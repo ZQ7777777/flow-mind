@@ -6,7 +6,7 @@
 
 - Java 8
 - Spring Boot 2.7.18
-- Maven 多模块
+- Maven 多模块，流程平台代码位于 `platform/`
 - Spring JDBC
 - SQLite 文件数据库
 - JUnit 5 / Spring Boot Test

@@ -13,13 +13,7 @@
     <description>Conversational business workflow automation platform</description>
 
     <modules>
-        <module>platform-api</module>
-        <module>platform-core</module>
-        <module>platform-persistence</module>
-        <module>platform-starter</module>
-        <module>platform-web</module>
-        <module>platform-mock</module>
-        <module>platform-demo</module>
+        <module>platform</module>
     </modules>
 
     <properties>
@@ -73,4 +67,3 @@
         </pluginManagement>
     </build>
 </project>
-
