@@ -10,8 +10,11 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -27,10 +30,12 @@ class RuntimeRequestContractTest {
     void everyRuntimeRequestProvidesItsContractFields(RequestFixture fixture) throws Exception {
         OperationRequest request = fixture.getRequest();
 
+        assertTrue(OperationRequest.class.isAssignableFrom(fixture.getRequestType()));
         assertNotNull(request.getOperationId());
         assertFalse(request.getOperationId().isEmpty());
         if (request instanceof TaskOperationRequest) {
             TaskOperationRequest taskRequest = (TaskOperationRequest) request;
+            assertTrue(TaskOperationRequest.class.isAssignableFrom(fixture.getRequestType()));
             assertNotNull(taskRequest.getTaskId());
             assertNotNull(taskRequest.getExpectedTaskVersion());
             assertNotNull(taskRequest.getOperatorUserId());
@@ -48,6 +53,21 @@ class RuntimeRequestContractTest {
     @Test
     void jumpNodeRequestIsInstanceLevelOnly() {
         assertFalse(TaskOperationRequest.class.isAssignableFrom(JumpNodeRequest.class));
+    }
+
+    @Test
+    void requestFixturesCoverEveryRuntimeModificationRequestExactlyOnce() throws Exception {
+        List<RequestFixture> fixtures = validRequestFixtures().collect(Collectors.toList());
+        Set<Class<? extends OperationRequest>> coveredTypes =
+                new LinkedHashSet<Class<? extends OperationRequest>>();
+
+        for (RequestFixture fixture : fixtures) {
+            assertTrue(coveredTypes.add(fixture.getRequestType()),
+                    fixture.getRequestType().getSimpleName() + " has duplicate fixtures");
+        }
+
+        assertEquals(runtimeModificationRequestTypes(), coveredTypes);
+        assertEquals(runtimeModificationRequestTypes().size(), fixtures.size());
     }
 
     private static Stream<RequestFixture> validRequestFixtures() throws Exception {
@@ -105,6 +125,28 @@ class RuntimeRequestContractTest {
                 taskFixture("remind", RemindTaskRequest.class, Collections.<String, Object>emptyMap()));
     }
 
+    private static Set<Class<? extends OperationRequest>> runtimeModificationRequestTypes() {
+        return new LinkedHashSet<Class<? extends OperationRequest>>(
+                Arrays.<Class<? extends OperationRequest>>asList(
+                        StartProcessRequest.class,
+                        UpdateVariablesRequest.class,
+                        SubmitTaskRequest.class,
+                        ApproveTaskRequest.class,
+                        RejectTaskRequest.class,
+                        ReturnTaskRequest.class,
+                        WithdrawTaskRequest.class,
+                        DirectSendRequest.class,
+                        TransferTaskRequest.class,
+                        AddSignRequest.class,
+                        ClaimTaskRequest.class,
+                        UnclaimTaskRequest.class,
+                        TerminateProcessRequest.class,
+                        DeleteProcessInstanceRequest.class,
+                        JumpNodeRequest.class,
+                        ForceCompleteRequest.class,
+                        RemindTaskRequest.class));
+    }
+
     private static RequestFixture taskFixture(String name,
                                               Class<? extends TaskOperationRequest> requestType,
                                               Map<String, Object> specificProperties) throws Exception {
@@ -123,7 +165,7 @@ class RuntimeRequestContractTest {
                                           Map<String, Object> properties) throws Exception {
         OperationRequest request = requestType.getDeclaredConstructor().newInstance();
         applyProperties(request, properties);
-        return new RequestFixture(name, request, properties);
+        return new RequestFixture(name, requestType, request, properties);
     }
 
     private static AttachmentUploadItem attachmentFixture() throws Exception {
@@ -190,13 +232,22 @@ class RuntimeRequestContractTest {
     private static final class RequestFixture {
 
         private final String name;
+        private final Class<? extends OperationRequest> requestType;
         private final OperationRequest request;
         private final Map<String, Object> properties;
 
-        private RequestFixture(String name, OperationRequest request, Map<String, Object> properties) {
+        private RequestFixture(String name,
+                               Class<? extends OperationRequest> requestType,
+                               OperationRequest request,
+                               Map<String, Object> properties) {
             this.name = name;
+            this.requestType = requestType;
             this.request = request;
             this.properties = properties;
+        }
+
+        private Class<? extends OperationRequest> getRequestType() {
+            return requestType;
         }
 
         private OperationRequest getRequest() {
