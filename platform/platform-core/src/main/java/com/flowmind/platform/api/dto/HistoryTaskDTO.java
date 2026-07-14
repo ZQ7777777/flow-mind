@@ -5,20 +5,35 @@ import java.util.Map;
 
 public class HistoryTaskDTO {
 
+    /** 历史任务记录 ID。 */
     private String historyTaskId;
+    /** 历史任务所属的流程实例 ID。 */
     private String instanceId;
+    /** 触发该历史记录的操作幂等号。 */
     private String operationId;
+    /** 被归档或取消的原活动任务 ID。 */
     private String activeTaskId;
+    /** 任务所在流程节点的编码。 */
     private String nodeCode;
+    /** 会签、或签或并行任务组 ID；非分组任务可为空。 */
     private String taskGroupId;
+    /** 并行任务所在分支的标识；非并行任务可为空。 */
     private String branchKey;
+    /** 实际办理人的用户 ID。 */
     private String assigneeUserId;
+    /** 实际办理人的名称快照。 */
     private String assigneeUserName;
+    /** 委托来源用户的 ID；非委托办理可为空。 */
     private String delegateFromUserId;
+    /** 委托来源用户的名称快照；非委托办理可为空。 */
     private String delegateFromUserName;
+    /** 办理时填写的意见或操作说明。 */
     private String comment;
+    /** 办理完成时固化的流程变量快照。 */
     private Map<String, Object> variablesSnapshot;
+    /** 该任务开始办理或创建的时间。 */
     private LocalDateTime startedAt;
+    /** 该任务归档或完成的时间。 */
     private LocalDateTime completedAt;
 
     public HistoryTaskDTO() {

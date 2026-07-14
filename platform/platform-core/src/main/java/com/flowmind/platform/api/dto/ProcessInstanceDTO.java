@@ -6,21 +6,37 @@ import java.util.Map;
 
 public class ProcessInstanceDTO {
 
+    /** 流程实例 ID。 */
     private String instanceId;
+    /** 实例所基于的流程定义 ID。 */
     private String definitionId;
+    /** 实例启动时固化绑定的附件配置 ID。 */
     private String attachmentConfigId;
+    /** 流程定义的业务编码。 */
     private String processCode;
+    /** 实例启动时固化的流程名称快照。 */
     private String processName;
+    /** 实例启动时固化的流程定义版本。 */
     private Integer version;
+    /** 展示给流程参与者的实例标题。 */
     private String instanceTitle;
+    /** 与外部业务系统关联的业务键。 */
     private String businessKey;
+    /** 流程发起人的用户 ID。 */
     private String starterUserId;
+    /** 流程发起人的名称快照。 */
     private String starterUserName;
+    /** 发起流程时所属部门的 ID。 */
     private String starterDeptId;
+    /** 当前等待办理的节点编码；并行流程可同时包含多个节点。 */
     private List<String> currentNodeCodes;
+    /** 当前流程变量集合。 */
     private Map<String, Object> variables;
+    /** 流程实例启动时间。 */
     private LocalDateTime startedAt;
+    /** 流程实例结束或办结时间；未结束时可为空。 */
     private LocalDateTime endedAt;
+    /** 本次启动或推进操作新建的活动任务；并行时可包含多个任务。 */
     private List<TaskDTO> createdTasks;
 
     public ProcessInstanceDTO() {

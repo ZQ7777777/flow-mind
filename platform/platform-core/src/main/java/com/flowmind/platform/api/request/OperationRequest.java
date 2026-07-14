@@ -1,10 +1,11 @@
 package com.flowmind.platform.api.request;
 
 /**
- * Base request for operations that modify workflow platform state.
+ * 流程平台状态修改请求的基类。
  */
 public class OperationRequest {
 
+    /** 调用方生成的全局唯一操作幂等号，用于安全重试并关联首次执行结果。 */
     private String operationId;
 
     public OperationRequest() {

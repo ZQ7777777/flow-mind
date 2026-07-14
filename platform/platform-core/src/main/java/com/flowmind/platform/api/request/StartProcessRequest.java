@@ -4,11 +4,17 @@ import java.util.Map;
 
 public class StartProcessRequest extends OperationRequest {
 
+    /** 要启动的流程定义业务编码。 */
     private String processCode;
+    /** 外部系统用于关联该流程实例的业务键。 */
     private String businessKey;
+    /** 展示给流程参与者的实例标题。 */
     private String instanceTitle;
+    /** 发起流程的用户 ID。 */
     private String starterUserId;
+    /** 发起流程时所属部门的 ID。 */
     private String starterDeptId;
+    /** 启动时写入的流程变量，通常承载表单字段值。 */
     private Map<String, Object> variables;
 
     public StartProcessRequest() {
