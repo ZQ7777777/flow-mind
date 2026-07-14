@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
  * 流程定义的基础返回对象，承载流程编码、版本和发布状态等定义期元数据。
  *
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class ProcessDefinitionDTO implements Serializable {

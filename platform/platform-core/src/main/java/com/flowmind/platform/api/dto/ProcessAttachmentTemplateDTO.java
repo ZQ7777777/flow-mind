@@ -11,7 +11,7 @@ import java.util.List;
  * 流程附件模板配置返回对象，合并展示全局附件模板版本和流程定义附件配置。
  *
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class ProcessAttachmentTemplateDTO implements Serializable {

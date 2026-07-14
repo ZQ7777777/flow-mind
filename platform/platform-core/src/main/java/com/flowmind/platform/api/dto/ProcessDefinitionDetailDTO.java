@@ -9,7 +9,7 @@ import java.util.List;
  * 流程定义详情返回对象，在基础定义信息之外包含流程图结构和附件配置。
  *
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class ProcessDefinitionDetailDTO extends ProcessDefinitionDTO {

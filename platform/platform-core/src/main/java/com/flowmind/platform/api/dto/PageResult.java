@@ -11,7 +11,7 @@ import java.util.List;
  *
  * @param <T> 分页记录类型
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class PageResult<T> implements Serializable {

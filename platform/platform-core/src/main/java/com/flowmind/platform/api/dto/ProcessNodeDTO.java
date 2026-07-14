@@ -8,7 +8,7 @@ import java.io.Serializable;
  * 流程节点返回对象，描述节点类型、审批人规则、监听配置和画布位置。
  *
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class ProcessNodeDTO implements Serializable {

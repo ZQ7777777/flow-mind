@@ -11,7 +11,7 @@ import java.util.List;
  * 活动任务返回对象，描述待办任务的实例、节点、候选人、办理人和乐观锁版本。
  *
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class TaskDTO implements Serializable {

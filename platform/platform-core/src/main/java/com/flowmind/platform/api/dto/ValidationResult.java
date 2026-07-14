@@ -10,7 +10,7 @@ import java.util.List;
  * 流程定义发布前校验结果，包含整体是否通过以及具体问题列表。
  *
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class ValidationResult implements Serializable {

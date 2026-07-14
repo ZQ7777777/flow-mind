@@ -8,7 +8,7 @@ import java.io.Serializable;
  * 流程表单字段返回对象，描述流程变量对应的表单控件和校验规则。
  *
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class ProcessFormFieldDTO implements Serializable {

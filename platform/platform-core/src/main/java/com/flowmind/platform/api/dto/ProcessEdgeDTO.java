@@ -8,7 +8,7 @@ import java.io.Serializable;
  * 流程连线返回对象，描述节点之间的流转关系和条件网关出线规则。
  *
  * @author Yuxin Xu
- * @created 2026-07-14
+ * @since 2026-07-14
  */
 @Data
 public class ProcessEdgeDTO implements Serializable {
