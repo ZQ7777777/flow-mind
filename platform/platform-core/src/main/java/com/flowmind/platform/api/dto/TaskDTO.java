@@ -1,84 +1,161 @@
 package com.flowmind.platform.api.dto;
 
-import lombok.Data;
-
-import java.io.Serializable;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 活动任务返回对象，描述待办任务的实例、节点、候选人、办理人和乐观锁版本。
- *
- * @author Yuxin Xu
- * @since 2026-07-14
- */
-@Data
-public class TaskDTO implements Serializable {
-    private static final long serialVersionUID = 1L;
+public class TaskDTO {
 
-    /**
-     * 活动任务 ID。
-     */
+    /** 活动任务 ID。 */
     private String taskId;
-    /**
-     * 所属流程实例 ID。
-     */
+    /** 任务所属的流程实例 ID。 */
     private String instanceId;
-    /**
-     * 所属流程定义 ID。
-     */
+    /** 任务所属流程定义的 ID。 */
     private String definitionId;
-    /**
-     * 流程定义版本快照。
-     */
-    private Integer version;
-    /**
-     * 当前任务所在节点编码。
-     */
+    /** 任务所在用户节点的编码。 */
     private String nodeCode;
-    /**
-     * 当前任务所在节点名称快照。
-     */
+    /** 任务所在用户节点的名称。 */
     private String nodeName;
-    /**
-     * 候选办理人 ID 列表。
-     */
-    private List<String> candidateUserIds = new ArrayList<>();
-    /**
-     * 当前办理人或认领人 ID。
-     */
+    /** 可认领或可办理该任务的候选用户 ID 列表。 */
+    private List<String> candidateUserIds;
+    /** 当前办理人或认领人的用户 ID。 */
     private String assigneeUserId;
-    /**
-     * 当前办理人或认领人名称快照。
-     */
+    /** 当前办理人或认领人的名称快照。 */
     private String assigneeUserName;
-    /**
-     * 委托来源用户 ID。
-     */
+    /** 委托来源用户的 ID；非委托任务可为空。 */
     private String delegateFromUserId;
-    /**
-     * 任务状态，如 ACTIVE、CLAIMED、COMPLETED、CANCELED。
-     */
-    private String taskStatus;
-    /**
-     * 会签、或签或并行任务组 ID。
-     */
+    /** 委托来源用户的名称快照；非委托任务可为空。 */
+    private String delegateFromUserName;
+    /** 会签、或签或并行任务组 ID；非分组任务可为空。 */
     private String taskGroupId;
-    /**
-     * 并行分支标识，可为空。
-     */
+    /** 并行任务所在分支的标识；非并行任务可为空。 */
     private String branchKey;
-    /**
-     * 任务乐观锁版本，对应 process_active_task.lock_version。
-     */
+    /** 活动任务的乐观锁版本，提交任务级请求时原样传入 expectedTaskVersion。 */
     private Long taskVersion;
-    /**
-     * 任务创建时间。
-     */
+    /** 活动任务创建时间。 */
     private LocalDateTime createdAt;
-    /**
-     * 任务超时时间。
-     */
+    /** 节点配置计算出的任务超时时间；未配置时可为空。 */
     private LocalDateTime dueAt;
+
+    public TaskDTO() {
+    }
+
+    public String getTaskId() {
+        return taskId;
+    }
+
+    public void setTaskId(String taskId) {
+        this.taskId = taskId;
+    }
+
+    public String getInstanceId() {
+        return instanceId;
+    }
+
+    public void setInstanceId(String instanceId) {
+        this.instanceId = instanceId;
+    }
+
+    public String getDefinitionId() {
+        return definitionId;
+    }
+
+    public void setDefinitionId(String definitionId) {
+        this.definitionId = definitionId;
+    }
+
+    public String getNodeCode() {
+        return nodeCode;
+    }
+
+    public void setNodeCode(String nodeCode) {
+        this.nodeCode = nodeCode;
+    }
+
+    public String getNodeName() {
+        return nodeName;
+    }
+
+    public void setNodeName(String nodeName) {
+        this.nodeName = nodeName;
+    }
+
+    public List<String> getCandidateUserIds() {
+        return candidateUserIds;
+    }
+
+    public void setCandidateUserIds(List<String> candidateUserIds) {
+        this.candidateUserIds = candidateUserIds;
+    }
+
+    public String getAssigneeUserId() {
+        return assigneeUserId;
+    }
+
+    public void setAssigneeUserId(String assigneeUserId) {
+        this.assigneeUserId = assigneeUserId;
+    }
+
+    public String getAssigneeUserName() {
+        return assigneeUserName;
+    }
+
+    public void setAssigneeUserName(String assigneeUserName) {
+        this.assigneeUserName = assigneeUserName;
+    }
+
+    public String getDelegateFromUserId() {
+        return delegateFromUserId;
+    }
+
+    public void setDelegateFromUserId(String delegateFromUserId) {
+        this.delegateFromUserId = delegateFromUserId;
+    }
+
+    public String getDelegateFromUserName() {
+        return delegateFromUserName;
+    }
+
+    public void setDelegateFromUserName(String delegateFromUserName) {
+        this.delegateFromUserName = delegateFromUserName;
+    }
+
+    public String getTaskGroupId() {
+        return taskGroupId;
+    }
+
+    public void setTaskGroupId(String taskGroupId) {
+        this.taskGroupId = taskGroupId;
+    }
+
+    public String getBranchKey() {
+        return branchKey;
+    }
+
+    public void setBranchKey(String branchKey) {
+        this.branchKey = branchKey;
+    }
+
+    public Long getTaskVersion() {
+        return taskVersion;
+    }
+
+    public void setTaskVersion(Long taskVersion) {
+        this.taskVersion = taskVersion;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getDueAt() {
+        return dueAt;
+    }
+
+    public void setDueAt(LocalDateTime dueAt) {
+        this.dueAt = dueAt;
+    }
 }
