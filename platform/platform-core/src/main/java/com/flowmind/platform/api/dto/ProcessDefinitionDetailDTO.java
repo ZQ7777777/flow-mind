@@ -18,17 +18,17 @@ public class ProcessDefinitionDetailDTO extends ProcessDefinitionDTO {
     /**
      * 当前定义版本下的节点列表。
      */
-    private List<ProcessNodeDTO> nodes = new ArrayList<ProcessNodeDTO>();
+    private List<ProcessNodeDTO> nodes = new ArrayList<>();
     /**
      * 当前定义版本下的连线列表。
      */
-    private List<ProcessEdgeDTO> edges = new ArrayList<ProcessEdgeDTO>();
+    private List<ProcessEdgeDTO> edges = new ArrayList<>();
     /**
      * 当前定义版本下的表单字段列表。
      */
-    private List<ProcessFormFieldDTO> formFields = new ArrayList<ProcessFormFieldDTO>();
+    private List<ProcessFormFieldDTO> formFields = new ArrayList<>();
     /**
      * 当前定义版本绑定的附件模板与附件配置列表。
      */
-    private List<ProcessAttachmentTemplateDTO> attachmentTemplates = new ArrayList<ProcessAttachmentTemplateDTO>();
+    private List<ProcessAttachmentTemplateDTO> attachmentTemplates = new ArrayList<>();
 }

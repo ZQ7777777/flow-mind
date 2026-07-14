@@ -27,15 +27,15 @@ public class TaskActionResult implements Serializable {
     /**
      * 本次动作完成并归档的任务 ID 列表。
      */
-    private List<String> completedTaskIds = new ArrayList<String>();
+    private List<String> completedTaskIds = new ArrayList<>();
     /**
      * 本次动作取消的任务 ID 列表。
      */
-    private List<String> canceledTaskIds = new ArrayList<String>();
+    private List<String> canceledTaskIds = new ArrayList<>();
     /**
      * 本次动作推进后新创建的活动任务列表。
      */
-    private List<TaskDTO> createdTasks = new ArrayList<TaskDTO>();
+    private List<TaskDTO> createdTasks = new ArrayList<>();
     /**
      * 动作完成后的流程实例状态。
      */

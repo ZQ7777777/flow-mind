@@ -20,7 +20,7 @@ public class PageResult<T> implements Serializable {
     /**
      * 当前页记录列表。
      */
-    private List<T> records = new ArrayList<T>();
+    private List<T> records = new ArrayList<>();
     /**
      * 当前页码，从 1 开始。
      */

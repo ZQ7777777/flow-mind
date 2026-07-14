@@ -23,7 +23,7 @@ public class ValidationResult implements Serializable {
     /**
      * 校验问题列表；为空时表示没有发现阻塞问题。
      */
-    private List<Issue> issues = new ArrayList<Issue>();
+    private List<Issue> issues = new ArrayList<>();
 
     /**
      * 单条校验问题，定位到流程节点或连线。

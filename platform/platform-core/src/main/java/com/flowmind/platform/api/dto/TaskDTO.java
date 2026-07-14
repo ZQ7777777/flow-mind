@@ -44,7 +44,7 @@ public class TaskDTO implements Serializable {
     /**
      * 候选办理人 ID 列表。
      */
-    private List<String> candidateUserIds = new ArrayList<String>();
+    private List<String> candidateUserIds = new ArrayList<>();
     /**
      * 当前办理人或认领人 ID。
      */

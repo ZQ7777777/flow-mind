@@ -60,7 +60,7 @@ public class ProcessAttachmentTemplateDTO implements Serializable {
     /**
      * 允许上传的文件扩展名列表。
      */
-    private List<String> allowedExtensions = new ArrayList<String>();
+    private List<String> allowedExtensions = new ArrayList<>();
     /**
      * 单文件大小限制，单位字节。
      */
@@ -84,7 +84,7 @@ public class ProcessAttachmentTemplateDTO implements Serializable {
     /**
      * 当前流程附件配置适用的节点编码列表。
      */
-    private List<String> applicableNodeCodes = new ArrayList<String>();
+    private List<String> applicableNodeCodes = new ArrayList<>();
     /**
      * 附件配置展示顺序。
      */
