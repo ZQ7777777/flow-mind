@@ -1,22 +1,22 @@
 package com.flowmind.platform.api.service;
 
-import com.flowmind.platform.api.dto.ProcessInstanceDTO;
-import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
-import com.flowmind.platform.api.dto.TaskActionResult;
-import com.flowmind.platform.api.request.AddSignRequest;
-import com.flowmind.platform.api.request.ApproveTaskRequest;
-import com.flowmind.platform.api.request.ClaimTaskRequest;
-import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
-import com.flowmind.platform.api.request.DirectSendRequest;
-import com.flowmind.platform.api.request.RejectTaskRequest;
-import com.flowmind.platform.api.request.ReturnTaskRequest;
-import com.flowmind.platform.api.request.StartProcessRequest;
-import com.flowmind.platform.api.request.SubmitTaskRequest;
-import com.flowmind.platform.api.request.TerminateProcessRequest;
-import com.flowmind.platform.api.request.TransferTaskRequest;
-import com.flowmind.platform.api.request.UnclaimTaskRequest;
-import com.flowmind.platform.api.request.UpdateVariablesRequest;
-import com.flowmind.platform.api.request.WithdrawTaskRequest;
+import com.flowmind.platform.api.entity.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.entity.dto.ProcessInstanceDetailDTO;
+import com.flowmind.platform.api.entity.result.TaskActionResult;
+import com.flowmind.platform.api.entity.request.AddSignRequest;
+import com.flowmind.platform.api.entity.request.ApproveTaskRequest;
+import com.flowmind.platform.api.entity.request.ClaimTaskRequest;
+import com.flowmind.platform.api.entity.request.DeleteProcessInstanceRequest;
+import com.flowmind.platform.api.entity.request.DirectSendRequest;
+import com.flowmind.platform.api.entity.request.RejectTaskRequest;
+import com.flowmind.platform.api.entity.request.ReturnTaskRequest;
+import com.flowmind.platform.api.entity.request.StartProcessRequest;
+import com.flowmind.platform.api.entity.request.SubmitTaskRequest;
+import com.flowmind.platform.api.entity.request.TerminateProcessRequest;
+import com.flowmind.platform.api.entity.request.TransferTaskRequest;
+import com.flowmind.platform.api.entity.request.UnclaimTaskRequest;
+import com.flowmind.platform.api.entity.request.UpdateVariablesRequest;
+import com.flowmind.platform.api.entity.request.WithdrawTaskRequest;
 
 /**
  * 流程运行时服务。

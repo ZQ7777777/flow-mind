@@ -1,5 +1,7 @@
 package com.flowmind.platform.api.request;
 
+import com.flowmind.platform.api.entity.request.OperationRequest;
+import com.flowmind.platform.api.entity.request.TaskOperationRequest;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;

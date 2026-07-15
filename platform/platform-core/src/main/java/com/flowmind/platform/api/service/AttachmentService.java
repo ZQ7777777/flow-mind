@@ -1,14 +1,14 @@
 package com.flowmind.platform.api.service;
 
-import com.flowmind.platform.api.dto.AttachmentDTO;
-import com.flowmind.platform.api.dto.AttachmentDownloadDTO;
-import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
-import com.flowmind.platform.api.request.AttachmentQuery;
-import com.flowmind.platform.api.request.CheckAttachmentRequest;
-import com.flowmind.platform.api.request.DeleteAttachmentRequest;
-import com.flowmind.platform.api.request.DownloadAttachmentRequest;
-import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
-import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
+import com.flowmind.platform.api.entity.dto.AttachmentDTO;
+import com.flowmind.platform.api.entity.dto.AttachmentDownloadDTO;
+import com.flowmind.platform.api.entity.result.AttachmentTemplateCheckResult;
+import com.flowmind.platform.api.entity.query.AttachmentQuery;
+import com.flowmind.platform.api.entity.request.CheckAttachmentRequest;
+import com.flowmind.platform.api.entity.request.DeleteAttachmentRequest;
+import com.flowmind.platform.api.entity.request.DownloadAttachmentRequest;
+import com.flowmind.platform.api.entity.request.SaveInstanceAttachmentRequest;
+import com.flowmind.platform.api.entity.request.SaveTaskAttachmentRequest;
 
 import java.util.List;
 

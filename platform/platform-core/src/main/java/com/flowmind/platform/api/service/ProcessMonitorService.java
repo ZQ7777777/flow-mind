@@ -1,14 +1,14 @@
 package com.flowmind.platform.api.service;
 
-import com.flowmind.platform.api.dto.AlertDTO;
-import com.flowmind.platform.api.dto.PageResult;
-import com.flowmind.platform.api.dto.ReminderDTO;
-import com.flowmind.platform.api.dto.TaskDTO;
-import com.flowmind.platform.api.request.AlertQuery;
-import com.flowmind.platform.api.request.HandleAlertRequest;
-import com.flowmind.platform.api.request.RemindTaskRequest;
-import com.flowmind.platform.api.request.ReminderQuery;
-import com.flowmind.platform.api.request.TimeoutScanRequest;
+import com.flowmind.platform.api.entity.dto.AlertDTO;
+import com.flowmind.platform.api.entity.result.PageResult;
+import com.flowmind.platform.api.entity.dto.ReminderDTO;
+import com.flowmind.platform.api.entity.dto.TaskDTO;
+import com.flowmind.platform.api.entity.query.AlertQuery;
+import com.flowmind.platform.api.entity.request.HandleAlertRequest;
+import com.flowmind.platform.api.entity.request.RemindTaskRequest;
+import com.flowmind.platform.api.entity.query.ReminderQuery;
+import com.flowmind.platform.api.entity.request.TimeoutScanRequest;
 
 import java.util.List;
 

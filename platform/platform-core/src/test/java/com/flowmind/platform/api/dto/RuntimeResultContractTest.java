@@ -1,6 +1,9 @@
 package com.flowmind.platform.api.dto;
 
-import com.flowmind.platform.api.request.AttachmentUploadItem;
+import com.flowmind.platform.api.entity.dto.*;
+import com.flowmind.platform.api.entity.po.AttachmentUploadItem;
+import com.flowmind.platform.api.entity.result.OperationResult;
+import com.flowmind.platform.api.entity.result.TaskActionResult;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;

@@ -1,6 +1,6 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.api.dto.DelegateRelationDTO;
+import com.flowmind.platform.api.entity.dto.DelegateRelationDTO;
 
 import java.time.LocalDateTime;
 import java.util.List;

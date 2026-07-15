@@ -1,8 +1,8 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.api.dto.FileContent;
-import com.flowmind.platform.api.dto.StoredFile;
-import com.flowmind.platform.api.request.StoreFileRequest;
+import com.flowmind.platform.api.entity.po.FileContent;
+import com.flowmind.platform.api.entity.po.StoredFile;
+import com.flowmind.platform.api.entity.request.StoreFileRequest;
 
 /**
  * 文件存储 SPI。

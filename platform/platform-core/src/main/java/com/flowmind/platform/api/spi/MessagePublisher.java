@@ -1,6 +1,6 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.api.dto.ProcessMessage;
+import com.flowmind.platform.api.entity.po.ProcessMessage;
 
 /**
  * 消息推送 SPI。

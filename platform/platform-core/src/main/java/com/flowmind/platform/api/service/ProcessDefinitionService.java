@@ -1,16 +1,16 @@
 package com.flowmind.platform.api.service;
 
-import com.flowmind.platform.api.dto.PageResult;
-import com.flowmind.platform.api.dto.ProcessDefinitionDTO;
-import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
-import com.flowmind.platform.api.dto.ProcessNodeDTO;
-import com.flowmind.platform.api.dto.ValidationResult;
-import com.flowmind.platform.api.request.CopyProcessDefinitionRequest;
-import com.flowmind.platform.api.request.CreateProcessDefinitionRequest;
-import com.flowmind.platform.api.request.DefinitionOperationRequest;
-import com.flowmind.platform.api.request.GrayReleaseRequest;
-import com.flowmind.platform.api.request.ProcessDefinitionQuery;
-import com.flowmind.platform.api.request.SaveProcessGraphRequest;
+import com.flowmind.platform.api.entity.result.PageResult;
+import com.flowmind.platform.api.entity.dto.ProcessDefinitionDTO;
+import com.flowmind.platform.api.entity.dto.ProcessDefinitionDetailDTO;
+import com.flowmind.platform.api.entity.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.entity.result.ValidationResult;
+import com.flowmind.platform.api.entity.request.CopyProcessDefinitionRequest;
+import com.flowmind.platform.api.entity.request.CreateProcessDefinitionRequest;
+import com.flowmind.platform.api.entity.request.DefinitionOperationRequest;
+import com.flowmind.platform.api.entity.request.GrayReleaseRequest;
+import com.flowmind.platform.api.entity.query.ProcessDefinitionQuery;
+import com.flowmind.platform.api.entity.request.SaveProcessGraphRequest;
 
 import java.util.List;
 

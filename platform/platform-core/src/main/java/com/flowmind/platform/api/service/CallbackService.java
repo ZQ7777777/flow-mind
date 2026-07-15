@@ -1,9 +1,9 @@
 package com.flowmind.platform.api.service;
 
-import com.flowmind.platform.api.dto.CallbackLogDTO;
-import com.flowmind.platform.api.dto.PageResult;
-import com.flowmind.platform.api.dto.WorkflowEvent;
-import com.flowmind.platform.api.request.CallbackLogQuery;
+import com.flowmind.platform.api.entity.dto.CallbackLogDTO;
+import com.flowmind.platform.api.entity.result.PageResult;
+import com.flowmind.platform.api.entity.po.WorkflowEvent;
+import com.flowmind.platform.api.entity.query.CallbackLogQuery;
 
 /**
  * 回调服务。
