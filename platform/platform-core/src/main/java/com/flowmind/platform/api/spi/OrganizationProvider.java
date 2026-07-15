@@ -1,7 +1,7 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.api.entity.dto.DepartmentDTO;
-import com.flowmind.platform.api.entity.dto.UserDTO;
+import com.flowmind.platform.api.dto.DepartmentDTO;
+import com.flowmind.platform.api.dto.UserDTO;
 
 import java.util.List;
 import java.util.Optional;

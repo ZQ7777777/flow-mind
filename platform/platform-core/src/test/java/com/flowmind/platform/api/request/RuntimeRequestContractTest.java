@@ -1,7 +1,6 @@
 package com.flowmind.platform.api.request;
 
-import com.flowmind.platform.api.entity.po.AttachmentUploadItem;
-import com.flowmind.platform.api.entity.request.*;
+import com.flowmind.platform.persistence.entity.AttachmentUploadItem;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;

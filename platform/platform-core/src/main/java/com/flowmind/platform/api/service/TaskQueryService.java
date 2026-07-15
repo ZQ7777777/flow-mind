@@ -1,15 +1,15 @@
 package com.flowmind.platform.api.service;
 
-import com.flowmind.platform.api.entity.dto.HistoryTaskDTO;
-import com.flowmind.platform.api.entity.result.PageResult;
-import com.flowmind.platform.api.entity.dto.ProcessCommentDTO;
-import com.flowmind.platform.api.entity.dto.ProcessInstanceDTO;
-import com.flowmind.platform.api.entity.dto.ReadRecordDTO;
-import com.flowmind.platform.api.entity.dto.TaskDTO;
-import com.flowmind.platform.api.entity.query.CompletedTaskQuery;
-import com.flowmind.platform.api.entity.query.ReadRecordQuery;
-import com.flowmind.platform.api.entity.query.StartedInstanceQuery;
-import com.flowmind.platform.api.entity.query.TodoTaskQuery;
+import com.flowmind.platform.api.dto.HistoryTaskDTO;
+import com.flowmind.platform.api.dto.PageResult;
+import com.flowmind.platform.api.dto.ProcessCommentDTO;
+import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.ReadRecordDTO;
+import com.flowmind.platform.api.dto.TaskDTO;
+import com.flowmind.platform.api.dto.CompletedTaskQuery;
+import com.flowmind.platform.api.dto.ReadRecordQuery;
+import com.flowmind.platform.api.dto.StartedInstanceQuery;
+import com.flowmind.platform.api.dto.TodoTaskQuery;
 
 import java.util.List;
 

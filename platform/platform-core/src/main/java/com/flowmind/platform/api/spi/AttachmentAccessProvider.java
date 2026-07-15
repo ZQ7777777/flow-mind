@@ -1,6 +1,6 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.api.entity.request.AttachmentAccessRequest;
+import com.flowmind.platform.api.request.AttachmentAccessRequest;
 
 /**
  * 附件访问授权 SPI。

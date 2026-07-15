@@ -1,6 +1,6 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.api.entity.po.WorkflowEvent;
+import com.flowmind.platform.persistence.entity.WorkflowEvent;
 
 /**
  * 工作流回调处理 SPI。

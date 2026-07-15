@@ -1,7 +1,7 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.api.entity.dto.UserDTO;
-import com.flowmind.platform.api.entity.request.ApproverResolveRequest;
+import com.flowmind.platform.api.dto.UserDTO;
+import com.flowmind.platform.api.request.ApproverResolveRequest;
 
 import java.util.List;
 

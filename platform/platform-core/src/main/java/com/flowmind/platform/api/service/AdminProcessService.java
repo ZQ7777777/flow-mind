@@ -1,19 +1,19 @@
 package com.flowmind.platform.api.service;
 
-import com.flowmind.platform.api.entity.dto.AuditLogDTO;
-import com.flowmind.platform.api.entity.dto.CallbackLogDTO;
-import com.flowmind.platform.api.entity.dto.HistoryTaskDTO;
-import com.flowmind.platform.api.entity.result.PageResult;
-import com.flowmind.platform.api.entity.dto.ProcessInstanceDTO;
-import com.flowmind.platform.api.entity.result.TaskActionResult;
-import com.flowmind.platform.api.entity.dto.TaskDTO;
-import com.flowmind.platform.api.entity.query.AdminHistoryTaskQuery;
-import com.flowmind.platform.api.entity.query.AdminInstanceQuery;
-import com.flowmind.platform.api.entity.query.AdminTaskQuery;
-import com.flowmind.platform.api.entity.query.AuditLogQuery;
-import com.flowmind.platform.api.entity.query.CallbackLogQuery;
-import com.flowmind.platform.api.entity.request.ForceCompleteRequest;
-import com.flowmind.platform.api.entity.request.JumpNodeRequest;
+import com.flowmind.platform.api.dto.AuditLogDTO;
+import com.flowmind.platform.api.dto.CallbackLogDTO;
+import com.flowmind.platform.api.dto.HistoryTaskDTO;
+import com.flowmind.platform.api.dto.PageResult;
+import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.TaskActionResult;
+import com.flowmind.platform.api.dto.TaskDTO;
+import com.flowmind.platform.api.dto.AdminHistoryTaskQuery;
+import com.flowmind.platform.api.dto.AdminInstanceQuery;
+import com.flowmind.platform.api.dto.AdminTaskQuery;
+import com.flowmind.platform.api.dto.AuditLogQuery;
+import com.flowmind.platform.api.dto.CallbackLogQuery;
+import com.flowmind.platform.api.request.ForceCompleteRequest;
+import com.flowmind.platform.api.request.JumpNodeRequest;
 
 /**
  * 管理端流程操作与查询服务。
