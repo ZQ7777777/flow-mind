@@ -1,6 +1,10 @@
 package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.request.AttachmentUploadItem;
+import com.flowmind.platform.api.request.TaskOperationRequest;
+import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
+import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
+import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -162,5 +166,23 @@ class RuntimeResultContractTest {
         assertTrue(result.isDeleted());
         assertFalse(result.isReplayed());
         assertArrayEquals(new byte[] {1, 2, 3}, attachment.getContent());
+    }
+
+    @Test
+    void runtimeDtoTypesAlignWithPersistedModelAndOptimisticLockRequest() throws NoSuchFieldException {
+        assertEquals(fieldType(ProcessInstanceEntity.class, "version"),
+                fieldType(ProcessInstanceDTO.class, "version"));
+        assertEquals(fieldType(ProcessActiveTaskEntity.class, "lockVersion"),
+                fieldType(TaskDTO.class, "taskVersion"));
+        assertEquals(fieldType(TaskDTO.class, "taskVersion"),
+                fieldType(TaskOperationRequest.class, "expectedTaskVersion"));
+        assertEquals(fieldType(ProcessHistoryTaskEntity.class, "operationId"),
+                fieldType(HistoryTaskDTO.class, "operationId"));
+        assertEquals(fieldType(ProcessHistoryTaskEntity.class, "commentText"),
+                fieldType(HistoryTaskDTO.class, "comment"));
+    }
+
+    private Class<?> fieldType(Class<?> owner, String fieldName) throws NoSuchFieldException {
+        return owner.getDeclaredField(fieldName).getType();
     }
 }
