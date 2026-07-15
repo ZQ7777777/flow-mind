@@ -26,6 +26,10 @@ Flow Mind 流程平台基于 Java 8、Spring Boot 2.7.18 和 Maven 多模块架�
 - 方法名和变量名使用 `camelCase`
 - 枚举值使用 `UPPER_SNAKE_CASE`
 - DTO 命名使用 `XxxDTO`、`XxxRequest`、`XxxResult`、`XxxQuery`
+- 定义实体类、DTO、Request、Result、Query 等数据承载类时，使用 Lombok `@Data` 生成访问器
+- 类使用 Javadoc 说明对象用途，并保留 `@author`、`@since`
+- 每个字段必须使用中文 Javadoc 说明业务含义、约束或单位；状态、类型字段应列出典型取值，JSON 配置字段应明确标注其内容格式
+- 数据承载类只承载数据，不包含业务判断、状态流转或持久化逻辑
 - Controller 仅负责 HTTP 协议适配，不承载核心逻辑
 - 为关键规则和复杂状态流转添加必要注释，重点说明设计意图和约束原因
 

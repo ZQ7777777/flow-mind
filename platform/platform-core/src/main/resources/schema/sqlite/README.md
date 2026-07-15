@@ -1,4 +1,4 @@
 # SQLite Schema
 
-This folder stores SQLite DDL used by local integration tests and standalone platform debugging.
+执行`001_init_flow_platform.sql`创建sqlite本地数据库
 
