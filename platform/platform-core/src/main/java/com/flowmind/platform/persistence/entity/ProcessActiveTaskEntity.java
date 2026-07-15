@@ -21,10 +21,6 @@ public class ProcessActiveTaskEntity {
      */
     private String definitionId;
     /**
-     * 流程定义版本快照。
-     */
-    private Integer version;
-    /**
      * 当前用户任务节点编码。
      */
     private String nodeCode;
