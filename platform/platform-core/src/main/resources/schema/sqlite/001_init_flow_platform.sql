@@ -210,7 +210,6 @@ CREATE TABLE IF NOT EXISTS process_active_task (
     id TEXT PRIMARY KEY,
     instance_id TEXT NOT NULL,
     definition_id TEXT NOT NULL,
-    version INTEGER NOT NULL,
     node_code TEXT NOT NULL,
     candidate_user_ids TEXT,
     assignee_user_id TEXT,

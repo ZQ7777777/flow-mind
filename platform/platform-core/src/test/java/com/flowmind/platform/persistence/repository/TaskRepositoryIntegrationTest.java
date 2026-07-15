@@ -135,9 +135,9 @@ class TaskRepositoryIntegrationTest {
 
     private void insertTask(String id, String status, long lockVersion) {
         jdbcTemplate.update("INSERT INTO process_active_task "
-                        + "(id, instance_id, definition_id, version, node_code, task_status, lock_version) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                id, "instance-1", "definition-1", 1, "review", status, lockVersion);
+                        + "(id, instance_id, definition_id, node_code, task_status, lock_version) "
+                        + "VALUES (?, ?, ?, ?, ?, ?)",
+                id, "instance-1", "definition-1", "review", status, lockVersion);
     }
 
     private void insertTaskGroup(String id, String type, int totalCount, int completedCount,

@@ -8,11 +8,16 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FlowPlatformSchemaTest {
 
@@ -49,6 +54,18 @@ class FlowPlatformSchemaTest {
         }
     }
 
+    @Test
+    void activeTaskReferencesDefinitionWithoutDuplicatingItsVersion() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            executeSchema(connection);
+
+            Set<String> columns = tableColumns(connection, "process_active_task");
+            assertTrue(columns.contains("definition_id"));
+            assertTrue(columns.contains("lock_version"));
+            assertFalse(columns.contains("version"));
+        }
+    }
+
     private static void executeSchema(Connection connection) throws IOException, SQLException {
         String sql;
         try (InputStream input = FlowPlatformSchemaTest.class.getResourceAsStream(SCHEMA)) {
@@ -70,6 +87,17 @@ class FlowPlatformSchemaTest {
                 }
             }
         }
+    }
+
+    private static Set<String> tableColumns(Connection connection, String tableName) throws SQLException {
+        Set<String> columns = new LinkedHashSet<String>();
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + tableName + ")")) {
+            while (resultSet.next()) {
+                columns.add(resultSet.getString("name"));
+            }
+        }
+        return columns;
     }
 
     private static void insertDefinition(Connection connection, String id, String code, int version,
