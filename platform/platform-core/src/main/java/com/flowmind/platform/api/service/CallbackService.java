@@ -2,7 +2,7 @@ package com.flowmind.platform.api.service;
 
 import com.flowmind.platform.api.dto.CallbackLogDTO;
 import com.flowmind.platform.api.dto.PageResult;
-import com.flowmind.platform.persistence.entity.WorkflowEvent;
+import com.flowmind.platform.api.dto.WorkflowEvent;
 import com.flowmind.platform.api.dto.CallbackLogQuery;
 
 /**

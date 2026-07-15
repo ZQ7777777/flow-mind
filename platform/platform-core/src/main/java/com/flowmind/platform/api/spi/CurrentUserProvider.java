@@ -1,6 +1,6 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.persistence.entity.UserContext;
+import com.flowmind.platform.api.dto.UserContext;
 
 /**
  * 当前用户获取 SPI。
