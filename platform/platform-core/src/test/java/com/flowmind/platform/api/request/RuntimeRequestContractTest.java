@@ -1,5 +1,6 @@
 package com.flowmind.platform.api.request;
 
+import com.flowmind.platform.api.enums.AlertStatusEnum;
 import com.flowmind.platform.persistence.entity.AttachmentUploadItem;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -140,6 +141,7 @@ class RuntimeRequestContractTest {
                         "operationId", "handle-alert-operation",
                         "alertId", "alert-001",
                         "operatorUserId", "operator-008",
+                        "targetStatus", AlertStatusEnum.HANDLED,
                         "comment", "handled")));
     }
 

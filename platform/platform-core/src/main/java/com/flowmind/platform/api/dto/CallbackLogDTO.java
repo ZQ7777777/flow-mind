@@ -34,8 +34,7 @@ public class CallbackLogDTO {
     private LocalDateTime createdAt;
     /** 最近更新时间。 */
     private LocalDateTime updatedAt;
-    /** 完成时间。 */
-    private LocalDateTime completedAt;
+
 
     public CallbackLogDTO() {
     }
@@ -154,11 +153,4 @@ public class CallbackLogDTO {
         this.updatedAt = updatedAt;
     }
 
-    public LocalDateTime getCompletedAt() {
-        return completedAt;
-    }
-
-    public void setCompletedAt(LocalDateTime completedAt) {
-        this.completedAt = completedAt;
-    }
 }
