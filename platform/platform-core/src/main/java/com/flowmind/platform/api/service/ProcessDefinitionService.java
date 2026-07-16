@@ -1,6 +1,7 @@
 package com.flowmind.platform.api.service;
 
 import com.flowmind.platform.api.dto.PageResult;
+import com.flowmind.platform.api.dto.OperationResult;
 import com.flowmind.platform.api.dto.ProcessDefinitionDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
@@ -105,7 +106,7 @@ public interface ProcessDefinitionService {
      *
      * @param request 定义操作请求
      */
-    void deleteDefinition(DefinitionOperationRequest request);
+    OperationResult deleteDefinition(DefinitionOperationRequest request);
 
     /**
      * 查询流程定义详情。

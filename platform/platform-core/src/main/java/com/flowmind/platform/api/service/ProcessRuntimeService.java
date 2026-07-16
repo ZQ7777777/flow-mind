@@ -1,5 +1,6 @@
 package com.flowmind.platform.api.service;
 
+import com.flowmind.platform.api.dto.OperationResult;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
@@ -131,7 +132,7 @@ public interface ProcessRuntimeService {
      *
      * @param request 删除请求
      */
-    void deleteInstance(DeleteProcessInstanceRequest request);
+    OperationResult deleteInstance(DeleteProcessInstanceRequest request);
 
     /**
      * 更新流程变量。
