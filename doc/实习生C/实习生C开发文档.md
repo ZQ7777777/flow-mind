@@ -61,222 +61,416 @@ platform-starter
 两种运行方式最终复用同一套 `platform-core` Service，实现关系如下：
 
 ```mermaid
-flowchart TD
-    subgraph EMBED["嵌入业务应用"]
-        BIZ["业务系统"] --> STARTER["platform-starter"]
-        STARTER --> AUTO["PlatformAutoConfiguration"]
-    end
-
-    subgraph STANDALONE["独立 REST 应用"]
-        CLIENT["前端或接口调用方"] --> WEB["PlatformStandaloneApplication / REST Controller"]
-    end
-
-    AUTO --> SERVICE["platform-core Service 实现"]
+graph TD
+    EMBED[嵌入业务应用] --> BIZ[业务系统]
+    BIZ --> STARTER[platform-starter]
+    STARTER --> AUTO[PlatformAutoConfiguration]
+    STANDALONE[独立 REST 应用] --> CLIENT[前端或接口调用方]
+    CLIENT --> WEB[PlatformStandaloneApplication / REST Controller]
+    AUTO --> SERVICE[platform-core Service 实现]
     WEB --> SERVICE
-    SERVICE --> DB["SQLite / Repository"]
-    SERVICE --> SPI["平台 SPI"]
-    SPI --> PROVIDER["宿主生产 Bean 或本地 Mock"]
+    SERVICE --> DB[SQLite / Repository]
+    SERVICE --> SPI[平台 SPI]
+    SPI --> PROVIDER[宿主生产 Bean 或本地 Mock]
 ```
 
 ## 3. M0 契约冻结与验收基线
 
-M0 的目标不是按现有代码罗列已经生成的类，而是在 A、B、C 三条工作线并行开发前，冻结跨模块依赖的最小公共契约，并建立后续实现必须持续通过的测试基线。M0 只确认“接口如何协作、请求必须携带什么、成功与冲突如何判定”，不把骨架代码或 Mock 行为描述为已经完成的生产能力。
+M0 的目标不是完成查询、附件、回调等业务功能，而是为 A、B、C 三条工作线建立一套能够共同遵守的接口基线和测试基线。C 线在本阶段重点负责 SPI、Starter、回调事件模型以及并发与幂等验收规则的规划和冻结，后续 M1～M6 的具体实现均以本阶段冻结的契约为准。
 
-### 3.1 DTO、Request 与辅助 Entity
+### 3.1 M0 目标与边界
 
-当前公开对象分布在 `com.flowmind.platform.api.dto` 和 `com.flowmind.platform.api.request`。名称以 `Query`、`Result` 结尾的类仍属于 DTO，不存在独立的 `api.query` 或 `api.result` 包。`persistence.entity` 仅保留 4 个文件、附件和消息相关的辅助 JavaBean。
+M0 由三人共同完成，C 线负责推动以下内容达成一致：
 
-**DTO（`api.dto`）**
+1. 冻结宿主系统接入平台所需的 SPI，包括当前用户、组织架构、审批人解析、委托关系、消息推送、文件存储、附件访问授权和流程回调；
+2. 冻结 Starter 对外暴露的 Service 接口、自动装配约定和宿主 Bean 覆盖规则；
+3. 冻结 `WorkflowEvent` 字段、事件类型和 `eventId` 的唯一性语义；
+4. 与 B 线共同冻结所有状态修改请求的 `operationId`，以及任务级修改请求的 `expectedTaskVersion`；
+5. 编写幂等、乐观锁和回调事件的契约测试，作为 M1–M6 的回归基线。
 
- 42 个 DTO：
+M0 不要求完成查询、附件、回调、监控、Repository 或 REST 的生产实现，也不以“接口能够注入”代表业务功能已经可用。Mock 仅用于本地开发和契约测试，生产环境必须允许宿主系统提供自己的实现。
 
-| 分组 | 当前代码中的 DTO |
-| --- | --- |
-| 公共上下文与分页 | `PageResult`、`UserDTO`、`DepartmentDTO`、`UserContext` |
-| 流程定义 | `ProcessDefinitionDTO`、`ProcessDefinitionDetailDTO`、`ProcessNodeDTO`、`ProcessEdgeDTO`、`ProcessFormFieldDTO`、`ProcessAttachmentConfigDTO`、`ValidationResult` |
-| 流程运行与任务 | `ProcessInstanceDTO`、`ProcessInstanceDetailDTO`、`TaskDTO`、`HistoryTaskDTO`、`ProcessCommentDTO`、`TaskActionResult`、`OperationResult` |
-| C 线外围能力 | `AttachmentDTO`、`AttachmentDownloadDTO`、`AttachmentTemplateCheckResult`、`AuditLogDTO`、`CallbackLogDTO`、`DelegateRelationDTO`、`OperationRecordDTO`、`ReadRecordDTO`、`ReminderDTO`、`AlertDTO`、`WorkflowEvent` |
-| 查询条件 DTO | `ProcessDefinitionQuery`、`TodoTaskQuery`、`CompletedTaskQuery`、`StartedInstanceQuery`、`AttachmentQuery`、`AuditLogQuery`、`CallbackLogQuery`、`ReadRecordQuery`、`ReminderQuery`、`AlertQuery`、`AdminInstanceQuery`、`AdminTaskQuery`、`AdminHistoryTaskQuery` |
+### 3.2 SPI 契约
 
-DTO 均采用 Java 8 JavaBean。分页查询条件使用 `pageNo`、`pageSize`，分页结果使用 `PageResult<T>`；`AttachmentQuery` 对应非分页的 `List<AttachmentDTO>`。普通 `AttachmentDTO` 只表达元数据，下载内容由 `AttachmentDownloadDTO.content` 承载。
+C 线计划在 `platform-core.api.spi` 中冻结以下 SPI。M0 只确定接口职责、输入输出，具体生产实现由宿主系统提供.
 
-**Request（`api.request`）**
-
-34 个 Request：
-
-| 分组 | 当前代码中的 Request |
-| --- | --- |
-| 基类 | `OperationRequest`、`TaskOperationRequest` |
-| 定义与审批人解析 | `CreateProcessDefinitionRequest`、`SaveProcessGraphRequest`、`DefinitionOperationRequest`、`GrayReleaseRequest`、`CopyProcessDefinitionRequest`、`ApproverResolveRequest` |
-| 运行时与管理动作 | `StartProcessRequest`、`SubmitTaskRequest`、`ApproveTaskRequest`、`RejectTaskRequest`、`ReturnTaskRequest`、`WithdrawTaskRequest`、`DirectSendRequest`、`TransferTaskRequest`、`AddSignRequest`、`ClaimTaskRequest`、`UnclaimTaskRequest`、`TerminateProcessRequest`、`DeleteProcessInstanceRequest`、`UpdateVariablesRequest`、`JumpNodeRequest`、`ForceCompleteRequest` |
-| C 线外围能力 | `AttachmentAccessRequest`、`CheckAttachmentRequest`、`DeleteAttachmentRequest`、`DownloadAttachmentRequest`、`HandleAlertRequest`、`RemindTaskRequest`、`SaveInstanceAttachmentRequest`、`SaveTaskAttachmentRequest`、`StoreFileRequest`、`TimeoutScanRequest` |
-
-`OperationRequest` 只冻结 `operationId`；任务级修改请求通过 `TaskOperationRequest` 增加 `taskId`、`expectedTaskVersion`、`operatorUserId` 和 `comment`，当前包括运行时任务动作、`RemindTaskRequest` 和 `SaveTaskAttachmentRequest`。`TimeoutScanRequest`、查询型请求和 SPI 辅助请求不强制继承幂等基类。
-
-**辅助 Entity（`persistence.entity`）**
-
-| Entity | 当前代码作用 |
-| --- | --- |
-| `AttachmentUploadItem` | 单个上传附件，包含附件编码、归属范围、文件元数据和二进制内容 |
-| `FileContent` | 文件存储 SPI 读取结果，包含文件元数据和二进制内容 |
-| `StoredFile` | 文件存储 SPI 保存结果，包含 `storageKey` 和文件元数据 |
-| `ProcessMessage` | 消息 SPI 使用的类型、标题、正文、接收人、扩展载荷和创建时间 |
-
-这 4 个类不是 `process_*` 数据库表的一一映射。当前 M0 只有 `process_operation_record`、`process_callback_log` 两张基线 DDL，没有 Repository Entity 或生产持久化实现。
-
-### 3.2 Service 与 SPI
-
-**Service 接口**
-
-当前 `api.service` 共有 7 个接口：
-
-| Service | 契约职责 | 主要归属 | 当前 Starter 状态 |
-| --- | --- | --- | --- |
-| `ProcessDefinitionService` | 流程定义创建、图保存、校验、发布状态、灰度、复制、删除和查询 | A 线 | 不装配 |
-| `ProcessRuntimeService` | 流程启动、任务动作、认领、实例终止/删除、变量更新和详情查询 | B 线 | 不装配 |
-| `AdminProcessService` | 管理端实例、任务、历史、审计和回调查询，以及跳转、强制办结入口 | C 负责查询，A/B 负责状态修改 | 不装配 |
-| `TaskQueryService` | 待办、已办、我发起、活动任务、历史任务、审批意见和已阅查询 | C 线 | 装配可覆盖骨架 |
-| `AttachmentService` | 实例/任务附件保存、下载、查询、删除和必填校验 | C 线 | 装配可覆盖骨架 |
-| `CallbackService` | 回调事件发布和回调日志分页查询 | C 线 | 装配可覆盖骨架 |
-| `ProcessMonitorService` | 催办、提醒查询、超时扫描、告警查询和处理 | C 线 | 装配可覆盖骨架 |
-
-`PlatformAutoConfiguration` 当前只为 4 个 C 线 Service 提供 `@ConditionalOnMissingBean` 骨架。骨架方法会抛出 `UnsupportedOperationException`，只用于冻结注入契约，不代表业务逻辑已经实现。
-
-**SPI 接口**
-
-有 8 个接口：
-
-| SPI | 方法 | 技术作用 | 当前 Starter 默认实现 |
-| --- | --- | --- | --- |
-| `ApproverResolver` | `resolveApprovers` | 根据 `ApproverResolveRequest` 解析可办理用户列表 | 无，由宿主实现 |
-| `AttachmentAccessProvider` | `isAllowed` | 判断附件访问请求是否允许 | 固定允许的 Mock |
-| `CurrentUserProvider` | `getCurrentUser` | 获取当前用户上下文 | 返回测试用户 |
-| `DelegateProvider` | `findDelegates` | 按委托人和时间查询有效委托关系 | 返回空列表 |
-| `FileStorageProvider` | `store`、`load`、`delete` | 保存、读取和删除文件内容 | 内存文件存储 |
-| `MessagePublisher` | `publish` | 发布通用流程消息 | 内存记录消息 |
-| `OrganizationProvider` | 部门、用户和角色查询方法 | 提供宿主组织架构只读查询 | 无，由宿主实现 |
-| `WorkflowCallbackHandler` | `handle` | 处理 `WorkflowEvent` | 空处理器 |
-
-6 个默认 Mock 受 `flow-mind.platform.mock.enabled` 控制，并可被宿主 Bean 覆盖。`FileStorageProvider`、`MessagePublisher` 当前使用辅助 Entity；`ApproverResolver`、`OrganizationProvider` 只冻结接口，不提供默认 Mock。
-
-### 3.3 回调事件模型
-
-`WorkflowEvent` 包含以下字段：
-
-| 字段 | 类型 | 说明 |
+| SPI | 职责 | M0 需要冻结的要点 |
 | --- | --- | --- |
-| `eventId` | `String` | 全局唯一事件标识 |
-| `operationId` | `String` | 触发动作的幂等号 |
-| `eventType` | `WorkflowEventTypeEnum` | 工作流事件类型 |
-| `processCode` | `String` | 流程编码 |
-| `instanceId` | `String` | 流程实例 ID |
-| `actionType` | `ActionTypeEnum` | 触发事件的动作类型 |
-| `operator` | `UserContext` | 操作人快照 |
-| `archivedTasks` | `List<HistoryTaskDTO>` | 本次归档或取消的历史任务 |
-| `createdTasks` | `List<TaskDTO>` | 本次创建的活动任务 |
-| `variables` | `Map<String, Object>` | 事件发生后的变量快照 |
-| `occurredAt` | `LocalDateTime` | 事件发生时间 |
+| `CurrentUserProvider` | 获取当前操作人 | 返回 `UserContext`；不得由平台猜测真实用户 |
+| `OrganizationProvider` | 查询部门、用户和角色 | 只读接口；数据归宿主系统所有 |
+| `ApproverResolver` | 按节点规则解析审批人 | 输入包含流程、节点、申请人和变量上下文；输出为用户列表 |
+| `DelegateProvider` | 查询有效委托关系 | 按委托人和指定时间查询，供待办和任务分配使用 |
+| `MessagePublisher` | 推送待办、提醒和告警消息 | 推送失败不得破坏已提交的流程事务 |
+| `FileStorageProvider` | 保存、读取和删除文件内容 | 平台数据库只保存文件元数据和 `storageKey` |
+| `AttachmentAccessProvider` | 判定附件操作权限 | 覆盖上传、查看、下载和删除；拒绝或异常均不得访问文件存储 |
+| `WorkflowCallbackHandler` | 流程回调事件 | 使用 `eventId` 去重；处理失败由回调日志记录并允许重试 |
 
-`WorkflowEventTypeEnum` 当前包含 14 个事件值：
+Starter 中的默认实现必须使用 `@ConditionalOnMissingBean`，宿主提供同类型 Bean 时自动让位。是否启用本地 Mock 由独立配置项控制；未提供关键生产 SPI 时应在启动或首次调用时给出明确错误，不能静默采用宽松权限。
 
-| 类别 | 事件值 |
+### 3.3 Starter 与 Service 契约
+
+M0 计划冻结流程平台对外暴露的 Service 接口。C 线负责外围能力接口的详细设计，同时参与 A、B 核心接口的请求和返回对象评审。
+
+| 类别         | Service                    | 主要能力                                           |
+| ------------ | -------------------------- | -------------------------------------------------- |
+| 流程定义入口 | `ProcessDefinitionService` | 定义创建、流程图保存、发布、激活、复制、删除和查询 |
+| 流程运行入口 | `ProcessRuntimeService`    | 启动实例、任务动作、变量更新、终止和实例详情       |
+| 管理入口     | `AdminProcessService`      | 跳转、强制办结以及实例、任务、审计和回调查询       |
+| 查询入口     | `TaskQueryService`         | 待办、已办、我发起、活动任务、历史轨迹、意见和已阅 |
+| 附件入口     | `AttachmentService`        | 附件保存、查询、下载、删除和必填校验               |
+| 回调入口     | `CallbackService`          | 事件发布、回调日志查询和后续重试扩展               |
+| 监控入口     | `ProcessMonitorService`    | 催办、提醒查询、超时扫描、告警查询和处理           |
+
+- `platform-starter` 的自动装配计划如下：
+  1. `platform-starter` 只依赖 `platform-core`，不重复编写流程逻辑；
+  2. 使用 Spring Boot 2.7 的自动装配机制注册 `PlatformAutoConfiguration`；
+  3. Starter 与独立 REST 应用装配同一套 `platform-core` Service 实现；
+  4. 可扩展 Service 和 SPI Bean 使用 `@ConditionalOnMissingBean`，宿主提供自定义实现时自动让位；
+  5. Mock 能力通过独立配置项控制，默认不得替代生产环境必须提供的关键 SPI；
+  6. M0 先验证自动装配结构和覆盖规则，完整 Service 实现分别在对应里程碑完成。
+
+### 3.4 回调事件模型
+
+`WorkflowEvent` 在 M0 冻结以下字段：
+
+| 字段 | 说明 |
 | --- | --- |
-| 流程生命周期 | `PROCESS_STARTED`、`PROCESS_REJECTED`、`PROCESS_RETURNED`、`PROCESS_WITHDRAWN`、`PROCESS_DIRECT_SENT`、`PROCESS_JUMPED`、`PROCESS_TERMINATED`、`PROCESS_CANCELED`、`PROCESS_COMPLETED` |
-| 任务生命周期 | `TASK_CREATED`、`TASK_SUBMITTED`、`TASK_COMPLETED`、`TASK_TRANSFERRED`、`TASK_ADDED_SIGN` |
+| `eventId` | 全局唯一事件标识，也是回调消费的幂等键 |
+| `operationId` | 触发本次事件的业务操作幂等号 |
+| `eventType` | 流程或任务生命周期事件类型 |
+| `processCode`、`instanceId` | 流程定义编码和实例标识 |
+| `actionType` | 触发事件的动作类型 |
+| `operator` | 操作人快照 |
+| `archivedTasks` | 本次归档或取消的任务快照 |
+| `createdTasks` | 本次创建的活动任务快照 |
+| `variables` | 事件发生后的流程变量快照 |
+| `occurredAt` | 事件发生时间 |
 
-`WorkflowCallbackHandler.handle(WorkflowEvent)` 和 `CallbackService.publishCallback(WorkflowEvent)` 已冻结接口；`WorkflowEventContractTest` 已覆盖事件字段、枚举转换和 `eventId` 幂等键表达能力。`process_callback_log.event_id` 在 M0 DDL 中具有唯一约束。
+事件模型只负责描述已经发生的业务事实。M0 冻结事件字段和类型，但生产级 Outbox 写入、事务提交后投递、失败重试及告警在 M2 以后实现。同一 `operationId` 的成功重放必须返回首次结果，不得重复生成事件；同一次操作如产生多个不同事件，每个事件使用不同且稳定的 `eventId`。
 
-当前尚未实现生产回调 Outbox 写入、事务后投递、失败重试或 `eventId` 生成器。相同 `operationId` 不产生重复事件属于后续实现必须遵守的契约，不应表述为已经落地的运行行为。
+### 3.5 幂等与并发处理契约
 
-**M0 当前验收结论**
+```mermaid
+graph TD
+    REQ["收到状态修改请求"] --> CHECK{"operationId 是否存在"}
+    CHECK -->|不存在| CREATE["登记 PROCESSING 与 requestHash"]
+    CHECK -->|存在且哈希不同| CONFLICT["返回 FLOW_OPERATION_ID_CONFLICT"]
+    CHECK -->|同请求且 SUCCESS| REPLAY["返回首次结果，replayed=true"]
+    CHECK -->|同请求且处理中| BUSY["返回处理中或按租约规则接管"]
+    CREATE --> TASK{"是否为任务级修改"}
+    TASK -->|是| CAS["按 taskId + 状态 + expectedTaskVersion 条件更新"]
+    TASK -->|否| TX["执行业务事务"]
+    CAS -->|更新 0 行| LOCK["返回 FLOW_TASK_CONCURRENT_MODIFIED"]
+    CAS -->|更新 1 行| TX
+    TX --> WRITE["同事务写历史、审计、回调日志和首次结果"]
+    WRITE --> COMMIT["提交事务"]
+    COMMIT --> ASYNC["提交后异步投递回调/消息"]
+```
 
-- 公共 DTO、Request、Service、SPI、枚举和回调事件模型可编译；
-- 幂等与并发使用内存夹具建立了验收基线，尚无生产幂等处理器；
-- Starter 可以注入 4 个 C 线 Service 骨架，并支持宿主自定义 Bean 覆盖；
-- 文件、消息、附件授权、回调、委托和当前用户提供本地 Mock；
-- 根项目自动化测试当前通过。
+必须固定以下语义：
+
+- 所有状态修改请求携带全局唯一 `operationId`；任务级修改额外携带客户端读取到的 `expectedTaskVersion`；
+- 相同 `operationId`、相同业务请求返回第一次执行结果，不重复归档任务、创建下一任务、累加任务组或生成回调；
+- 相同 `operationId` 对应不同业务请求时拒绝执行；
+- 两个不同 `operationId` 使用同一任务版本并发修改时，只允许一个成功；失败请求不得留下历史任务、后续任务或回调记录；
+- 活动任务更新、历史归档、任务组更新、下一任务创建、审计、回调日志和幂等成功结果位于同一数据库事务；外部 SPI 投递不夹在该事务中间。
+
+### 3.6 M0 验收用例
+
+| 用例 | 操作 | 预期结果 |
+| --- | --- | --- |
+| 相同请求重放 | 使用同一 `operationId` 连续提交两次 | 第二次返回首次结果，且不产生重复数据 |
+| 幂等号冲突 | 同一 `operationId` 提交不同业务参数 | 返回 `FLOW_OPERATION_ID_CONFLICT` |
+| 任务并发 | 两个请求使用不同 `operationId` 和同一 `expectedTaskVersion` | 仅一个成功，另一个返回并发修改错误 |
+| 事务回滚 | 在历史归档或下一任务创建时制造异常 | 活动任务、历史、后续任务、审计和回调均不产生部分提交 |
+| 事件契约 | 序列化并反序列化全部事件类型 | 字段完整、枚举稳定、`eventId` 可作为唯一键 |
+| Starter 默认装配 | 业务应用仅引入 Starter | 所需 Bean 可注入，未实现能力有明确错误 |
+| 宿主覆盖 | 宿主提供自定义 SPI Bean | 自动装配让位并调用宿主实现 |
+| 回调失败隔离 | 回调处理器抛出异常 | 主流程事务不回滚，失败状态被记录并可重试 |
+
+M0 完成标准是上述契约经 A、B、C 三方评审并由自动化测试固化，而不是“生成了一批类”。测试可以先使用内存夹具或 Mock 表达期望，但 M2 接入真实持久化和事务后，必须复用同一组用例验证生产实现。
 
 ## 4. 表单字段与附件模板（M1）
 
-### 4.1 表单字段
+### 4.1 M1 目标与职责边界
 
-表单字段属于流程定义版本，随 `definitionId` 保存。C 线负责字段持久化和读取，A 的 `saveGraph` 统一控制保存事务。
+M1 阶段的目标是补齐流程定义中的业务表单结构和材料要求，使 A 线创建的流程定义不仅包含节点与连线，还能够完整描述“需要填写哪些字段、需要提交哪些附件、附件在哪个节点生效”。完成后，`ProcessDefinitionDetailDTO` 应能返回节点、连线、表单字段和附件配置，形成一份可被发布校验、Agent 和后续运行时共同使用的完整流程定义。
 
-字段建议包含：
+C 线在 M1 阶段负责：
 
-| 字段 | 说明 |
-| --- | --- |
-| `fieldCode` | 字段编码，同一定义内唯一 |
-| `fieldName` | 字段名称 |
-| `fieldType` | 字段类型，如文本、数字、日期、枚举 |
-| `required` | 是否必填 |
-| `defaultValue` | 默认值 |
-| `optionConfig` | 枚举或选择配置 JSON |
-| `validationConfig` | 校验规则 JSON |
-| `sortOrder` | 展示顺序 |
+1. 实现表单字段的数据库表、Entity、DTO、Repository、校验、保存、查询、复制和删除；
 
-保存规则：
+2. 实现全局附件模板的版本化管理，维护附件名称、允许格式、大小限制和启停状态；
 
-1. 只允许草稿定义修改表单字段；
-2. `fieldCode` 在同一 `definitionId` 下唯一；
-3. 字段类型和配置 JSON 必须能被解析；
-4. 保存失败必须回滚整次 `saveGraph`；
-5. 查询定义详情时随 `ProcessDefinitionDetailDTO.formFields` 返回。
+3. 实现流程定义附件配置，维护模板引用、必填规则、数量限制、适用节点和配置组状态；
 
-### 4.2 附件模板
+4. 接入 A 线的 `saveGraph`、`getDefinition`、`copyDefinition` 和 `deleteDefinition`，保证扩展数据与流程定义处于同一事务；
 
-附件模板是全局可复用版本，不直接绑定流程定义版本。
+5. 为 A 线后续发布、激活流程定义提供附件配置校验和配置组激活能力。
 
-| 字段 | 说明 |
-| --- | --- |
-| `attachmentCode` | 附件编码 |
-| `templateVersion` | 模板版本，由后端递增 |
-| `attachmentName` | 附件名称 |
-| `allowedExtensions` | 允许扩展名 |
-| `maxSizeBytes` | 最大文件大小 |
-| `contentTypeLimit` | 可选的 MIME 类型限制 |
-| `description` | 说明 |
+6. 编写 Repository、校验器和流程定义集成测试，验证入金申请的表单字段及银行回单配置。
 
-规则：
+   M1 不实现以下运行期能力：
 
-- `attachmentCode + templateVersion` 唯一；
-- 已被生效配置引用的模板版本不可原地修改关键校验字段；
-- 如需调整格式或大小，创建同一 `attachmentCode` 的新版本；
-- 入金申请基准模板为 `bankReceipt`，允许 `pdf/jpg/png`，最大 `10MB`。
+   - 不接收或保存用户实际上传的文件；
+   - 不实现 `process_attachment` 运行数据的增删改查；
+   - 不调用 `FileStorageProvider` 保存或读取文件内容；
+   - 不实现附件上传、下载、访问授权和软删除；
+   - 不在任务办理时判断必填附件是否已经上传；
+   - 不保存用户填写的表单值，用户填写值由 B 线在运行期写入 `process_instance.variables_json`。
 
-### 4.3 流程定义附件配置
+   因此，M1 实现的是“字段定义和附件要求”，不是“实际表单数据和实际附件文件”。
 
-附件配置是定义版本下的一组配置记录，由 `attachmentConfigId` 标识。
+### 4.2 数据模型
 
-| 字段 | 说明 |
-| --- | --- |
-| `attachmentConfigId` | 附件配置组 ID |
-| `definitionId` | 流程定义 ID |
-| `configStatus` | `DRAFT/ACTIVE/INACTIVE` |
-| `attachmentTemplateId` | 引用的模板版本 |
-| `attachmentCode` | 附件编码 |
-| `required` | 是否必填 |
-| `minCount/maxCount` | 数量限制 |
-| `applicableNodeCodes` | 适用节点集合 |
-| `sortOrder` | 展示顺序 |
+#### 4.2.1 `process_form_field` 表单字段定义
 
-运行时新建实例时，平台把当前 `ACTIVE` 的附件配置组 ID 固化到 `process_instance.attachment_config_id`。后续附件校验必须按实例固化的配置读取，不能读取定义最新配置。
+表单字段表示流程的表单结构，不保存用户实际填写值。入金申请中的申请人姓名、入金金额和入金账号都属于表单字段定义；实际填写结果在实例启动后保存到 process_instance.variables_json。
+
+| 字段              | 说明                                                     |
+| ----------------- | -------------------------------------------------------- |
+| `id`              | 主键                                                     |
+| `definition_id`   | 所属流程定义 ID                                          |
+| `field_code`      | 字段编码                                                 |
+| `field_name`      | 字段名称                                                 |
+| `field_type`      | `string`、`number`、`date`、`boolean`、`select` 等       |
+| `control_type`    | `input`、`textarea`、`number`、`datePicker`、`select` 等 |
+| `required`        | 是否必填                                                 |
+| `validation_rule` | 校验规则 JSON                                            |
+| `default_value`   | 默认值                                                   |
+| `sort_order`      | 展示顺序                                                 |
+
+约束：
+
+- 同一 `definition_id` 下 `field_code` 唯一；
+- 不同定义版本可以使用相同的 `field_code`；
+- `required` 在 SQLite 中使用 `0/1` 保存；
+- `validation_rule` 保存合法 JSON，不增加 `option_config`、`validation_config` 等未在 v4 基线冻结的字段；
+- 表单字段随流程定义版本保存，定义复制时生成新的数据库主键并绑定目标 `definition_id`。
+
+#### 4.2.2 附件模板
+
+附件模板定义可复用的材料规则，例如“银行回单允许 pdf、jpg、png，单文件最大 10MB”。模板不直接绑定某个流程定义，也不包含“是否必填、需要几份、在哪个节点上传”等流程特定规则。
+
+| 字段                      | 说明                  |
+| ------------------------- | --------------------- |
+| `id`                      | 主键                  |
+| `attachment_code`         | 附件编码              |
+| `template_version`        | 模板版本号            |
+| `attachment_name`         | 附件名称              |
+| `description`             | 说明                  |
+| `allowed_extensions`      | 允许的扩展名集合      |
+| `max_size_bytes`          | 单文件大小限制        |
+| `template_status`         | `ENABLED`、`DISABLED` |
+| `created_by / created_at` | 创建信息              |
+| `updated_by / updated_at` | 更新信息              |
+
+- 约束：
+  - `attachment_code + template_version` 唯一；
+  - `template_version` 由后端按相同 `attachment_code` 的最大版本加一生成，调用方不能直接控制；
+  - `allowed_extensions` 统一转为小写并去除前导点，可使用 JSON 数组保存；
+  - `max_size_bytes` 必须大于 0；
+  - 已被生效配置引用的模板版本不可原地修改格式和大小；规则变化时创建新版本；
+  - 模板禁用只阻止新配置引用，不影响已绑定该版本的历史配置。
+
+#### 4.2.3 流程定义附件配置
+
+流程定义附件配置表示某个定义如何使用全局附件模板。required、min_count、max_count 和 applicable_node_codes 都属于该表，而不属于全局模板。
+
+| 字段                      | 说明                          |
+| ------------------------- | ----------------------------- |
+| `id`                      | 主键                          |
+| `attachment_config_id`    | 附件配置组 ID                 |
+| `definition_id`           | 流程定义 ID                   |
+| `config_status`           | `DRAFT`、`ACTIVE`、`INACTIVE` |
+| `activated_at`            | 生效时间                      |
+| `attachment_template_id`  | 引用的附件模板版本 ID         |
+| `attachment_code`         | 附件编码快照                  |
+| `required`                | 是否必填                      |
+| `min_count / max_count`   | 数量限制                      |
+| `applicable_node_codes`   | 适用节点编码 JSON             |
+| `sort_order`              | 展示顺序                      |
+| `created_by / created_at` | 创建信息                      |
+| `updated_by / updated_at` | 更新信息                      |
+
+同一个 `attachment_config_id` 下的多行组成一组附件要求，必须具有相同的 `definition_id`、`config_status` 和 `activated_at`。同一流程定义同一时刻只允许一个配置组为 `ACTIVE`。
 
 附件配置从定义期进入运行期的版本固化流程如下：
 
 ```mermaid
-flowchart TD
-    DRAFT["草稿定义"] --> SAVE["保存表单字段和附件配置草稿"]
-    SAVE --> CHECK["校验字段、模板版本和数量规则"]
-    CHECK --> PUBLISH["A 线发布定义并激活配置组"]
-    PUBLISH --> START["B 线启动流程实例"]
-    START --> BIND["固化 attachment_config_id"]
-    BIND --> VALIDATE["C 线按固化配置校验和查询附件"]
-    NEWVER["后续创建并激活新配置版本"] -. "不影响历史实例" .-> VALIDATE
-    NEWVER --> FUTURE["仅供后续新实例绑定"]
+graph TD
+    DRAFT[草稿定义] --> SAVE[保存表单字段和附件配置草稿]
+    SAVE --> CHECK[校验字段模板版本和数量规则]
+    CHECK --> PUBLISH[A 线发布定义并激活配置组]
+    PUBLISH --> START[B 线启动流程实例]
+    START --> BIND[固化 attachment_config_id]
+    BIND --> VALIDATE[C 线按固化配置校验和查询附件]
+    NEWVER[后续创建并激活新配置版本] -. 不影响历史实例 .-> VALIDATE
+    NEWVER --> FUTURE[仅供后续新实例绑定]
 ```
 
-### 4.4 与 A 线的扩展生命周期接口
+### 4.3 表单字段保存与查询
+
+#### 4.3.1 校验规则
+
+保存前至少校验：
+
+1. 当前流程定义存在且状态为 `DRAFT`；
+
+2. `fieldCode`、`fieldName`、`fieldType` 和 `controlType` 非空；
+
+3. 同一请求中的 `fieldCode` 不重复；
+
+4. `fieldType` 仅允许首期冻结的类型；
+
+5. `controlType` 与 `fieldType` 基本匹配；
+
+6. `sortOrder` 不得为负数；
+
+7. `validationRule` 非空时必须是合法 JSON；
+
+8. `defaultValue` 与 `fieldType` 兼容；
+
+9. 空 `formFields` 表示清空当前定义的全部表单字段，而不是保留旧数据。
+
+   类型映射:
+
+   | `fieldType`   | 允许的 `controlType`          |
+   | ------------- | ----------------------------- |
+   | `string`      | `input`、`textarea`、`select` |
+   | `number`      | `number`、`input`             |
+   | `date`        | `datePicker`                  |
+   | `boolean`     | `checkbox`、`select`          |
+   | `select`      | `select`                      |
+
+#### 4.3.2 保存流程
+
+表单字段采用按 `definitionId` 整组替换的方式保存：
+
+```mermaid
+graph TD
+    REQ[saveGraph 请求] --> DEF[校验定义为草稿]
+    DEF --> FIELD[校验 formFields]
+    FIELD --> DELETE[删除旧表单字段]
+    DELETE --> INSERT[批量插入新表单字段]
+    INSERT --> DETAIL[查询定义详情]
+    DETAIL --> RETURN[返回 formFields]
+```
+
+表单字段删除、插入必须与节点、连线、附件配置和 `process_operation_record` 的成功结果位于同一事务。任一步失败，整次 `saveGraph` 回滚，旧流程图和旧表单字段保持不变。
+
+### 4.4 附件模板版本管理
+
+#### 4.4.1 创建新模板版本
+
+附件模板按 `attachment_code` 维护多版本。调用方提交附件编码、名称、说明、允许扩展名和大小限制，后端读取同编码最大 `template_version` 后加一创建新版本。首期不允许调用方指定版本号，也不允许复用已存在的 `attachment_code + template_version`。
+
+创建前至少校验：
+
+1. `attachmentCode`、`attachmentName`、`allowedExtensions` 和 `maxSizeBytes` 非空；
+2. `allowedExtensions` 统一转为小写，去除前导点，并去重；
+3. 扩展名只保存后缀，不保存 MIME 探测结果；
+4. `maxSizeBytes > 0`，入金申请银行回单基准值为 `10MB`；
+5. 默认状态为 `ENABLED`。
+
+```mermaid
+graph TD
+    REQ[创建附件模板] --> CHECK[校验编码名称格式大小]
+    CHECK --> LOAD[读取同编码最大版本]
+    LOAD --> VERSION[生成下一版本号]
+    VERSION --> INSERT[插入 ENABLED 模板]
+    INSERT --> RETURN[返回模板版本详情]
+```
+
+#### 4.4.2 模板变更与禁用
+
+已被 `ACTIVE` 或 `INACTIVE` 附件配置引用的模板版本不可原地修改 `allowed_extensions`、`max_size_bytes` 和 `attachment_code`。如需调整格式或大小，必须创建同一 `attachment_code` 的新版本，再由草稿定义引用新版本。
+
+允许修改的内容限于未被引用版本的名称、说明和状态。`DISABLED` 模板不能被新的流程定义附件配置引用，但不影响已经发布定义或历史实例按旧配置校验。
+
+```mermaid
+graph TD
+    CHANGE[模板变更请求] --> USED{是否被生效配置引用}
+    USED -->|否| UPDATE[允许修改名称说明或禁用]
+    USED -->|是| KEY{是否修改格式大小编码}
+    KEY -->|是| REJECT[拒绝原地修改]
+    KEY -->|否| UPDATE
+    REJECT --> NEWVER[创建新模板版本]
+```
+
+#### 4.4.3 查询要求
+
+模板查询至少支持按 `attachmentCode`、`templateStatus` 和版本号过滤。流程定义配置页默认只展示 `ENABLED` 模板；管理端排查时可以查看 `DISABLED` 和历史版本。返回结果必须包含 `templateVersion`，避免前端只按附件编码误引用最新版本。
+
+
+
+### 4.5 流程定义附件配置
+
+#### 4.5.1 保存校验
+
+至少校验以下规则：
+
+1. 当前流程定义存在且为 `DRAFT`；
+2. `attachmentTemplateId` 对应的模板版本存在；
+3. 被引用的模板状态为 `ENABLED`；
+4. DTO 中的 `attachmentCode` 与模板记录一致；
+5. 同一配置组中 `attachmentTemplateId` 不重复；
+6. 同一配置组中 `attachmentCode` 不重复；
+7. `minCount >= 0`、`maxCount >= 1` 且 `minCount <= maxCount`；
+8. `required=true` 时 `minCount >= 1`；
+9. `applicableNodeCodes` 非空时，其中的每个节点都属于当前定义；
+10. 首期只允许附件配置绑定 `USER_TASK` 节点；
+11. `ACTIVE` 和 `INACTIVE` 配置不可原地修改；
+12. 空附件配置列表表示当前草稿定义不要求附件，保存一个空配置结果并清理旧草稿组。
+
+校验模板引用和适用节点时，应读取同一事务中的最新节点数据，不能读取尚未失效的旧定义缓存。
+
+#### 4.5.2 草稿配置保存
+
+同一 `attachment_config_id` 下各行的 `definition_id`、`config_status` 和 `activated_at` 必须一致。保存配置失败时，节点、连线、表单字段和定义审计字段全部回滚。
+
+草稿配置同样采用整组替换方式保存。若请求中没有附件配置，则删除当前定义的草稿配置组；若请求中存在配置，则为本次草稿生成或复用一个 `attachment_config_id`，并按 `sortOrder` 批量插入配置行。
+
+```mermaid
+graph TD
+    REQ[saveGraph 请求] --> NODE[读取本次节点集合]
+    NODE --> CHECK[校验模板和适用节点]
+    CHECK --> DELETE[删除旧 DRAFT 配置]
+    DELETE --> EMPTY{附件配置是否为空}
+    EMPTY -->|是| DONE[保存空配置结果]
+    EMPTY -->|否| GROUP[生成配置组 ID]
+    GROUP --> INSERT[批量插入 DRAFT 配置]
+    INSERT --> DONE
+```
+
+#### 4.5.3 配置组激活
+
+A 线发布或激活流程定义时，C 线需要在同一事务内把当前草稿附件配置组固化为 `ACTIVE`。如果流程定义没有附件要求，可以不生成 `ACTIVE` 配置组；如果存在草稿配置，则必须先完成模板和节点校验，再切换状态。
+
+激活规则：
+
+1. 只能对可发布或可激活的流程定义执行；
+2. 草稿配置引用的模板版本必须仍为 `ENABLED`；
+3. `applicableNodeCodes` 必须仍能在当前定义节点中找到；
+4. 同一定义原有 `ACTIVE` 配置组切换为 `INACTIVE`；
+5. 当前草稿配置组切换为 `ACTIVE`，并写入同一个 `activated_at`；
+6. 激活失败时，流程定义发布或激活动作整体回滚；
+7. B 线启动实例时只读取当前 `ACTIVE` 配置组，并把 `attachment_config_id` 固化到 `process_instance.attachment_config_id`。
+
+```mermaid
+graph TD
+    PUBLISH[A 线发布或激活定义] --> LOAD[读取 DRAFT 附件配置]
+    LOAD --> EMPTY{是否存在附件配置}
+    EMPTY -->|否| PASS[无需绑定配置组]
+    EMPTY -->|是| CHECK[重新校验模板和节点]
+    CHECK --> OLD[旧 ACTIVE 改为 INACTIVE]
+    OLD --> ACTIVE[DRAFT 改为 ACTIVE]
+    ACTIVE --> BIND[B 线启动实例时绑定配置组]
+```
+
+#### 4.5.4 与 A 线的扩展生命周期
+
+A 线负责流程定义主数据，C 线负责表单字段和附件配置扩展数据。两者必须通过事务内扩展生命周期接口协作，不能让流程图保存成功而扩展数据失败。
 
 ```java
 public interface DefinitionExtensionLifecycle {
@@ -285,20 +479,38 @@ public interface DefinitionExtensionLifecycle {
 }
 ```
 
-协作规则：
+协作要求：
 
-- A 复制定义时，事务内调用 `copyExtensions` 复制表单字段和附件配置草稿；
-- A 删除定义时，事务内调用 C 的扩展删除逻辑；
-- C 保存表单或附件配置后，提交后通知定义缓存失效；
-- 扩展复制或删除失败时，A 的定义事务必须整体回滚。
+1. `saveGraph`：A 线保存节点和连线时，同一事务调用 C 线保存表单字段和附件配置；
+2. `getDefinition`：A 线查询定义详情时，聚合返回 `formFields` 和附件配置；
+3. `copyDefinition`：复制草稿或版本时，C 线复制表单字段和附件配置，生成新的主键和新的草稿配置组；
+4. `deleteDefinition`：删除草稿定义时，C 线删除对应表单字段和草稿附件配置；
+5. `publish/activate`：A 线发布或激活定义时，C 线激活附件配置组；
+6. 缓存失效：表单字段或附件配置变化后，必须让定义详情缓存失效。
 
-### 4.5 M1 验收点
+```mermaid
+graph TD
+    SAVE[A 线 saveGraph] --> MAIN[保存节点连线]
+    MAIN --> FORM[保存表单字段]
+    FORM --> ATTACH[保存附件配置]
+    ATTACH --> COMMIT[提交同一事务]
+    COMMIT --> CACHE[定义缓存失效]
+```
 
-- 入金申请表单字段可随定义保存和读取；
-- 银行回单附件模板和定义附件配置可保存；
-- 已发布或归档定义不可修改表单和附件配置；
-- 复制定义时表单字段和附件配置一并复制；
-- 新实例绑定当时生效的附件配置，后续配置变更不影响历史实例。
+### 4.6 M1 验收点
+
+- DDL、Entity、Repository 和 DTO 覆盖 `process_form_field`、附件模板和流程定义附件配置三类数据；
+- `saveGraph` 能在同一事务内保存节点、连线、表单字段和附件配置，任一校验失败时全部回滚；
+- 入金申请表单字段可随定义保存、查询、复制和删除，`fieldCode` 唯一性、类型映射和 JSON 校验有测试覆盖；
+- 银行回单附件模板可创建版本，基准规则为 `pdf/jpg/png` 且单文件不超过 `10MB`；
+- 草稿流程定义可引用启用状态的附件模板，配置必填、数量限制和适用节点；
+- 已发布、已激活或已归档定义不可直接修改表单字段和附件配置；
+- 发布或激活定义时，草稿附件配置组可切换为 `ACTIVE`，旧 `ACTIVE` 配置组变为 `INACTIVE`；
+- 复制定义时表单字段和附件配置一并复制，复制结果使用新的主键和新的草稿配置组；
+- 删除草稿定义时，对应表单字段和草稿附件配置被清理，已生效模板版本不被误删；
+- `ProcessDefinitionDetailDTO` 返回节点、连线、表单字段和附件配置，供发布校验、Agent 和运行期读取；
+- 新实例只绑定启动时的 `ACTIVE` 附件配置组，后续配置变更不影响历史实例；
+- M1 不保存用户填写值、不保存实际附件文件、不调用 `FileStorageProvider`，这些运行期能力留到 M4。
 
 ## 5. 幂等、审批意见、流程轨迹与回调（M2）
 
@@ -329,22 +541,22 @@ C 线负责提供统一幂等记录模型和测试基线，B/A 的修改动作�
 统一幂等处理的判定流程如下，A/B/C 的修改动作均复用此流程：
 
 ```mermaid
-flowchart TD
+graph TD
     R["收到修改请求"] --> V["校验 operationId 并计算 requestHash"]
     V --> Q{"operationId 是否已存在"}
-    Q -- "否" --> CREATE["写入 PROCESSING 和租约"]
-    Q -- "是" --> HASH{"requestHash 是否一致"}
-    HASH -- "否" --> CONFLICT["返回 FLOW_OPERATION_ID_CONFLICT"]
-    HASH -- "是" --> STATUS{"记录状态"}
-    STATUS -- "SUCCESS" --> CACHE["返回首次成功结果快照"]
-    STATUS -- "FAILED" --> ERROR["返回已落库错误结果"]
-    STATUS -- "PROCESSING 且租约未过期" --> BUSY["返回处理中"]
-    STATUS -- "PROCESSING 且租约已过期" --> TAKEOVER["同一请求接管处理"]
+    Q -->|否| CREATE["写入 PROCESSING 和租约"]
+    Q -->|是| HASH{"requestHash 是否一致"}
+    HASH -->|否| CONFLICT["返回 FLOW_OPERATION_ID_CONFLICT"]
+    HASH -->|是| STATUS{"记录状态"}
+    STATUS -->|SUCCESS| CACHE["返回首次成功结果快照"]
+    STATUS -->|FAILED| ERROR["返回已落库错误结果"]
+    STATUS -->|PROCESSING 且租约未过期| BUSY["返回处理中"]
+    STATUS -->|PROCESSING 且租约已过期| TAKEOVER["同一请求接管处理"]
     CREATE --> EXECUTE["在主事务中执行业务动作"]
     TAKEOVER --> EXECUTE
     EXECUTE --> COMMIT{"主事务是否成功"}
-    COMMIT -- "是" --> SUCCESS["保存 SUCCESS 和 resultJson"]
-    COMMIT -- "否" --> FAIL["回滚业务变更，不留下成功状态"]
+    COMMIT -->|是| SUCCESS["保存 SUCCESS 和 resultJson"]
+    COMMIT -->|否| FAIL["回滚业务变更，不留下成功状态"]
 ```
 
 ### 5.2 审批意见和流程轨迹
@@ -442,7 +654,7 @@ C 的集成测试需要验证运行状态对查询和回调的影响：
 待办列表需要聚合本人、候选和委托三类来源，再统一过滤和分页：
 
 ```mermaid
-flowchart TD
+graph TD
     U["CurrentUserProvider 获取当前用户"] --> DIRECT["查询 assignee_user_id 为当前用户的任务"]
     U --> CANDIDATE["查询候选人包含当前用户的待认领任务"]
     U --> DELEGATE["DelegateProvider 查询有效委托关系"]
@@ -453,7 +665,7 @@ flowchart TD
     MARK --> MERGE
     MERGE --> FILTER["应用流程、标题、发起人、节点、状态和时间过滤"]
     FILTER --> SORT["按到期时间或 createdAt 稳定排序"]
-    SORT --> PAGE["返回 PageResult<TaskDTO> 和最新 taskVersion"]
+    SORT --> PAGE["返回 PageResult&lt;TaskDTO&gt; 和最新 taskVersion"]
 ```
 
 ### 6.3 已办、我发起和实例详情查询
@@ -497,11 +709,11 @@ flowchart TD
 ### 7.1 附件保存流程
 
 ```mermaid
-flowchart TD
+graph TD
     R["收到附件保存请求"] --> V["校验 operationId 和基础字段"]
     V --> A["调用 AttachmentAccessProvider"]
-    A -- "拒绝或异常" --> DENY["FLOW_ATTACHMENT_PERMISSION_DENIED"]
-    A -- "允许" --> C["按实例 attachment_config_id 校验模板"]
+    A -->|拒绝或异常| DENY["FLOW_ATTACHMENT_PERMISSION_DENIED"]
+    A -->|允许| C["按实例 attachment_config_id 校验模板"]
     C --> S["调用 FileStorageProvider.store"]
     S --> D["事务内写 process_attachment 元数据"]
     D --> O["写审计和幂等结果"]
@@ -654,17 +866,17 @@ C 的职责：
 并行分支到达汇聚点时，需要通过任务组版本控制确保只推进一次：
 
 ```mermaid
-flowchart TD
+graph TD
     ARRIVE["某分支到达汇聚网关"] --> LOAD["读取 task_group、branch_state_json 和 lock_version"]
     LOAD --> DONE{"该 branchKey 是否已 ARRIVED"}
-    DONE -- "是" --> IDEMPOTENT["按重复到达幂等返回"]
-    DONE -- "否" --> CAS["按 lock_version 条件更新分支状态和 completed_count"]
+    DONE -->|是| IDEMPOTENT["按重复到达幂等返回"]
+    DONE -->|否| CAS["按 lock_version 条件更新分支状态和 completed_count"]
     CAS --> UPDATED{"条件更新是否成功"}
-    UPDATED -- "否" --> RETRY["重新读取后重试"]
+    UPDATED -->|否| RETRY["重新读取后重试"]
     RETRY --> LOAD
-    UPDATED -- "是" --> COMPLETE{"completed_count 是否等于 total_count"}
-    COMPLETE -- "否" --> WAIT["保持等待其他分支"]
-    COMPLETE -- "是" --> ADVANCE["以同一任务组幂等键推进一次"]
+    UPDATED -->|是| COMPLETE{"completed_count 是否等于 total_count"}
+    COMPLETE -->|否| WAIT["保持等待其他分支"]
+    COMPLETE -->|是| ADVANCE["以同一任务组幂等键推进一次"]
     ADVANCE --> NEXT["创建汇聚后的后续任务"]
     NEXT --> RECORD["写历史、审计、回调和幂等结果"]
 ```
@@ -694,12 +906,12 @@ C 负责：
 流程：
 
 ```mermaid
-flowchart TD
-    S["扫描 due_at <= now 的活动任务"] --> F["过滤已完成、已取消和已处理记录"]
+graph TD
+    S["扫描 due_at &lt;= now 的活动任务"] --> F["过滤已完成、已取消和已处理记录"]
     F --> C["读取节点 timeout/reminder 配置"]
     C --> R{"生成提醒还是告警"}
-    R -- "提醒" --> M["写 reminder_record 并调用 MessagePublisher"]
-    R -- "告警" --> A["写 alert_record"]
+    R -->|提醒| M["写 reminder_record 并调用 MessagePublisher"]
+    R -->|告警| A["写 alert_record"]
     M --> O["返回超时任务列表"]
     A --> O
 ```
@@ -815,3 +1027,4 @@ public interface AuditLogWriter {
 - 幂等、并发、删除、附件权限、超时提醒和告警处理都有测试；
 - 入金申请串行流程可完成发起、附件校验、审批、查询、回调和审计闭环；
 - 平台核心不包含具体业务判断。
+

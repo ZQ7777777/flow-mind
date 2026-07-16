@@ -1,7 +1,6 @@
 package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.request.TaskOperationRequest;
-import com.flowmind.platform.persistence.entity.AttachmentUploadItem;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;

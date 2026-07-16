@@ -1,7 +1,7 @@
 package com.flowmind.platform.api.request;
 
 import com.flowmind.platform.api.enums.AlertStatusEnum;
-import com.flowmind.platform.persistence.entity.AttachmentUploadItem;
+import com.flowmind.platform.api.dto.AttachmentUploadItem;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;

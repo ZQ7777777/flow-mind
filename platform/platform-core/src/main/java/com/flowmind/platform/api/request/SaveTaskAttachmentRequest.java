@@ -1,6 +1,6 @@
 package com.flowmind.platform.api.request;
 
-import com.flowmind.platform.persistence.entity.AttachmentUploadItem;
+import com.flowmind.platform.api.dto.AttachmentUploadItem;
 
 /**
  * 保存任务级附件请求。
