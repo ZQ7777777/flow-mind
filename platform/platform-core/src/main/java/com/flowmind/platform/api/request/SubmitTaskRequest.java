@@ -1,5 +1,7 @@
 package com.flowmind.platform.api.request;
 
+import com.flowmind.platform.persistence.entity.AttachmentUploadItem;
+
 import java.util.List;
 import java.util.Map;
 

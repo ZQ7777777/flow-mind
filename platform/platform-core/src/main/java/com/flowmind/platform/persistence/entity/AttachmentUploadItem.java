@@ -1,4 +1,4 @@
-package com.flowmind.platform.api.request;
+package com.flowmind.platform.persistence.entity;
 
 public class AttachmentUploadItem {
 

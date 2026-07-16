@@ -1,5 +1,6 @@
 package com.flowmind.platform.api.request;
 
+import com.flowmind.platform.persistence.entity.AttachmentUploadItem;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -122,7 +123,24 @@ class RuntimeRequestContractTest {
                         "instanceId", "instance-005",
                         "operatorUserId", "operator-005",
                         "comment", "force complete request")),
-                taskFixture("remind", RemindTaskRequest.class, Collections.<String, Object>emptyMap()));
+                taskFixture("remind", RemindTaskRequest.class, Collections.<String, Object>emptyMap()),
+                fixture("save instance attachment", SaveInstanceAttachmentRequest.class, properties(
+                        "operationId", "save-instance-attachment-operation",
+                        "instanceId", "instance-006",
+                        "operatorUserId", "operator-006",
+                        "attachment", attachment)),
+                taskFixture("save task attachment", SaveTaskAttachmentRequest.class, properties(
+                        "instanceId", "instance-007",
+                        "attachment", attachment)),
+                fixture("delete attachment", DeleteAttachmentRequest.class, properties(
+                        "operationId", "delete-attachment-operation",
+                        "attachmentId", "attachment-001",
+                        "operatorUserId", "operator-007")),
+                fixture("handle alert", HandleAlertRequest.class, properties(
+                        "operationId", "handle-alert-operation",
+                        "alertId", "alert-001",
+                        "operatorUserId", "operator-008",
+                        "comment", "handled")));
     }
 
     private static Set<Class<? extends OperationRequest>> runtimeModificationRequestTypes() {
@@ -144,7 +162,11 @@ class RuntimeRequestContractTest {
                         DeleteProcessInstanceRequest.class,
                         JumpNodeRequest.class,
                         ForceCompleteRequest.class,
-                        RemindTaskRequest.class));
+                        RemindTaskRequest.class,
+                        SaveInstanceAttachmentRequest.class,
+                        SaveTaskAttachmentRequest.class,
+                        DeleteAttachmentRequest.class,
+                        HandleAlertRequest.class));
     }
 
     private static RequestFixture taskFixture(String name,
