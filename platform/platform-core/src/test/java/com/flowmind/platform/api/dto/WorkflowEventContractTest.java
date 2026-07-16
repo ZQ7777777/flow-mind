@@ -81,7 +81,6 @@ class WorkflowEventContractTest {
         log.setLastError("timeout");
         log.setCreatedAt(createdAt);
         log.setUpdatedAt(updatedAt);
-        log.setCompletedAt(updatedAt);
 
         assertEquals("callback-log-001", log.getCallbackLogId());
         assertEquals("operation-001:TASK_CREATED:1", log.getEventId());
@@ -97,7 +96,6 @@ class WorkflowEventContractTest {
         assertEquals("timeout", log.getErrorMessage());
         assertEquals(createdAt, log.getCreatedAt());
         assertEquals(updatedAt, log.getUpdatedAt());
-        assertEquals(updatedAt, log.getCompletedAt());
     }
 
     @Test

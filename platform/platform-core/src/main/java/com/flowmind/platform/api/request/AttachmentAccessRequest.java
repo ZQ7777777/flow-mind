@@ -1,5 +1,6 @@
 package com.flowmind.platform.api.request;
 
+import com.flowmind.platform.api.enums.AttachmentAccessActionEnum;
 import com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum;
 
 public class AttachmentAccessRequest {
@@ -9,7 +10,7 @@ public class AttachmentAccessRequest {
     /** 发起附件访问请求的用户名称。 */
     private String userName;
     /** 附件访问动作，例如上传、查看、下载或删除。 */
-    private String accessAction;
+    private AttachmentAccessActionEnum accessAction;
     /** 附件所属流程实例 ID。 */
     private String instanceId;
     /** 附件关联任务 ID；实例级附件或未关联任务时可为空。 */
@@ -22,7 +23,7 @@ public class AttachmentAccessRequest {
     public AttachmentAccessRequest() {
     }
 
-    public AttachmentAccessRequest(String userId, String userName, String accessAction, String instanceId,
+    public AttachmentAccessRequest(String userId, String userName, AttachmentAccessActionEnum accessAction, String instanceId,
             String taskId, String attachmentId, AttachmentOwnerTypeEnum ownerType) {
         this.userId = userId;
         this.userName = userName;
@@ -49,11 +50,11 @@ public class AttachmentAccessRequest {
         this.userName = userName;
     }
 
-    public String getAccessAction() {
+    public AttachmentAccessActionEnum getAccessAction() {
         return accessAction;
     }
 
-    public void setAccessAction(String accessAction) {
+    public void setAccessAction(AttachmentAccessActionEnum accessAction) {
         this.accessAction = accessAction;
     }
 
