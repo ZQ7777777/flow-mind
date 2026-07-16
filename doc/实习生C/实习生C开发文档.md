@@ -111,7 +111,7 @@ DTO 均采用 Java 8 JavaBean。分页查询条件使用 `pageNo`、`pageSize`�
 | 运行时与管理动作 | `StartProcessRequest`、`SubmitTaskRequest`、`ApproveTaskRequest`、`RejectTaskRequest`、`ReturnTaskRequest`、`WithdrawTaskRequest`、`DirectSendRequest`、`TransferTaskRequest`、`AddSignRequest`、`ClaimTaskRequest`、`UnclaimTaskRequest`、`TerminateProcessRequest`、`DeleteProcessInstanceRequest`、`UpdateVariablesRequest`、`JumpNodeRequest`、`ForceCompleteRequest` |
 | C 线外围能力 | `AttachmentAccessRequest`、`CheckAttachmentRequest`、`DeleteAttachmentRequest`、`DownloadAttachmentRequest`、`HandleAlertRequest`、`RemindTaskRequest`、`SaveInstanceAttachmentRequest`、`SaveTaskAttachmentRequest`、`StoreFileRequest`、`TimeoutScanRequest` |
 
-`OperationRequest` 只冻结 `operationId`；运行时任务动作通过 `TaskOperationRequest` 增加 `taskId`、`expectedTaskVersion`、`operatorUserId` 和 `comment`。`SaveTaskAttachmentRequest` 当前直接继承 `OperationRequest`，`TimeoutScanRequest`、查询型请求和 SPI 辅助请求不强制继承幂等基类。
+`OperationRequest` 只冻结 `operationId`；任务级修改请求通过 `TaskOperationRequest` 增加 `taskId`、`expectedTaskVersion`、`operatorUserId` 和 `comment`，当前包括运行时任务动作、`RemindTaskRequest` 和 `SaveTaskAttachmentRequest`。`TimeoutScanRequest`、查询型请求和 SPI 辅助请求不强制继承幂等基类。
 
 **辅助 Entity（`persistence.entity`）**
 
