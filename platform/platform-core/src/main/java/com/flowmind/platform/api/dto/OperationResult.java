@@ -4,6 +4,8 @@ public class OperationResult {
 
     /** 本次操作的幂等号。 */
     private String operationId;
+    /** 被操作对象的类型，如 DEFINITION、INSTANCE、TASK、ATTACHMENT。 */
+    private String targetType;
     /** 被操作对象的 ID。 */
     private String targetId;
     /** 被操作对象是否已删除。 */
@@ -20,6 +22,14 @@ public class OperationResult {
 
     public void setOperationId(String operationId) {
         this.operationId = operationId;
+    }
+
+    public String getTargetType() {
+        return targetType;
+    }
+
+    public void setTargetType(String targetType) {
+        this.targetType = targetType;
     }
 
     public String getTargetId() {

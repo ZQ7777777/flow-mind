@@ -154,6 +154,7 @@ class RuntimeResultContractTest {
     void operationResultAndAttachmentItemExpressReplayAndBinaryContent() {
         OperationResult result = new OperationResult();
         result.setOperationId("operation-002");
+        result.setTargetType("INSTANCE");
         result.setTargetId("instance-002");
         result.setDeleted(true);
         result.setReplayed(false);
@@ -162,6 +163,7 @@ class RuntimeResultContractTest {
         attachment.setContent(new byte[] {1, 2, 3});
 
         assertEquals("operation-002", result.getOperationId());
+        assertEquals("INSTANCE", result.getTargetType());
         assertEquals("instance-002", result.getTargetId());
         assertTrue(result.isDeleted());
         assertFalse(result.isReplayed());
