@@ -88,7 +88,7 @@ M0 当前完成的是公共对象、Service/SPI 接口、回调事件模型、St
 
 **DTO（`api.dto`）**
 
-当前代码共有 42 个 DTO：
+ 42 个 DTO：
 
 | 分组 | 当前代码中的 DTO |
 | --- | --- |
@@ -102,7 +102,7 @@ DTO 均采用 Java 8 JavaBean。分页查询条件使用 `pageNo`、`pageSize`�
 
 **Request（`api.request`）**
 
-当前代码共有 34 个 Request：
+34 个 Request：
 
 | 分组 | 当前代码中的 Request |
 | --- | --- |
@@ -144,7 +144,7 @@ DTO 均采用 Java 8 JavaBean。分页查询条件使用 `pageNo`、`pageSize`�
 
 **SPI 接口**
 
-当前 `api.spi` 共有 8 个接口：
+有 8 个接口：
 
 | SPI | 方法 | 技术作用 | 当前 Starter 默认实现 |
 | --- | --- | --- | --- |
@@ -161,7 +161,7 @@ DTO 均采用 Java 8 JavaBean。分页查询条件使用 `pageNo`、`pageSize`�
 
 ### 3.3 回调事件模型
 
-`WorkflowEvent` 位于 `api.dto`，当前字段与代码一致：
+`WorkflowEvent` 包含以下字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
