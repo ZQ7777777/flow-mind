@@ -90,6 +90,18 @@ class FlowPlatformSchemaTest {
         }
     }
 
+    @Test
+    void operationRecordSupportsRuntimeAndDefinitionNamespacedActions() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            executeSchema(connection);
+
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-001", "operation-001", "APPROVE"));
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-002", "operation-002", "DEFINITION_SAVE_GRAPH"));
+            assertThrows(SQLException.class,
+                    () -> insertOperationRecord(connection, "record-003", "operation-003", "SAVE_GRAPH"));
+        }
+    }
+
     private static void executeSchema(Connection connection) throws IOException, SQLException {
         String sql;
         try (InputStream input = FlowPlatformSchemaTest.class.getResourceAsStream(SCHEMA)) {
@@ -181,6 +193,16 @@ class FlowPlatformSchemaTest {
                     + "(id, event_id, instance_id, operation_id, event_type, action_type, payload_json) "
                     + "VALUES ('callback-001', 'event-001', 'instance-001', 'operation-001', "
                     + "'PROCESS_STARTED', 'START', '{}')");
+        }
+    }
+
+    private static void insertOperationRecord(Connection connection, String id, String operationId,
+                                              String actionType) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("INSERT INTO process_operation_record "
+                    + "(id, operation_id, action_type, operator_id, request_hash, processing_expires_at, expires_at) "
+                    + "VALUES ('" + id + "', '" + operationId + "', '" + actionType + "', "
+                    + "'operator-001', 'hash-" + operationId + "', '2026-07-16 10:05:00', '2026-07-17 10:00:00')");
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.DefinitionActionTypeEnum;
 import com.flowmind.platform.api.enums.OperationStatusEnum;
 import org.junit.jupiter.api.Test;
 
@@ -36,7 +37,7 @@ class OperationRecordContractTest {
         assertEquals("operation-001", record.getOperationId());
         assertEquals("instance-001", record.getInstanceId());
         assertEquals("task-001", record.getTaskId());
-        assertEquals(ActionTypeEnum.APPROVE, record.getActionType());
+        assertEquals("APPROVE", record.getActionType());
         assertEquals("user-001", record.getOperatorId());
         assertEquals("hash-001", record.getRequestHash());
         assertEquals(OperationStatusEnum.SUCCESS, record.getOperationStatus());
@@ -46,5 +47,15 @@ class OperationRecordContractTest {
         assertEquals(expiresAt, record.getExpiresAt());
         assertEquals(createdAt, record.getCreatedAt());
         assertEquals(processingExpiresAt, record.getUpdatedAt());
+    }
+
+    @Test
+    void operationRecordSupportsDefinitionActionNamespace() {
+        OperationRecordDTO record = new OperationRecordDTO();
+
+        record.setActionType(DefinitionActionTypeEnum.SAVE_GRAPH);
+
+        assertEquals("DEFINITION_SAVE_GRAPH", record.getActionType());
+        assertEquals("DEFINITION_DELETE", DefinitionActionTypeEnum.DELETE.getOperationActionType());
     }
 }

@@ -1,6 +1,7 @@
 package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.DefinitionActionTypeEnum;
 import com.flowmind.platform.api.enums.OperationStatusEnum;
 
 import java.time.LocalDateTime;
@@ -15,8 +16,8 @@ public class OperationRecordDTO {
     private String instanceId;
     /** 关联活动任务 ID，可空。 */
     private String taskId;
-    /** 操作动作类型。 */
-    private ActionTypeEnum actionType;
+    /** 操作动作类型。运行时动作直接存枚举名，定义管理动作使用 DEFINITION_* 命名空间。 */
+    private String actionType;
     /** 操作人 ID。 */
     private String operatorId;
     /** 规范化请求内容的哈希。 */
@@ -71,12 +72,20 @@ public class OperationRecordDTO {
         this.taskId = taskId;
     }
 
-    public ActionTypeEnum getActionType() {
+    public String getActionType() {
         return actionType;
     }
 
-    public void setActionType(ActionTypeEnum actionType) {
+    public void setActionType(String actionType) {
         this.actionType = actionType;
+    }
+
+    public void setActionType(ActionTypeEnum actionType) {
+        this.actionType = actionType == null ? null : actionType.name();
+    }
+
+    public void setActionType(DefinitionActionTypeEnum actionType) {
+        this.actionType = actionType == null ? null : actionType.getOperationActionType();
     }
 
     public String getOperatorId() {
