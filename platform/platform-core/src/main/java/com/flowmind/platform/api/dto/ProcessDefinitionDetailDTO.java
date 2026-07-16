@@ -1,6 +1,7 @@
 package com.flowmind.platform.api.dto;
 
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,6 +13,7 @@ import java.util.List;
  * @since 2026-07-14
  */
 @Data
+@EqualsAndHashCode(callSuper = true)
 public class ProcessDefinitionDetailDTO extends ProcessDefinitionDTO {
     private static final long serialVersionUID = 1L;
 
