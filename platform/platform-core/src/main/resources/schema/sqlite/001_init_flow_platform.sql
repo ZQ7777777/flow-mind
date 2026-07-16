@@ -181,7 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_process_instance_business_key
 
 CREATE TABLE IF NOT EXISTS process_task_group (
     id TEXT PRIMARY KEY,
-    instance_id TEXT NOT NULL,
+    instance_id TEXT,
     node_code TEXT NOT NULL,
     join_node_code TEXT,
     parent_group_id TEXT,
@@ -331,7 +331,7 @@ CREATE INDEX IF NOT EXISTS idx_process_audit_log_operation
 CREATE TABLE IF NOT EXISTS process_callback_log (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL UNIQUE,
-    instance_id TEXT NOT NULL,
+    instance_id TEXT,
     operation_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     action_type TEXT NOT NULL
@@ -343,7 +343,7 @@ CREATE TABLE IF NOT EXISTS process_callback_log (
     last_error TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE CASCADE
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_process_callback_log_status

@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,6 +64,29 @@ class FlowPlatformSchemaTest {
             assertTrue(columns.contains("definition_id"));
             assertTrue(columns.contains("lock_version"));
             assertFalse(columns.contains("version"));
+        }
+    }
+
+    @Test
+    void deletingInstancePreservesCallbackLogAndClearsInstanceReference() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            executeSchema(connection);
+            insertDefinition(connection, "definition-001", "expense", 1,
+                    "DRAFT", "INACTIVE", "OFF", null);
+            insertInstance(connection);
+            insertCallbackLog(connection);
+
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("DELETE FROM process_instance WHERE id = 'instance-001'");
+            }
+
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT instance_id FROM process_callback_log WHERE id = 'callback-001'")) {
+                assertTrue(resultSet.next());
+                assertNull(resultSet.getString("instance_id"));
+                assertFalse(resultSet.next());
+            }
         }
     }
 
@@ -139,6 +163,24 @@ class FlowPlatformSchemaTest {
             statement.executeUpdate("INSERT INTO process_attachment_template "
                     + "(id, attachment_code, template_version, attachment_name, allowed_extensions, "
                     + "max_size_bytes, created_by) VALUES ('template-001', 'receipt', 1, 'Receipt', 'pdf', 1024, 'test')");
+        }
+    }
+
+    private static void insertInstance(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("INSERT INTO process_instance "
+                    + "(id, definition_id, process_code, process_name, version, instance_title, "
+                    + "starter_user_id, starter_user_name) VALUES ('instance-001', 'definition-001', "
+                    + "'expense', 'Expense', 1, 'Expense Instance', 'starter-001', 'Starter')");
+        }
+    }
+
+    private static void insertCallbackLog(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("INSERT INTO process_callback_log "
+                    + "(id, event_id, instance_id, operation_id, event_type, action_type, payload_json) "
+                    + "VALUES ('callback-001', 'event-001', 'instance-001', 'operation-001', "
+                    + "'PROCESS_STARTED', 'START', '{}')");
         }
     }
 }
