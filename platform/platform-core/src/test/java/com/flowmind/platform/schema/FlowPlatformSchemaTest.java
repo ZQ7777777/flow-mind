@@ -1,5 +1,6 @@
 package com.flowmind.platform.schema;
 
+import com.flowmind.platform.api.enums.DefinitionActionTypeEnum;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -87,6 +88,38 @@ class FlowPlatformSchemaTest {
                 assertNull(resultSet.getString("instance_id"));
                 assertFalse(resultSet.next());
             }
+        }
+    }
+
+    @Test
+    void operationRecordSupportsRuntimeAndDefinitionNamespacedActions() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            executeSchema(connection);
+
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-001", "operation-001", "APPROVE"));
+            for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
+                String suffix = actionType.name();
+                assertDoesNotThrow(() -> insertOperationRecord(connection, "record-" + suffix,
+                        "operation-" + suffix, actionType.getOperationActionType()));
+            }
+            assertThrows(SQLException.class,
+                    () -> insertOperationRecord(connection, "record-003", "operation-003", "SAVE_GRAPH"));
+        }
+    }
+
+    @Test
+    void auditLogSupportsRuntimeAndDefinitionNamespacedActions() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            executeSchema(connection);
+
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-001", "TASK", "task-001", "APPROVE"));
+            for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
+                String suffix = actionType.name();
+                assertDoesNotThrow(() -> insertAuditLog(connection, "audit-" + suffix, "DEFINITION",
+                        "definition-" + suffix, actionType.getOperationActionType()));
+            }
+            assertThrows(SQLException.class,
+                    () -> insertAuditLog(connection, "audit-003", "DEFINITION", "definition-001", "DELETE"));
         }
     }
 
@@ -181,6 +214,26 @@ class FlowPlatformSchemaTest {
                     + "(id, event_id, instance_id, operation_id, event_type, action_type, payload_json) "
                     + "VALUES ('callback-001', 'event-001', 'instance-001', 'operation-001', "
                     + "'PROCESS_STARTED', 'START', '{}')");
+        }
+    }
+
+    private static void insertOperationRecord(Connection connection, String id, String operationId,
+                                              String actionType) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("INSERT INTO process_operation_record "
+                    + "(id, operation_id, action_type, operator_id, request_hash, processing_expires_at, expires_at) "
+                    + "VALUES ('" + id + "', '" + operationId + "', '" + actionType + "', "
+                    + "'operator-001', 'hash-" + operationId + "', '2026-07-16 10:05:00', '2026-07-17 10:00:00')");
+        }
+    }
+
+    private static void insertAuditLog(Connection connection, String id, String targetType, String targetId,
+                                       String actionType) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("INSERT INTO process_audit_log "
+                    + "(id, operation_id, target_type, target_id, action_type, operator_id, detail_json) "
+                    + "VALUES ('" + id + "', 'operation-" + id + "', '" + targetType + "', '" + targetId
+                    + "', '" + actionType + "', 'operator-001', '{}')");
         }
     }
 }

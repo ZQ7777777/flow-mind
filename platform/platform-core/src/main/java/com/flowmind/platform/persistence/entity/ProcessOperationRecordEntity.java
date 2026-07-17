@@ -25,7 +25,7 @@ public class ProcessOperationRecordEntity {
      */
     private String taskId;
     /**
-     * 动作类型，典型值：START、SEND、APPROVE、REJECT、TERMINATE。
+     * 动作类型。运行时动作直接使用动作名，流程定义管理动作使用 DEFINITION_* 命名空间。
      */
     private String actionType;
     /**

@@ -1,6 +1,7 @@
 package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.DefinitionActionTypeEnum;
 import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
 
 import java.time.LocalDateTime;
@@ -23,8 +24,8 @@ public class AuditLogDTO {
     private OperationTargetTypeEnum targetType;
     /** 被审计操作针对的对象 ID。 */
     private String targetId;
-    /** 动作类型。 */
-    private ActionTypeEnum actionType;
+    /** 动作类型。运行时动作直接存枚举名，定义管理动作使用 DEFINITION_* 命名空间。 */
+    private String actionType;
     /** 操作人用户 ID。 */
     private String operatorUserId;
     /** 操作人名称快照。 */
@@ -85,12 +86,20 @@ public class AuditLogDTO {
         this.targetId = targetId;
     }
 
-    public ActionTypeEnum getActionType() {
+    public String getActionType() {
         return actionType;
     }
 
-    public void setActionType(ActionTypeEnum actionType) {
+    public void setActionType(String actionType) {
         this.actionType = actionType;
+    }
+
+    public void setActionType(ActionTypeEnum actionType) {
+        this.actionType = actionType == null ? null : actionType.name();
+    }
+
+    public void setActionType(DefinitionActionTypeEnum actionType) {
+        this.actionType = actionType == null ? null : actionType.getOperationActionType();
     }
 
     public String getOperatorUserId() {

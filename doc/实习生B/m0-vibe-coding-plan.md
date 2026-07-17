@@ -80,19 +80,19 @@ B 在自己的分支持续小提交；A/C 合并后统一 rebase。若字段或�
 
 5. **B0.5：与 A/C 对齐并冻结**
 
-   A/C 合并后，B rebase 并完成：按 A 的模型字段与乐观锁语义校正 DTO，直接使用已经合并的正式枚举类型，确认 `WorkflowEvent` 使用 B 的任务/历史 DTO，完成 Starter Service 接口编译和 C 的幂等测试夹具接入。若公共文档已冻结有限取值但 `api.enums` 确实没有对应枚举，应在确认不存在同义类型后补充唯一正式枚举，不得以 `String` 或兼容别名代替。
+   A/C 合并后，B 同步最新 `develop`（已共享的 feature 使用 merge，尚未共享时可 rebase）并完成：按 A 的模型字段与乐观锁语义校正 DTO，直接使用已经合并的正式枚举类型，确认 `WorkflowEvent` 使用 B 的任务/历史 DTO，完成 Starter Service 接口编译和 C 的幂等测试夹具接入。若公共文档已冻结有限取值但 `api.enums` 确实没有对应枚举，应在确认不存在同义类型后补充唯一正式枚举，不得以 `String` 或兼容别名代替。唯一例外是 v4 已明确的日志统一存储契约：`AuditLogDTO`、`OperationRecordDTO` 的 `actionType` 使用 `String` 承载运行时动作名和 `DEFINITION_*` 定义管理动作，并通过两个正式枚举的重载 setter 生成规范值。
 
    提示词：  
-   “不得新增兼容别名或重复类型。按 A 的模型字段和持久化语义修正 B DTO，并与公共正式枚举、事件、SPI、Service 接口一次编译通过；公共文档已冻结但确实缺失的枚举补充到 `api.enums`，同步补齐因对齐产生的契约测试。”
+   “不得新增未写入公共文档的兼容别名或重复类型。按 A 的模型字段和持久化语义修正 B DTO，并与公共正式枚举、事件、SPI、Service 接口一次编译通过；公共文档已冻结但确实缺失的枚举补充到 `api.enums`。日志 `actionType` 按 v4 使用字符串统一存储和枚举重载适配，并同步补齐因对齐产生的契约测试。”
 
    测试与完成条件：  
    对齐产生的每项字段或泛型调整必须同步更新契约测试；先执行 `mvn -q -pl platform/platform-core -am test`，再在 rebase 完成后执行根目录 `mvn -q test`。两项均通过才可冻结。
 
 ## 验收与合并门禁
 
-- 每个微任务完成后，相关 DTO 契约单元测试随代码提交，并已通过 `mvn -q -pl platform/platform-core -am test`；B0.5 rebase 后根目录 `mvn -q test` 通过，根模块和 `platform-core` 均可编译。
+- 每个微任务完成后，相关 DTO 契约单元测试随代码提交，并已通过 `mvn -q -pl platform/platform-core -am test`；B0.5 同步最新 `develop` 后根目录 `mvn -q test` 通过，根模块和 `platform-core` 均可编译。
 - 所有运行时状态修改请求有 `operationId`；任务级动作有 `expectedTaskVersion`。
 - `TaskDTO.taskVersion` 与后续乐观锁字段语义一致。
 - `TaskActionResult` 与 `WorkflowEvent` 都能表达归档任务、新建任务和操作号。
 - 同一操作号相同请求可表达 `replayed=true`；同号不同请求由 C 的幂等基线断言为冲突。
-- 无重复枚举、SPI、事件或 Starter 接口；B 代码不包含流程流转、SQL 或具体业务判断。
+- 无未文档化的重复枚举、SPI、事件或 Starter 接口；B 代码不包含流程流转、SQL 或具体业务判断。
