@@ -5,7 +5,7 @@ import java.time.LocalDateTime;
 /**
  * 超时任务扫描请求。
  */
-public class TimeoutScanRequest {
+public class TimeoutScanRequest extends OperationRequest {
 
     /** 扫描基准时间。 */
     private LocalDateTime scanAt;

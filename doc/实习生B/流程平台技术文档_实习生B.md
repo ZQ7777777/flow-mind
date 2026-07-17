@@ -172,7 +172,7 @@ flowchart TD
 
 当前已经落地：
 
-- 运行时请求基类、B0.4 原始 17 类及 B0.5 联合冻结后的 21 类修改请求和附件上传项；
+- 运行时请求基类、B0.4 原始 17 类、B0.5 联合冻结后的 21 类及补充超时扫描后的 22 类修改请求和附件上传项；
 - 实例、活动任务、历史任务、任务动作结果和通用操作结果 DTO；
 - 请求继承、JavaBean 属性、有效夹具、任务版本传递和结果表达能力的契约测试；
 - `TaskDTO.taskVersion -> process_active_task.lock_version -> expectedTaskVersion` 的类型和语义对齐；
