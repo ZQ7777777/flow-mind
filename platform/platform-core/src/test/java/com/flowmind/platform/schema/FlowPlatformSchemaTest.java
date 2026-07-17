@@ -102,6 +102,19 @@ class FlowPlatformSchemaTest {
         }
     }
 
+    @Test
+    void auditLogSupportsRuntimeAndDefinitionNamespacedActions() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            executeSchema(connection);
+
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-001", "TASK", "task-001", "APPROVE"));
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-002", "DEFINITION", "definition-001",
+                    "DEFINITION_DELETE"));
+            assertThrows(SQLException.class,
+                    () -> insertAuditLog(connection, "audit-003", "DEFINITION", "definition-001", "DELETE"));
+        }
+    }
+
     private static void executeSchema(Connection connection) throws IOException, SQLException {
         String sql;
         try (InputStream input = FlowPlatformSchemaTest.class.getResourceAsStream(SCHEMA)) {
@@ -203,6 +216,16 @@ class FlowPlatformSchemaTest {
                     + "(id, operation_id, action_type, operator_id, request_hash, processing_expires_at, expires_at) "
                     + "VALUES ('" + id + "', '" + operationId + "', '" + actionType + "', "
                     + "'operator-001', 'hash-" + operationId + "', '2026-07-16 10:05:00', '2026-07-17 10:00:00')");
+        }
+    }
+
+    private static void insertAuditLog(Connection connection, String id, String targetType, String targetId,
+                                       String actionType) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("INSERT INTO process_audit_log "
+                    + "(id, operation_id, target_type, target_id, action_type, operator_id, detail_json) "
+                    + "VALUES ('" + id + "', 'operation-" + id + "', '" + targetType + "', '" + targetId
+                    + "', '" + actionType + "', 'operator-001', '{}')");
         }
     }
 }
