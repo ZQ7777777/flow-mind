@@ -31,12 +31,5 @@ public enum WorkflowEventTypeEnum {
     /** 流程取消。 */
     PROCESS_CANCELED,
     /** 流程办结。 */
-    PROCESS_COMPLETED;
-
-    public static WorkflowEventTypeEnum fromCode(String code) {
-        if (code == null) {
-            return null;
-        }
-        return WorkflowEventTypeEnum.valueOf(code);
-    }
+    PROCESS_COMPLETED
 }

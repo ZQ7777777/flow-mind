@@ -79,14 +79,6 @@ public class CallbackLogDTO {
         this.eventType = eventType;
     }
 
-    public void setEventType(String eventType) {
-        this.eventType = WorkflowEventTypeEnum.fromCode(eventType);
-    }
-
-    public String getEventTypeCode() {
-        return eventType == null ? null : eventType.name();
-    }
-
     public ActionTypeEnum getActionType() {
         return actionType;
     }

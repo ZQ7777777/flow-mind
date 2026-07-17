@@ -11,6 +11,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkflowEventContractTest {
 
@@ -42,7 +44,6 @@ class WorkflowEventContractTest {
         assertEquals("operation-001:TASK_COMPLETED:1", event.getEventId());
         assertEquals("operation-001", event.getOperationId());
         assertEquals(WorkflowEventTypeEnum.TASK_COMPLETED, event.getEventType());
-        assertEquals("TASK_COMPLETED", event.getEventTypeCode());
         assertEquals("process-code-001", event.getProcessCode());
         assertEquals("instance-001", event.getInstanceId());
         assertEquals(ActionTypeEnum.APPROVE, event.getActionType());
@@ -54,13 +55,24 @@ class WorkflowEventContractTest {
     }
 
     @Test
-    void workflowEventAcceptsStringEventTypeForSerializationAdapters() {
-        WorkflowEvent event = new WorkflowEvent();
-
-        event.setEventType("PROCESS_STARTED");
-
-        assertEquals(WorkflowEventTypeEnum.PROCESS_STARTED, event.getEventType());
-        assertEquals("PROCESS_STARTED", event.getEventTypeCode());
+    void eventTypeOnlyExposesFormalEnumContract() throws NoSuchFieldException {
+        assertEquals(WorkflowEventTypeEnum.class,
+                WorkflowEvent.class.getDeclaredField("eventType").getType());
+        assertEquals(WorkflowEventTypeEnum.class,
+                CallbackLogDTO.class.getDeclaredField("eventType").getType());
+        assertThrows(NoSuchMethodException.class,
+                () -> WorkflowEvent.class.getMethod("setEventType", String.class));
+        assertThrows(NoSuchMethodException.class,
+                () -> CallbackLogDTO.class.getMethod("setEventType", String.class));
+        assertThrows(NoSuchMethodException.class,
+                () -> WorkflowEvent.class.getMethod("getEventTypeCode"));
+        assertThrows(NoSuchMethodException.class,
+                () -> CallbackLogDTO.class.getMethod("getEventTypeCode"));
+        assertThrows(NoSuchMethodException.class,
+                () -> WorkflowEventTypeEnum.class.getMethod("fromCode", String.class));
+        assertTrue(java.util.Arrays.stream(WorkflowEvent.class.getConstructors())
+                .noneMatch(constructor -> constructor.getParameterCount() > 2
+                        && constructor.getParameterTypes()[2] == String.class));
     }
 
     @Test
@@ -73,7 +85,7 @@ class WorkflowEventContractTest {
         log.setEventId("operation-001:TASK_CREATED:1");
         log.setInstanceId("instance-001");
         log.setOperationId("operation-001");
-        log.setEventType("TASK_CREATED");
+        log.setEventType(WorkflowEventTypeEnum.TASK_CREATED);
         log.setActionType(ActionTypeEnum.START);
         log.setPayloadJson("{\"eventId\":\"operation-001:TASK_CREATED:1\"}");
         log.setCallbackStatus(CallbackStatusEnum.FAILED);
@@ -87,7 +99,6 @@ class WorkflowEventContractTest {
         assertEquals("instance-001", log.getInstanceId());
         assertEquals("operation-001", log.getOperationId());
         assertEquals(WorkflowEventTypeEnum.TASK_CREATED, log.getEventType());
-        assertEquals("TASK_CREATED", log.getEventTypeCode());
         assertEquals(ActionTypeEnum.START, log.getActionType());
         assertEquals("{\"eventId\":\"operation-001:TASK_CREATED:1\"}", log.getPayloadJson());
         assertEquals(CallbackStatusEnum.FAILED, log.getCallbackStatus());
