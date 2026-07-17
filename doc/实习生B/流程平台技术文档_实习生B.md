@@ -73,6 +73,8 @@ flowchart LR
 - Java 代码必须兼容 Java 8，不使用 `record`、`List.of`、`Stream.toList` 等 Java 9+ 语法或 API；
 - DTO、枚举、Service、SPI 和事件模型在公共包中只保留一份，不创建平行类型或兼容别名。
 
+公共 SPI 同样遵守 API 边界：`StoreFileRequest` 和 `AttachmentUploadItem` 位于 `api.request`；`StoredFile`、`FileContent` 与 `ProcessMessage` 位于 `api.dto`。`persistence.entity` 只用于数据库映射，不得出现在宿主系统需要实现的 SPI 方法签名中。
+
 ## 3. 公共契约与运行时边界（M0）
 
 M0 的目标是冻结 B 线对外输入/输出以及幂等、并发表达能力。M0 不实现 Service、流程流转、Repository、SQL、文件存储、回调投递或运行时参数校验。
