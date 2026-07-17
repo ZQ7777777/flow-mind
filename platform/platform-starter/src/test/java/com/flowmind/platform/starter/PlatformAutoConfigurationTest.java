@@ -21,8 +21,10 @@ import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
-import com.flowmind.platform.persistence.entity.FileContent;
-import com.flowmind.platform.persistence.entity.StoredFile;
+import com.flowmind.platform.api.dto.FileContent;
+import com.flowmind.platform.api.dto.StoredFile;
+import com.flowmind.platform.api.request.AttachmentAccessRequest;
+import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -47,6 +49,9 @@ class PlatformAutoConfigurationTest {
             assertThat(context).hasSingleBean(ProcessMonitorService.class);
             assertThat(context).hasSingleBean(FileStorageProvider.class);
             assertThat(context).hasSingleBean(AttachmentAccessProvider.class);
+            assertThat(context).hasSingleBean(AttachmentAccessGuard.class);
+            assertThat(context.getBean(AttachmentAccessProvider.class)
+                    .isAllowed(new AttachmentAccessRequest())).isFalse();
             assertThat(context).hasSingleBean(MessagePublisher.class);
             assertThat(context).hasSingleBean(WorkflowCallbackHandler.class);
             assertThat(context).hasSingleBean(DelegateProvider.class);
@@ -67,6 +72,19 @@ class PlatformAutoConfigurationTest {
     }
 
     @Test
+    void customAttachmentAccessExceptionIsConvertedToDenial() {
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(PlatformAutoConfiguration.class))
+                .withUserConfiguration(ThrowingAccessProviderConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(AttachmentAccessProvider.class);
+                    assertThat(context).hasSingleBean(AttachmentAccessGuard.class);
+                    assertThat(context.getBean(AttachmentAccessGuard.class)
+                            .isAllowed(new AttachmentAccessRequest())).isFalse();
+                });
+    }
+
+    @Test
     void customServiceBeanOverridesStarterSkeleton() {
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(PlatformAutoConfiguration.class))
@@ -79,12 +97,15 @@ class PlatformAutoConfigurationTest {
     }
 
     @Test
-    void mockSpisCanBeDisabledByProperty() {
+    void optionalMockSpisCanBeDisabledButDenyAllAccessRemains() {
         contextRunner
                 .withPropertyValues("flow-mind.platform.mock.enabled=false")
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(FileStorageProvider.class);
-                    assertThat(context).doesNotHaveBean(AttachmentAccessProvider.class);
+                    assertThat(context).hasSingleBean(AttachmentAccessProvider.class);
+                    assertThat(context).hasSingleBean(AttachmentAccessGuard.class);
+                    assertThat(context.getBean(AttachmentAccessGuard.class)
+                            .isAllowed(new AttachmentAccessRequest())).isFalse();
                     assertThat(context).doesNotHaveBean(MessagePublisher.class);
                     assertThat(context).doesNotHaveBean(WorkflowCallbackHandler.class);
                     assertThat(context).doesNotHaveBean(DelegateProvider.class);
@@ -106,6 +127,16 @@ class PlatformAutoConfigurationTest {
         @Bean
         TaskQueryService customTaskQueryService() {
             return new CustomTaskQueryService();
+        }
+    }
+
+    @Configuration
+    static class ThrowingAccessProviderConfiguration {
+        @Bean
+        AttachmentAccessProvider throwingAttachmentAccessProvider() {
+            return request -> {
+                throw new IllegalStateException("authorization unavailable");
+            };
         }
     }
 

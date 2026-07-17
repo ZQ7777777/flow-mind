@@ -2,6 +2,9 @@ package com.flowmind.platform.api.enums;
 
 /**
  * 流程定义管理动作类型。
+ *
+ * @author Intern A
+ * @since 2026-07-17
  */
 public enum DefinitionActionTypeEnum {
     /** 创建流程定义草稿。 */

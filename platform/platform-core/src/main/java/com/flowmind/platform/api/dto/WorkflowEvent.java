@@ -52,13 +52,6 @@ public class WorkflowEvent {
         this.occurredAt = occurredAt;
     }
 
-    public WorkflowEvent(String eventId, String operationId, String eventType, String processCode, String instanceId,
-                         ActionTypeEnum actionType, UserContext operator, List<HistoryTaskDTO> archivedTasks,
-                         List<TaskDTO> createdTasks, Map<String, Object> variables, LocalDateTime occurredAt) {
-        this(eventId, operationId, WorkflowEventTypeEnum.fromCode(eventType), processCode, instanceId, actionType,
-                operator, archivedTasks, createdTasks, variables, occurredAt);
-    }
-
     public String getEventId() {
         return eventId;
     }
@@ -81,14 +74,6 @@ public class WorkflowEvent {
 
     public void setEventType(WorkflowEventTypeEnum eventType) {
         this.eventType = eventType;
-    }
-
-    public void setEventType(String eventType) {
-        this.eventType = WorkflowEventTypeEnum.fromCode(eventType);
-    }
-
-    public String getEventTypeCode() {
-        return eventType == null ? null : eventType.name();
     }
 
     public String getProcessCode() {

@@ -24,7 +24,7 @@ B 不重复实现：
 - C 负责的文件存储 SPI、附件元数据持久化、查询聚合、回调投递、审计、Starter 自动装配、委托关系和并行汇聚外围能力；
 - 宿主系统的具体业务规则。表单数据只作为流程变量保存，平台核心不得出现“入金”等业务判断。
 
-当前实现状态：M0 的运行时请求/结果 DTO 和契约测试已经落地，并已对齐 A 线的活动任务版本模型；公共枚举、事件、SPI 和 Starter Service 仍需在 C 线正式契约合入后完成最终冻结。M1～M6 本文描述的是目标实现与验收标准，不等同于已交付代码。共享基线中已有的最小定义结构校验只作为 M1 的起点，不代表 M1 已收口。
+当前实现状态：M0 的运行时请求/结果 DTO、公共枚举、事件、SPI、Starter Service 与契约测试均已完成联合冻结，并已对齐 A 线的活动任务版本模型和定义管理幂等动作。M1～M6 本文描述的是目标实现与验收标准，不等同于已交付代码。共享基线中已有的最小定义结构校验只作为 M1 的起点，不代表 M1 已收口。
 
 ## 2. 总体实现结构
 
@@ -72,6 +72,8 @@ flowchart LR
 - 文件内容不得写入 SQLite，平台数据库只保存附件元数据和 `storageKey`；
 - Java 代码必须兼容 Java 8，不使用 `record`、`List.of`、`Stream.toList` 等 Java 9+ 语法或 API；
 - DTO、枚举、Service、SPI 和事件模型在公共包中只保留一份，不创建平行类型或兼容别名。
+
+公共 SPI 同样遵守 API 边界：`StoreFileRequest` 和 `AttachmentUploadItem` 位于 `api.request`；`StoredFile`、`FileContent` 与 `ProcessMessage` 位于 `api.dto`。`persistence.entity` 只用于数据库映射，不得出现在宿主系统需要实现的 SPI 方法签名中。
 
 ## 3. 公共契约与运行时边界（M0）
 
@@ -128,7 +130,7 @@ classDiagram
 | 实例管理 | `TerminateProcessRequest`、`DeleteProcessInstanceRequest`、`ForceCompleteRequest` | `instanceId` 及所需操作人/说明 |
 | 管理员跳转 | `JumpNodeRequest` | `instanceId`、`targetNodeCode`、操作人、说明 |
 
-`AttachmentUploadItem` 表示单次调用中的内存上传载荷，包含附件编码、归属类型、文件名、MIME 类型、字节数和二进制内容。它不表示文件内容存入数据库；M4 必须调用 C 的文件存储能力保存文件，并只把返回的存储键写入元数据。
+`AttachmentUploadItem` 位于 `api.request`，表示单次调用中的嵌套上传载荷，包含附件编码、归属类型、文件名、MIME 类型、字节数和二进制内容。它不属于查询结果或持久化实体，也不表示文件内容存入数据库；M4 必须调用 C 的文件存储能力保存文件，并只把返回的存储键写入元数据。
 
 ### 3.2 运行时结果契约
 
@@ -142,7 +144,7 @@ classDiagram
 
 `TaskActionResult` 必须保留完整的归档任务和新建任务，而不是只返回 ID 列表。这样 C 的查询、回调和审计可以复用同一份动作结果，不需要重新推断本次状态变化。
 
-公共枚举正式合入后，需要为结果 DTO 补齐实例状态、任务状态、历史办理方式、动作类型和操作目标类型。补齐时直接使用公共枚举，不保留字符串兼容字段。
+结果 DTO 已补齐实例状态、任务状态、历史办理方式、动作类型和操作目标类型，全部直接使用 `api.enums` 的正式枚举，不保留字符串兼容字段。
 
 ### 3.3 幂等与乐观锁契约
 
@@ -170,11 +172,12 @@ flowchart TD
 
 当前已经落地：
 
-- 运行时请求基类、17 类修改请求和附件上传项；
+- 运行时请求基类、B0.4 原始 17 类及 B0.5 联合冻结后的 21 类修改请求和附件上传项；
 - 实例、活动任务、历史任务、任务动作结果和通用操作结果 DTO；
 - 请求继承、JavaBean 属性、有效夹具、任务版本传递和结果表达能力的契约测试；
 - `TaskDTO.taskVersion -> process_active_task.lock_version -> expectedTaskVersion` 的类型和语义对齐；
-- 活动任务通过 `definitionId` 关联定义，不重复保存流程定义版本字段。
+- 活动任务通过 `definitionId` 关联定义，不重复保存流程定义版本字段；
+- 定义管理日志动作通过 `DefinitionActionTypeEnum` 表达，操作/审计日志以 `String actionType` 保存运行时动作名或 `DEFINITION_*`，并保留 `OperationTargetTypeEnum + targetId` 目标定位。
 
 M0 收口条件：
 
@@ -471,18 +474,25 @@ sequenceDiagram
     participant U as 调用方
     participant B as B 运行时 Service
     participant Config as 实例附件配置快照
+    participant Guard as AttachmentAccessGuard
     participant Access as AttachmentAccessProvider
     participant Storage as FileStorageProvider
     participant Repo as 附件元数据 Repository
     U->>B: submitTask(attachments)
     B->>Config: 按 attachmentConfigId + nodeCode 读取规则
     B->>B: 校验必填、数量、扩展名、MIME、大小
-    B->>Access: isAllowed(用户、动作、实例、任务、归属)
-    Access-->>B: 允许 / 拒绝 / 异常
-    B->>Storage: store(稳定 operationId 存储键)
-    Storage-->>B: storageKey
-    B->>Repo: 主事务内保存附件元数据
-    B-->>U: 随 TaskActionResult 返回
+    B->>Guard: isAllowed(用户、动作、实例、任务、归属)
+    Guard->>Access: isAllowed(访问上下文)
+    Access-->>Guard: 允许 / 拒绝 / 异常
+    Guard-->>B: true / false（失败关闭）
+    alt Guard 返回 false
+        B-->>U: 拒绝访问，不调用文件存储
+    else Guard 返回 true
+        B->>Storage: store(稳定 operationId 存储键)
+        Storage-->>B: storageKey
+        B->>Repo: 主事务内保存附件元数据
+        B-->>U: 随 TaskActionResult 返回
+    end
 ```
 
 授权 SPI 缺失、抛出异常或返回拒绝时，一律返回 `FLOW_ATTACHMENT_PERMISSION_DENIED`，且不得调用文件存储或修改任务状态。
@@ -648,7 +658,7 @@ sequenceDiagram
 | `DefinitionCacheInvalidator` | A/C 调 B | 定义或扩展配置事务提交后按定义 ID 清除运行时缓存 |
 | `ApproverResolver` | B 调 A | 创建用户任务前解析实际审批人 |
 | 条件/或签运行协作 | B 与 A | 条件选择、或签推进权取得后回到统一推进器 |
-| `AttachmentAccessProvider` | B 调 C/宿主 | 附件上传、查看、下载和删除前执行授权，失败时默认拒绝 |
+| `AttachmentAccessProvider` / `AttachmentAccessGuard` | B 调 C/宿主 | 附件上传、查看、下载和删除前执行授权；只有 SPI 明确允许才继续，缺失、拒绝或异常均失败关闭 |
 | `FileStorageProvider` / `AttachmentService` | B 调 C | 保存文件内容、附件元数据及执行查询/下载/删除 |
 | `CallbackOutboxWriter` | B 调 C | 主事务内追加稳定 `eventId` 的回调记录 |
 | `AuditLogWriter` | B 调 C | 主事务内记录实例、任务、附件和管理动作 |

@@ -1,7 +1,7 @@
 package com.flowmind.platform.api.request;
 
 import com.flowmind.platform.api.enums.AlertStatusEnum;
-import com.flowmind.platform.api.dto.AttachmentUploadItem;
+import com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -201,7 +201,7 @@ class RuntimeRequestContractTest {
     private static Map<String, Object> attachmentProperties() {
         return properties(
                 "attachmentCode", "receipt",
-                "ownerType", "INSTANCE",
+                "ownerType", AttachmentOwnerTypeEnum.INSTANCE,
                 "fileName", "receipt.pdf",
                 "contentType", "application/pdf",
                 "sizeBytes", Long.valueOf(3L),

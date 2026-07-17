@@ -1,6 +1,8 @@
 package com.flowmind.platform.api.dto;
 
+import com.flowmind.platform.api.enums.AlertSeverityEnum;
 import com.flowmind.platform.api.enums.AlertStatusEnum;
+import com.flowmind.platform.api.enums.AlertTypeEnum;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -17,9 +19,9 @@ public class AlertDTO {
     /** 活动任务 ID。 */
     private String taskId;
     /** 告警类型。 */
-    private String alertType;
+    private AlertTypeEnum alertType;
     /** 告警级别。 */
-    private String severity;
+    private AlertSeverityEnum severity;
     /** 告警状态。 */
     private AlertStatusEnum alertStatus;
     /** 告警详情。 */
@@ -58,19 +60,19 @@ public class AlertDTO {
         this.taskId = taskId;
     }
 
-    public String getAlertType() {
+    public AlertTypeEnum getAlertType() {
         return alertType;
     }
 
-    public void setAlertType(String alertType) {
+    public void setAlertType(AlertTypeEnum alertType) {
         this.alertType = alertType;
     }
 
-    public String getSeverity() {
+    public AlertSeverityEnum getSeverity() {
         return severity;
     }
 
-    public void setSeverity(String severity) {
+    public void setSeverity(AlertSeverityEnum severity) {
         this.severity = severity;
     }
 

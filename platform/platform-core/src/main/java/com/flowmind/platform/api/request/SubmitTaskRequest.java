@@ -1,7 +1,5 @@
 package com.flowmind.platform.api.request;
 
-import com.flowmind.platform.api.dto.AttachmentUploadItem;
-
 import java.util.List;
 import java.util.Map;
 

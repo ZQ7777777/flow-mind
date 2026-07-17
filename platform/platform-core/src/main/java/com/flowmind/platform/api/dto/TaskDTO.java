@@ -1,5 +1,6 @@
 package com.flowmind.platform.api.dto;
 
+import com.flowmind.platform.api.enums.TaskStatusEnum;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -38,6 +39,8 @@ public class TaskDTO {
     private String taskGroupId;
     /** 并行任务所在分支的标识；非并行任务可为空。 */
     private String branchKey;
+    /** 活动任务当前状态。 */
+    private TaskStatusEnum taskStatus;
     /** 活动任务的乐观锁版本，提交任务级请求时原样传入 expectedTaskVersion。 */
     private Long taskVersion;
     /** 活动任务创建时间。 */

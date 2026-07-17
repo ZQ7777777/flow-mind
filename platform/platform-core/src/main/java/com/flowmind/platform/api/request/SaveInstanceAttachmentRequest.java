@@ -1,7 +1,5 @@
 package com.flowmind.platform.api.request;
 
-import com.flowmind.platform.api.dto.AttachmentUploadItem;
-
 /**
  * 保存实例级附件请求。
  */
