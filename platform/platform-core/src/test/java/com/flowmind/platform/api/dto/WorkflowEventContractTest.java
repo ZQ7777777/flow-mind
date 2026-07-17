@@ -104,9 +104,14 @@ class WorkflowEventContractTest {
         assertEquals(CallbackStatusEnum.FAILED, log.getCallbackStatus());
         assertEquals(Integer.valueOf(2), log.getRetryCount());
         assertEquals("timeout", log.getLastError());
-        assertEquals("timeout", log.getErrorMessage());
         assertEquals(createdAt, log.getCreatedAt());
         assertEquals(updatedAt, log.getUpdatedAt());
+        assertThrows(NoSuchFieldException.class,
+                () -> CallbackLogDTO.class.getDeclaredField("errorMessage"));
+        assertThrows(NoSuchMethodException.class,
+                () -> CallbackLogDTO.class.getMethod("getErrorMessage"));
+        assertThrows(NoSuchMethodException.class,
+                () -> CallbackLogDTO.class.getMethod("setErrorMessage", String.class));
     }
 
     @Test
