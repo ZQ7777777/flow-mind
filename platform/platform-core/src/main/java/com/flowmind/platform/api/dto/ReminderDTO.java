@@ -1,6 +1,7 @@
 package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.enums.ReminderStatusEnum;
+import com.flowmind.platform.api.enums.ReminderTypeEnum;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -17,7 +18,7 @@ public class ReminderDTO {
     /** 活动任务 ID。 */
     private String taskId;
     /** 提醒类型。 */
-    private String reminderType;
+    private ReminderTypeEnum reminderType;
     /** 提醒目标用户 ID 列表。 */
     private List<String> targetUserIds;
     /** 提醒内容。 */
@@ -60,11 +61,11 @@ public class ReminderDTO {
         this.taskId = taskId;
     }
 
-    public String getReminderType() {
+    public ReminderTypeEnum getReminderType() {
         return reminderType;
     }
 
-    public void setReminderType(String reminderType) {
+    public void setReminderType(ReminderTypeEnum reminderType) {
         this.reminderType = reminderType;
     }
 

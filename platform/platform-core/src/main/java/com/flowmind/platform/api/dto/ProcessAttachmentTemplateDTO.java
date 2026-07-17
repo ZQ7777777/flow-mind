@@ -1,5 +1,7 @@
 package com.flowmind.platform.api.dto;
 
+import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
+import com.flowmind.platform.api.enums.AttachmentTemplateStatusEnum;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -32,7 +34,7 @@ public class ProcessAttachmentTemplateDTO implements Serializable {
     /**
      * 附件配置状态，如 DRAFT、ACTIVE、INACTIVE。
      */
-    private String configStatus;
+    private AttachmentConfigStatusEnum configStatus;
     /**
      * 附件配置组生效时间。
      */
@@ -68,7 +70,7 @@ public class ProcessAttachmentTemplateDTO implements Serializable {
     /**
      * 附件模板状态，如 ENABLED、DISABLED。
      */
-    private String templateStatus;
+    private AttachmentTemplateStatusEnum templateStatus;
     /**
      * 当前流程附件配置下是否必填。
      */

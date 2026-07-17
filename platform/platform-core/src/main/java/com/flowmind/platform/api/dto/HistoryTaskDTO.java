@@ -1,5 +1,8 @@
 package com.flowmind.platform.api.dto;
 
+import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.HandleTypeEnum;
+
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -27,6 +30,10 @@ public class HistoryTaskDTO {
     private String delegateFromUserId;
     /** 委托来源用户的名称快照；非委托办理可为空。 */
     private String delegateFromUserName;
+    /** 历史任务的实际办理方式。 */
+    private HandleTypeEnum handleType;
+    /** 归档该任务的流程动作类型。 */
+    private ActionTypeEnum actionType;
     /** 办理时填写的意见或操作说明。 */
     private String comment;
     /** 办理完成时固化的流程变量快照。 */
@@ -125,6 +132,22 @@ public class HistoryTaskDTO {
 
     public void setDelegateFromUserName(String delegateFromUserName) {
         this.delegateFromUserName = delegateFromUserName;
+    }
+
+    public HandleTypeEnum getHandleType() {
+        return handleType;
+    }
+
+    public void setHandleType(HandleTypeEnum handleType) {
+        this.handleType = handleType;
+    }
+
+    public ActionTypeEnum getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(ActionTypeEnum actionType) {
+        this.actionType = actionType;
     }
 
     public String getComment() {

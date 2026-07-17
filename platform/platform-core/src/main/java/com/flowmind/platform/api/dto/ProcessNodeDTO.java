@@ -1,5 +1,8 @@
 package com.flowmind.platform.api.dto;
 
+import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
+import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
+import com.flowmind.platform.api.enums.NodeTypeEnum;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -33,7 +36,7 @@ public class ProcessNodeDTO implements Serializable {
     /**
      * 节点类型，如 START、USER_TASK、EXCLUSIVE_GATEWAY、END。
      */
-    private String nodeType;
+    private NodeTypeEnum nodeType;
     /**
      * 配对网关节点编码，仅并行分支/汇聚网关使用。
      */
@@ -41,7 +44,7 @@ public class ProcessNodeDTO implements Serializable {
     /**
      * 审批人规则类型，如 USER、STARTER、ROLE。
      */
-    private String approverRuleType;
+    private ApproverRuleTypeEnum approverRuleType;
     /**
      * 审批人规则 JSON 配置。
      */
@@ -49,7 +52,7 @@ public class ProcessNodeDTO implements Serializable {
     /**
      * 多人审批模式，如 SINGLE、OR_SIGN、COUNTERSIGN。
      */
-    private String multiInstanceMode;
+    private MultiInstanceModeEnum multiInstanceMode;
     /**
      * 节点监听器 JSON 配置。
      */

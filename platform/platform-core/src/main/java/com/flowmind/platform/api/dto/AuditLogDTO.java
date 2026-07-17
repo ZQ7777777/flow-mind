@@ -1,6 +1,7 @@
 package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -18,6 +19,10 @@ public class AuditLogDTO {
     private String instanceId;
     /** 任务 ID。 */
     private String taskId;
+    /** 被审计操作针对的对象类型。 */
+    private OperationTargetTypeEnum targetType;
+    /** 被审计操作针对的对象 ID。 */
+    private String targetId;
     /** 动作类型。 */
     private ActionTypeEnum actionType;
     /** 操作人用户 ID。 */
@@ -62,6 +67,22 @@ public class AuditLogDTO {
 
     public void setTaskId(String taskId) {
         this.taskId = taskId;
+    }
+
+    public OperationTargetTypeEnum getTargetType() {
+        return targetType;
+    }
+
+    public void setTargetType(OperationTargetTypeEnum targetType) {
+        this.targetType = targetType;
+    }
+
+    public String getTargetId() {
+        return targetId;
+    }
+
+    public void setTargetId(String targetId) {
+        this.targetId = targetId;
     }
 
     public ActionTypeEnum getActionType() {

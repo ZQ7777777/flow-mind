@@ -1,6 +1,7 @@
 package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.enums.CallbackStatusEnum;
+import com.flowmind.platform.api.enums.WorkflowEventTypeEnum;
 
 /**
  * 回调日志查询条件。
@@ -10,7 +11,7 @@ public class CallbackLogQuery {
     /** 流程实例 ID。 */
     private String instanceId;
     /** 事件类型。 */
-    private String eventType;
+    private WorkflowEventTypeEnum eventType;
     /** 回调状态。 */
     private CallbackStatusEnum callbackStatus;
     /** 当前页码，从 1 开始。 */
@@ -29,11 +30,11 @@ public class CallbackLogQuery {
         this.instanceId = instanceId;
     }
 
-    public String getEventType() {
+    public WorkflowEventTypeEnum getEventType() {
         return eventType;
     }
 
-    public void setEventType(String eventType) {
+    public void setEventType(WorkflowEventTypeEnum eventType) {
         this.eventType = eventType;
     }
 

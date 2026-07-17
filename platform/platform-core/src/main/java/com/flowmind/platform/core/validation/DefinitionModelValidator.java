@@ -4,6 +4,8 @@ import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
+import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
+import com.flowmind.platform.api.enums.NodeTypeEnum;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -26,13 +28,13 @@ import java.util.Set;
  */
 public class DefinitionModelValidator {
 
-    private static final String START = "START";
-    private static final String END = "END";
-    private static final String USER_TASK = "USER_TASK";
-    private static final String EXCLUSIVE_GATEWAY = "EXCLUSIVE_GATEWAY";
-    private static final String PARALLEL_SPLIT_GATEWAY = "PARALLEL_SPLIT_GATEWAY";
-    private static final String PARALLEL_JOIN_GATEWAY = "PARALLEL_JOIN_GATEWAY";
-    private static final String STARTER = "STARTER";
+    private static final NodeTypeEnum START = NodeTypeEnum.START;
+    private static final NodeTypeEnum END = NodeTypeEnum.END;
+    private static final NodeTypeEnum USER_TASK = NodeTypeEnum.USER_TASK;
+    private static final NodeTypeEnum EXCLUSIVE_GATEWAY = NodeTypeEnum.EXCLUSIVE_GATEWAY;
+    private static final NodeTypeEnum PARALLEL_SPLIT_GATEWAY = NodeTypeEnum.PARALLEL_SPLIT_GATEWAY;
+    private static final NodeTypeEnum PARALLEL_JOIN_GATEWAY = NodeTypeEnum.PARALLEL_JOIN_GATEWAY;
+    private static final ApproverRuleTypeEnum STARTER = ApproverRuleTypeEnum.STARTER;
 
     public ValidationResult validate(ProcessDefinitionDetailDTO definition) {
         ValidationResult result = new ValidationResult();
@@ -134,7 +136,7 @@ public class DefinitionModelValidator {
         for (ProcessNodeDTO node : nodes) {
             // 用户任务必须有审批人规则；STARTER 规则不强制额外配置。
             if (USER_TASK.equals(node.getNodeType())
-                    && (isBlank(node.getApproverRuleType())
+                    && (node.getApproverRuleType() == null
                     || (!STARTER.equals(node.getApproverRuleType())
                     && isBlank(node.getApproverRuleConfig())))) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_USER_TASK_APPROVER_REQUIRED,

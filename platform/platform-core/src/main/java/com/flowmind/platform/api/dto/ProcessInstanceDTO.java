@@ -1,5 +1,7 @@
 package com.flowmind.platform.api.dto;
 
+import com.flowmind.platform.api.enums.InstanceStatusEnum;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +30,8 @@ public class ProcessInstanceDTO {
     private String starterUserName;
     /** 发起流程时所属部门的 ID。 */
     private String starterDeptId;
+    /** 流程实例当前运行状态。 */
+    private InstanceStatusEnum instanceStatus;
     /** 当前等待办理的节点编码；并行流程可同时包含多个节点。 */
     private List<String> currentNodeCodes;
     /** 当前流程变量集合。 */
@@ -128,6 +132,14 @@ public class ProcessInstanceDTO {
 
     public void setStarterDeptId(String starterDeptId) {
         this.starterDeptId = starterDeptId;
+    }
+
+    public InstanceStatusEnum getInstanceStatus() {
+        return instanceStatus;
+    }
+
+    public void setInstanceStatus(InstanceStatusEnum instanceStatus) {
+        this.instanceStatus = instanceStatus;
     }
 
     public List<String> getCurrentNodeCodes() {

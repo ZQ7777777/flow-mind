@@ -1,5 +1,10 @@
 package com.flowmind.platform.api.dto;
 
+import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.HandleTypeEnum;
+import com.flowmind.platform.api.enums.InstanceStatusEnum;
+import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
+import com.flowmind.platform.api.enums.TaskStatusEnum;
 import com.flowmind.platform.api.request.TaskOperationRequest;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
@@ -37,6 +42,7 @@ class RuntimeResultContractTest {
         task.setDelegateFromUserName("Delegator");
         task.setTaskGroupId("group-001");
         task.setBranchKey("branch-001");
+        task.setTaskStatus(TaskStatusEnum.ACTIVE);
         task.setTaskVersion(2L);
         task.setCreatedAt(createdAt);
         task.setDueAt(dueAt);
@@ -53,6 +59,7 @@ class RuntimeResultContractTest {
         instance.setStarterUserId("starter-001");
         instance.setStarterUserName("Starter");
         instance.setStarterDeptId("dept-001");
+        instance.setInstanceStatus(InstanceStatusEnum.RUNNING);
         instance.setCurrentNodeCodes(Collections.singletonList("review"));
         instance.setVariables(variables);
         instance.setStartedAt(createdAt);
@@ -70,6 +77,7 @@ class RuntimeResultContractTest {
         assertEquals("starter-001", instance.getStarterUserId());
         assertEquals("Starter", instance.getStarterUserName());
         assertEquals("dept-001", instance.getStarterDeptId());
+        assertEquals(InstanceStatusEnum.RUNNING, instance.getInstanceStatus());
         assertEquals(Collections.singletonList("review"), instance.getCurrentNodeCodes());
         assertEquals(variables, instance.getVariables());
         assertEquals(createdAt, instance.getStartedAt());
@@ -87,6 +95,7 @@ class RuntimeResultContractTest {
         assertEquals("Delegator", task.getDelegateFromUserName());
         assertEquals("group-001", task.getTaskGroupId());
         assertEquals("branch-001", task.getBranchKey());
+        assertEquals(TaskStatusEnum.ACTIVE, task.getTaskStatus());
         assertEquals(Long.valueOf(2L), task.getTaskVersion());
         assertEquals(createdAt, task.getCreatedAt());
         assertEquals(dueAt, task.getDueAt());
@@ -110,6 +119,8 @@ class RuntimeResultContractTest {
         archivedTask.setAssigneeUserName("Reviewer");
         archivedTask.setDelegateFromUserId("user-002");
         archivedTask.setDelegateFromUserName("Delegator");
+        archivedTask.setHandleType(HandleTypeEnum.DELEGATE);
+        archivedTask.setActionType(ActionTypeEnum.APPROVE);
         archivedTask.setComment("completed");
         archivedTask.setVariablesSnapshot(variablesSnapshot);
         archivedTask.setStartedAt(startedAt);
@@ -137,6 +148,8 @@ class RuntimeResultContractTest {
         assertEquals("Reviewer", archivedTask.getAssigneeUserName());
         assertEquals("user-002", archivedTask.getDelegateFromUserId());
         assertEquals("Delegator", archivedTask.getDelegateFromUserName());
+        assertEquals(HandleTypeEnum.DELEGATE, archivedTask.getHandleType());
+        assertEquals(ActionTypeEnum.APPROVE, archivedTask.getActionType());
         assertEquals("completed", archivedTask.getComment());
         assertEquals(variablesSnapshot, archivedTask.getVariablesSnapshot());
         assertEquals(startedAt, archivedTask.getStartedAt());
@@ -152,13 +165,13 @@ class RuntimeResultContractTest {
     void operationResultExpressesReplayAndTargetInformation() {
         OperationResult result = new OperationResult();
         result.setOperationId("operation-002");
-        result.setTargetType("INSTANCE");
+        result.setTargetType(OperationTargetTypeEnum.INSTANCE);
         result.setTargetId("instance-002");
         result.setDeleted(true);
         result.setReplayed(false);
 
         assertEquals("operation-002", result.getOperationId());
-        assertEquals("INSTANCE", result.getTargetType());
+        assertEquals(OperationTargetTypeEnum.INSTANCE, result.getTargetType());
         assertEquals("instance-002", result.getTargetId());
         assertTrue(result.isDeleted());
         assertFalse(result.isReplayed());

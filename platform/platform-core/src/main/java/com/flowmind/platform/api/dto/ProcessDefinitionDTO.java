@@ -1,5 +1,8 @@
 package com.flowmind.platform.api.dto;
 
+import com.flowmind.platform.api.enums.ActivationStatusEnum;
+import com.flowmind.platform.api.enums.DefinitionStatusEnum;
+import com.flowmind.platform.api.enums.GrayStatusEnum;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -38,15 +41,15 @@ public class ProcessDefinitionDTO implements Serializable {
     /**
      * 定义状态，如 DRAFT、PUBLISHED、ARCHIVED。
      */
-    private String definitionStatus;
+    private DefinitionStatusEnum definitionStatus;
     /**
      * 激活状态，如 INACTIVE、ACTIVE。
      */
-    private String activationStatus;
+    private ActivationStatusEnum activationStatus;
     /**
      * 灰度状态，如 OFF、ON。
      */
-    private String grayStatus;
+    private GrayStatusEnum grayStatus;
     /**
      * 灰度规则 JSON 配置。
      */

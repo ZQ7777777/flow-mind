@@ -1,5 +1,6 @@
 package com.flowmind.platform.api.request;
 
+import com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum;
 import lombok.Data;
 
 /**
@@ -14,7 +15,7 @@ public class AttachmentUploadItem {
     /** 附件模板编码，在实例绑定的附件配置范围内唯一。 */
     private String attachmentCode;
     /** 附件归属范围，用于区分实例级与任务级附件。 */
-    private String ownerType;
+    private AttachmentOwnerTypeEnum ownerType;
     /** 调用方上传时提供的原始文件名。 */
     private String fileName;
     /** 文件的 MIME 内容类型。 */
