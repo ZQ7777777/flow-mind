@@ -45,6 +45,7 @@ import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.api.dto.FileContent;
 import com.flowmind.platform.api.dto.ProcessMessage;
 import com.flowmind.platform.api.dto.StoredFile;
+import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.starter.properties.PlatformProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -98,10 +99,14 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnProperty(prefix = "flow-mind.platform.mock", name = "enabled", havingValue = "true",
-            matchIfMissing = true)
     public AttachmentAccessProvider attachmentAccessProvider() {
-        return request -> true;
+        return request -> false;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AttachmentAccessGuard attachmentAccessGuard(AttachmentAccessProvider accessProvider) {
+        return new AttachmentAccessGuard(accessProvider);
     }
 
     @Bean

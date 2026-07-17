@@ -473,18 +473,25 @@ sequenceDiagram
     participant U as 调用方
     participant B as B 运行时 Service
     participant Config as 实例附件配置快照
+    participant Guard as AttachmentAccessGuard
     participant Access as AttachmentAccessProvider
     participant Storage as FileStorageProvider
     participant Repo as 附件元数据 Repository
     U->>B: submitTask(attachments)
     B->>Config: 按 attachmentConfigId + nodeCode 读取规则
     B->>B: 校验必填、数量、扩展名、MIME、大小
-    B->>Access: isAllowed(用户、动作、实例、任务、归属)
-    Access-->>B: 允许 / 拒绝 / 异常
-    B->>Storage: store(稳定 operationId 存储键)
-    Storage-->>B: storageKey
-    B->>Repo: 主事务内保存附件元数据
-    B-->>U: 随 TaskActionResult 返回
+    B->>Guard: isAllowed(用户、动作、实例、任务、归属)
+    Guard->>Access: isAllowed(访问上下文)
+    Access-->>Guard: 允许 / 拒绝 / 异常
+    Guard-->>B: true / false（失败关闭）
+    alt Guard 返回 false
+        B-->>U: 拒绝访问，不调用文件存储
+    else Guard 返回 true
+        B->>Storage: store(稳定 operationId 存储键)
+        Storage-->>B: storageKey
+        B->>Repo: 主事务内保存附件元数据
+        B-->>U: 随 TaskActionResult 返回
+    end
 ```
 
 授权 SPI 缺失、抛出异常或返回拒绝时，一律返回 `FLOW_ATTACHMENT_PERMISSION_DENIED`，且不得调用文件存储或修改任务状态。
@@ -650,7 +657,7 @@ sequenceDiagram
 | `DefinitionCacheInvalidator` | A/C 调 B | 定义或扩展配置事务提交后按定义 ID 清除运行时缓存 |
 | `ApproverResolver` | B 调 A | 创建用户任务前解析实际审批人 |
 | 条件/或签运行协作 | B 与 A | 条件选择、或签推进权取得后回到统一推进器 |
-| `AttachmentAccessProvider` | B 调 C/宿主 | 附件上传、查看、下载和删除前执行授权，失败时默认拒绝 |
+| `AttachmentAccessProvider` / `AttachmentAccessGuard` | B 调 C/宿主 | 附件上传、查看、下载和删除前执行授权；只有 SPI 明确允许才继续，缺失、拒绝或异常均失败关闭 |
 | `FileStorageProvider` / `AttachmentService` | B 调 C | 保存文件内容、附件元数据及执行查询/下载/删除 |
 | `CallbackOutboxWriter` | B 调 C | 主事务内追加稳定 `eventId` 的回调记录 |
 | `AuditLogWriter` | B 调 C | 主事务内记录实例、任务、附件和管理动作 |
