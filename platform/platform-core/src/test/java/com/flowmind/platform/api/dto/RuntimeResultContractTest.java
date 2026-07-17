@@ -12,7 +12,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -150,7 +149,7 @@ class RuntimeResultContractTest {
     }
 
     @Test
-    void operationResultAndAttachmentItemExpressReplayAndBinaryContent() {
+    void operationResultExpressesReplayAndTargetInformation() {
         OperationResult result = new OperationResult();
         result.setOperationId("operation-002");
         result.setTargetType("INSTANCE");
@@ -158,15 +157,11 @@ class RuntimeResultContractTest {
         result.setDeleted(true);
         result.setReplayed(false);
 
-        AttachmentUploadItem attachment = new AttachmentUploadItem();
-        attachment.setContent(new byte[] {1, 2, 3});
-
         assertEquals("operation-002", result.getOperationId());
         assertEquals("INSTANCE", result.getTargetType());
         assertEquals("instance-002", result.getTargetId());
         assertTrue(result.isDeleted());
         assertFalse(result.isReplayed());
-        assertArrayEquals(new byte[] {1, 2, 3}, attachment.getContent());
     }
 
     @Test

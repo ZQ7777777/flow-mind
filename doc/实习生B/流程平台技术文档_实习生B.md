@@ -128,7 +128,7 @@ classDiagram
 | 实例管理 | `TerminateProcessRequest`、`DeleteProcessInstanceRequest`、`ForceCompleteRequest` | `instanceId` 及所需操作人/说明 |
 | 管理员跳转 | `JumpNodeRequest` | `instanceId`、`targetNodeCode`、操作人、说明 |
 
-`AttachmentUploadItem` 表示单次调用中的内存上传载荷，包含附件编码、归属类型、文件名、MIME 类型、字节数和二进制内容。它不表示文件内容存入数据库；M4 必须调用 C 的文件存储能力保存文件，并只把返回的存储键写入元数据。
+`AttachmentUploadItem` 位于 `api.request`，表示单次调用中的嵌套上传载荷，包含附件编码、归属类型、文件名、MIME 类型、字节数和二进制内容。它不属于查询结果或持久化实体，也不表示文件内容存入数据库；M4 必须调用 C 的文件存储能力保存文件，并只把返回的存储键写入元数据。
 
 ### 3.2 运行时结果契约
 

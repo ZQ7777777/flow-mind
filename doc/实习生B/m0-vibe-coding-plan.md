@@ -39,7 +39,7 @@ B 在自己的分支持续小提交；A/C 合并后统一 rebase。若字段或�
 
 2. **B0.2：运行时请求 DTO**
 
-   创建并统一继承基类：`StartProcessRequest`、`UpdateVariablesRequest`、`SubmitTaskRequest`、审批/驳回/退回/撤回/直送/转办/加签/认领/取消认领请求、终止/删除实例请求、跳转/强制办结请求与 `RemindTaskRequest`。
+   创建并统一继承基类：`StartProcessRequest`、`UpdateVariablesRequest`、`SubmitTaskRequest`、审批/驳回/退回/撤回/直送/转办/加签/认领/取消认领请求、终止/删除实例请求、跳转/强制办结请求与 `RemindTaskRequest`；在 `api.request` 定义嵌套请求载荷 `AttachmentUploadItem`。
 
    固定字段：启动请求含流程编码、业务键、标题、发起人、部门、变量；任务提交含变量与附件；节点定向动作含目标节点；转办含目标用户；加签含加签用户；实例操作含实例 ID。`JumpNodeRequest` 仅为实例级操作，不携带任务版本。
 
@@ -47,18 +47,17 @@ B 在自己的分支持续小提交；A/C 合并后统一 rebase。若字段或�
    “按 v4 第 6、7 节创建运行时请求 DTO。所有状态修改请求必须可取得 `operationId`；仅任务级请求可取得 `expectedTaskVersion`。不得把入金等业务字段写入 DTO。”
 
    测试与完成条件：  
-   AI 同步将全部请求类加入参数化契约测试：断言每个修改请求继承或声明 `operationId`，每个任务级修改请求继承 `TaskOperationRequest` 并具备 `expectedTaskVersion`，`JumpNodeRequest` 不具备任务版本。为每类请求提供有效夹具；执行 `mvn -q -pl platform/platform-core -am test` 后提交。
+   AI 同步将全部请求类加入参数化契约测试：断言每个修改请求继承或声明 `operationId`，每个任务级修改请求继承 `TaskOperationRequest` 并具备 `expectedTaskVersion`，`JumpNodeRequest` 不具备任务版本；验证 `AttachmentUploadItem.content` 为 `byte[]`。为每类请求提供有效夹具；执行 `mvn -q -pl platform/platform-core -am test` 后提交。
 
 3. **B0.3：运行时结果 DTO**
 
-   创建 `ProcessInstanceDTO`、`TaskDTO`、`HistoryTaskDTO`、`TaskActionResult`、`OperationResult` 与 `AttachmentUploadItem`。
+   创建 `ProcessInstanceDTO`、`TaskDTO`、`HistoryTaskDTO`、`TaskActionResult` 与 `OperationResult`。
 
    - `ProcessInstanceDTO` 返回实例基本信息、流程变量和 `createdTasks`。
    - `TaskDTO` 返回任务标识、节点、候选/办理/委托信息、任务组与分支、`taskVersion`。
    - `HistoryTaskDTO` 返回归档动作、意见、变量快照与办理时间。
    - `TaskActionResult` 返回 `operationId`、实例、`archivedTasks`、`createdTasks`、`replayed`。
    - `OperationResult` 返回操作号、目标类型/ID、删除状态、`replayed`。
-   - `AttachmentUploadItem` 使用 `byte[] content` 承载上传内容。
 
    执行顺序：  
    先完成不依赖 C 枚举的字段、集合、无参构造与访问器，并为其补充测试；枚举字段作为 B0.3 的等待子项，待 C 合并正式枚举后再补齐。不得为等待字段创建临时 `String`、重复枚举或兼容别名。
@@ -67,7 +66,7 @@ B 在自己的分支持续小提交；A/C 合并后统一 rebase。若字段或�
    “创建运行时结果 DTO，严格按 v4 的结果和回调字段命名。先完成不依赖枚举的字段；仅在 C 已合并正式枚举后补齐对应枚举字段。不得创建临时 String、重复枚举或兼容别名。”
 
    测试与完成条件：  
-   AI 同步测试每个结果 DTO 的 JavaBean 属性与类型，特别验证 `ProcessInstanceDTO.createdTasks`、`TaskDTO.taskVersion`、`TaskActionResult.operationId/archivedTasks/createdTasks/replayed`、`OperationResult` 的删除与重放字段，以及 `AttachmentUploadItem.content` 为 `byte[]`。无枚举依赖部分测试通过后可提交；C 合并后的枚举字段与测试补齐后，再执行 `mvn -q -pl platform/platform-core -am test`。
+   AI 同步测试每个结果 DTO 的 JavaBean 属性与类型，特别验证 `ProcessInstanceDTO.createdTasks`、`TaskDTO.taskVersion`、`TaskActionResult.operationId/archivedTasks/createdTasks/replayed`、`OperationResult` 的删除与重放字段。无枚举依赖部分测试通过后可提交；C 合并后的枚举字段与测试补齐后，再执行 `mvn -q -pl platform/platform-core -am test`。
 
 4. **B0.4：DTO 契约测试与夹具**
 
