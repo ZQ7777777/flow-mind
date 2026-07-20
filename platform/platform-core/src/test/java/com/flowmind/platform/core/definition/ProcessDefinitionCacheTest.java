@@ -41,8 +41,9 @@ class ProcessDefinitionCacheTest {
         source.getNodes().get(0).setNodeCode("changed-source-node");
         source.getAttachmentTemplates().get(0).getAllowedExtensions().add("exe");
 
-        ProcessDefinitionDetailDTO firstRead = cache.get("definition-1", 1);
+        ProcessDefinitionDetailDTO firstRead = cache.get("definition-1");
         assertEquals("Expense approval", firstRead.getProcessName());
+        assertEquals(Integer.valueOf(1), firstRead.getVersion());
         assertEquals("review", firstRead.getNodes().get(0).getNodeCode());
         assertEquals(Arrays.asList("pdf", "png"),
                 firstRead.getAttachmentTemplates().get(0).getAllowedExtensions());
@@ -52,7 +53,7 @@ class ProcessDefinitionCacheTest {
         firstRead.getFormFields().clear();
         firstRead.getAttachmentTemplates().get(0).getApplicableNodeCodes().clear();
 
-        ProcessDefinitionDetailDTO secondRead = cache.get("definition-1", 1);
+        ProcessDefinitionDetailDTO secondRead = cache.get("definition-1");
         assertEquals("review", secondRead.getNodes().get(0).getNodeCode());
         assertEquals(1, secondRead.getFormFields().size());
         assertEquals(Collections.singletonList("review"),
@@ -61,50 +62,53 @@ class ProcessDefinitionCacheTest {
     }
 
     @Test
-    void isolatesVersionsAndInvalidatesAllVersionsForDefinition() {
+    void isolatesDefinitionsAndInvalidatesOnlyTargetDefinition() {
         ProcessDefinitionCache cache = new ProcessDefinitionCache();
-        ProcessDefinitionDetailDTO versionOne = publishedDefinition("definition-1", 1);
-        ProcessDefinitionDetailDTO versionTwo = publishedDefinition("definition-1", 2);
-        versionTwo.setProcessName("Expense approval v2");
+        ProcessDefinitionDetailDTO firstDefinition = publishedDefinition("definition-1", 1);
+        ProcessDefinitionDetailDTO secondDefinition = publishedDefinition("definition-2", 2);
+        secondDefinition.setProcessCode("travel");
+        secondDefinition.setProcessName("Travel approval");
 
-        assertNull(cache.get("definition-1", 3));
-        assertTrue(cache.put(versionOne, validResult(), cache.captureGeneration("definition-1")));
-        assertTrue(cache.put(versionTwo, validResult(), cache.captureGeneration("definition-1")));
-        assertEquals("Expense approval", cache.get("definition-1", 1).getProcessName());
-        assertEquals("Expense approval v2", cache.get("definition-1", 2).getProcessName());
+        assertNull(cache.get("definition-1"));
+        assertTrue(cache.put(firstDefinition, validResult(), cache.captureGeneration("definition-1")));
+        assertTrue(cache.put(secondDefinition, validResult(), cache.captureGeneration("definition-2")));
+        assertEquals("Expense approval", cache.get("definition-1").getProcessName());
+        assertEquals("Travel approval", cache.get("definition-2").getProcessName());
 
         cache.invalidate("definition-1");
 
-        assertNull(cache.get("definition-1", 1));
-        assertNull(cache.get("definition-1", 2));
+        assertNull(cache.get("definition-1"));
+        assertEquals("Travel approval", cache.get("definition-2").getProcessName());
     }
 
     @Test
     void rejectsNonCacheableDefinitionsWithoutEvictingActiveVersion() {
         ProcessDefinitionCache cache = new ProcessDefinitionCache();
         ProcessDefinitionDetailDTO active = publishedDefinition("definition-1", 1);
-        ProcessDefinitionDetailDTO draft = publishedDefinition("definition-1", 2);
+        ProcessDefinitionDetailDTO draft = publishedDefinition("definition-2", 2);
         draft.setDefinitionStatus(DefinitionStatusEnum.DRAFT);
         draft.setActivationStatus(ActivationStatusEnum.INACTIVE);
-        ProcessDefinitionDetailDTO inactive = publishedDefinition("definition-1", 3);
+        ProcessDefinitionDetailDTO inactive = publishedDefinition("definition-3", 3);
         inactive.setActivationStatus(ActivationStatusEnum.INACTIVE);
-        ProcessDefinitionDetailDTO invalid = publishedDefinition("definition-1", 4);
+        ProcessDefinitionDetailDTO invalid = publishedDefinition("definition-4", 4);
         ProcessDefinitionDetailDTO missingId = publishedDefinition(" ", 5);
-        ProcessDefinitionDetailDTO missingVersion = publishedDefinition("definition-1", null);
+        ProcessDefinitionDetailDTO missingVersion = publishedDefinition("definition-5", null);
 
         assertTrue(cache.put(active, validResult(), cache.captureGeneration("definition-1")));
-        assertFalse(cache.put(draft, validResult(), cache.captureGeneration("definition-1")));
-        assertFalse(cache.put(inactive, validResult(), cache.captureGeneration("definition-1")));
-        assertFalse(cache.put(invalid, invalidResult(), cache.captureGeneration("definition-1")));
+        assertFalse(cache.put(draft, validResult(), cache.captureGeneration("definition-2")));
+        assertFalse(cache.put(inactive, validResult(), cache.captureGeneration("definition-3")));
+        assertFalse(cache.put(invalid, invalidResult(), cache.captureGeneration("definition-4")));
         assertFalse(cache.put(missingId, validResult(), cache.captureGeneration(" ")));
-        assertFalse(cache.put(missingVersion, validResult(), cache.captureGeneration("definition-1")));
+        assertFalse(cache.put(missingVersion, validResult(), cache.captureGeneration("definition-5")));
         assertFalse(cache.put(null, validResult(), null));
         assertFalse(cache.put(active, null, cache.captureGeneration("definition-1")));
 
-        assertEquals("Expense approval", cache.get("definition-1", 1).getProcessName());
-        assertNull(cache.get("definition-1", 2));
-        assertNull(cache.get("definition-1", 3));
-        assertNull(cache.get("definition-1", 4));
+        assertEquals("Expense approval", cache.get("definition-1").getProcessName());
+        assertNull(cache.get("definition-2"));
+        assertNull(cache.get("definition-3"));
+        assertNull(cache.get("definition-4"));
+        assertNull(cache.get(null));
+        assertNull(cache.get(" "));
     }
 
     @Test
@@ -117,7 +121,7 @@ class ProcessDefinitionCacheTest {
         source.setAttachmentTemplates(null);
 
         assertTrue(cache.put(source, validResult(), cache.captureGeneration("definition-1")));
-        ProcessDefinitionDetailDTO cached = cache.get("definition-1", 1);
+        ProcessDefinitionDetailDTO cached = cache.get("definition-1");
 
         assertNull(cached.getNodes());
         assertNull(cached.getEdges());
@@ -142,11 +146,12 @@ class ProcessDefinitionCacheTest {
                         if (!start.await(5, TimeUnit.SECONDS)) {
                             return false;
                         }
+                        String definitionId = "definition-concurrent-" + currentVersion;
                         ProcessDefinitionDetailDTO definition =
-                                publishedDefinition("definition-concurrent", currentVersion);
+                                publishedDefinition(definitionId, currentVersion);
                         return cache.put(definition, validResult(),
-                                cache.captureGeneration("definition-concurrent"))
-                                && cache.get("definition-concurrent", currentVersion) != null;
+                                cache.captureGeneration(definitionId))
+                                && cache.get(definitionId) != null;
                     }
                 }));
             }
@@ -171,7 +176,7 @@ class ProcessDefinitionCacheTest {
         cache.invalidate("definition-1");
 
         assertFalse(cache.put(staleDefinition, validResult(), staleGeneration));
-        assertNull(cache.get("definition-1", 1));
+        assertNull(cache.get("definition-1"));
         assertTrue(cache.put(staleDefinition, validResult(),
                 cache.captureGeneration("definition-1")));
     }
@@ -199,7 +204,7 @@ class ProcessDefinitionCacheTest {
             continueCopy.countDown();
 
             assertFalse(stalePut.get(5, TimeUnit.SECONDS));
-            assertNull(cache.get("definition-1", 1));
+            assertNull(cache.get("definition-1"));
         } finally {
             continueCopy.countDown();
             executor.shutdownNow();

@@ -11,7 +11,6 @@ import com.flowmind.platform.api.enums.DefinitionStatusEnum;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,9 +26,9 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class ProcessDefinitionCache {
 
-    /** 定义详情缓存条目，键包含定义 ID 和版本。 */
-    private final ConcurrentMap<CacheKey, ProcessDefinitionDetailDTO> entries =
-            new ConcurrentHashMap<CacheKey, ProcessDefinitionDetailDTO>();
+    /** 定义详情缓存条目，键为流程定义 ID。 */
+    private final ConcurrentMap<String, ProcessDefinitionDetailDTO> entries =
+            new ConcurrentHashMap<String, ProcessDefinitionDetailDTO>();
     /**
      * 定义 ID 对应的失效世代；其对象监视器同时串行化该定义的写入和失效，避免旧加载在失效后回写。
      */
@@ -37,17 +36,18 @@ public final class ProcessDefinitionCache {
             new ConcurrentHashMap<String, AtomicLong>();
 
     /**
-     * 读取指定版本的流程定义详情。
+     * 读取指定流程定义详情。
+     *
+     * <p>定义 ID 已唯一定位数据库中的固定版本；运行时调用方仍应将返回详情的版本与实例快照核对。</p>
      *
      * @param definitionId 流程定义 ID
-     * @param version 流程定义版本
      * @return 深层防御性副本；未命中或参数非法时返回 {@code null}
      */
-    public ProcessDefinitionDetailDTO get(String definitionId, Integer version) {
-        if (isBlank(definitionId) || version == null) {
+    public ProcessDefinitionDetailDTO get(String definitionId) {
+        if (isBlank(definitionId)) {
             return null;
         }
-        ProcessDefinitionDetailDTO cached = entries.get(new CacheKey(definitionId, version));
+        ProcessDefinitionDetailDTO cached = entries.get(definitionId);
         return cached == null ? null : copyOf(cached);
     }
 
@@ -86,20 +86,19 @@ public final class ProcessDefinitionCache {
                 || !definition.getId().equals(generation.definitionId)) {
             return false;
         }
-        CacheKey key = new CacheKey(definition.getId(), definition.getVersion());
         ProcessDefinitionDetailDTO copied = copyOf(definition);
         AtomicLong currentGeneration = generationOf(definition.getId());
         synchronized (currentGeneration) {
             if (currentGeneration.get() != generation.value) {
                 return false;
             }
-            entries.put(key, copied);
+            entries.put(definition.getId(), copied);
             return true;
         }
     }
 
     /**
-     * 失效同一流程定义的全部版本缓存。
+     * 失效流程定义缓存。
      *
      * @param definitionId 流程定义 ID
      */
@@ -110,11 +109,7 @@ public final class ProcessDefinitionCache {
         AtomicLong currentGeneration = generationOf(definitionId);
         synchronized (currentGeneration) {
             currentGeneration.incrementAndGet();
-            for (Map.Entry<CacheKey, ProcessDefinitionDetailDTO> entry : entries.entrySet()) {
-                if (definitionId.equals(entry.getKey().definitionId)) {
-                    entries.remove(entry.getKey(), entry.getValue());
-                }
-            }
+            entries.remove(definitionId);
         }
     }
 
@@ -308,34 +303,4 @@ public final class ProcessDefinitionCache {
         }
     }
 
-    /** 流程定义版本缓存键。 */
-    private static final class CacheKey {
-        /** 流程定义 ID。 */
-        private final String definitionId;
-        /** 流程定义版本。 */
-        private final Integer version;
-
-        private CacheKey(String definitionId, Integer version) {
-            this.definitionId = definitionId;
-            this.version = version;
-        }
-
-        @Override
-        public boolean equals(Object object) {
-            if (this == object) {
-                return true;
-            }
-            if (!(object instanceof CacheKey)) {
-                return false;
-            }
-            CacheKey other = (CacheKey) object;
-            return definitionId.equals(other.definitionId) && version.equals(other.version);
-        }
-
-        @Override
-        public int hashCode() {
-            int result = definitionId.hashCode();
-            return 31 * result + version.hashCode();
-        }
-    }
 }
