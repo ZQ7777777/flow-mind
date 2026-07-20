@@ -12,6 +12,9 @@ import java.time.format.DateTimeFormatter;
 
 final class DefinitionRowMappers {
 
+    /*
+    * 将从数据库中查询出来的一行数据转换成实体类对象
+     */
     static final RowMapper<ProcessDefinitionEntity> DEFINITION = new RowMapper<ProcessDefinitionEntity>() {
         @Override
         public ProcessDefinitionEntity mapRow(ResultSet resultSet, int rowNum) throws SQLException {
@@ -78,14 +81,23 @@ final class DefinitionRowMappers {
     private static final DateTimeFormatter SQLITE_DATE_TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    /*
+    * private 类型的构造函数，禁止别人创建对象（工具类）
+     */
     private DefinitionRowMappers() {
     }
 
+    /*
+    * 将java时间转成SQLite字符串
+     */
     static String toDbString(LocalDateTime value) {
         return value == null ? null : value.format(SQLITE_DATE_TIME);
     }
 
-    private static LocalDateTime toLocalDateTime(String value) {
+    /*
+     * 将SQLite字符串转成java时间
+     */
+    static LocalDateTime toLocalDateTime(String value) {
         if (value == null || value.trim().isEmpty()) {
             return null;
         }
