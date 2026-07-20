@@ -8,34 +8,34 @@ import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 
 /**
  * 流程定义模型结构的最小冻结校验器。
  *
- * <p>M0.5 只做发布前的结构约束表达，不在这里执行发布、部署或运行时推进。</p>
+ * <p>只报告发布前模型问题，不执行发布、部署或运行时推进。</p>
  *
  * @author Yuxin Xu
  * @since 2026-07-15
  */
 public class DefinitionModelValidator {
 
-    private static final NodeTypeEnum START = NodeTypeEnum.START;
-    private static final NodeTypeEnum END = NodeTypeEnum.END;
     private static final NodeTypeEnum USER_TASK = NodeTypeEnum.USER_TASK;
     private static final NodeTypeEnum EXCLUSIVE_GATEWAY = NodeTypeEnum.EXCLUSIVE_GATEWAY;
     private static final NodeTypeEnum PARALLEL_SPLIT_GATEWAY = NodeTypeEnum.PARALLEL_SPLIT_GATEWAY;
     private static final NodeTypeEnum PARALLEL_JOIN_GATEWAY = NodeTypeEnum.PARALLEL_JOIN_GATEWAY;
     private static final ApproverRuleTypeEnum STARTER = ApproverRuleTypeEnum.STARTER;
 
+    /**
+     * 校验流程定义详情中的基础模型约束。
+     *
+     * @param definition 正式流程定义详情
+     * @return 包含全部已发现问题的校验结果
+     */
     public ValidationResult validate(ProcessDefinitionDetailDTO definition) {
         ValidationResult result = new ValidationResult();
         result.setValid(true);
@@ -45,117 +45,94 @@ public class DefinitionModelValidator {
             return result;
         }
 
-        List<ProcessNodeDTO> nodes = safeNodes(definition.getNodes());
-        List<ProcessEdgeDTO> edges = safeEdges(definition.getEdges());
-        Map<String, ProcessNodeDTO> nodeByCode = indexNodes(result, nodes);
-        Map<String, List<ProcessEdgeDTO>> outgoing = new HashMap<String, List<ProcessEdgeDTO>>();
-        Map<String, List<ProcessEdgeDTO>> incoming = new HashMap<String, List<ProcessEdgeDTO>>();
-
-        // 各校验步骤独立追加 issue，尽量一次返回完整模型问题列表。
-        validateStartAndEnd(result, nodes);
-        validateEdges(result, edges, nodeByCode, outgoing, incoming);
-        validateUserTasks(result, nodes);
-        validateExclusiveGatewayDefaults(result, nodes, outgoing);
-        validateParallelGatewayPairs(result, nodes, nodeByCode, outgoing, incoming);
-        validateReachability(result, nodes, edges, outgoing, incoming);
+        DefinitionGraphIndex graph = DefinitionGraphIndex.from(definition);
+        validateNullElements(result, graph);
+        validateNodeCodes(result, graph.getNodes());
+        validateStartAndEnd(result, graph);
+        validateEdges(result, graph);
+        validateUserTasks(result, graph.getNodes());
+        validateExclusiveGatewayDefaults(result, graph);
+        validateParallelGatewayPairs(result, graph);
+        validateReachability(result, graph);
         return result;
     }
 
-    private Map<String, ProcessNodeDTO> indexNodes(ValidationResult result, List<ProcessNodeDTO> nodes) {
-        Map<String, ProcessNodeDTO> nodeByCode = new LinkedHashMap<String, ProcessNodeDTO>();
+    private void validateNullElements(ValidationResult result, DefinitionGraphIndex graph) {
+        for (int index = 0; index < graph.getNullNodeCount(); index++) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_NODE_REFERENCE_INVALID,
+                    "Definition model contains a null node.", null, null);
+        }
+        for (int index = 0; index < graph.getNullEdgeCount(); index++) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_EDGE_REFERENCE_INVALID,
+                    "Definition model contains a null edge.", null, null);
+        }
+    }
+
+    private void validateNodeCodes(ValidationResult result, List<ProcessNodeDTO> nodes) {
+        Set<String> nodeCodes = new LinkedHashSet<String>();
         for (ProcessNodeDTO node : nodes) {
-            // node_code 是连线引用和网关配对的基础标识，不能为空且不能重复。
             if (isBlank(node.getNodeCode())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_NODE_REFERENCE_INVALID,
                         "Node code must not be blank.", null, null);
-                continue;
-            }
-            ProcessNodeDTO previous = nodeByCode.put(node.getNodeCode(), node);
-            if (previous != null) {
+            } else if (!nodeCodes.add(node.getNodeCode())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_NODE_REFERENCE_INVALID,
                         "Duplicate node code: " + node.getNodeCode() + ".",
                         node.getNodeCode(), null);
             }
         }
-        return nodeByCode;
     }
 
-    private void validateStartAndEnd(ValidationResult result, List<ProcessNodeDTO> nodes) {
-        int startCount = 0;
-        int endCount = 0;
-        for (ProcessNodeDTO node : nodes) {
-            if (START.equals(node.getNodeType())) {
-                startCount++;
-            }
-            if (END.equals(node.getNodeType())) {
-                endCount++;
-            }
-        }
-        if (startCount != 1) {
+    private void validateStartAndEnd(ValidationResult result, DefinitionGraphIndex graph) {
+        if (graph.getStartNodes().size() != 1) {
             addIssue(result, FrozenValidationErrorCodes.MODEL_START_NODE_INVALID,
                     "Definition model must contain exactly one start node.", null, null);
         }
-        if (endCount < 1) {
+        if (graph.getEndNodes().isEmpty()) {
             addIssue(result, FrozenValidationErrorCodes.MODEL_END_NODE_REQUIRED,
                     "Definition model must contain at least one end node.", null, null);
         }
     }
 
-    private void validateEdges(ValidationResult result,
-                               List<ProcessEdgeDTO> edges,
-                               Map<String, ProcessNodeDTO> nodeByCode,
-                               Map<String, List<ProcessEdgeDTO>> outgoing,
-                               Map<String, List<ProcessEdgeDTO>> incoming) {
+    private void validateEdges(ValidationResult result, DefinitionGraphIndex graph) {
         Set<String> edgeCodes = new LinkedHashSet<String>();
-        for (ProcessEdgeDTO edge : edges) {
-            // 连线编码用于分支键和审计定位，重复会导致运行时语义不确定。
+        for (ProcessEdgeDTO edge : graph.getEdges()) {
             if (!isBlank(edge.getEdgeCode()) && !edgeCodes.add(edge.getEdgeCode())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_EDGE_REFERENCE_INVALID,
                         "Duplicate edge code: " + edge.getEdgeCode() + ".",
                         null, edge.getEdgeCode());
             }
-            // 连线两端必须都能解析到当前定义内的节点。
-            if (!nodeByCode.containsKey(edge.getSourceNodeCode())) {
+            if (!graph.getNodesByCode().containsKey(edge.getSourceNodeCode())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_EDGE_REFERENCE_INVALID,
                         "Edge source node does not exist: " + edge.getSourceNodeCode() + ".",
                         edge.getSourceNodeCode(), edge.getEdgeCode());
-            } else {
-                putEdge(outgoing, edge.getSourceNodeCode(), edge);
             }
-            if (!nodeByCode.containsKey(edge.getTargetNodeCode())) {
+            if (!graph.getNodesByCode().containsKey(edge.getTargetNodeCode())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_EDGE_REFERENCE_INVALID,
                         "Edge target node does not exist: " + edge.getTargetNodeCode() + ".",
                         edge.getTargetNodeCode(), edge.getEdgeCode());
-            } else {
-                putEdge(incoming, edge.getTargetNodeCode(), edge);
             }
         }
     }
 
     private void validateUserTasks(ValidationResult result, List<ProcessNodeDTO> nodes) {
         for (ProcessNodeDTO node : nodes) {
-            // 用户任务必须有审批人规则；STARTER 规则不强制额外配置。
             if (USER_TASK.equals(node.getNodeType())
                     && (node.getApproverRuleType() == null
                     || (!STARTER.equals(node.getApproverRuleType())
                     && isBlank(node.getApproverRuleConfig())))) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_USER_TASK_APPROVER_REQUIRED,
-                        "User task must define approver rule.",
-                        node.getNodeCode(), null);
+                        "User task must define approver rule.", node.getNodeCode(), null);
             }
         }
     }
 
-    private void validateExclusiveGatewayDefaults(ValidationResult result,
-                                                  List<ProcessNodeDTO> nodes,
-                                                  Map<String, List<ProcessEdgeDTO>> outgoing) {
-        for (ProcessNodeDTO node : nodes) {
+    private void validateExclusiveGatewayDefaults(ValidationResult result, DefinitionGraphIndex graph) {
+        for (ProcessNodeDTO node : graph.getGatewayNodes()) {
             if (!EXCLUSIVE_GATEWAY.equals(node.getNodeType())) {
                 continue;
             }
-            // 条件网关允许没有默认线，但最多只能有一条默认线。
             int defaultCount = 0;
-            for (ProcessEdgeDTO edge : edgesOf(outgoing, node.getNodeCode())) {
+            for (ProcessEdgeDTO edge : graph.getOutgoingEdges(node.getNodeCode())) {
                 if (Boolean.TRUE.equals(edge.getDefaultEdge())) {
                     defaultCount++;
                 }
@@ -168,34 +145,28 @@ public class DefinitionModelValidator {
         }
     }
 
-    private void validateParallelGatewayPairs(ValidationResult result,
-                                              List<ProcessNodeDTO> nodes,
-                                              Map<String, ProcessNodeDTO> nodeByCode,
-                                              Map<String, List<ProcessEdgeDTO>> outgoing,
-                                              Map<String, List<ProcessEdgeDTO>> incoming) {
-        for (ProcessNodeDTO node : nodes) {
-            if (!PARALLEL_SPLIT_GATEWAY.equals(node.getNodeType())
-                    && !PARALLEL_JOIN_GATEWAY.equals(node.getNodeType())) {
+    private void validateParallelGatewayPairs(ValidationResult result, DefinitionGraphIndex graph) {
+        for (ProcessNodeDTO node : graph.getGatewayNodes()) {
+            if ((!PARALLEL_SPLIT_GATEWAY.equals(node.getNodeType())
+                    && !PARALLEL_JOIN_GATEWAY.equals(node.getNodeType()))
+                    || isBlank(node.getNodeCode())) {
                 continue;
             }
-            // 并行拆分和汇聚必须互相声明配对，避免跨网关误汇聚。
-            ProcessNodeDTO paired = nodeByCode.get(node.getPairedGatewayCode());
+            ProcessNodeDTO paired = graph.getNodesByCode().get(node.getPairedGatewayCode());
             if (paired == null || !isExpectedPairType(node, paired)
                     || !node.getNodeCode().equals(paired.getPairedGatewayCode())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_PARALLEL_GATEWAY_PAIR_INVALID,
-                        "Parallel gateway pair is invalid.",
-                        node.getNodeCode(), null);
+                        "Parallel gateway pair is invalid.", node.getNodeCode(), null);
                 continue;
             }
-            // 拆分至少两个出分支，汇聚至少两个入分支，才具备并行语义。
             if (PARALLEL_SPLIT_GATEWAY.equals(node.getNodeType())
-                    && edgesOf(outgoing, node.getNodeCode()).size() < 2) {
+                    && graph.getOutgoingEdges(node.getNodeCode()).size() < 2) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_PARALLEL_GATEWAY_PAIR_INVALID,
                         "Parallel split gateway must have at least two outgoing branches.",
                         node.getNodeCode(), null);
             }
             if (PARALLEL_JOIN_GATEWAY.equals(node.getNodeType())
-                    && edgesOf(incoming, node.getNodeCode()).size() < 2) {
+                    && graph.getIncomingEdges(node.getNodeCode()).size() < 2) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_PARALLEL_GATEWAY_PAIR_INVALID,
                         "Parallel join gateway must have at least two incoming branches.",
                         node.getNodeCode(), null);
@@ -203,38 +174,46 @@ public class DefinitionModelValidator {
         }
     }
 
-    private void validateReachability(ValidationResult result,
-                                      List<ProcessNodeDTO> nodes,
-                                      List<ProcessEdgeDTO> edges,
-                                      Map<String, List<ProcessEdgeDTO>> outgoing,
-                                      Map<String, List<ProcessEdgeDTO>> incoming) {
-        ProcessNodeDTO start = null;
-        Set<String> endCodes = new LinkedHashSet<String>();
-        for (ProcessNodeDTO node : nodes) {
-            if (START.equals(node.getNodeType())) {
-                start = node;
-            }
-            if (END.equals(node.getNodeType())) {
-                endCodes.add(node.getNodeCode());
-            }
-        }
+    private void validateReachability(ValidationResult result, DefinitionGraphIndex graph) {
+        ProcessNodeDTO start = firstNodeWithCode(graph.getStartNodes());
+        Set<String> endCodes = nodeCodes(graph.getEndNodes());
         if (start == null || endCodes.isEmpty()) {
             return;
         }
-        // 节点必须既能从开始节点到达，也能继续到达某个结束节点。
-        Set<String> reachableFromStart = walkForward(start.getNodeCode(), outgoing);
-        Set<String> canReachEnd = walkBackward(endCodes, incoming);
-        for (ProcessNodeDTO node : nodes) {
-            String nodeCode = node.getNodeCode();
-            if (!reachableFromStart.contains(nodeCode) || !canReachEnd.contains(nodeCode)) {
+        Set<String> reachableFromStart = walkForward(start.getNodeCode(), graph);
+        Set<String> canReachEnd = walkBackward(endCodes, graph);
+        for (ProcessNodeDTO node : graph.getNodes()) {
+            if (isBlank(node.getNodeCode())) {
+                continue;
+            }
+            if (!reachableFromStart.contains(node.getNodeCode())
+                    || !canReachEnd.contains(node.getNodeCode())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_ORPHAN_NODE_INVALID,
-                        "Node is isolated from start or end path.",
-                        nodeCode, null);
+                        "Node is isolated from start or end path.", node.getNodeCode(), null);
             }
         }
     }
 
-    private Set<String> walkForward(String startCode, Map<String, List<ProcessEdgeDTO>> outgoing) {
+    private ProcessNodeDTO firstNodeWithCode(List<ProcessNodeDTO> nodes) {
+        for (ProcessNodeDTO node : nodes) {
+            if (!isBlank(node.getNodeCode())) {
+                return node;
+            }
+        }
+        return null;
+    }
+
+    private Set<String> nodeCodes(List<ProcessNodeDTO> nodes) {
+        Set<String> nodeCodes = new LinkedHashSet<String>();
+        for (ProcessNodeDTO node : nodes) {
+            if (!isBlank(node.getNodeCode())) {
+                nodeCodes.add(node.getNodeCode());
+            }
+        }
+        return nodeCodes;
+    }
+
+    private Set<String> walkForward(String startCode, DefinitionGraphIndex graph) {
         Set<String> visited = new HashSet<String>();
         Queue<String> queue = new ArrayDeque<String>();
         queue.add(startCode);
@@ -243,14 +222,16 @@ public class DefinitionModelValidator {
             if (!visited.add(current)) {
                 continue;
             }
-            for (ProcessEdgeDTO edge : edgesOf(outgoing, current)) {
-                queue.add(edge.getTargetNodeCode());
+            for (ProcessEdgeDTO edge : graph.getOutgoingEdges(current)) {
+                if (!isBlank(edge.getTargetNodeCode())) {
+                    queue.add(edge.getTargetNodeCode());
+                }
             }
         }
         return visited;
     }
 
-    private Set<String> walkBackward(Set<String> endCodes, Map<String, List<ProcessEdgeDTO>> incoming) {
+    private Set<String> walkBackward(Set<String> endCodes, DefinitionGraphIndex graph) {
         Set<String> visited = new HashSet<String>();
         Queue<String> queue = new ArrayDeque<String>();
         queue.addAll(endCodes);
@@ -259,8 +240,10 @@ public class DefinitionModelValidator {
             if (!visited.add(current)) {
                 continue;
             }
-            for (ProcessEdgeDTO edge : edgesOf(incoming, current)) {
-                queue.add(edge.getSourceNodeCode());
+            for (ProcessEdgeDTO edge : graph.getIncomingEdges(current)) {
+                if (!isBlank(edge.getSourceNodeCode())) {
+                    queue.add(edge.getSourceNodeCode());
+                }
             }
         }
         return visited;
@@ -271,31 +254,6 @@ public class DefinitionModelValidator {
                 && PARALLEL_JOIN_GATEWAY.equals(paired.getNodeType()))
                 || (PARALLEL_JOIN_GATEWAY.equals(node.getNodeType())
                 && PARALLEL_SPLIT_GATEWAY.equals(paired.getNodeType()));
-    }
-
-    private List<ProcessNodeDTO> safeNodes(List<ProcessNodeDTO> nodes) {
-        return nodes == null ? new ArrayList<ProcessNodeDTO>() : nodes;
-    }
-
-    private List<ProcessEdgeDTO> safeEdges(List<ProcessEdgeDTO> edges) {
-        return edges == null ? new ArrayList<ProcessEdgeDTO>() : edges;
-    }
-
-    private void putEdge(Map<String, List<ProcessEdgeDTO>> edgesByNode,
-                         String nodeCode,
-                         ProcessEdgeDTO edge) {
-        List<ProcessEdgeDTO> edges = edgesByNode.get(nodeCode);
-        if (edges == null) {
-            edges = new ArrayList<ProcessEdgeDTO>();
-            edgesByNode.put(nodeCode, edges);
-        }
-        edges.add(edge);
-    }
-
-    private List<ProcessEdgeDTO> edgesOf(Map<String, List<ProcessEdgeDTO>> edgesByNode,
-                                         String nodeCode) {
-        List<ProcessEdgeDTO> edges = edgesByNode.get(nodeCode);
-        return edges == null ? new ArrayList<ProcessEdgeDTO>() : edges;
     }
 
     private void addIssue(ValidationResult result,
