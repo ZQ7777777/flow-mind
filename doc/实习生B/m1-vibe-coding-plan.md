@@ -46,9 +46,10 @@ ProcessDefinitionService / C 的扩展配置实现
 运行时读侧（M2 接入）
 ProcessRuntimeService
   -> ProcessDefinitionCache
-  -> 未命中时调用 ProcessDefinitionService.getDefinition
+  -> 未命中时 captureGeneration(definitionId)
+  -> 调用 ProcessDefinitionService.getDefinition
   -> 校验 PUBLISHED + ACTIVE
-  -> 写入缓存
+  -> put(detailDTO, validationResult, generation)
 ```
 
 `getDefinition` 和 `validateForPublish` 必须读取当前事实数据，不以运行时缓存替代数据库查询。
@@ -138,16 +139,17 @@ M1 只校验配置和拓扑，不求值表达式或执行并行汇聚。
 在 `core.definition` 实现线程安全的 `ProcessDefinitionCache`：
 
 - 键包含定义 ID 与版本，值为 `ProcessDefinitionDetailDTO` 深层防御性副本；
-- 只提供 `get`、`put`、按定义 ID 失效，不调用 Service 或 Repository；
+- 提供 `get`、`captureGeneration`、`put` 和按定义 ID 失效；令牌仅防止失效前的在途加载回写旧副本，不调用 Service 或 Repository；
 - 写入和返回时复制 DTO、元素及嵌套集合；
 - 草稿、未发布、未激活、校验失败或加载异常不得写入；
 - 同一定义内容变化后失效；保存另一未激活草稿不影响当前激活定义；
 - 失效发生在事务提交后，回滚不清除有效缓存；
+- 同一定义的写入与失效串行化，失效返回后不得暴露旧加载结果；
 - 不引入 Redis、Caffeine 或新的读取 port。
 
 `ProcessDefinitionService` 写侧负责失效；`ProcessRuntimeService` 在 M2 负责缓存读取、未命中加载和状态门禁。M1 不提前实现运行时 Service。
 
-完成条件：覆盖命中、缺失、版本隔离、按定义失效、状态门禁、深层复制和并发读写。A 的真实状态生命周期联测转入 M3。
+完成条件：覆盖命中、缺失、版本隔离、按定义失效、状态门禁、深层复制、并发读写和在途旧加载。A 的真实状态生命周期联测转入 M3。
 
 建议提交：`feat: cache active process definition details`
 
