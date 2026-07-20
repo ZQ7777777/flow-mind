@@ -81,9 +81,9 @@ final class DefinitionGraphIndex {
     private final Map<String, ProcessNodeDTO> nodesByCode;
     /** 按连线编码读取的连线索引。 */
     private final Map<String, ProcessEdgeDTO> edgesByCode;
-    /** 按来源节点读取的有效出线。 */
+    /** 按来源节点读取的出线。 */
     private final Map<String, List<ProcessEdgeDTO>> outgoingEdges;
-    /** 按目标节点读取的有效入线。 */
+    /** 按目标节点读取的入线。 */
     private final Map<String, List<ProcessEdgeDTO>> incomingEdges;
     /** 原节点列表中的空元素数量。 */
     private final int nullNodeCount;
@@ -152,7 +152,7 @@ final class DefinitionGraphIndex {
     }
 
     /**
-     * 获取指定节点的有效出线。
+     * 获取指定节点的出线。
      *
      * @param nodeCode 节点编码
      * @return 稳定排序后的出线列表
@@ -162,7 +162,7 @@ final class DefinitionGraphIndex {
     }
 
     /**
-     * 获取指定节点的有效入线。
+     * 获取指定节点的入线。
      *
      * @param nodeCode 节点编码
      * @return 稳定排序后的入线列表

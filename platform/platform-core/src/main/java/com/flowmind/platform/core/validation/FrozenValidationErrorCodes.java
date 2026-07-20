@@ -43,6 +43,27 @@ public final class FrozenValidationErrorCodes {
             "FLOW_FROZEN_MODEL_PARALLEL_GATEWAY_PAIR_INVALID";
     public static final String MODEL_ORPHAN_NODE_INVALID =
             "FLOW_FROZEN_MODEL_ORPHAN_NODE_INVALID";
+    /** 开始节点或用户任务的出线数量不符合要求。 */
+    public static final String MODEL_NODE_OUTGOING_EDGE_INVALID =
+            "FLOW_FROZEN_MODEL_NODE_OUTGOING_EDGE_INVALID";
+    /** 网关配置了审批人规则或多人办理模式。 */
+    public static final String MODEL_GATEWAY_NODE_CONFIGURATION_INVALID =
+            "FLOW_FROZEN_MODEL_GATEWAY_NODE_CONFIGURATION_INVALID";
+    /** 排他网关的出线数量或条件配置不符合要求。 */
+    public static final String MODEL_EXCLUSIVE_GATEWAY_TOPOLOGY_INVALID =
+            "FLOW_FROZEN_MODEL_EXCLUSIVE_GATEWAY_TOPOLOGY_INVALID";
+    /** 并行网关的出入线、条件或分支拓扑不符合要求。 */
+    public static final String MODEL_PARALLEL_GATEWAY_TOPOLOGY_INVALID =
+            "FLOW_FROZEN_MODEL_PARALLEL_GATEWAY_TOPOLOGY_INVALID";
+    /** 定义图包含无法静态证明有限结束的有向环。 */
+    public static final String MODEL_GRAPH_CYCLE_INVALID =
+            "FLOW_FROZEN_MODEL_GRAPH_CYCLE_INVALID";
+    /** 表单字段配置不符合发布要求。 */
+    public static final String MODEL_FORM_FIELD_INVALID =
+            "FLOW_FROZEN_MODEL_FORM_FIELD_INVALID";
+    /** 附件配置不符合发布要求。 */
+    public static final String MODEL_ATTACHMENT_CONFIGURATION_INVALID =
+            "FLOW_FROZEN_MODEL_ATTACHMENT_CONFIGURATION_INVALID";
 
     private FrozenValidationErrorCodes() {
     }
