@@ -9,11 +9,11 @@ import com.flowmind.platform.core.validation.ProcessAttachmentTemplateValidator;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
+import com.flowmind.platform.testsupport.ExistingConnectionDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -29,8 +29,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class ProcessAttachmentTemplateManagerIntegrationTest {
 
@@ -45,7 +45,7 @@ class ProcessAttachmentTemplateManagerIntegrationTest {
     void setUp() throws Exception {
         connection = DriverManager.getConnection("jdbc:sqlite::memory:");
         executeSchema(connection);
-        jdbcTemplate = new JdbcTemplate(new SingleConnectionDataSource(connection, true));
+        jdbcTemplate = new JdbcTemplate(new ExistingConnectionDataSource(connection));
         ProcessAttachmentTemplateRepository templateRepository =
                 new ProcessAttachmentTemplateRepository(jdbcTemplate);
         manager = new ProcessAttachmentTemplateManager(templateRepository,
@@ -129,10 +129,12 @@ class ProcessAttachmentTemplateManagerIntegrationTest {
         update.setAttachmentTemplateId(created.getAttachmentTemplateId());
         update.setTemplateStatus(AttachmentTemplateStatusEnum.ENABLED);
 
-        FrozenValidationException exception = assertThrows(FrozenValidationException.class,
-                () -> manager.updateTemplate(update, "tester"));
-
-        assertEquals(FrozenValidationErrorCodes.ATTACHMENT_TEMPLATE_REFERENCED, exception.getErrorCode());
+        try {
+            manager.updateTemplate(update, "tester");
+            fail("Expected FrozenValidationException.");
+        } catch (FrozenValidationException exception) {
+            assertEquals(FrozenValidationErrorCodes.ATTACHMENT_TEMPLATE_REFERENCED, exception.getErrorCode());
+        }
     }
 
     @Test

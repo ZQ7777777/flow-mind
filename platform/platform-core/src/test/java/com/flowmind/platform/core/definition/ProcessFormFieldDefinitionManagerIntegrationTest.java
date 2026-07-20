@@ -4,11 +4,11 @@ import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
 import com.flowmind.platform.core.validation.ProcessFormFieldValidator;
 import com.flowmind.platform.persistence.repository.ProcessFormFieldRepository;
+import com.flowmind.platform.testsupport.ExistingConnectionDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -39,7 +39,7 @@ class ProcessFormFieldDefinitionManagerIntegrationTest {
     void setUp() throws Exception {
         connection = DriverManager.getConnection("jdbc:sqlite::memory:");
         executeSchema(connection);
-        jdbcTemplate = new JdbcTemplate(new SingleConnectionDataSource(connection, true));
+        jdbcTemplate = new JdbcTemplate(new ExistingConnectionDataSource(connection));
         manager = new ProcessFormFieldDefinitionManager(
                 new ProcessFormFieldRepository(jdbcTemplate),
                 new ProcessFormFieldValidator());

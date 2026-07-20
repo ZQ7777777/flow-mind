@@ -3,11 +3,11 @@ package com.flowmind.platform.persistence.repository;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
 import com.flowmind.platform.persistence.entity.ProcessFormFieldEntity;
+import com.flowmind.platform.testsupport.ExistingConnectionDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -40,7 +40,7 @@ class DefinitionExtensionRepositoryIntegrationTest {
     void setUp() throws Exception {
         connection = DriverManager.getConnection("jdbc:sqlite::memory:");
         executeSchema(connection);
-        SingleConnectionDataSource dataSource = new SingleConnectionDataSource(connection, true);
+        ExistingConnectionDataSource dataSource = new ExistingConnectionDataSource(connection);
         jdbcTemplate = new JdbcTemplate(dataSource);
         formFieldRepository = new ProcessFormFieldRepository(jdbcTemplate);
         attachmentTemplateRepository = new ProcessAttachmentTemplateRepository(jdbcTemplate);

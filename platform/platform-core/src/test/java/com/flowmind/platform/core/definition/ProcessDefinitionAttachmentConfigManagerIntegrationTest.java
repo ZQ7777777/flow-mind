@@ -11,11 +11,11 @@ import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigVa
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
+import com.flowmind.platform.testsupport.ExistingConnectionDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -47,7 +47,7 @@ class ProcessDefinitionAttachmentConfigManagerIntegrationTest {
     void setUp() throws Exception {
         connection = DriverManager.getConnection("jdbc:sqlite::memory:");
         executeSchema(connection);
-        jdbcTemplate = new JdbcTemplate(new SingleConnectionDataSource(connection, true));
+        jdbcTemplate = new JdbcTemplate(new ExistingConnectionDataSource(connection));
         templateRepository = new ProcessAttachmentTemplateRepository(jdbcTemplate);
         ProcessDefinitionAttachmentConfigRepository configRepository =
                 new ProcessDefinitionAttachmentConfigRepository(jdbcTemplate);

@@ -1,10 +1,10 @@
 package com.flowmind.platform.persistence.repository;
 
+import com.flowmind.platform.testsupport.ExistingConnectionDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -31,7 +31,7 @@ class TaskRepositoryIntegrationTest {
     void setUp() throws Exception {
         connection = DriverManager.getConnection("jdbc:sqlite::memory:");
         executeSchema(connection);
-        SingleConnectionDataSource dataSource = new SingleConnectionDataSource(connection, true);
+        ExistingConnectionDataSource dataSource = new ExistingConnectionDataSource(connection);
         jdbcTemplate = new JdbcTemplate(dataSource);
         activeTaskRepository = new ActiveTaskRepository(jdbcTemplate);
         taskGroupRepository = new TaskGroupRepository(jdbcTemplate);
