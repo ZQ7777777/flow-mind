@@ -43,6 +43,46 @@ public final class FrozenValidationErrorCodes {
             "FLOW_FROZEN_MODEL_PARALLEL_GATEWAY_PAIR_INVALID";
     public static final String MODEL_ORPHAN_NODE_INVALID =
             "FLOW_FROZEN_MODEL_ORPHAN_NODE_INVALID";
+    public static final String FORM_FIELD_REQUIRED =
+            "FLOW_FORM_FIELD_REQUIRED";
+    public static final String FORM_FIELD_CODE_DUPLICATED =
+            "FLOW_FORM_FIELD_CODE_DUPLICATED";
+    public static final String FORM_FIELD_TYPE_INVALID =
+            "FLOW_FORM_FIELD_TYPE_INVALID";
+    public static final String FORM_FIELD_CONTROL_TYPE_INVALID =
+            "FLOW_FORM_FIELD_CONTROL_TYPE_INVALID";
+    public static final String FORM_FIELD_SORT_ORDER_INVALID =
+            "FLOW_FORM_FIELD_SORT_ORDER_INVALID";
+    public static final String FORM_FIELD_VALIDATION_RULE_INVALID =
+            "FLOW_FORM_FIELD_VALIDATION_RULE_INVALID";
+    public static final String FORM_FIELD_DEFAULT_VALUE_INVALID =
+            "FLOW_FORM_FIELD_DEFAULT_VALUE_INVALID";
+    public static final String ATTACHMENT_TEMPLATE_REQUIRED =
+            "FLOW_ATTACHMENT_TEMPLATE_REQUIRED";
+    public static final String ATTACHMENT_TEMPLATE_EXTENSION_INVALID =
+            "FLOW_ATTACHMENT_TEMPLATE_EXTENSION_INVALID";
+    public static final String ATTACHMENT_TEMPLATE_SIZE_INVALID =
+            "FLOW_ATTACHMENT_TEMPLATE_SIZE_INVALID";
+    public static final String ATTACHMENT_TEMPLATE_STATUS_INVALID =
+            "FLOW_ATTACHMENT_TEMPLATE_STATUS_INVALID";
+    public static final String ATTACHMENT_TEMPLATE_NOT_FOUND =
+            "FLOW_ATTACHMENT_TEMPLATE_NOT_FOUND";
+    public static final String ATTACHMENT_TEMPLATE_REFERENCED =
+            "FLOW_ATTACHMENT_TEMPLATE_REFERENCED";
+    public static final String ATTACHMENT_CONFIG_REQUIRED =
+            "FLOW_ATTACHMENT_CONFIG_REQUIRED";
+    public static final String ATTACHMENT_CONFIG_TEMPLATE_INVALID =
+            "FLOW_ATTACHMENT_CONFIG_TEMPLATE_INVALID";
+    public static final String ATTACHMENT_CONFIG_TEMPLATE_DISABLED =
+            "FLOW_ATTACHMENT_CONFIG_TEMPLATE_DISABLED";
+    public static final String ATTACHMENT_CONFIG_QUANTITY_INVALID =
+            "FLOW_ATTACHMENT_CONFIG_QUANTITY_INVALID";
+    public static final String ATTACHMENT_CONFIG_NODE_INVALID =
+            "FLOW_ATTACHMENT_CONFIG_NODE_INVALID";
+    public static final String ATTACHMENT_CONFIG_DUPLICATED =
+            "FLOW_ATTACHMENT_CONFIG_DUPLICATED";
+    public static final String ATTACHMENT_CONFIG_SORT_ORDER_INVALID =
+            "FLOW_ATTACHMENT_CONFIG_SORT_ORDER_INVALID";
 
     private FrozenValidationErrorCodes() {
     }
