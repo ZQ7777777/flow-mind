@@ -138,7 +138,7 @@ M1 只校验配置和拓扑，不求值表达式或执行并行汇聚。
 
 在 `core.definition` 实现线程安全的 `ProcessDefinitionCache`：
 
-- 键包含定义 ID 与版本，值为 `ProcessDefinitionDetailDTO` 深层防御性副本；
+- 键为定义 ID；版本保留在详情中，M2 运行时与实例快照核对，值为 `ProcessDefinitionDetailDTO` 深层防御性副本；
 - 提供 `get`、`captureGeneration`、`put` 和按定义 ID 失效；令牌仅防止失效前的在途加载回写旧副本，不调用 Service 或 Repository；
 - 写入和返回时复制 DTO、元素及嵌套集合；
 - 草稿、未发布、未激活、校验失败或加载异常不得写入；
