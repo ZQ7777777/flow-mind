@@ -21,12 +21,22 @@ public class ProcessNodeRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    /**
+     * 根据流程定义id查询所有节点
+     * @param definitionId
+     * @return
+     */
     public List<ProcessNodeEntity> findByDefinitionId(String definitionId) {
         return jdbcTemplate.query("SELECT * FROM process_node WHERE definition_id = ? "
                         + "ORDER BY sort_order ASC, node_code ASC",
                 DefinitionRowMappers.NODE, definitionId);
     }
 
+    /**
+     * 一次性插入多个节点
+     * @param nodes
+     * @return
+     */
     public int[] batchInsert(final List<ProcessNodeEntity> nodes) {
         return jdbcTemplate.batchUpdate("INSERT INTO process_node "
                         + "(id, definition_id, node_code, node_name, node_type, paired_gateway_code, "
@@ -49,9 +59,9 @@ public class ProcessNodeRepository {
                         ps.setString(10, node.getListenerConfig());
                         ps.setString(11, node.getTimeoutConfig());
                         ps.setString(12, node.getReminderConfig());
-                        setNullableDouble(ps, 13, node.getPositionX());
-                        setNullableDouble(ps, 14, node.getPositionY());
-                        setNullableInteger(ps, 15, node.getSortOrder());
+                        JdbcBindingUtils.setNullableDouble(ps, 13, node.getPositionX());
+                        JdbcBindingUtils.setNullableDouble(ps, 14, node.getPositionY());
+                        JdbcBindingUtils.setNullableInteger(ps, 15, node.getSortOrder());
                     }
 
                     @Override
@@ -61,23 +71,12 @@ public class ProcessNodeRepository {
                 });
     }
 
+    /**
+     * 根据流程定义Id删除所有节点
+     * @param definitionId
+     * @return
+     */
     public int deleteByDefinitionId(String definitionId) {
         return jdbcTemplate.update("DELETE FROM process_node WHERE definition_id = ?", definitionId);
-    }
-
-    private void setNullableDouble(PreparedStatement ps, int index, Double value) throws SQLException {
-        if (value == null) {
-            ps.setObject(index, null);
-        } else {
-            ps.setDouble(index, value.doubleValue());
-        }
-    }
-
-    private void setNullableInteger(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setObject(index, null);
-        } else {
-            ps.setInt(index, value.intValue());
-        }
     }
 }
