@@ -7,12 +7,9 @@ import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
-import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
-import com.flowmind.platform.api.enums.DefinitionErrorCodes;
+import com.flowmind.platform.core.definition.DefinitionErrorCodes;
 import com.flowmind.platform.core.definition.DefinitionValidationException;
-import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
-import com.flowmind.platform.api.enums.NodeTypeEnum;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -118,16 +115,11 @@ public class DefinitionModelValidator {
         for (ProcessNodeDTO node : nodes) {
             validateRequiredText(node.getNodeCode(), "nodeCode");
             validateRequiredText(node.getNodeName(), "nodeName");
-            validateRequiredText(node.getNodeType(), "nodeType");
+            validateRequiredValue(node.getNodeType(), "nodeType");
             if (!nodeCodes.add(node.getNodeCode())) {
                 throw new DefinitionValidationException(DefinitionErrorCodes.NODE_CODE_DUPLICATED,
                         "Duplicate node code: " + node.getNodeCode());
             }
-            validateNodeType(node.getNodeType());
-            if (!isBlank(node.getApproverRuleType())) {
-                validateApproverRuleType(node.getApproverRuleType());
-            }
-            validateMultiInstanceMode(node.getMultiInstanceMode());
         }
 
         Set<String> edgeCodes = new LinkedHashSet<String>();
@@ -159,8 +151,6 @@ public class DefinitionModelValidator {
         }
     }
 
-    private Map<String, ProcessNodeDTO> indexNodes(ValidationResult result, List<ProcessNodeDTO> nodes) {
-        Map<String, ProcessNodeDTO> nodeByCode = new LinkedHashMap<String, ProcessNodeDTO>();
     private void validateNullElements(ValidationResult result, DefinitionGraphIndex graph) {
         for (int index = 0; index < graph.getNullNodeCount(); index++) {
             addIssue(result, FrozenValidationErrorCodes.MODEL_NODE_REFERENCE_INVALID,
@@ -706,35 +696,15 @@ public class DefinitionModelValidator {
         result.setValid(false);
     }
 
-    private void validateNodeType(String value) {
-        try {
-            NodeTypeEnum.valueOf(value);
-        } catch (IllegalArgumentException ex) {
-            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
-                    "nodeType is invalid: " + value, ex);
-        }
-    }
-
-    private void validateApproverRuleType(String value) {
-        try {
-            ApproverRuleTypeEnum.valueOf(value);
-        } catch (IllegalArgumentException ex) {
-            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
-                    "approverRuleType is invalid: " + value, ex);
-        }
-    }
-
-    private void validateMultiInstanceMode(String value) {
-        try {
-            MultiInstanceModeEnum.valueOf(value);
-        } catch (IllegalArgumentException ex) {
-            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
-                    "multiInstanceMode is invalid: " + value, ex);
-        }
-    }
-
     private void validateRequiredText(String value, String fieldName) {
         if (isBlank(value)) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                    fieldName + " must not be empty");
+        }
+    }
+
+    private void validateRequiredValue(Object value, String fieldName) {
+        if (value == null) {
             throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
                     fieldName + " must not be empty");
         }

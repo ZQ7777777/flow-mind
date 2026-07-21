@@ -1,6 +1,9 @@
 package com.flowmind.platform.core.validation;
 
-import com.flowmind.platform.api.enums.DefinitionErrorCodes;
+import com.flowmind.platform.api.enums.ActivationStatusEnum;
+import com.flowmind.platform.api.enums.DefinitionStatusEnum;
+import com.flowmind.platform.api.enums.GrayStatusEnum;
+import com.flowmind.platform.core.definition.DefinitionErrorCodes;
 import com.flowmind.platform.core.definition.DefinitionStateException;
 
 /**
@@ -13,13 +16,13 @@ import com.flowmind.platform.core.definition.DefinitionStateException;
  */
 public class DefinitionStatusValidator {
 
-    public static final String DRAFT = "DRAFT";
-    public static final String PUBLISHED = "PUBLISHED";
-    public static final String ARCHIVED = "ARCHIVED";
-    public static final String INACTIVE = "INACTIVE";
-    public static final String ACTIVE = "ACTIVE";
-    public static final String OFF = "OFF";
-    public static final String ON = "ON";
+    public static final String DRAFT = String.valueOf(DefinitionStatusEnum.DRAFT);
+    public static final String PUBLISHED = String.valueOf(DefinitionStatusEnum.PUBLISHED);
+    public static final String ARCHIVED = String.valueOf(DefinitionStatusEnum.ARCHIVED);
+    public static final String INACTIVE = String.valueOf(ActivationStatusEnum.INACTIVE);
+    public static final String ACTIVE = String.valueOf(ActivationStatusEnum.ACTIVE);
+    public static final String OFF = String.valueOf(GrayStatusEnum.OFF);
+    public static final String ON = String.valueOf(GrayStatusEnum.ON);
 
     public void validate(String definitionStatus,
                          String activationStatus,

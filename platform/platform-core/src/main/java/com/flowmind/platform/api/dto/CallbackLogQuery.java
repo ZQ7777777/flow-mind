@@ -6,7 +6,7 @@ import com.flowmind.platform.api.enums.WorkflowEventTypeEnum;
 /**
  * 回调日志查询条件。
  */
-public class CallbackLogQuery {
+public class CallbackLogQuery extends PageQuery {
 
     /** 流程实例 ID。 */
     private String instanceId;
@@ -15,9 +15,7 @@ public class CallbackLogQuery {
     /** 回调状态。 */
     private CallbackStatusEnum callbackStatus;
     /** 当前页码，从 1 开始。 */
-    private Integer pageNo;
     /** 每页条数。 */
-    private Integer pageSize;
 
     public CallbackLogQuery() {
     }
@@ -46,19 +44,4 @@ public class CallbackLogQuery {
         this.callbackStatus = callbackStatus;
     }
 
-    public Integer getPageNo() {
-        return pageNo;
-    }
-
-    public void setPageNo(Integer pageNo) {
-        this.pageNo = pageNo;
-    }
-
-    public Integer getPageSize() {
-        return pageSize;
-    }
-
-    public void setPageSize(Integer pageSize) {
-        this.pageSize = pageSize;
-    }
 }
