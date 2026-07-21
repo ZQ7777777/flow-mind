@@ -90,6 +90,8 @@ public final class FrozenValidationErrorCodes {
             "FLOW_ATTACHMENT_TEMPLATE_NOT_FOUND";
     public static final String ATTACHMENT_TEMPLATE_REFERENCED =
             "FLOW_ATTACHMENT_TEMPLATE_REFERENCED";
+    public static final String ATTACHMENT_TEMPLATE_VERSION_CONFLICT =
+            "FLOW_ATTACHMENT_TEMPLATE_VERSION_CONFLICT";
     public static final String ATTACHMENT_CONFIG_REQUIRED =
             "FLOW_ATTACHMENT_CONFIG_REQUIRED";
     public static final String ATTACHMENT_CONFIG_TEMPLATE_INVALID =

@@ -91,7 +91,7 @@ public class ProcessFormFieldValidator {
         String fieldCode = trim(field.getFieldCode());
         String fieldName = trim(field.getFieldName());
         String fieldType = normalize(field.getFieldType());
-        String controlType = normalize(field.getControlType());
+        String controlType = trim(field.getControlType());
 
         if (isBlank(fieldCode) || isBlank(fieldName) || isBlank(fieldType) || isBlank(controlType)
                 || field.getRequired() == null) {
@@ -256,7 +256,7 @@ public class ProcessFormFieldValidator {
         Map<String, Set<String>> result = new LinkedHashMap<String, Set<String>>();
         result.put("string", new LinkedHashSet<String>(Arrays.asList("input", "textarea", "select")));
         result.put("number", new LinkedHashSet<String>(Arrays.asList("number", "input")));
-        result.put("date", new LinkedHashSet<String>(Arrays.asList("datePicker")));
+        result.put("date", new LinkedHashSet<String>(Arrays.asList("datepicker")));
         result.put("boolean", new LinkedHashSet<String>(Arrays.asList("checkbox", "select")));
         result.put("select", new LinkedHashSet<String>(Arrays.asList("select")));
         return result;

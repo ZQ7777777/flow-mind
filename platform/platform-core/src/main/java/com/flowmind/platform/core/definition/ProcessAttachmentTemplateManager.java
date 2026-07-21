@@ -9,6 +9,7 @@ import com.flowmind.platform.core.validation.FrozenValidationException;
 import com.flowmind.platform.core.validation.ProcessAttachmentTemplateValidator;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +29,8 @@ import java.util.UUID;
  */
 @Component
 public class ProcessAttachmentTemplateManager {
+
+    private static final int CREATE_VERSION_MAX_ATTEMPTS = 3;
 
     private final ProcessAttachmentTemplateRepository attachmentTemplateRepository;
     private final ProcessAttachmentTemplateValidator attachmentTemplateValidator;
@@ -66,16 +69,39 @@ public class ProcessAttachmentTemplateManager {
      * @param operatorUserId 操作人用户 ID
      * @return 新创建的附件模板版本
      */
+    @Transactional
     public ProcessAttachmentTemplateDTO createTemplateVersion(ProcessAttachmentTemplateDTO request,
                                                               String operatorUserId) {
         ValidationResult validationResult = attachmentTemplateValidator.validateForCreate(request);
         throwIfInvalid(validationResult);
         String attachmentCode = request.getAttachmentCode().trim();
-        int nextVersion = attachmentTemplateRepository.findMaxVersionByAttachmentCode(attachmentCode) + 1;
+        for (int attempt = 1; attempt <= CREATE_VERSION_MAX_ATTEMPTS; attempt++) {
+            int nextVersion = attachmentTemplateRepository.findMaxVersionByAttachmentCode(attachmentCode) + 1;
+            ProcessAttachmentTemplateEntity entity = buildCreateEntity(request, operatorUserId,
+                    attachmentCode, nextVersion);
+            try {
+                attachmentTemplateRepository.insert(entity);
+                return findById(entity.getId()).get();
+            } catch (DataIntegrityViolationException ex) {
+                if (attempt == CREATE_VERSION_MAX_ATTEMPTS) {
+                    throw new FrozenValidationException(
+                            FrozenValidationErrorCodes.ATTACHMENT_TEMPLATE_VERSION_CONFLICT,
+                            "Attachment template version was created concurrently, please retry.");
+                }
+            }
+        }
+        throw new FrozenValidationException(FrozenValidationErrorCodes.ATTACHMENT_TEMPLATE_VERSION_CONFLICT,
+                "Attachment template version was created concurrently, please retry.");
+    }
+
+    private ProcessAttachmentTemplateEntity buildCreateEntity(ProcessAttachmentTemplateDTO request,
+                                                              String operatorUserId,
+                                                              String attachmentCode,
+                                                              int templateVersion) {
         ProcessAttachmentTemplateEntity entity = new ProcessAttachmentTemplateEntity();
         entity.setId(UUID.randomUUID().toString());
         entity.setAttachmentCode(attachmentCode);
-        entity.setTemplateVersion(nextVersion);
+        entity.setTemplateVersion(templateVersion);
         entity.setAttachmentName(request.getAttachmentName().trim());
         entity.setDescription(trimToNull(request.getDescription()));
         entity.setAllowedExtensions(toJson(attachmentTemplateValidator.normalizeAllowedExtensions(
@@ -84,8 +110,7 @@ public class ProcessAttachmentTemplateManager {
         entity.setTemplateStatus(AttachmentTemplateStatusEnum.ENABLED.name());
         entity.setCreatedBy(operatorUserId);
         entity.setUpdatedBy(operatorUserId);
-        attachmentTemplateRepository.insert(entity);
-        return findById(entity.getId()).get();
+        return entity;
     }
 
     /**
