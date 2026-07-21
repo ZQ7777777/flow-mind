@@ -74,7 +74,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     private final DefinitionGraphDraftFactory graphDraftFactory = new DefinitionGraphDraftFactory();
 
     /**
-     * 默认构造器，装配定义管理所需的持久化仓储、幂等组件和图缓存失效扩展点。
+     * 默认构造器，装配定义管理所需的持久化仓储、幂等组件和定义图缓存。
      *
      * @param definitionRepository      流程定义主表仓储
      * @param nodeRepository            流程节点仓储
@@ -82,7 +82,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
      * @param formFieldRepository       流程表单字段仓储
      * @param attachmentConfigRepository 流程定义附件配置仓储
      * @param idempotencyService        操作幂等组件，负责 begin/replay/markSuccess/markFailed
-     * @param processDefinitionCache    图缓存失效扩展点列表，为空时表示当前部署不需要通知运行线缓存
+     * @param processDefinitionCache    定义图缓存组件，为空时使用本地默认缓存
      */
     @Autowired
     public DefaultProcessDefinitionService(ProcessDefinitionRepository definitionRepository,
