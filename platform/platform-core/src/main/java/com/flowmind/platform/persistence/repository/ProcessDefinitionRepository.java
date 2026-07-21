@@ -184,9 +184,32 @@ public class ProcessDefinitionRepository {
     }
 
     /**
-     * 删除流程定义Id对应的流程实例
-     * @param definitionId
-     * @return
+     * 清空流程定义关联实例在审计日志中的引用，日志记录本身保留。
+     *
+     * @param definitionId 流程定义 ID
+     * @return 受影响行数
+     */
+    public int clearAuditLogInstanceReferencesByDefinitionId(String definitionId) {
+        return jdbcTemplate.update("UPDATE process_audit_log SET instance_id = NULL WHERE instance_id IN "
+                + "(SELECT id FROM process_instance WHERE definition_id = ?)", definitionId);
+    }
+
+    /**
+     * 清空流程定义关联实例在回调日志中的引用，日志记录本身保留。
+     *
+     * @param definitionId 流程定义 ID
+     * @return 受影响行数
+     */
+    public int clearCallbackLogInstanceReferencesByDefinitionId(String definitionId) {
+        return jdbcTemplate.update("UPDATE process_callback_log SET instance_id = NULL WHERE instance_id IN "
+                + "(SELECT id FROM process_instance WHERE definition_id = ?)", definitionId);
+    }
+
+    /**
+     * 删除流程定义关联的流程实例。
+     *
+     * @param definitionId 流程定义 ID
+     * @return 受影响行数
      */
     public int deleteInstancesByDefinitionId(String definitionId) {
         return jdbcTemplate.update("DELETE FROM process_instance WHERE definition_id = ?", definitionId);

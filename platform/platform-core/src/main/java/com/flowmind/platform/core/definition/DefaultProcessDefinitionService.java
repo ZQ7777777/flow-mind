@@ -328,6 +328,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         definitionRepository.deleteTaskGroupsByDefinitionId(definition.getId());
         definitionRepository.deleteReminderRecordsByDefinitionId(definition.getId());
         definitionRepository.deleteAlertRecordsByDefinitionId(definition.getId());
+        definitionRepository.clearAuditLogInstanceReferencesByDefinitionId(definition.getId());
+        definitionRepository.clearCallbackLogInstanceReferencesByDefinitionId(definition.getId());
         definitionRepository.deleteInstancesByDefinitionId(definition.getId());
         edgeRepository.deleteByDefinitionId(definition.getId());
         nodeRepository.deleteByDefinitionId(definition.getId());
