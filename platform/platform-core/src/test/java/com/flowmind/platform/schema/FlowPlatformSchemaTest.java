@@ -15,8 +15,8 @@ import java.sql.Statement;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -57,6 +57,22 @@ class FlowPlatformSchemaTest {
     }
 
     @Test
+    void deletingDefinitionWithChildRowsRequiresExplicitServiceCleanup() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            executeSchema(connection);
+            insertDefinition(connection, "definition-001", "expense", 1,
+                    "DRAFT", "INACTIVE", "OFF", null);
+            insertNode(connection, "node-001", "start", "START");
+
+            assertThrows(SQLException.class, () -> {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("DELETE FROM process_definition WHERE id = 'definition-001'");
+                }
+            });
+        }
+    }
+
+    @Test
     void activeTaskReferencesDefinitionWithoutDuplicatingItsVersion() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             executeSchema(connection);
@@ -69,7 +85,7 @@ class FlowPlatformSchemaTest {
     }
 
     @Test
-    void deletingInstancePreservesCallbackLogAndClearsInstanceReference() throws Exception {
+    void deletingInstanceWithCallbackLogRequiresExplicitServiceCleanup() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             executeSchema(connection);
             insertDefinition(connection, "definition-001", "expense", 1,
@@ -77,15 +93,17 @@ class FlowPlatformSchemaTest {
             insertInstance(connection);
             insertCallbackLog(connection);
 
-            try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("DELETE FROM process_instance WHERE id = 'instance-001'");
-            }
+            assertThrows(SQLException.class, () -> {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("DELETE FROM process_instance WHERE id = 'instance-001'");
+                }
+            });
 
             try (Statement statement = connection.createStatement();
                  ResultSet resultSet = statement.executeQuery(
                          "SELECT instance_id FROM process_callback_log WHERE id = 'callback-001'")) {
                 assertTrue(resultSet.next());
-                assertNull(resultSet.getString("instance_id"));
+                assertEquals("instance-001", resultSet.getString("instance_id"));
                 assertFalse(resultSet.next());
             }
         }
