@@ -199,7 +199,6 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
             return replaySaveGraph(decision.getRecord());
         }
         rejectNonExecutableOperation(decision);
-        modelValidator.validateSaveGraphStructure(nodes, edges);
         ensureValid(formFieldManager.validateFormFields(formFields));
         ensureValid(attachmentConfigManager.validateAttachmentConfigs(attachmentConfigs, nodes));
 
@@ -226,7 +225,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
 
     @Override
     public ValidationResult validateForPublish(String definitionId) {
-        throw new UnsupportedOperationException("validateForPublish is not implemented in M1.3");
+        return modelValidator.validate(getDefinition(definitionId));
     }
 
     @Override
