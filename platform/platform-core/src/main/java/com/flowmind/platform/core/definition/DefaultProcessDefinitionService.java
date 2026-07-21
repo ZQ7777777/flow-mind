@@ -82,7 +82,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
      * @param formFieldRepository       流程表单字段仓储
      * @param attachmentConfigRepository 流程定义附件配置仓储
      * @param idempotencyService        操作幂等组件，负责 begin/replay/markSuccess/markFailed
-     * @param graphCacheInvalidators    图缓存失效扩展点列表，为空时表示当前部署不需要通知运行线缓存
+     * @param processDefinitionCache    图缓存失效扩展点列表，为空时表示当前部署不需要通知运行线缓存
      */
     @Autowired
     public DefaultProcessDefinitionService(ProcessDefinitionRepository definitionRepository,
@@ -646,7 +646,6 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
      * 注册图缓存失效通知。
      *
      * @param definitionId 已变更的流程定义 ID，用于精确失效定义级缓存
-     * @param processCode  已变更的流程编码，用于失效按流程编码组织的运行期缓存
      */
     private void registerGraphCacheInvalidation(final String definitionId) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
