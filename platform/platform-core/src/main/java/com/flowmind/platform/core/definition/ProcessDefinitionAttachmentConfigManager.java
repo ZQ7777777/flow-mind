@@ -1,6 +1,5 @@
 package com.flowmind.platform.core.definition;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flowmind.platform.api.dto.ProcessAttachmentConfigDTO;
 import com.flowmind.platform.api.dto.ProcessAttachmentTemplateDTO;
@@ -8,6 +7,7 @@ import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
 import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
 import com.flowmind.platform.api.enums.AttachmentTemplateStatusEnum;
+import com.flowmind.platform.core.validation.FrozenValidationErrorCodes;
 import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigValidator;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
@@ -86,18 +86,24 @@ public class ProcessDefinitionAttachmentConfigManager {
                                            List<ProcessAttachmentConfigDTO> configs,
                                            List<ProcessNodeDTO> currentNodes,
                                            String operatorUserId) {
-        ValidationResult result = attachmentConfigValidator.validate(configs, currentNodes);
+        List<ProcessAttachmentConfigDTO> safeConfigs = configs == null
+                ? new ArrayList<ProcessAttachmentConfigDTO>() : configs;
+        String groupId = resolveGroupId(attachmentConfigId, safeConfigs);
+        ValidationResult groupIdValidation = validateGroupIdConsistency(safeConfigs, groupId);
+        if (!groupIdValidation.isValid()) {
+            return groupIdValidation;
+        }
+        ValidationResult result = attachmentConfigValidator.validate(safeConfigs, currentNodes);
         if (!result.isValid()) {
             return result;
         }
-        String groupId = resolveGroupId(attachmentConfigId, configs);
-        if (configs == null || configs.isEmpty()) {
+        if (safeConfigs.isEmpty()) {
             attachmentConfigRepository.replaceDraftGroup(definitionId, groupId,
                     new ArrayList<ProcessDefinitionAttachmentConfigEntity>());
             return result;
         }
         attachmentConfigRepository.replaceDraftGroup(definitionId, groupId,
-                toEntities(definitionId, groupId, configs, operatorUserId));
+                toEntities(definitionId, groupId, safeConfigs, operatorUserId));
         return result;
     }
 
@@ -147,15 +153,17 @@ public class ProcessDefinitionAttachmentConfigManager {
                                           List<ProcessNodeDTO> currentNodes,
                                           String operatorUserId) {
         List<ProcessDefinitionAttachmentConfigEntity> groupEntities =
-                attachmentConfigRepository.findByAttachmentConfigId(attachmentConfigId);
+                attachmentConfigRepository.findByDefinitionIdAndAttachmentConfigId(definitionId, attachmentConfigId);
+        if (groupEntities.isEmpty()) {
+            return invalidResult(FrozenValidationErrorCodes.ATTACHMENT_CONFIG_REQUIRED,
+                    "Attachment config group does not exist in definition: " + attachmentConfigId + ".");
+        }
         List<ProcessAttachmentConfigDTO> configs = toConfigDtos(groupEntities);
         ValidationResult result = attachmentConfigValidator.validate(configs, currentNodes);
         if (!result.isValid()) {
             return result;
         }
-        if (!groupEntities.isEmpty()) {
-            attachmentConfigRepository.activateGroup(definitionId, attachmentConfigId, operatorUserId);
-        }
+        attachmentConfigRepository.activateGroup(definitionId, attachmentConfigId, operatorUserId);
         return result;
     }
 
@@ -166,6 +174,7 @@ public class ProcessDefinitionAttachmentConfigManager {
      * @param targetDefinitionId 目标流程定义 ID
      * @return 复制的附件配置行数
      */
+    @Transactional
     public int copyAttachmentConfigs(String sourceDefinitionId, String targetDefinitionId) {
         return attachmentConfigRepository.copyToDefinition(sourceDefinitionId, targetDefinitionId);
     }
@@ -356,7 +365,7 @@ public class ProcessDefinitionAttachmentConfigManager {
     private String toJson(List<String> values) {
         try {
             return objectMapper.writeValueAsString(values);
-        } catch (JsonProcessingException ex) {
+        } catch (Exception ex) {
             throw new IllegalStateException("Failed to serialize applicable node codes.", ex);
         }
     }
@@ -378,7 +387,7 @@ public class ProcessDefinitionAttachmentConfigManager {
                 result.add(value);
             }
             return result;
-        } catch (JsonProcessingException ex) {
+        } catch (Exception ex) {
             throw new IllegalStateException("Failed to parse applicable node codes.", ex);
         }
     }
@@ -410,5 +419,50 @@ public class ProcessDefinitionAttachmentConfigManager {
      */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    /**
+     * 创建单问题校验失败结果。
+     *
+     * @param code 错误码
+     * @param message 错误信息
+     * @return 校验失败结果
+     */
+    private ValidationResult invalidResult(String code, String message) {
+        ValidationResult result = new ValidationResult();
+        result.setValid(false);
+        ValidationResult.Issue issue = new ValidationResult.Issue();
+        issue.setCode(code);
+        issue.setMessage(message);
+        result.getIssues().add(issue);
+        return result;
+    }
+
+    /**
+     * 校验传入配置列表中的配置组 ID 是否与目标组一致。
+     *
+     * @param configs 配置列表
+     * @param groupId 目标配置组 ID
+     * @return 校验结果
+     */
+    private ValidationResult validateGroupIdConsistency(List<ProcessAttachmentConfigDTO> configs, String groupId) {
+        ValidationResult result = new ValidationResult();
+        result.setValid(true);
+        for (int index = 0; index < configs.size(); index++) {
+            ProcessAttachmentConfigDTO config = configs.get(index);
+            if (config == null || isBlank(config.getAttachmentConfigId())) {
+                continue;
+            }
+            String configGroupId = config.getAttachmentConfigId().trim();
+            if (!groupId.equals(configGroupId)) {
+                ValidationResult.Issue issue = new ValidationResult.Issue();
+                issue.setCode(FrozenValidationErrorCodes.ATTACHMENT_CONFIG_REQUIRED);
+                issue.setMessage("Attachment config group id at index " + index
+                        + " does not match target group id: " + configGroupId + " vs " + groupId + ".");
+                result.getIssues().add(issue);
+                result.setValid(false);
+            }
+        }
+        return result;
     }
 }

@@ -109,6 +109,22 @@ public class ProcessAttachmentTemplateRepository {
                 attachmentName, description, allowedExtensions, maxSizeBytes, templateStatus, updatedBy, id);
     }
 
+    public int updateTemplateIfUnreferenced(String id,
+                                            String attachmentName,
+                                            String description,
+                                            String allowedExtensions,
+                                            Long maxSizeBytes,
+                                            String templateStatus,
+                                            String updatedBy) {
+        return jdbcTemplate.update("UPDATE process_attachment_template "
+                        + "SET attachment_name = ?, description = ?, allowed_extensions = ?, "
+                        + "max_size_bytes = ?, template_status = ?, updated_by = ?, updated_at = datetime('now') "
+                        + "WHERE id = ? AND NOT EXISTS ("
+                        + "SELECT 1 FROM process_definition_attachment_config "
+                        + "WHERE attachment_template_id = ? AND config_status IN ('ACTIVE', 'INACTIVE'))",
+                attachmentName, description, allowedExtensions, maxSizeBytes, templateStatus, updatedBy, id, id);
+    }
+
     public boolean isReferencedByActiveConfig(String templateId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(1) FROM process_definition_attachment_config "

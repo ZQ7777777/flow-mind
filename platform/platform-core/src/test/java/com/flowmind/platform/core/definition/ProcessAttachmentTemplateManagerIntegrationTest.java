@@ -138,6 +138,24 @@ class ProcessAttachmentTemplateManagerIntegrationTest {
     }
 
     @Test
+    void inactiveReferencedTemplateCannotChangeRulesInPlace() {
+        ProcessAttachmentTemplateDTO created = manager.createTemplateVersion(
+                template("receipt", "Receipt", Arrays.asList("pdf"), 10L), "tester");
+        attachmentConfigRepository.insert(config(created.getAttachmentTemplateId(), "INACTIVE"));
+        ProcessAttachmentTemplateDTO update = template("receipt", "Receipt",
+                Arrays.asList("pdf", "jpg"), 10L);
+        update.setAttachmentTemplateId(created.getAttachmentTemplateId());
+        update.setTemplateStatus(AttachmentTemplateStatusEnum.ENABLED);
+
+        try {
+            manager.updateTemplate(update, "tester");
+            fail("Expected FrozenValidationException.");
+        } catch (FrozenValidationException exception) {
+            assertEquals(FrozenValidationErrorCodes.ATTACHMENT_TEMPLATE_REFERENCED, exception.getErrorCode());
+        }
+    }
+
+    @Test
     void referencedTemplateCanBeDisabledWithoutChangingRules() {
         ProcessAttachmentTemplateDTO created = manager.createTemplateVersion(
                 template("receipt", "Receipt", Arrays.asList("pdf"), 10L), "tester");

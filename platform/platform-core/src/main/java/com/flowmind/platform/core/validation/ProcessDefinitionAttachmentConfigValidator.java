@@ -82,18 +82,20 @@ public class ProcessDefinitionAttachmentConfigValidator {
                     "Attachment config at index " + index + " must not be null.");
             return;
         }
-        if (isBlank(config.getAttachmentTemplateId()) || isBlank(config.getAttachmentCode())
+        String attachmentTemplateId = trim(config.getAttachmentTemplateId());
+        String attachmentCode = trim(config.getAttachmentCode());
+        if (isBlank(attachmentTemplateId) || isBlank(attachmentCode)
                 || config.getRequired() == null || config.getMinCount() == null) {
             addIssue(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_REQUIRED,
                     "Attachment template id, code, required flag and minCount must not be blank.");
         }
-        ProcessAttachmentTemplateEntity template = validateTemplate(result, config);
-        validateDuplicates(result, config, attachmentCodes, templateIds);
+        ProcessAttachmentTemplateEntity template = validateTemplate(result, attachmentTemplateId);
+        validateDuplicates(result, attachmentCode, attachmentTemplateId, attachmentCodes, templateIds);
         validateQuantity(result, config);
         validateSortOrder(result, config);
         validateNodes(result, config, nodeByCode);
-        if (template != null && !isBlank(config.getAttachmentCode())
-                && !template.getAttachmentCode().equals(config.getAttachmentCode())) {
+        if (template != null && !isBlank(attachmentCode)
+                && !template.getAttachmentCode().equals(attachmentCode)) {
             addIssue(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_TEMPLATE_INVALID,
                     "Attachment code must match referenced template version.");
         }
@@ -103,24 +105,23 @@ public class ProcessDefinitionAttachmentConfigValidator {
      * 校验附件配置引用的模板版本。
      *
      * @param result 校验结果，会在发现问题时追加 issue
-     * @param config 附件配置 DTO
      * @return 引用的附件模板实体，不存在或模板 ID 为空时返回 null
      */
     private ProcessAttachmentTemplateEntity validateTemplate(ValidationResult result,
-                                                            ProcessAttachmentConfigDTO config) {
-        if (isBlank(config.getAttachmentTemplateId())) {
+                                                            String attachmentTemplateId) {
+        if (isBlank(attachmentTemplateId)) {
             return null;
         }
         Optional<ProcessAttachmentTemplateEntity> template =
-                attachmentTemplateRepository.findById(config.getAttachmentTemplateId());
+                attachmentTemplateRepository.findById(attachmentTemplateId);
         if (!template.isPresent()) {
             addIssue(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_TEMPLATE_INVALID,
-                    "Attachment template version does not exist: " + config.getAttachmentTemplateId() + ".");
+                    "Attachment template version does not exist: " + attachmentTemplateId + ".");
             return null;
         }
         if (!AttachmentTemplateStatusEnum.ENABLED.name().equals(template.get().getTemplateStatus())) {
             addIssue(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_TEMPLATE_DISABLED,
-                    "Attachment template version is disabled: " + config.getAttachmentTemplateId() + ".");
+                    "Attachment template version is disabled: " + attachmentTemplateId + ".");
         }
         return template.get();
     }
@@ -129,21 +130,21 @@ public class ProcessDefinitionAttachmentConfigValidator {
      * 校验同一附件配置组内的附件编码和模板版本是否重复。
      *
      * @param result 校验结果，会在发现问题时追加 issue
-     * @param config 附件配置 DTO
      * @param attachmentCodes 当前配置组已出现的附件编码集合
      * @param templateIds 当前配置组已出现的模板版本 ID 集合
      */
     private void validateDuplicates(ValidationResult result,
-                                    ProcessAttachmentConfigDTO config,
+                                    String attachmentCode,
+                                    String attachmentTemplateId,
                                     Set<String> attachmentCodes,
                                     Set<String> templateIds) {
-        if (!isBlank(config.getAttachmentCode()) && !attachmentCodes.add(config.getAttachmentCode())) {
+        if (!isBlank(attachmentCode) && !attachmentCodes.add(attachmentCode)) {
             addIssue(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_DUPLICATED,
-                    "Duplicate attachment code in config group: " + config.getAttachmentCode() + ".");
+                    "Duplicate attachment code in config group: " + attachmentCode + ".");
         }
-        if (!isBlank(config.getAttachmentTemplateId()) && !templateIds.add(config.getAttachmentTemplateId())) {
+        if (!isBlank(attachmentTemplateId) && !templateIds.add(attachmentTemplateId)) {
             addIssue(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_DUPLICATED,
-                    "Duplicate attachment template in config group: " + config.getAttachmentTemplateId() + ".");
+                    "Duplicate attachment template in config group: " + attachmentTemplateId + ".");
         }
     }
 
@@ -203,15 +204,16 @@ public class ProcessDefinitionAttachmentConfigValidator {
         }
         Set<String> seenNodeCodes = new LinkedHashSet<String>();
         for (String nodeCode : nodeCodes) {
-            if (isBlank(nodeCode) || !seenNodeCodes.add(nodeCode)) {
+            String normalizedNodeCode = trim(nodeCode);
+            if (isBlank(normalizedNodeCode) || !seenNodeCodes.add(normalizedNodeCode)) {
                 addIssue(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_NODE_INVALID,
                         "Applicable node code must not be blank or duplicated.");
                 continue;
             }
-            ProcessNodeDTO node = nodeByCode.get(nodeCode);
+            ProcessNodeDTO node = nodeByCode.get(normalizedNodeCode);
             if (node == null || !NodeTypeEnum.USER_TASK.equals(node.getNodeType())) {
                 addIssue(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_NODE_INVALID,
-                        "Applicable node must exist and be USER_TASK: " + nodeCode + ".");
+                        "Applicable node must exist and be USER_TASK: " + normalizedNodeCode + ".");
             }
         }
     }
@@ -269,5 +271,15 @@ public class ProcessDefinitionAttachmentConfigValidator {
      */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    /**
+     * 对字符串做空安全去空格处理。
+     *
+     * @param value 待处理字符串
+     * @return null 或去首尾空格后的字符串
+     */
+    private String trim(String value) {
+        return value == null ? null : value.trim();
     }
 }

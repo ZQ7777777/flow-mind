@@ -10,6 +10,7 @@ import com.flowmind.platform.core.validation.ProcessAttachmentTemplateValidator;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -94,6 +95,8 @@ public class ProcessAttachmentTemplateManager {
      * @param operatorUserId 操作人用户 ID
      * @return 更新后的附件模板版本
      */
+
+    @Transactional
     public ProcessAttachmentTemplateDTO updateTemplate(ProcessAttachmentTemplateDTO request,
                                                        String operatorUserId) {
         ValidationResult validationResult = attachmentTemplateValidator.validateForUpdate(request);
@@ -104,13 +107,19 @@ public class ProcessAttachmentTemplateManager {
         String allowedExtensionsJson = toJson(normalizedExtensions);
         boolean destructiveChange = !existing.getAllowedExtensions().equals(allowedExtensionsJson)
                 || !existing.getMaxSizeBytes().equals(request.getMaxSizeBytes());
-        if (destructiveChange && attachmentTemplateRepository.isReferencedByEffectiveConfig(existing.getId())) {
-            throw new FrozenValidationException(FrozenValidationErrorCodes.ATTACHMENT_TEMPLATE_REFERENCED,
-                    "Referenced attachment template version cannot be modified in place.");
+        if (destructiveChange) {
+            int updatedRows = attachmentTemplateRepository.updateTemplateIfUnreferenced(existing.getId(),
+                    request.getAttachmentName().trim(), trimToNull(request.getDescription()), allowedExtensionsJson,
+                    request.getMaxSizeBytes(), request.getTemplateStatus().name(), operatorUserId);
+            if (updatedRows == 0) {
+                throw new FrozenValidationException(FrozenValidationErrorCodes.ATTACHMENT_TEMPLATE_REFERENCED,
+                        "Referenced attachment template version cannot be modified in place.");
+            }
+        } else {
+            attachmentTemplateRepository.updateTemplate(existing.getId(), request.getAttachmentName().trim(),
+                    trimToNull(request.getDescription()), allowedExtensionsJson, request.getMaxSizeBytes(),
+                    request.getTemplateStatus().name(), operatorUserId);
         }
-        attachmentTemplateRepository.updateTemplate(existing.getId(), request.getAttachmentName().trim(),
-                trimToNull(request.getDescription()), allowedExtensionsJson, request.getMaxSizeBytes(),
-                request.getTemplateStatus().name(), operatorUserId);
         return findById(existing.getId()).get();
     }
 
@@ -218,7 +227,7 @@ public class ProcessAttachmentTemplateManager {
     private String toJson(List<String> allowedExtensions) {
         try {
             return objectMapper.writeValueAsString(allowedExtensions);
-        } catch (IOException ex) {
+        } catch (Exception ex) {
             throw new IllegalStateException("Failed to serialize attachment extensions.", ex);
         }
     }
@@ -237,7 +246,7 @@ public class ProcessAttachmentTemplateManager {
                 result.add(value);
             }
             return result;
-        } catch (IOException ex) {
+        } catch (Exception ex) {
             throw new IllegalStateException("Failed to parse attachment extensions.", ex);
         }
     }
