@@ -13,6 +13,7 @@ import com.flowmind.platform.testsupport.ExistingConnectionDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.ByteArrayOutputStream;
@@ -72,6 +73,36 @@ class ProcessAttachmentTemplateManagerIntegrationTest {
         assertEquals(Arrays.asList("pdf", "jpg", "png"), first.getAllowedExtensions());
         assertEquals(AttachmentTemplateStatusEnum.ENABLED, first.getTemplateStatus());
         assertEquals(2, second.getTemplateVersion());
+    }
+
+    @Test
+    void createTemplateVersionRetriesWhenConcurrentVersionConflictHappens() {
+        RetryingTemplateRepository retryingRepository = new RetryingTemplateRepository(jdbcTemplate, 2);
+        ProcessAttachmentTemplateManager retryingManager = new ProcessAttachmentTemplateManager(retryingRepository,
+                new ProcessAttachmentTemplateValidator());
+
+        ProcessAttachmentTemplateDTO created = retryingManager.createTemplateVersion(
+                template("receipt", "Receipt", Arrays.asList("pdf"), 10L), "tester");
+
+        assertEquals(3, retryingRepository.getInsertAttempts());
+        assertEquals(1, created.getTemplateVersion());
+    }
+
+    @Test
+    void createTemplateVersionThrowsBusinessExceptionAfterRetryLimitExceeded() {
+        RetryingTemplateRepository retryingRepository = new RetryingTemplateRepository(jdbcTemplate, 3);
+        ProcessAttachmentTemplateManager retryingManager = new ProcessAttachmentTemplateManager(retryingRepository,
+                new ProcessAttachmentTemplateValidator());
+
+        try {
+            retryingManager.createTemplateVersion(
+                    template("receipt", "Receipt", Arrays.asList("pdf"), 10L), "tester");
+            fail("Expected FrozenValidationException.");
+        } catch (FrozenValidationException exception) {
+            assertEquals(FrozenValidationErrorCodes.ATTACHMENT_TEMPLATE_VERSION_CONFLICT,
+                    exception.getErrorCode());
+        }
+        assertEquals(3, retryingRepository.getInsertAttempts());
     }
 
     @Test
@@ -232,5 +263,29 @@ class ProcessAttachmentTemplateManagerIntegrationTest {
             }
         }
         throw new AssertionError("Expected issue code " + expectedCode + " but got " + result.getIssues());
+    }
+
+    private static final class RetryingTemplateRepository extends ProcessAttachmentTemplateRepository {
+
+        private final int conflictsBeforeSuccess;
+        private int insertAttempts;
+
+        private RetryingTemplateRepository(JdbcTemplate jdbcTemplate, int conflictsBeforeSuccess) {
+            super(jdbcTemplate);
+            this.conflictsBeforeSuccess = conflictsBeforeSuccess;
+        }
+
+        @Override
+        public int insert(com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity entity) {
+            insertAttempts++;
+            if (insertAttempts <= conflictsBeforeSuccess) {
+                throw new DuplicateKeyException("Simulated concurrent version conflict.");
+            }
+            return super.insert(entity);
+        }
+
+        private int getInsertAttempts() {
+            return insertAttempts;
+        }
     }
 }
