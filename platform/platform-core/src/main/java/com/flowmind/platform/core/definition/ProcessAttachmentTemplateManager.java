@@ -66,7 +66,6 @@ public class ProcessAttachmentTemplateManager {
      * @param operatorUserId 操作人用户 ID
      * @return 新创建的附件模板版本
      */
-    @Transactional
     public ProcessAttachmentTemplateDTO createTemplateVersion(ProcessAttachmentTemplateDTO request,
                                                               String operatorUserId) {
         ValidationResult validationResult = attachmentTemplateValidator.validateForCreate(request);
