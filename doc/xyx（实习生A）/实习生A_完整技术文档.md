@@ -1,4 +1,4 @@
-# 流程平台技术文档 - 实习生 A
+﻿# 流程平台技术文档 - 实习生 A
 
 > 分工依据：`流程平台技术路线_v5.2.md`  
 > 数据模型与接口基线：`流程平台设计与接口文档_v3.md`  
@@ -133,7 +133,7 @@ flowchart TD
 | 返回类型                     | 关键字段                                                                                              |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `ProcessDefinitionDTO`       | `id`、`processCode`、`processName`、`systemCode`、`version`、三个状态字段、`grayRuleConfig`、审计时间 |
-| `ProcessDefinitionDetailDTO` | 定义基本信息，以及 `nodes`、`edges`、`formFields`、`attachmentTemplates`                              |
+| `ProcessDefinitionDetailDTO` | 定义基本信息，以及 `nodes`、`edges`、`formFields`、`attachmentConfigs`                              |
 | `ProcessNodeDTO`             | 节点基本信息、审批规则、多人模式、配置 JSON、坐标和顺序                                               |
 | `ValidationResult`           | `valid`、`issues[]`；问题包含 `code`、`message`、`nodeCode/edgeCode`                                  |
 | `PageResult<T>`              | `records`、`pageNo`、`pageSize`、`total`、`totalPages`                                                |
@@ -198,7 +198,7 @@ flowchart TD
 | `nodes`               | 是   | 完整节点数组                    |
 | `edges`               | 是   | 完整连线数组                    |
 | `formFields`          | 否   | C 线维护的表单字段              |
-| `attachmentTemplates` | 否   | C 线维护的附件配置              |
+| `attachmentConfigs` | 否   | C 线维护的附件配置              |
 | `expectedUpdatedAt`   | 建议 | v3 未冻结定义级锁时防止覆盖编辑 |
 
 节点项使用 `ProcessNodeDTO` 字段；连线项至少包含编码、起止节点、条件、默认标志和顺序。
@@ -269,14 +269,14 @@ flowchart TD
     E -- "是" --> A{"是否仍为 ACTIVE"}
     A -- "是" --> STOP["拒绝删除，要求先停用"]
     A -- "否" --> TX["开启数据库事务"]
-    TX --> RUN1["删除附件记录、已阅记录"]
-    RUN1 --> RUN2["删除活动任务、任务组、历史任务"]
-    RUN2 --> RUN3["删除流程实例"]
-    RUN3 --> DEF1["删除表单字段、附件配置"]
-    DEF1 --> DEF2["删除连线，再删除节点"]
+    TX --> DEF0["删除表单字段、附件配置"]
+    DEF0 --> RUN1["删除附件记录、已阅记录"]
+    RUN1 --> RUN2["删除活动任务、任务组、历史任务、提醒和告警"]
+    RUN2 --> KEEP["清空审计、回调日志的实例引用并保留日志"]
+    KEEP --> RUN3["删除流程实例"]
+    RUN3 --> DEF2["删除连线，再删除节点"]
     DEF2 --> DEF3["删除流程定义"]
-    DEF3 --> KEEP["保留审计、回调和未过期幂等记录\n标记目标已删除"]
-    KEEP --> SAVE["保存本次幂等成功结果"]
+    DEF3 --> SAVE["保存本次幂等成功结果\n保留未过期幂等记录"]
     SAVE --> COMMIT["COMMIT"]
     COMMIT --> OK["返回删除成功"]
 ```
@@ -286,10 +286,10 @@ flowchart TD
 | 数据类别 | 删除内容 |
 | --- | --- |
 | 定义期数据 | `process_edge`、`process_node`、`process_form_field`、`process_definition_attachment_config`、`process_definition` |
-| 运行期数据 | `process_attachment`、`process_read_record`、`process_active_task`、`process_task_group`、`process_history_task`、`process_instance` |
-| 默认保留 | `process_audit_log`、`process_callback_log`、未到 `expires_at` 的 `process_operation_record` |
+| 运行期数据 | `process_attachment`、`process_read_record`、`process_active_task`、`process_task_group`、`process_history_task`、`process_reminder_record`、`process_alert_record`、`process_instance` |
+| 默认保留 | `process_audit_log`、`process_callback_log` 删除实例前由 Service 显式清空 `instance_id` 引用后保留；未到 `expires_at` 的 `process_operation_record` 保留 |
 
-所有删除必须在同一数据库事务中执行。顺序遵循“运行期子表 → 实例 → 定义期子表 → 定义”，任何一步失败都回滚，不能留下孤立任务、实例或半份定义。文件内容由文件存储 SPI 管理时，应先记录待清理的存储键，数据库提交后再执行文件删除；文件删除失败写告警，不能恢复已经提交的数据库事务。
+所有删除必须在同一数据库事务中执行。顺序遵循“定义期扩展 → 运行期子表 → 清空保留型日志引用 → 实例 → 连线/节点 → 定义”，任何一步失败都回滚，不能留下孤立任务、实例或半份定义。文件内容由文件存储 SPI 管理时，应先记录待清理的存储键，数据库提交后再执行文件删除；文件删除失败写告警，不能恢复已经提交的数据库事务。
 
 返回结果：Service 无业务体；REST 建议返回 `204 No Content`。同幂等号重试仍成功；非重放场景下定义不存在返回 `FLOW_DEFINITION_NOT_FOUND`。
 

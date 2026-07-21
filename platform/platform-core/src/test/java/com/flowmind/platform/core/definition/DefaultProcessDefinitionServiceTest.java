@@ -387,7 +387,7 @@ class DefaultProcessDefinitionServiceTest {
     }
 
     @Test
-    void deleteDefinitionCascadesDefinitionRuntimeChildrenAndPreservesLogs() {
+    void deleteDefinitionExplicitlyDeletesDefinitionRuntimeChildrenAndPreservesLogs() {
         ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
         insertAttachmentTemplate();
         saveGraph(created.getId(), depositGraph("operation-save-001"));

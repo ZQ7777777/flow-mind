@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS process_node (
     position_x REAL,
     position_y REAL,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (definition_id) REFERENCES process_definition (id) ON DELETE CASCADE,
+    FOREIGN KEY (definition_id) REFERENCES process_definition (id),
     UNIQUE (definition_id, node_code)
 );
 
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS process_edge (
     condition_expression TEXT,
     default_edge INTEGER NOT NULL DEFAULT 0 CHECK (default_edge IN (0, 1)),
     sort_order INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (definition_id) REFERENCES process_definition (id) ON DELETE CASCADE,
+    FOREIGN KEY (definition_id) REFERENCES process_definition (id),
     UNIQUE (definition_id, edge_code)
 );
 
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS process_form_field (
     validation_rule TEXT,
     default_value TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (definition_id) REFERENCES process_definition (id) ON DELETE CASCADE,
+    FOREIGN KEY (definition_id) REFERENCES process_definition (id),
     UNIQUE (definition_id, field_code)
 );
 
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS process_definition_attachment_config (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_by TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (definition_id) REFERENCES process_definition (id) ON DELETE CASCADE,
+    FOREIGN KEY (definition_id) REFERENCES process_definition (id),
     FOREIGN KEY (attachment_template_id) REFERENCES process_attachment_template (id),
     UNIQUE (attachment_config_id, attachment_template_id),
     UNIQUE (attachment_config_id, attachment_code),
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS process_instance (
         CHECK (instance_status IN ('NOT_STARTED', 'RUNNING', 'COMPLETED', 'ARCHIVED', 'TERMINATED')),
     started_at TEXT,
     ended_at TEXT,
-    FOREIGN KEY (definition_id) REFERENCES process_definition (id) ON DELETE CASCADE
+    FOREIGN KEY (definition_id) REFERENCES process_definition (id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_process_instance_starter_status
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS process_task_group (
     lock_version INTEGER NOT NULL DEFAULT 0 CHECK (lock_version >= 0),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at TEXT,
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE CASCADE,
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id),
     FOREIGN KEY (parent_group_id) REFERENCES process_task_group (id)
 );
 
@@ -222,8 +222,8 @@ CREATE TABLE IF NOT EXISTS process_active_task (
     lock_version INTEGER NOT NULL DEFAULT 0 CHECK (lock_version >= 0),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     due_at TEXT,
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE CASCADE,
-    FOREIGN KEY (definition_id) REFERENCES process_definition (id) ON DELETE CASCADE,
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id),
+    FOREIGN KEY (definition_id) REFERENCES process_definition (id),
     FOREIGN KEY (task_group_id) REFERENCES process_task_group (id)
 );
 
@@ -260,7 +260,7 @@ CREATE TABLE IF NOT EXISTS process_history_task (
     started_at TEXT,
     completed_at TEXT NOT NULL DEFAULT (datetime('now')),
     extra_json TEXT,
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE CASCADE,
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id),
     UNIQUE (active_task_id, action_type, operation_id)
 );
 
@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS process_read_record (
     user_id TEXT NOT NULL,
     user_name TEXT NOT NULL,
     read_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE CASCADE,
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id),
     UNIQUE (instance_id, user_id)
 );
 
@@ -299,7 +299,7 @@ CREATE TABLE IF NOT EXISTS process_attachment (
     deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
     deleted_by TEXT,
     deleted_at TEXT,
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE CASCADE
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_process_attachment_instance_owner
@@ -319,7 +319,7 @@ CREATE TABLE IF NOT EXISTS process_audit_log (
     operator_id TEXT NOT NULL,
     detail_json TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE SET NULL
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_process_audit_log_instance_created
@@ -343,7 +343,7 @@ CREATE TABLE IF NOT EXISTS process_callback_log (
     last_error TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE SET NULL
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_process_callback_log_status
@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS process_reminder_record (
     created_by TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     sent_at TEXT,
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE CASCADE
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_process_reminder_record_task
@@ -386,7 +386,7 @@ CREATE TABLE IF NOT EXISTS process_alert_record (
     handled_by TEXT,
     handled_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (instance_id) REFERENCES process_instance (id) ON DELETE SET NULL
+    FOREIGN KEY (instance_id) REFERENCES process_instance (id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_process_alert_record_status
