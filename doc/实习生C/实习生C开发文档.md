@@ -217,7 +217,7 @@ C 线在 M1 阶段负责：
    - 不调用 `FileStorageProvider` 保存或读取文件内容；
    - 不实现附件上传、下载、访问授权和软删除；
    - 不在任务办理时判断必填附件是否已经上传；
-   - 不保存用户填写的表单值，用户填写值由 B 线在运行期写入 `process_instance.variables_json`。
+   - 不保存用户填写的表单值。
 
    因此，M1 实现的是“字段定义和附件要求”，不是“实际表单数据和实际附件文件”。
 
@@ -243,7 +243,7 @@ C 线在 M1 阶段负责：
 约束：
 
 - 同一 `definition_id` 下 `field_code` 唯一；
-- 不同定义版本可以使用相同的 `field_code`；
+- 不同流程定义版本可以使用相同的 `field_code`；
 - `required` 在 SQLite 中使用 `0/1` 保存；
 - `validation_rule` 保存合法 JSON，不增加 `option_config`、`validation_config` 等未在 v4 基线冻结的字段；
 - 表单字段随流程定义版本保存，定义复制时生成新的数据库主键并绑定目标 `definition_id`。
@@ -259,7 +259,7 @@ C 线在 M1 阶段负责：
 | `template_version`        | 模板版本号            |
 | `attachment_name`         | 附件名称              |
 | `description`             | 说明                  |
-| `allowed_extensions`      | 允许的扩展名集合      |
+| `allowed_extensions`      | 允许的格式            |
 | `max_size_bytes`          | 单文件大小限制        |
 | `template_status`         | `ENABLED`、`DISABLED` |
 | `created_by / created_at` | 创建信息              |
@@ -372,15 +372,6 @@ graph TD
 3. 扩展名只保存后缀，不保存 MIME 探测结果；
 4. `maxSizeBytes > 0`，入金申请银行回单基准值为 `10MB`；
 5. 默认状态为 `ENABLED`。
-
-```mermaid
-graph TD
-    REQ[创建附件模板] --> CHECK[校验编码名称格式大小]
-    CHECK --> LOAD[读取同编码最大版本]
-    LOAD --> VERSION[生成下一版本号]
-    VERSION --> INSERT[插入 ENABLED 模板]
-    INSERT --> RETURN[返回模板版本详情]
-```
 
 #### 4.4.2 模板变更与禁用
 
@@ -624,15 +615,15 @@ C 的集成测试需要验证运行状态对查询和回调的影响：
 
 | 功能 | Service | REST |
 | --- | --- | --- |
-| 待办查询 | `queryTodoTasks` | `GET /api/platform/tasks/todo` |
-| 已办查询 | `queryCompletedTasks` | `GET /api/platform/tasks/completed` |
-| 我发起的 | `queryStartedInstances` | `GET /api/platform/instances/started` |
-| 活动任务 | `queryActiveTasks` | `GET /api/platform/instances/{instanceId}/active-tasks` |
-| 历史任务 | `queryHistoryTasks` | `GET /api/platform/instances/{instanceId}/history-tasks` |
-| 审批意见 | `queryComments` | `GET /api/platform/instances/{instanceId}/comments` |
-| 已阅记录 | `queryReadRecords` | `GET /api/platform/read-records` |
-| 审计日志 | `queryAuditLogs` | `GET /api/platform/admin/audit-logs` |
-| 回调日志 | `queryCallbackLogs` | `GET /api/platform/admin/callback-logs` |
+| 待办查询 | `TaskQueryService.queryTodoTasks` | `GET /api/platform/tasks/todo` |
+| 已办查询 | `TaskQueryService.queryCompletedTasks` | `GET /api/platform/tasks/completed` |
+| 我发起的 | `TaskQueryService.queryStartedInstances` | `GET /api/platform/instances/started` |
+| 活动任务 | `TaskQueryService.queryActiveTasks` | `GET /api/platform/instances/{instanceId}/active-tasks` |
+| 历史任务 | `TaskQueryService.queryHistoryTasks` | `GET /api/platform/instances/{instanceId}/history-tasks` |
+| 审批意见 | `TaskQueryService.queryComments` | `GET /api/platform/instances/{instanceId}/comments` |
+| 已阅记录 | `TaskQueryService.queryReadRecords` | `GET /api/platform/read-records` |
+| 审计日志 | `AdminProcessService.queryAuditLogs` | `GET /api/platform/admin/audit-logs` |
+| 回调日志 | `AdminProcessService.queryCallbackLogs` | `GET /api/platform/admin/callback-logs` |
 
 所有分页接口必须使用 `PageResult<T>`，并校验 `pageNo >= 1`、`pageSize` 在合理范围内。
 
