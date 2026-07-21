@@ -83,6 +83,22 @@ class ProcessDefinitionAttachmentConfigManagerIntegrationTest {
     }
 
     @Test
+    void draftGroupTrimsTemplateCodeAndNodeBeforeValidationAndSave() {
+        ProcessAttachmentConfigDTO receipt = config(" template-receipt ", " receipt ", 10);
+        receipt.setApplicableNodeCodes(Collections.singletonList(" apply "));
+
+        ValidationResult result = manager.saveDraftGroup("definition-source", "config-group-trim",
+                Collections.singletonList(receipt), userTaskNodes(), "tester");
+
+        assertTrue(result.isValid());
+        List<ProcessAttachmentTemplateDTO> draft = manager.findDraftByDefinitionId("definition-source");
+        assertEquals(1, draft.size());
+        assertEquals("template-receipt", draft.get(0).getAttachmentTemplateId());
+        assertEquals("receipt", draft.get(0).getAttachmentCode());
+        assertEquals(Collections.singletonList("apply"), draft.get(0).getApplicableNodeCodes());
+    }
+
+    @Test
     void invalidDraftGroupIsRejectedAndNotPersisted() {
         ProcessAttachmentConfigDTO disabled = config("template-disabled", "disabled", 10);
         ProcessAttachmentConfigDTO duplicate = config("template-receipt", "receipt", 20);
@@ -108,6 +124,34 @@ class ProcessDefinitionAttachmentConfigManagerIntegrationTest {
     }
 
     @Test
+    void draftGroupRejectsConfigGroupIdDifferentFromMethodArgument() {
+        ProcessAttachmentConfigDTO receipt = config("template-receipt", "receipt", 10);
+        receipt.setAttachmentConfigId("config-group-other");
+
+        ValidationResult result = manager.saveDraftGroup("definition-source", "config-group-target",
+                Collections.singletonList(receipt), userTaskNodes(), "tester");
+
+        assertFalse(result.isValid());
+        assertContainsCode(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_REQUIRED);
+        assertTrue(manager.findDraftByDefinitionId("definition-source").isEmpty());
+    }
+
+    @Test
+    void draftGroupRejectsMixedConfigGroupIdsInConfigList() {
+        ProcessAttachmentConfigDTO receipt = config("template-receipt", "receipt", 10);
+        receipt.setAttachmentConfigId("config-group-first");
+        ProcessAttachmentConfigDTO license = config("template-license", "license", 20);
+        license.setAttachmentConfigId("config-group-second");
+
+        ValidationResult result = manager.saveDraftGroup("definition-source", null,
+                Arrays.asList(receipt, license), userTaskNodes(), "tester");
+
+        assertFalse(result.isValid());
+        assertContainsCode(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_REQUIRED);
+        assertTrue(manager.findDraftByDefinitionId("definition-source").isEmpty());
+    }
+
+    @Test
     void emptyDraftGroupClearsExistingDraftConfigs() {
         manager.saveDraftGroup("definition-source", "config-group-draft",
                 Collections.singletonList(config("template-receipt", "receipt", 10)),
@@ -115,6 +159,15 @@ class ProcessDefinitionAttachmentConfigManagerIntegrationTest {
 
         ValidationResult result = manager.saveDraftGroup("definition-source", "config-group-draft",
                 Collections.emptyList(), userTaskNodes(), "tester");
+
+        assertTrue(result.isValid());
+        assertTrue(manager.findDraftByDefinitionId("definition-source").isEmpty());
+    }
+
+    @Test
+    void nullDraftGroupConfigsAreHandledAsEmptyList() {
+        ValidationResult result = manager.saveDraftGroup("definition-source", null,
+                null, userTaskNodes(), "tester");
 
         assertTrue(result.isValid());
         assertTrue(manager.findDraftByDefinitionId("definition-source").isEmpty());
@@ -174,6 +227,29 @@ class ProcessDefinitionAttachmentConfigManagerIntegrationTest {
         List<ProcessAttachmentTemplateDTO> all = manager.findByDefinitionId("definition-source");
         assertEquals(2, all.size());
         assertTrue(containsStatus(all, "config-group-first", AttachmentConfigStatusEnum.INACTIVE));
+    }
+
+    @Test
+    void activatingMissingGroupIsRejected() {
+        ValidationResult result = manager.activateGroup("definition-source", "config-group-missing",
+                userTaskNodes(), "tester");
+
+        assertFalse(result.isValid());
+        assertContainsCode(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_REQUIRED);
+    }
+
+    @Test
+    void activatingGroupFromAnotherDefinitionIsRejected() {
+        manager.saveDraftGroup("definition-source", "config-group-source-only",
+                Collections.singletonList(config("template-receipt", "receipt", 10)),
+                userTaskNodes(), "tester");
+
+        ValidationResult result = manager.activateGroup("definition-target", "config-group-source-only",
+                userTaskNodes(), "tester");
+
+        assertFalse(result.isValid());
+        assertContainsCode(result, FrozenValidationErrorCodes.ATTACHMENT_CONFIG_REQUIRED);
+        assertTrue(manager.findActiveByDefinitionId("definition-target").isEmpty());
     }
 
     @Test

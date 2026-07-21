@@ -6,6 +6,7 @@ import com.flowmind.platform.core.validation.ProcessFormFieldValidator;
 import com.flowmind.platform.persistence.entity.ProcessFormFieldEntity;
 import com.flowmind.platform.persistence.repository.ProcessFormFieldRepository;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,6 +46,7 @@ public class ProcessFormFieldDefinitionManager {
      * @param formFields 表单字段列表，空列表表示清空当前定义字段
      * @return 表单字段校验结果
      */
+    @Transactional
     public ValidationResult saveFormFields(String definitionId, List<ProcessFormFieldDTO> formFields) {
         ValidationResult result = formFieldValidator.validate(formFields);
         if (!result.isValid()) {
@@ -76,6 +78,7 @@ public class ProcessFormFieldDefinitionManager {
      * @param targetDefinitionId 目标流程定义 ID
      * @return 复制的表单字段数量
      */
+    @Transactional
     public int copyFormFields(String sourceDefinitionId, String targetDefinitionId) {
         return formFieldRepository.copyToDefinition(sourceDefinitionId, targetDefinitionId);
     }

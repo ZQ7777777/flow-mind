@@ -91,7 +91,7 @@ public class ProcessFormFieldValidator {
         String fieldCode = trim(field.getFieldCode());
         String fieldName = trim(field.getFieldName());
         String fieldType = normalize(field.getFieldType());
-        String controlType = trim(field.getControlType());
+        String controlType = normalize(field.getControlType());
 
         if (isBlank(fieldCode) || isBlank(fieldName) || isBlank(fieldType) || isBlank(controlType)
                 || field.getRequired() == null) {
@@ -123,6 +123,7 @@ public class ProcessFormFieldValidator {
      * @param fieldCode 字段编码，用于错误信息
      */
     private void validateType(ValidationResult result, String fieldType, String controlType, String fieldCode) {
+        controlType = normalize(controlType);
         if (isBlank(fieldType)) {
             return;
         }
