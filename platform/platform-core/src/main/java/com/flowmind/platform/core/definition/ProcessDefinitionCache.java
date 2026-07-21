@@ -8,6 +8,7 @@ import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
 import com.flowmind.platform.api.enums.ActivationStatusEnum;
 import com.flowmind.platform.api.enums.DefinitionStatusEnum;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,7 +25,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * @author FlowMind
  * @since 2026-07-20
  */
-public final class ProcessDefinitionCache {
+@Component
+public class ProcessDefinitionCache {
 
     /** 定义详情缓存条目，键为流程定义 ID。 */
     private final ConcurrentMap<String, ProcessDefinitionDetailDTO> entries =

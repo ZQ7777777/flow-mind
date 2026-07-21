@@ -7,7 +7,7 @@ import com.flowmind.platform.api.enums.GrayStatusEnum;
 /**
  * 流程定义分页查询条件。
  */
-public class ProcessDefinitionQuery {
+public class ProcessDefinitionQuery extends PageQuery {
 
     /** 流程编码。 */
     private String processCode;
@@ -21,11 +21,6 @@ public class ProcessDefinitionQuery {
     private ActivationStatusEnum activationStatus;
     /** 灰度发布状态。 */
     private GrayStatusEnum grayStatus;
-    /** 当前页码，从 1 开始。 */
-    private Integer pageNo;
-    /** 每页条数。 */
-    private Integer pageSize;
-
     public ProcessDefinitionQuery() {
     }
 
@@ -77,19 +72,4 @@ public class ProcessDefinitionQuery {
         this.grayStatus = grayStatus;
     }
 
-    public Integer getPageNo() {
-        return pageNo;
-    }
-
-    public void setPageNo(Integer pageNo) {
-        this.pageNo = pageNo;
-    }
-
-    public Integer getPageSize() {
-        return pageSize;
-    }
-
-    public void setPageSize(Integer pageSize) {
-        this.pageSize = pageSize;
-    }
 }

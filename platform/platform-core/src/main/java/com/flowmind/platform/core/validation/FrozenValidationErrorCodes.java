@@ -64,46 +64,66 @@ public final class FrozenValidationErrorCodes {
     /** 附件配置不符合发布要求。 */
     public static final String MODEL_ATTACHMENT_CONFIGURATION_INVALID =
             "FLOW_FROZEN_MODEL_ATTACHMENT_CONFIGURATION_INVALID";
+    /** 表单字段必填项缺失。 */
     public static final String FORM_FIELD_REQUIRED =
             "FLOW_FORM_FIELD_REQUIRED";
+    /** 表单字段编码重复。 */
     public static final String FORM_FIELD_CODE_DUPLICATED =
             "FLOW_FORM_FIELD_CODE_DUPLICATED";
+    /** 表单字段类型非法。 */
     public static final String FORM_FIELD_TYPE_INVALID =
             "FLOW_FORM_FIELD_TYPE_INVALID";
+    /** 表单字段控件类型非法。 */
     public static final String FORM_FIELD_CONTROL_TYPE_INVALID =
             "FLOW_FORM_FIELD_CONTROL_TYPE_INVALID";
+    /** 表单字段排序值非法。 */
     public static final String FORM_FIELD_SORT_ORDER_INVALID =
             "FLOW_FORM_FIELD_SORT_ORDER_INVALID";
+    /** 表单字段校验规则 JSON 非法。 */
     public static final String FORM_FIELD_VALIDATION_RULE_INVALID =
             "FLOW_FORM_FIELD_VALIDATION_RULE_INVALID";
+    /** 表单字段默认值非法。 */
     public static final String FORM_FIELD_DEFAULT_VALUE_INVALID =
             "FLOW_FORM_FIELD_DEFAULT_VALUE_INVALID";
+    /** 附件模板必填项缺失。 */
     public static final String ATTACHMENT_TEMPLATE_REQUIRED =
             "FLOW_ATTACHMENT_TEMPLATE_REQUIRED";
+    /** 附件模板扩展名配置非法。 */
     public static final String ATTACHMENT_TEMPLATE_EXTENSION_INVALID =
             "FLOW_ATTACHMENT_TEMPLATE_EXTENSION_INVALID";
+    /** 附件模板大小限制非法。 */
     public static final String ATTACHMENT_TEMPLATE_SIZE_INVALID =
             "FLOW_ATTACHMENT_TEMPLATE_SIZE_INVALID";
+    /** 附件模板状态非法。 */
     public static final String ATTACHMENT_TEMPLATE_STATUS_INVALID =
             "FLOW_ATTACHMENT_TEMPLATE_STATUS_INVALID";
+    /** 附件模板不存在。 */
     public static final String ATTACHMENT_TEMPLATE_NOT_FOUND =
             "FLOW_ATTACHMENT_TEMPLATE_NOT_FOUND";
+    /** 附件模板已被引用。 */
     public static final String ATTACHMENT_TEMPLATE_REFERENCED =
             "FLOW_ATTACHMENT_TEMPLATE_REFERENCED";
+    /** 附件配置必填项缺失。 */
     public static final String ATTACHMENT_TEMPLATE_VERSION_CONFLICT =
             "FLOW_ATTACHMENT_TEMPLATE_VERSION_CONFLICT";
     public static final String ATTACHMENT_CONFIG_REQUIRED =
             "FLOW_ATTACHMENT_CONFIG_REQUIRED";
+    /** 附件配置引用的模板非法。 */
     public static final String ATTACHMENT_CONFIG_TEMPLATE_INVALID =
             "FLOW_ATTACHMENT_CONFIG_TEMPLATE_INVALID";
+    /** 附件配置引用的模板已停用。 */
     public static final String ATTACHMENT_CONFIG_TEMPLATE_DISABLED =
             "FLOW_ATTACHMENT_CONFIG_TEMPLATE_DISABLED";
+    /** 附件配置数量约束非法。 */
     public static final String ATTACHMENT_CONFIG_QUANTITY_INVALID =
             "FLOW_ATTACHMENT_CONFIG_QUANTITY_INVALID";
+    /** 附件配置适用节点非法。 */
     public static final String ATTACHMENT_CONFIG_NODE_INVALID =
             "FLOW_ATTACHMENT_CONFIG_NODE_INVALID";
+    /** 附件配置重复。 */
     public static final String ATTACHMENT_CONFIG_DUPLICATED =
             "FLOW_ATTACHMENT_CONFIG_DUPLICATED";
+    /** 附件配置排序值非法。 */
     public static final String ATTACHMENT_CONFIG_SORT_ORDER_INVALID =
             "FLOW_ATTACHMENT_CONFIG_SORT_ORDER_INVALID";
 

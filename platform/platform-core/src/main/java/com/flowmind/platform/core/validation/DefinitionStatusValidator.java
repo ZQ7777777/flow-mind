@@ -1,5 +1,11 @@
 package com.flowmind.platform.core.validation;
 
+import com.flowmind.platform.api.enums.ActivationStatusEnum;
+import com.flowmind.platform.api.enums.DefinitionStatusEnum;
+import com.flowmind.platform.api.enums.GrayStatusEnum;
+import com.flowmind.platform.core.definition.DefinitionErrorCodes;
+import com.flowmind.platform.core.definition.DefinitionStateException;
+
 /**
  * 校验流程定义的冻结状态组合。
  *
@@ -10,13 +16,13 @@ package com.flowmind.platform.core.validation;
  */
 public class DefinitionStatusValidator {
 
-    public static final String DRAFT = "DRAFT";
-    public static final String PUBLISHED = "PUBLISHED";
-    public static final String ARCHIVED = "ARCHIVED";
-    public static final String INACTIVE = "INACTIVE";
-    public static final String ACTIVE = "ACTIVE";
-    public static final String OFF = "OFF";
-    public static final String ON = "ON";
+    public static final String DRAFT = String.valueOf(DefinitionStatusEnum.DRAFT);
+    public static final String PUBLISHED = String.valueOf(DefinitionStatusEnum.PUBLISHED);
+    public static final String ARCHIVED = String.valueOf(DefinitionStatusEnum.ARCHIVED);
+    public static final String INACTIVE = String.valueOf(ActivationStatusEnum.INACTIVE);
+    public static final String ACTIVE = String.valueOf(ActivationStatusEnum.ACTIVE);
+    public static final String OFF = String.valueOf(GrayStatusEnum.OFF);
+    public static final String ON = String.valueOf(GrayStatusEnum.ON);
 
     public void validate(String definitionStatus,
                          String activationStatus,
@@ -41,6 +47,24 @@ public class DefinitionStatusValidator {
         if (ARCHIVED.equals(definitionStatus)
                 && (!INACTIVE.equals(activationStatus) || !OFF.equals(grayStatus))) {
             throw invalidCombination(definitionStatus, activationStatus, grayStatus);
+        }
+    }
+
+    /**
+     * 校验流程定义是否处于允许编辑的草稿态。
+     *
+     * @param definitionStatus 定义状态，典型值：DRAFT、PUBLISHED、ARCHIVED
+     * @param activationStatus 激活状态，典型值：INACTIVE、ACTIVE
+     * @param grayStatus       灰度状态，典型值：OFF、ON
+     */
+    public void validateEditable(String definitionStatus,
+                                 String activationStatus,
+                                 String grayStatus) {
+        if (!DRAFT.equals(definitionStatus)
+                || !INACTIVE.equals(activationStatus)
+                || !OFF.equals(grayStatus)) {
+            throw new DefinitionStateException(DefinitionErrorCodes.DEFINITION_NOT_EDITABLE,
+                    "definition must be DRAFT + INACTIVE + OFF");
         }
     }
 

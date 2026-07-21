@@ -5,7 +5,7 @@ import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
 /**
  * 审计日志查询条件。
  */
-public class AuditLogQuery {
+public class AuditLogQuery extends PageQuery {
 
     /** 流程实例 ID。 */
     private String instanceId;
@@ -16,9 +16,7 @@ public class AuditLogQuery {
     /** 操作人用户 ID。 */
     private String operatorUserId;
     /** 当前页码，从 1 开始。 */
-    private Integer pageNo;
     /** 每页条数。 */
-    private Integer pageSize;
 
     public AuditLogQuery() {
     }
@@ -55,19 +53,4 @@ public class AuditLogQuery {
         this.operatorUserId = operatorUserId;
     }
 
-    public Integer getPageNo() {
-        return pageNo;
-    }
-
-    public void setPageNo(Integer pageNo) {
-        this.pageNo = pageNo;
-    }
-
-    public Integer getPageSize() {
-        return pageSize;
-    }
-
-    public void setPageSize(Integer pageSize) {
-        this.pageSize = pageSize;
-    }
 }

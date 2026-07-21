@@ -722,9 +722,7 @@ public interface ProcessDefinitionGraphReader {
     ProcessDefinitionGraphSnapshot load(String definitionId);
 }
 
-public interface DefinitionCacheInvalidator {
-    void invalidate(String definitionId);
-}
+ProcessDefinitionCache.invalidate(definitionId)
 
 public interface DefinitionExtensionLifecycle {
     void copyExtensions(String sourceDefinitionId, String targetDefinitionId);
@@ -735,7 +733,7 @@ public interface DefinitionExtensionLifecycle {
 | 功能                                    | 入参                   | 返回结果                                                 |
 | --------------------------------------- | ---------------------- | -------------------------------------------------------- |
 | `ProcessDefinitionGraphReader.load`     | `definitionId`         | `ProcessDefinitionGraphSnapshot`，含定义、排序节点和连线 |
-| `DefinitionCacheInvalidator.invalidate` | `definitionId`         | `void`，仅提交后调用                                     |
+| `ProcessDefinitionCache.invalidate`     | `definitionId`         | `void`，仅事务提交后调用                                 |
 | `copyExtensions`                        | 源定义 ID、目标定义 ID | `void`，异常使复制事务回滚                               |
 | `deleteDraftExtensions`                 | `definitionId`         | `void`，异常使删除事务回滚                               |
 

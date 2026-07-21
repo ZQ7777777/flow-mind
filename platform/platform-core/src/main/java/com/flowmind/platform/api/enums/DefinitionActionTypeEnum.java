@@ -3,8 +3,8 @@ package com.flowmind.platform.api.enums;
 /**
  * 流程定义管理动作类型。
  *
- * @author Intern A
- * @since 2026-07-17
+ * @author Yuxin Xu
+ * @since 2026-07-16
  */
 public enum DefinitionActionTypeEnum {
     /** 创建流程定义草稿。 */
@@ -31,9 +31,9 @@ public enum DefinitionActionTypeEnum {
     DISABLE_GRAY;
 
     /**
-     * 返回写入 process_operation_record.action_type 的命名空间动作值。
+     * 返回写入平台日志动作字段的命名空间动作值。
      *
-     * @return 幂等记录动作值
+     * @return 操作记录和审计日志使用的动作值
      */
     public String getOperationActionType() {
         return "DEFINITION_" + name();
