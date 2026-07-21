@@ -10,6 +10,7 @@ import com.flowmind.platform.api.dto.ProcessDefinitionQuery;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.dto.ValidationResult;
 import com.flowmind.platform.api.enums.ActivationStatusEnum;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
@@ -23,6 +24,7 @@ import com.flowmind.platform.api.request.CreateProcessDefinitionRequest;
 import com.flowmind.platform.api.request.DefinitionOperationRequest;
 import com.flowmind.platform.api.request.SaveProcessGraphRequest;
 import com.flowmind.platform.core.validation.DefinitionRequestValidator;
+import com.flowmind.platform.core.validation.FrozenValidationErrorCodes;
 import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigValidator;
 import com.flowmind.platform.core.validation.ProcessFormFieldValidator;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionEntity;
@@ -188,16 +190,36 @@ class DefaultProcessDefinitionServiceTest {
     }
 
     @Test
-    void saveGraphRejectsEdgeReferencingMissingNode() {
+    void saveGraphPersistsInvalidDraftAndDefersEdgeReferenceToPublishValidation() {
         ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        insertAttachmentTemplate();
 
         SaveProcessGraphRequest request = depositGraph("operation-save-001");
         request.getEdges().get(3).setTargetNodeCode("missing");
 
-        assertThrows(IllegalArgumentException.class, () -> saveGraph(created.getId(), request));
-        assertEquals(0, nodeRepository.findByDefinitionId(created.getId()).size());
-        assertEquals(0, edgeRepository.findByDefinitionId(created.getId()).size());
-        assertEquals(0, processDefinitionCache.definitionIds.size());
+        saveGraph(created.getId(), request);
+
+        assertEquals(5, nodeRepository.findByDefinitionId(created.getId()).size());
+        assertEquals("missing", service.getDefinition(created.getId()).getEdges().get(3).getTargetNodeCode());
+        ValidationResult first = service.validateForPublish(created.getId());
+        ValidationResult second = service.validateForPublish(created.getId());
+
+        assertTrue(!first.isValid());
+        assertTrue(hasIssue(first, FrozenValidationErrorCodes.MODEL_EDGE_REFERENCE_INVALID,
+                "missing", "edge-finance-end"));
+        assertEquals(first, second);
+    }
+
+    @Test
+    void validateForPublishUsesDefinitionDetailsPersistedByAAndC() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        insertAttachmentTemplate();
+        saveGraph(created.getId(), depositGraph("operation-save-001"));
+
+        ValidationResult result = service.validateForPublish(created.getId());
+
+        assertTrue(result.isValid());
+        assertTrue(result.getIssues().isEmpty());
     }
 
     @Test
@@ -742,6 +764,20 @@ class DefaultProcessDefinitionServiceTest {
             codes.add(attachment.getAttachmentCode());
         }
         return codes;
+    }
+
+    private static boolean hasIssue(ValidationResult result,
+                                    String code,
+                                    String nodeCode,
+                                    String edgeCode) {
+        for (ValidationResult.Issue issue : result.getIssues()) {
+            if (code.equals(issue.getCode())
+                    && nodeCode.equals(issue.getNodeCode())
+                    && edgeCode.equals(issue.getEdgeCode())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void assertDifferentNodeIds(ProcessDefinitionDetailDTO source,

@@ -8,8 +8,6 @@ import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
-import com.flowmind.platform.core.definition.DefinitionErrorCodes;
-import com.flowmind.platform.core.definition.DefinitionValidationException;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -102,53 +100,6 @@ public class DefinitionModelValidator {
         validateReachability(result, graph);
         validateExtensionConfiguration(result, definition, graph);
         return result;
-    }
-
-    /**
-     * 校验保存草稿图时需要立即阻断的结构问题。
-     *
-     * @param nodes 流程节点列表
-     * @param edges 流程连线列表
-     */
-    public void validateSaveGraphStructure(List<ProcessNodeDTO> nodes, List<ProcessEdgeDTO> edges) {
-        Set<String> nodeCodes = new LinkedHashSet<String>();
-        for (ProcessNodeDTO node : nodes) {
-            validateRequiredText(node.getNodeCode(), "nodeCode");
-            validateRequiredText(node.getNodeName(), "nodeName");
-            validateRequiredValue(node.getNodeType(), "nodeType");
-            if (!nodeCodes.add(node.getNodeCode())) {
-                throw new DefinitionValidationException(DefinitionErrorCodes.NODE_CODE_DUPLICATED,
-                        "Duplicate node code: " + node.getNodeCode());
-            }
-        }
-
-        Set<String> edgeCodes = new LinkedHashSet<String>();
-        for (ProcessEdgeDTO edge : edges) {
-            validateRequiredText(edge.getEdgeCode(), "edgeCode");
-            validateRequiredText(edge.getSourceNodeCode(), "sourceNodeCode");
-            validateRequiredText(edge.getTargetNodeCode(), "targetNodeCode");
-            if (!edgeCodes.add(edge.getEdgeCode())) {
-                throw new DefinitionValidationException(DefinitionErrorCodes.EDGE_CODE_DUPLICATED,
-                        "Duplicate edge code: " + edge.getEdgeCode());
-            }
-            if (!nodeCodes.contains(edge.getSourceNodeCode())) {
-                throw new DefinitionValidationException(DefinitionErrorCodes.NODE_NOT_FOUND,
-                        "Edge source node does not exist: " + edge.getSourceNodeCode());
-            }
-            if (!nodeCodes.contains(edge.getTargetNodeCode())) {
-                throw new DefinitionValidationException(DefinitionErrorCodes.NODE_NOT_FOUND,
-                        "Edge target node does not exist: " + edge.getTargetNodeCode());
-            }
-        }
-
-        ProcessDefinitionDetailDTO detail = new ProcessDefinitionDetailDTO();
-        detail.setNodes(nodes);
-        detail.setEdges(edges);
-        ValidationResult result = validate(detail);
-        if (!result.isValid()) {
-            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
-                    "process graph is invalid: " + describeIssues(result));
-        }
     }
 
     private void validateNullElements(ValidationResult result, DefinitionGraphIndex graph) {
@@ -694,39 +645,6 @@ public class DefinitionModelValidator {
         issue.setEdgeCode(edgeCode);
         result.getIssues().add(issue);
         result.setValid(false);
-    }
-
-    private void validateRequiredText(String value, String fieldName) {
-        if (isBlank(value)) {
-            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
-                    fieldName + " must not be empty");
-        }
-    }
-
-    private void validateRequiredValue(Object value, String fieldName) {
-        if (value == null) {
-            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
-                    fieldName + " must not be empty");
-        }
-    }
-
-    private String describeIssues(ValidationResult result) {
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < result.getIssues().size(); i++) {
-            if (i > 0) {
-                builder.append("; ");
-            }
-            ValidationResult.Issue issue = result.getIssues().get(i);
-            builder.append(issue.getCode()).append('[')
-                    .append(safe(issue.getNodeCode())).append(',')
-                    .append(safe(issue.getEdgeCode())).append("] ")
-                    .append(issue.getMessage());
-        }
-        return builder.toString();
-    }
-
-    private String safe(String value) {
-        return value == null ? "" : value;
     }
 
     private boolean isBlank(String value) {
