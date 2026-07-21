@@ -1,5 +1,8 @@
 package com.flowmind.platform.core.validation;
 
+import com.flowmind.platform.api.enums.DefinitionErrorCodes;
+import com.flowmind.platform.core.definition.DefinitionStateException;
+
 /**
  * 校验流程定义的冻结状态组合。
  *
@@ -41,6 +44,24 @@ public class DefinitionStatusValidator {
         if (ARCHIVED.equals(definitionStatus)
                 && (!INACTIVE.equals(activationStatus) || !OFF.equals(grayStatus))) {
             throw invalidCombination(definitionStatus, activationStatus, grayStatus);
+        }
+    }
+
+    /**
+     * 校验流程定义是否处于允许编辑的草稿态。
+     *
+     * @param definitionStatus 定义状态，典型值：DRAFT、PUBLISHED、ARCHIVED
+     * @param activationStatus 激活状态，典型值：INACTIVE、ACTIVE
+     * @param grayStatus       灰度状态，典型值：OFF、ON
+     */
+    public void validateEditable(String definitionStatus,
+                                 String activationStatus,
+                                 String grayStatus) {
+        if (!DRAFT.equals(definitionStatus)
+                || !INACTIVE.equals(activationStatus)
+                || !OFF.equals(grayStatus)) {
+            throw new DefinitionStateException(DefinitionErrorCodes.DEFINITION_NOT_EDITABLE,
+                    "definition must be DRAFT + INACTIVE + OFF");
         }
     }
 

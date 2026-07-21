@@ -4,6 +4,11 @@ import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
+import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
+import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
+import com.flowmind.platform.api.enums.NodeTypeEnum;
+import com.flowmind.platform.api.enums.DefinitionErrorCodes;
+import com.flowmind.platform.core.definition.DefinitionValidationException;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -57,6 +62,58 @@ public class DefinitionModelValidator {
         validateParallelGatewayPairs(result, nodes, nodeByCode, outgoing, incoming);
         validateReachability(result, nodes, edges, outgoing, incoming);
         return result;
+    }
+
+    /**
+     * 校验保存草稿图时需要立即阻断的结构问题。
+     *
+     * @param nodes 流程节点列表
+     * @param edges 流程连线列表
+     */
+    public void validateSaveGraphStructure(List<ProcessNodeDTO> nodes, List<ProcessEdgeDTO> edges) {
+        Set<String> nodeCodes = new LinkedHashSet<String>();
+        for (ProcessNodeDTO node : nodes) {
+            validateRequiredText(node.getNodeCode(), "nodeCode");
+            validateRequiredText(node.getNodeName(), "nodeName");
+            validateRequiredText(node.getNodeType(), "nodeType");
+            if (!nodeCodes.add(node.getNodeCode())) {
+                throw new DefinitionValidationException(DefinitionErrorCodes.NODE_CODE_DUPLICATED,
+                        "Duplicate node code: " + node.getNodeCode());
+            }
+            validateNodeType(node.getNodeType());
+            if (!isBlank(node.getApproverRuleType())) {
+                validateApproverRuleType(node.getApproverRuleType());
+            }
+            validateMultiInstanceMode(node.getMultiInstanceMode());
+        }
+
+        Set<String> edgeCodes = new LinkedHashSet<String>();
+        for (ProcessEdgeDTO edge : edges) {
+            validateRequiredText(edge.getEdgeCode(), "edgeCode");
+            validateRequiredText(edge.getSourceNodeCode(), "sourceNodeCode");
+            validateRequiredText(edge.getTargetNodeCode(), "targetNodeCode");
+            if (!edgeCodes.add(edge.getEdgeCode())) {
+                throw new DefinitionValidationException(DefinitionErrorCodes.EDGE_CODE_DUPLICATED,
+                        "Duplicate edge code: " + edge.getEdgeCode());
+            }
+            if (!nodeCodes.contains(edge.getSourceNodeCode())) {
+                throw new DefinitionValidationException(DefinitionErrorCodes.NODE_NOT_FOUND,
+                        "Edge source node does not exist: " + edge.getSourceNodeCode());
+            }
+            if (!nodeCodes.contains(edge.getTargetNodeCode())) {
+                throw new DefinitionValidationException(DefinitionErrorCodes.NODE_NOT_FOUND,
+                        "Edge target node does not exist: " + edge.getTargetNodeCode());
+            }
+        }
+
+        ProcessDefinitionDetailDTO detail = new ProcessDefinitionDetailDTO();
+        detail.setNodes(nodes);
+        detail.setEdges(edges);
+        ValidationResult result = validate(detail);
+        if (!result.isValid()) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                    "process graph is invalid: " + describeIssues(result));
+        }
     }
 
     private Map<String, ProcessNodeDTO> indexNodes(ValidationResult result, List<ProcessNodeDTO> nodes) {
@@ -308,6 +365,59 @@ public class DefinitionModelValidator {
         issue.setEdgeCode(edgeCode);
         result.getIssues().add(issue);
         result.setValid(false);
+    }
+
+    private void validateNodeType(String value) {
+        try {
+            NodeTypeEnum.valueOf(value);
+        } catch (IllegalArgumentException ex) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                    "nodeType is invalid: " + value, ex);
+        }
+    }
+
+    private void validateApproverRuleType(String value) {
+        try {
+            ApproverRuleTypeEnum.valueOf(value);
+        } catch (IllegalArgumentException ex) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                    "approverRuleType is invalid: " + value, ex);
+        }
+    }
+
+    private void validateMultiInstanceMode(String value) {
+        try {
+            MultiInstanceModeEnum.valueOf(value);
+        } catch (IllegalArgumentException ex) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                    "multiInstanceMode is invalid: " + value, ex);
+        }
+    }
+
+    private void validateRequiredText(String value, String fieldName) {
+        if (isBlank(value)) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                    fieldName + " must not be empty");
+        }
+    }
+
+    private String describeIssues(ValidationResult result) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < result.getIssues().size(); i++) {
+            if (i > 0) {
+                builder.append("; ");
+            }
+            ValidationResult.Issue issue = result.getIssues().get(i);
+            builder.append(issue.getCode()).append('[')
+                    .append(safe(issue.getNodeCode())).append(',')
+                    .append(safe(issue.getEdgeCode())).append("] ")
+                    .append(issue.getMessage());
+        }
+        return builder.toString();
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private boolean isBlank(String value) {

@@ -6,7 +6,7 @@ import com.flowmind.platform.api.request.CreateProcessDefinitionRequest;
 import com.flowmind.platform.api.request.DefinitionOperationRequest;
 import com.flowmind.platform.api.request.OperationRequest;
 import com.flowmind.platform.api.request.SaveProcessGraphRequest;
-import com.flowmind.platform.core.definition.DefinitionErrorCodes;
+import com.flowmind.platform.api.enums.DefinitionErrorCodes;
 import com.flowmind.platform.core.definition.DefinitionValidationException;
 import com.flowmind.platform.core.query.PageQueryNormalizer;
 
