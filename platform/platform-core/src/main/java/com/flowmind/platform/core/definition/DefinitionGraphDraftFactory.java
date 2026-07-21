@@ -5,12 +5,9 @@ import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
-import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
 import com.flowmind.platform.persistence.entity.ProcessEdgeEntity;
-import com.flowmind.platform.persistence.entity.ProcessFormFieldEntity;
 import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -188,30 +185,6 @@ final class DefinitionGraphDraftFactory {
     }
 
     /**
-     * 将已归一化的附件配置转换为草稿态持久化实体。
-     *
-     * @param attachmentConfigs 归一化后的附件配置 DTO 列表
-     * @param operatorUserId    当前操作人 ID，用于 createdBy/updatedBy 审计字段
-     * @param now               当前业务时间，用于 createdAt/updatedAt 审计字段
-     * @return 可直接批量写入 process_definition_attachment_config 的实体列表
-     */
-    List<ProcessDefinitionAttachmentConfigEntity> toDraftAttachmentConfigEntities(
-            List<ProcessAttachmentConfigDTO> attachmentConfigs,
-            String operatorUserId,
-            LocalDateTime now) {
-        List<ProcessDefinitionAttachmentConfigEntity> entities =
-                ProcessDefinitionMapper.toAttachmentConfigEntities(attachmentConfigs);
-        for (ProcessDefinitionAttachmentConfigEntity entity : entities) {
-            entity.setConfigStatus("DRAFT");
-            entity.setCreatedBy(operatorUserId);
-            entity.setCreatedAt(now);
-            entity.setUpdatedBy(operatorUserId);
-            entity.setUpdatedAt(now);
-        }
-        return entities;
-    }
-
-    /**
      * 复制节点实体到新的流程定义。
      *
      * @param sourceNodes        源定义下已持久化的节点实体
@@ -267,78 +240,6 @@ final class DefinitionGraphDraftFactory {
             target.setConditionExpression(source.getConditionExpression());
             target.setDefaultEdge(source.getDefaultEdge());
             target.setSortOrder(source.getSortOrder());
-            copied.add(target);
-        }
-        return copied;
-    }
-
-    /**
-     * 复制表单字段实体到新的流程定义。
-     *
-     * @param sourceFormFields   源定义下已持久化的表单字段实体
-     * @param targetDefinitionId 新定义 ID，复制结果都会绑定到该定义并生成新主键
-     * @return 可批量插入到目标定义的表单字段实体
-     */
-    List<ProcessFormFieldEntity> copyFormFieldEntities(List<ProcessFormFieldEntity> sourceFormFields,
-                                                       String targetDefinitionId) {
-        if (sourceFormFields == null || sourceFormFields.isEmpty()) {
-            return Collections.emptyList();
-        }
-        List<ProcessFormFieldEntity> copied = new ArrayList<ProcessFormFieldEntity>(sourceFormFields.size());
-        for (ProcessFormFieldEntity source : sourceFormFields) {
-            ProcessFormFieldEntity target = new ProcessFormFieldEntity();
-            target.setId(newId());
-            target.setDefinitionId(targetDefinitionId);
-            target.setFieldCode(source.getFieldCode());
-            target.setFieldName(source.getFieldName());
-            target.setFieldType(source.getFieldType());
-            target.setControlType(source.getControlType());
-            target.setRequired(source.getRequired());
-            target.setValidationRule(source.getValidationRule());
-            target.setDefaultValue(source.getDefaultValue());
-            target.setSortOrder(source.getSortOrder());
-            copied.add(target);
-        }
-        return copied;
-    }
-
-    /**
-     * 复制附件配置实体到新的流程定义，并重置为草稿态。
-     *
-     * @param sourceAttachmentConfigs 源定义下已持久化的附件配置实体
-     * @param targetDefinitionId      新定义 ID，复制结果都会绑定到该定义并生成新主键
-     * @param operatorUserId          当前操作人 ID，用于重置 createdBy/updatedBy 审计字段
-     * @param now                     当前业务时间，用于重置 createdAt/updatedAt 审计字段
-     * @return 可批量插入到目标定义的附件配置实体
-     */
-    List<ProcessDefinitionAttachmentConfigEntity> copyAttachmentConfigEntities(
-            List<ProcessDefinitionAttachmentConfigEntity> sourceAttachmentConfigs,
-            String targetDefinitionId,
-            String operatorUserId,
-            LocalDateTime now) {
-        if (sourceAttachmentConfigs == null || sourceAttachmentConfigs.isEmpty()) {
-            return Collections.emptyList();
-        }
-        List<ProcessDefinitionAttachmentConfigEntity> copied =
-                new ArrayList<ProcessDefinitionAttachmentConfigEntity>(sourceAttachmentConfigs.size());
-        for (ProcessDefinitionAttachmentConfigEntity source : sourceAttachmentConfigs) {
-            ProcessDefinitionAttachmentConfigEntity target = new ProcessDefinitionAttachmentConfigEntity();
-            target.setId(newId());
-            target.setAttachmentConfigId(draftAttachmentConfigId(targetDefinitionId));
-            target.setDefinitionId(targetDefinitionId);
-            target.setConfigStatus("DRAFT");
-            target.setActivatedAt(null);
-            target.setAttachmentTemplateId(source.getAttachmentTemplateId());
-            target.setAttachmentCode(source.getAttachmentCode());
-            target.setRequired(source.getRequired());
-            target.setMinCount(source.getMinCount());
-            target.setMaxCount(source.getMaxCount());
-            target.setApplicableNodeCodes(source.getApplicableNodeCodes());
-            target.setSortOrder(source.getSortOrder());
-            target.setCreatedBy(operatorUserId);
-            target.setCreatedAt(now);
-            target.setUpdatedBy(operatorUserId);
-            target.setUpdatedAt(now);
             copied.add(target);
         }
         return copied;

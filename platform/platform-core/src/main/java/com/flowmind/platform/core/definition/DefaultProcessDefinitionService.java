@@ -24,16 +24,12 @@ import com.flowmind.platform.api.service.ProcessDefinitionService;
 import com.flowmind.platform.core.validation.DefinitionModelValidator;
 import com.flowmind.platform.core.validation.DefinitionRequestValidator;
 import com.flowmind.platform.core.validation.DefinitionStatusValidator;
-import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionEntity;
 import com.flowmind.platform.persistence.entity.ProcessEdgeEntity;
-import com.flowmind.platform.persistence.entity.ProcessFormFieldEntity;
 import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
 import com.flowmind.platform.persistence.entity.ProcessOperationRecordEntity;
-import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
 import com.flowmind.platform.persistence.repository.ProcessEdgeRepository;
-import com.flowmind.platform.persistence.repository.ProcessFormFieldRepository;
 import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
 import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,8 +61,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     private final ProcessDefinitionRepository definitionRepository;
     private final ProcessNodeRepository nodeRepository;
     private final ProcessEdgeRepository edgeRepository;
-    private final ProcessFormFieldRepository formFieldRepository;
-    private final ProcessDefinitionAttachmentConfigRepository attachmentConfigRepository;
+    private final ProcessFormFieldDefinitionManager formFieldManager;
+    private final ProcessDefinitionAttachmentConfigManager attachmentConfigManager;
     private final OperationIdempotencyService idempotencyService;
     private final ProcessDefinitionCache processDefinitionCache;
     private final DefinitionStatusValidator statusValidator = new DefinitionStatusValidator();
@@ -79,8 +75,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
      * @param definitionRepository      流程定义主表仓储
      * @param nodeRepository            流程节点仓储
      * @param edgeRepository            流程连线仓储
-     * @param formFieldRepository       流程表单字段仓储
-     * @param attachmentConfigRepository 流程定义附件配置仓储
+     * @param formFieldManager          流程表单字段管理组件
+     * @param attachmentConfigManager   流程定义附件配置管理组件
      * @param idempotencyService        操作幂等组件，负责 begin/replay/markSuccess/markFailed
      * @param processDefinitionCache    定义图缓存组件，为空时使用本地默认缓存
      */
@@ -88,15 +84,15 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     public DefaultProcessDefinitionService(ProcessDefinitionRepository definitionRepository,
                                            ProcessNodeRepository nodeRepository,
                                            ProcessEdgeRepository edgeRepository,
-                                           ProcessFormFieldRepository formFieldRepository,
-                                           ProcessDefinitionAttachmentConfigRepository attachmentConfigRepository,
+                                           ProcessFormFieldDefinitionManager formFieldManager,
+                                           ProcessDefinitionAttachmentConfigManager attachmentConfigManager,
                                            OperationIdempotencyService idempotencyService,
                                            ProcessDefinitionCache processDefinitionCache) {
         this.definitionRepository = definitionRepository;
         this.nodeRepository = nodeRepository;
         this.edgeRepository = edgeRepository;
-        this.formFieldRepository = formFieldRepository;
-        this.attachmentConfigRepository = attachmentConfigRepository;
+        this.formFieldManager = formFieldManager;
+        this.attachmentConfigManager = attachmentConfigManager;
         this.idempotencyService = idempotencyService;
         this.processDefinitionCache = processDefinitionCache == null
                 ? new ProcessDefinitionCache() : processDefinitionCache;
@@ -105,22 +101,12 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     public DefaultProcessDefinitionService(ProcessDefinitionRepository definitionRepository,
                                            ProcessNodeRepository nodeRepository,
                                            ProcessEdgeRepository edgeRepository,
-                                           ProcessFormFieldRepository formFieldRepository,
-                                           ProcessDefinitionAttachmentConfigRepository attachmentConfigRepository,
+                                           ProcessFormFieldDefinitionManager formFieldManager,
+                                           ProcessDefinitionAttachmentConfigManager attachmentConfigManager,
                                            ProcessOperationRecordRepository operationRecordRepository,
                                            ProcessDefinitionCache processDefinitionCache) {
-        this(definitionRepository, nodeRepository, edgeRepository, formFieldRepository, attachmentConfigRepository,
+        this(definitionRepository, nodeRepository, edgeRepository, formFieldManager, attachmentConfigManager,
                 new OperationIdempotencyService(operationRecordRepository), processDefinitionCache);
-    }
-
-    public DefaultProcessDefinitionService(ProcessDefinitionRepository definitionRepository,
-                                           ProcessNodeRepository nodeRepository,
-                                           ProcessEdgeRepository edgeRepository,
-                                           ProcessFormFieldRepository formFieldRepository,
-                                           ProcessDefinitionAttachmentConfigRepository attachmentConfigRepository,
-                                           ProcessOperationRecordRepository operationRecordRepository) {
-        this(definitionRepository, nodeRepository, edgeRepository, formFieldRepository, attachmentConfigRepository,
-                operationRecordRepository, new ProcessDefinitionCache());
     }
 
     /**
@@ -214,6 +200,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         rejectNonExecutableOperation(decision);
         modelValidator.validateSaveGraphStructure(nodes, edges);
+        ensureValid(formFieldManager.validateFormFields(formFields));
+        ensureValid(attachmentConfigManager.validateAttachmentConfigs(attachmentConfigs, nodes));
 
         //删除全部旧图元素，批量插入新图元素
         edgeRepository.deleteByDefinitionId(definitionId);
@@ -221,11 +209,13 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         nodeRepository.batchInsert(ProcessDefinitionMapper.toNodeEntities(nodes));
         edgeRepository.batchInsert(ProcessDefinitionMapper.toEdgeEntities(edges));
         definitionRepository.touchUpdated(definitionId, request.getOperatorUserId());
-        formFieldRepository.deleteByDefinitionId(definitionId);
-        formFieldRepository.batchInsert(ProcessDefinitionMapper.toFormFieldEntities(formFields));
-        attachmentConfigRepository.deleteByDefinitionId(definitionId);
-        attachmentConfigRepository.batchInsert(graphDraftFactory.toDraftAttachmentConfigEntities(
-                attachmentConfigs, request.getOperatorUserId(), now));
+        ensureValid(formFieldManager.saveFormFields(definitionId, formFields));
+        if (attachmentConfigs.isEmpty()) {
+            attachmentConfigManager.deleteAttachmentConfigs(definitionId);
+        } else {
+            ensureValid(attachmentConfigManager.saveDraftGroup(definitionId, null, attachmentConfigs, nodes,
+                    request.getOperatorUserId()));
+        }
 
         //标记幂等操作成功
         idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(definitionId));
@@ -294,16 +284,12 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         List<ProcessNodeEntity> sourceNodes = nodeRepository.findByDefinitionId(definitionId);
         List<ProcessEdgeEntity> sourceEdges = edgeRepository.findByDefinitionId(definitionId);
-        List<ProcessFormFieldEntity> sourceFormFields = formFieldRepository.findByDefinitionId(definitionId);
-        List<ProcessDefinitionAttachmentConfigEntity> sourceAttachmentConfigs =
-                attachmentConfigRepository.findByDefinitionId(definitionId);
 
         ProcessDefinitionEntity copied = insertCopiedDefinitionWithRetry(source, request, now);
         nodeRepository.batchInsert(graphDraftFactory.copyNodeEntities(sourceNodes, copied.getId()));
         edgeRepository.batchInsert(graphDraftFactory.copyEdgeEntities(sourceEdges, copied.getId()));
-        formFieldRepository.batchInsert(graphDraftFactory.copyFormFieldEntities(sourceFormFields, copied.getId()));
-        attachmentConfigRepository.batchInsert(graphDraftFactory.copyAttachmentConfigEntities(sourceAttachmentConfigs,
-                copied.getId(), request.getOperatorUserId(), now));
+        formFieldManager.copyFormFields(definitionId, copied.getId());
+        attachmentConfigManager.copyAttachmentConfigs(definitionId, copied.getId());
 
         idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(copied.getId()));
         registerGraphCacheInvalidation(copied.getId());
@@ -334,8 +320,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                     "active definition must not be deleted");
         }
 
-        formFieldRepository.deleteByDefinitionId(definition.getId());
-        attachmentConfigRepository.deleteByDefinitionId(definition.getId());
+        formFieldManager.deleteFormFields(definition.getId());
+        attachmentConfigManager.deleteAttachmentConfigs(definition.getId());
         definitionRepository.deleteAttachmentsByDefinitionId(definition.getId());
         definitionRepository.deleteReadRecordsByDefinitionId(definition.getId());
         definitionRepository.deleteHistoryTasksByDefinitionId(definition.getId());
@@ -371,8 +357,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         return ProcessDefinitionMapper.toDetailDto(definition,
                 nodeRepository.findByDefinitionId(definitionId),
                 edgeRepository.findByDefinitionId(definitionId),
-                formFieldRepository.findByDefinitionId(definitionId),
-                attachmentConfigRepository.findByDefinitionId(definitionId));
+                formFieldManager.findFormFields(definitionId),
+                attachmentConfigManager.findByDefinitionId(definitionId));
     }
 
     /**
@@ -519,6 +505,20 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     private OperationResult replayDeleteDefinition(ProcessOperationRecordEntity existing) {
         return deleteOperationResult(existing.getOperationId(),
                 JsonCodec.extractDefinitionId(existing.getResultJson()), true);
+    }
+
+    private void ensureValid(ValidationResult result) {
+        if (result == null || result.isValid()) {
+            return;
+        }
+        if (result.getIssues() == null || result.getIssues().isEmpty()) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                    "definition extension validation failed");
+        }
+        ValidationResult.Issue issue = result.getIssues().get(0);
+        String code = hasText(issue.getCode()) ? issue.getCode() : DefinitionErrorCodes.DEFINITION_INVALID;
+        String message = hasText(issue.getMessage()) ? issue.getMessage() : "definition extension validation failed";
+        throw new DefinitionValidationException(code, message);
     }
 
     private ProcessDefinitionDTO replayCreateDefinition(ProcessOperationRecordEntity existing) {

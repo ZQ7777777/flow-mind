@@ -23,10 +23,12 @@ import com.flowmind.platform.api.request.CreateProcessDefinitionRequest;
 import com.flowmind.platform.api.request.DefinitionOperationRequest;
 import com.flowmind.platform.api.request.SaveProcessGraphRequest;
 import com.flowmind.platform.core.validation.DefinitionRequestValidator;
-import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
+import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigValidator;
+import com.flowmind.platform.core.validation.ProcessFormFieldValidator;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionEntity;
 import com.flowmind.platform.persistence.entity.ProcessEdgeEntity;
 import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
+import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
 import com.flowmind.platform.persistence.repository.ProcessEdgeRepository;
@@ -72,7 +74,10 @@ class DefaultProcessDefinitionServiceTest {
     private ProcessNodeRepository nodeRepository;
     private ProcessEdgeRepository edgeRepository;
     private ProcessFormFieldRepository formFieldRepository;
+    private ProcessAttachmentTemplateRepository attachmentTemplateRepository;
     private ProcessDefinitionAttachmentConfigRepository attachmentConfigRepository;
+    private ProcessFormFieldDefinitionManager formFieldManager;
+    private ProcessDefinitionAttachmentConfigManager attachmentConfigManager;
     private TransactionTemplate transactionTemplate;
     private RecordingProcessDefinitionCache processDefinitionCache;
     private DefaultProcessDefinitionService service;
@@ -88,13 +93,19 @@ class DefaultProcessDefinitionServiceTest {
         nodeRepository = new ProcessNodeRepository(jdbcTemplate);
         edgeRepository = new ProcessEdgeRepository(jdbcTemplate);
         formFieldRepository = new ProcessFormFieldRepository(jdbcTemplate);
+        attachmentTemplateRepository = new ProcessAttachmentTemplateRepository(jdbcTemplate);
         attachmentConfigRepository = new ProcessDefinitionAttachmentConfigRepository(jdbcTemplate);
+        formFieldManager = new ProcessFormFieldDefinitionManager(formFieldRepository,
+                new ProcessFormFieldValidator());
+        attachmentConfigManager = new ProcessDefinitionAttachmentConfigManager(attachmentConfigRepository,
+                attachmentTemplateRepository,
+                new ProcessDefinitionAttachmentConfigValidator(attachmentTemplateRepository));
         processDefinitionCache = new RecordingProcessDefinitionCache();
         service = new DefaultProcessDefinitionService(definitionRepository,
                 nodeRepository,
                 edgeRepository,
-                formFieldRepository,
-                attachmentConfigRepository,
+                formFieldManager,
+                attachmentConfigManager,
                 new ProcessOperationRecordRepository(jdbcTemplate),
                 processDefinitionCache);
     }
@@ -309,7 +320,7 @@ class DefaultProcessDefinitionServiceTest {
         assertNotEquals(sourceAttachment.getAttachmentConfigId(), copiedAttachment.getAttachmentConfigId());
         assertEquals(AttachmentConfigStatusEnum.DRAFT, copiedAttachment.getConfigStatus());
         assertNull(copiedAttachment.getActivatedAt());
-        assertEquals("operator-copy", copiedAttachment.getCreatedBy());
+        assertEquals(sourceAttachment.getCreatedBy(), copiedAttachment.getCreatedBy());
         assertEquals(Collections.singletonList(copied.getId()), processDefinitionCache.definitionIds);
     }
 
@@ -339,8 +350,10 @@ class DefaultProcessDefinitionServiceTest {
         DefaultProcessDefinitionService failingService = new DefaultProcessDefinitionService(definitionRepository,
                 nodeRepository,
                 edgeRepository,
-                formFieldRepository,
-                new FailingAttachmentConfigRepository(jdbcTemplate),
+                formFieldManager,
+                new FailingAttachmentConfigManager(attachmentConfigRepository,
+                        attachmentTemplateRepository,
+                        new ProcessDefinitionAttachmentConfigValidator(attachmentTemplateRepository)),
                 new ProcessOperationRecordRepository(jdbcTemplate),
                 processDefinitionCache);
 
@@ -361,8 +374,8 @@ class DefaultProcessDefinitionServiceTest {
                 conflictingRepository,
                 nodeRepository,
                 edgeRepository,
-                formFieldRepository,
-                attachmentConfigRepository,
+                formFieldManager,
+                attachmentConfigManager,
                 new ProcessOperationRecordRepository(jdbcTemplate),
                 processDefinitionCache);
 
@@ -453,8 +466,8 @@ class DefaultProcessDefinitionServiceTest {
         DefaultProcessDefinitionService failingService = new DefaultProcessDefinitionService(definitionRepository,
                 nodeRepository,
                 edgeRepository,
-                new FailingFormFieldRepository(jdbcTemplate),
-                attachmentConfigRepository,
+                new FailingFormFieldManager(formFieldRepository, new ProcessFormFieldValidator()),
+                attachmentConfigManager,
                 new ProcessOperationRecordRepository(jdbcTemplate),
                 processDefinitionCache);
 
@@ -897,27 +910,30 @@ class DefaultProcessDefinitionServiceTest {
         }
     }
 
-    private static final class FailingAttachmentConfigRepository
-            extends ProcessDefinitionAttachmentConfigRepository {
+    private static final class FailingAttachmentConfigManager
+            extends ProcessDefinitionAttachmentConfigManager {
 
-        private FailingAttachmentConfigRepository(JdbcTemplate jdbcTemplate) {
-            super(jdbcTemplate);
+        private FailingAttachmentConfigManager(ProcessDefinitionAttachmentConfigRepository attachmentConfigRepository,
+                                               ProcessAttachmentTemplateRepository attachmentTemplateRepository,
+                                               ProcessDefinitionAttachmentConfigValidator validator) {
+            super(attachmentConfigRepository, attachmentTemplateRepository, validator);
         }
 
         @Override
-        public int[] batchInsert(List<ProcessDefinitionAttachmentConfigEntity> attachmentConfigs) {
+        public int copyAttachmentConfigs(String sourceDefinitionId, String targetDefinitionId) {
             throw new RuntimeException("copy attachment config failure");
         }
     }
 
-    private static final class FailingFormFieldRepository extends ProcessFormFieldRepository {
+    private static final class FailingFormFieldManager extends ProcessFormFieldDefinitionManager {
 
-        private FailingFormFieldRepository(JdbcTemplate jdbcTemplate) {
-            super(jdbcTemplate);
+        private FailingFormFieldManager(ProcessFormFieldRepository formFieldRepository,
+                                        ProcessFormFieldValidator validator) {
+            super(formFieldRepository, validator);
         }
 
         @Override
-        public int deleteByDefinitionId(String definitionId) {
+        public int deleteFormFields(String definitionId) {
             throw new RuntimeException("delete form field failure");
         }
     }
