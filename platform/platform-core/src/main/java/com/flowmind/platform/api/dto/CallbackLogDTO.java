@@ -26,8 +26,6 @@ public class CallbackLogDTO {
     private CallbackStatusEnum callbackStatus;
     /** 投递重试次数。 */
     private Integer retryCount;
-    /** 兼容旧字段的错误信息。 */
-    private String errorMessage;
     /** 最近一次投递错误。 */
     private String lastError;
     /** 创建时间。 */
@@ -79,14 +77,6 @@ public class CallbackLogDTO {
         this.eventType = eventType;
     }
 
-    public void setEventType(String eventType) {
-        this.eventType = WorkflowEventTypeEnum.fromCode(eventType);
-    }
-
-    public String getEventTypeCode() {
-        return eventType == null ? null : eventType.name();
-    }
-
     public ActionTypeEnum getActionType() {
         return actionType;
     }
@@ -119,22 +109,12 @@ public class CallbackLogDTO {
         this.retryCount = retryCount;
     }
 
-    public String getErrorMessage() {
-        return errorMessage;
-    }
-
-    public void setErrorMessage(String errorMessage) {
-        this.errorMessage = errorMessage;
-        this.lastError = errorMessage;
-    }
-
     public String getLastError() {
         return lastError;
     }
 
     public void setLastError(String lastError) {
         this.lastError = lastError;
-        this.errorMessage = lastError;
     }
 
     public LocalDateTime getCreatedAt() {

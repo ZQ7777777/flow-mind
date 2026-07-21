@@ -1,7 +1,7 @@
 package com.flowmind.platform.api.request;
 
 import com.flowmind.platform.api.enums.AlertStatusEnum;
-import com.flowmind.platform.api.dto.AttachmentUploadItem;
+import com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -9,6 +9,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Method;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -137,6 +138,10 @@ class RuntimeRequestContractTest {
                         "operationId", "delete-attachment-operation",
                         "attachmentId", "attachment-001",
                         "operatorUserId", "operator-007")),
+                fixture("scan timeout tasks", TimeoutScanRequest.class, properties(
+                        "operationId", "timeout-scan-operation",
+                        "scanAt", LocalDateTime.of(2026, 7, 17, 12, 0),
+                        "limit", Integer.valueOf(100))),
                 fixture("handle alert", HandleAlertRequest.class, properties(
                         "operationId", "handle-alert-operation",
                         "alertId", "alert-001",
@@ -168,6 +173,7 @@ class RuntimeRequestContractTest {
                         SaveInstanceAttachmentRequest.class,
                         SaveTaskAttachmentRequest.class,
                         DeleteAttachmentRequest.class,
+                        TimeoutScanRequest.class,
                         HandleAlertRequest.class));
     }
 
@@ -201,7 +207,7 @@ class RuntimeRequestContractTest {
     private static Map<String, Object> attachmentProperties() {
         return properties(
                 "attachmentCode", "receipt",
-                "ownerType", "INSTANCE",
+                "ownerType", AttachmentOwnerTypeEnum.INSTANCE,
                 "fileName", "receipt.pdf",
                 "contentType", "application/pdf",
                 "sizeBytes", Long.valueOf(3L),

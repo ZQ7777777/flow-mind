@@ -3,6 +3,7 @@ package com.flowmind.platform.api.dto;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.DefinitionActionTypeEnum;
 import com.flowmind.platform.api.enums.OperationStatusEnum;
+import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -63,8 +64,12 @@ class OperationLogContractTest {
     void auditLogSupportsRuntimeActionType() {
         AuditLogDTO auditLog = new AuditLogDTO();
 
+        auditLog.setTargetType(OperationTargetTypeEnum.TASK);
+        auditLog.setTargetId("task-001");
         auditLog.setActionType(ActionTypeEnum.FORCE_COMPLETE);
 
+        assertEquals(OperationTargetTypeEnum.TASK, auditLog.getTargetType());
+        assertEquals("task-001", auditLog.getTargetId());
         assertEquals("FORCE_COMPLETE", auditLog.getActionType());
     }
 
@@ -72,8 +77,26 @@ class OperationLogContractTest {
     void auditLogSupportsDefinitionActionNamespace() {
         AuditLogDTO auditLog = new AuditLogDTO();
 
+        auditLog.setTargetType(OperationTargetTypeEnum.DEFINITION);
+        auditLog.setTargetId("definition-001");
         auditLog.setActionType(DefinitionActionTypeEnum.DELETE);
 
+        assertEquals(OperationTargetTypeEnum.DEFINITION, auditLog.getTargetType());
+        assertEquals("definition-001", auditLog.getTargetId());
         assertEquals("DEFINITION_DELETE", auditLog.getActionType());
+    }
+
+    @Test
+    void logContractsUseStringStorageWithEnumAdapters() throws NoSuchFieldException {
+        OperationRecordDTO operationRecord = new OperationRecordDTO();
+        AuditLogDTO auditLog = new AuditLogDTO();
+
+        operationRecord.setActionType("DEFINITION_PUBLISH");
+        auditLog.setActionType("DEFINITION_ACTIVATE");
+
+        assertEquals(String.class, OperationRecordDTO.class.getDeclaredField("actionType").getType());
+        assertEquals(String.class, AuditLogDTO.class.getDeclaredField("actionType").getType());
+        assertEquals("DEFINITION_PUBLISH", operationRecord.getActionType());
+        assertEquals("DEFINITION_ACTIVATE", auditLog.getActionType());
     }
 }

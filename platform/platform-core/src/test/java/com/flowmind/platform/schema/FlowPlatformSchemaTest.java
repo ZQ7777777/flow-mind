@@ -1,5 +1,6 @@
 package com.flowmind.platform.schema;
 
+import com.flowmind.platform.api.enums.DefinitionActionTypeEnum;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -96,7 +97,11 @@ class FlowPlatformSchemaTest {
             executeSchema(connection);
 
             assertDoesNotThrow(() -> insertOperationRecord(connection, "record-001", "operation-001", "APPROVE"));
-            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-002", "operation-002", "DEFINITION_SAVE_GRAPH"));
+            for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
+                String suffix = actionType.name();
+                assertDoesNotThrow(() -> insertOperationRecord(connection, "record-" + suffix,
+                        "operation-" + suffix, actionType.getOperationActionType()));
+            }
             assertThrows(SQLException.class,
                     () -> insertOperationRecord(connection, "record-003", "operation-003", "SAVE_GRAPH"));
         }
@@ -108,8 +113,11 @@ class FlowPlatformSchemaTest {
             executeSchema(connection);
 
             assertDoesNotThrow(() -> insertAuditLog(connection, "audit-001", "TASK", "task-001", "APPROVE"));
-            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-002", "DEFINITION", "definition-001",
-                    "DEFINITION_DELETE"));
+            for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
+                String suffix = actionType.name();
+                assertDoesNotThrow(() -> insertAuditLog(connection, "audit-" + suffix, "DEFINITION",
+                        "definition-" + suffix, actionType.getOperationActionType()));
+            }
             assertThrows(SQLException.class,
                     () -> insertAuditLog(connection, "audit-003", "DEFINITION", "definition-001", "DELETE"));
         }

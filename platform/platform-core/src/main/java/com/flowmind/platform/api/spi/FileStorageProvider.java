@@ -1,7 +1,7 @@
 package com.flowmind.platform.api.spi;
 
-import com.flowmind.platform.persistence.entity.FileContent;
-import com.flowmind.platform.persistence.entity.StoredFile;
+import com.flowmind.platform.api.dto.FileContent;
+import com.flowmind.platform.api.dto.StoredFile;
 import com.flowmind.platform.api.request.StoreFileRequest;
 
 /**
