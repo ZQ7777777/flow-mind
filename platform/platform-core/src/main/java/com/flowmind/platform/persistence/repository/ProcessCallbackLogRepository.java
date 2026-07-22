@@ -1,7 +1,6 @@
 package com.flowmind.platform.persistence.repository;
 
 import com.flowmind.platform.api.dto.CallbackLogQuery;
-import com.flowmind.platform.core.query.PageQueryNormalizer;
 import com.flowmind.platform.persistence.entity.ProcessCallbackLogEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -17,6 +16,10 @@ import java.util.List;
  */
 @Repository
 public class ProcessCallbackLogRepository {
+
+    private static final int DEFAULT_PAGE_NO = 1;
+    private static final int DEFAULT_PAGE_SIZE = 20;
+    private static final int MAX_PAGE_SIZE = 100;
 
     private static final RowMapper<ProcessCallbackLogEntity> ROW_MAPPER =
             new RowMapper<ProcessCallbackLogEntity>() {
@@ -87,8 +90,8 @@ public class ProcessCallbackLogRepository {
 
     public List<ProcessCallbackLogEntity> query(CallbackLogQuery query) {
         CallbackLogQuery normalized = query == null ? new CallbackLogQuery() : query;
-        int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
-        int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        int pageNo = normalizePageNo(normalized.getPageNo());
+        int pageSize = normalizePageSize(normalized.getPageSize());
         List<Object> params = new ArrayList<Object>();
         StringBuilder sql = new StringBuilder("SELECT * FROM process_callback_log ");
         appendWhere(sql, params, normalized);
@@ -130,5 +133,19 @@ public class ProcessCallbackLogRepository {
             sql.append("AND callback_status = ? ");
             params.add(query.getCallbackStatus().name());
         }
+    }
+
+    private static int normalizePageNo(Integer pageNo) {
+        if (pageNo == null || pageNo.intValue() < 1) {
+            return DEFAULT_PAGE_NO;
+        }
+        return pageNo.intValue();
+    }
+
+    private static int normalizePageSize(Integer pageSize) {
+        if (pageSize == null || pageSize.intValue() < 1) {
+            return DEFAULT_PAGE_SIZE;
+        }
+        return Math.min(pageSize.intValue(), MAX_PAGE_SIZE);
     }
 }
