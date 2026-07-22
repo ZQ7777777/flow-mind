@@ -5,7 +5,6 @@ import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
 import com.flowmind.platform.core.runtime.RuntimeValidationException;
 import com.flowmind.platform.persistence.entity.ProcessCallbackLogEntity;
 import com.flowmind.platform.persistence.repository.ProcessCallbackLogRepository;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -37,20 +36,8 @@ public class CallbackOutboxService {
             throw new RuntimeValidationException(RuntimeErrorCodes.CALLBACK_EVENT_CONFLICT,
                     "callback eventId already exists with different payload");
         }
-        try {
-            callbackLogRepository.insertPending(candidate);
-            return candidate;
-        } catch (DataIntegrityViolationException ex) {
-            existing = callbackLogRepository.findByEventId(event.getEventId());
-            if (existing != null && sameBusinessEvent(existing, candidate)) {
-                return existing;
-            }
-            if (existing != null) {
-                throw new RuntimeValidationException(RuntimeErrorCodes.CALLBACK_EVENT_CONFLICT,
-                        "callback eventId already exists with different payload", ex);
-            }
-            throw ex;
-        }
+        callbackLogRepository.insertPending(candidate);
+        return candidate;
     }
 
     public List<ProcessCallbackLogEntity> appendPendingBatch(List<WorkflowEvent> events) {

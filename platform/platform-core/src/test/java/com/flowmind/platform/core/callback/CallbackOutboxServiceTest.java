@@ -6,6 +6,7 @@ import com.flowmind.platform.api.dto.WorkflowEvent;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.CallbackStatusEnum;
 import com.flowmind.platform.api.enums.WorkflowEventTypeEnum;
+import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
 import com.flowmind.platform.core.runtime.RuntimeValidationException;
 import com.flowmind.platform.persistence.entity.ProcessCallbackLogEntity;
@@ -16,16 +17,15 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class CallbackOutboxServiceTest {
@@ -35,15 +35,12 @@ class CallbackOutboxServiceTest {
     private ProcessCallbackLogRepository callbackLogRepository;
     private CallbackLogMapper callbackLogMapper;
     private CallbackOutboxService outboxService;
-    private TransactionTemplate transactionTemplate;
 
     @BeforeEach
     void setUp() throws Exception {
         connection = DriverManager.getConnection("jdbc:sqlite::memory:");
         SchemaTestSupport.executeSchema(connection);
-        ExistingConnectionDataSource dataSource = new ExistingConnectionDataSource(connection);
-        jdbcTemplate = new JdbcTemplate(dataSource);
-        transactionTemplate = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+        jdbcTemplate = new JdbcTemplate(new ExistingConnectionDataSource(connection));
         callbackLogRepository = new ProcessCallbackLogRepository(jdbcTemplate);
         callbackLogMapper = new CallbackLogMapper();
         outboxService = new CallbackOutboxService(callbackLogRepository, callbackLogMapper);
@@ -82,29 +79,30 @@ class CallbackOutboxServiceTest {
     }
 
     @Test
-    void callbackServicePublishOnlyAppendsPendingOutbox() {
-        WorkflowEvent event = event("op-001:TASK_COMPLETED:1", WorkflowEventTypeEnum.TASK_COMPLETED);
-        DefaultCallbackService callbackService = new DefaultCallbackService(callbackLogRepository,
-                callbackLogMapper, outboxService);
+    void callbackServiceUpdatesSuccessAndFailedStatusWithoutThrowingFailure() {
+        WorkflowEvent success = event("op-001:TASK_COMPLETED:1", WorkflowEventTypeEnum.TASK_COMPLETED);
+        WorkflowEvent failed = event("op-002:TASK_COMPLETED:1", WorkflowEventTypeEnum.TASK_COMPLETED);
+        outboxService.appendPending(success);
+        outboxService.appendPending(failed);
+        DefaultCallbackService successService = new DefaultCallbackService(callbackLogRepository,
+                callbackLogMapper, Collections.<WorkflowCallbackHandler>emptyList());
+        DefaultCallbackService failedService = new DefaultCallbackService(callbackLogRepository,
+                callbackLogMapper, Arrays.<WorkflowCallbackHandler>asList(new WorkflowCallbackHandler() {
+                    @Override
+                    public void handle(WorkflowEvent event) {
+                        throw new IllegalStateException("remote failed");
+                    }
+                }));
 
-        transactionTemplate.execute(status -> {
-            callbackService.publishCallback(event);
-            return null;
-        });
+        successService.publishCallback(success);
+        failedService.publishCallback(failed);
 
-        ProcessCallbackLogEntity log = callbackLogRepository.findByEventId(event.getEventId());
-        assertEquals(CallbackStatusEnum.PENDING.name(), log.getCallbackStatus());
-        assertEquals(Integer.valueOf(0), log.getRetryCount());
-        assertNull(log.getLastError());
-    }
-
-    @Test
-    void callbackServicePublishRequiresExistingTransaction() {
-        WorkflowEvent event = event("op-001:TASK_COMPLETED:1", WorkflowEventTypeEnum.TASK_COMPLETED);
-        DefaultCallbackService callbackService = new DefaultCallbackService(callbackLogRepository,
-                callbackLogMapper, outboxService);
-
-        assertThrows(IllegalStateException.class, () -> callbackService.publishCallback(event));
+        assertEquals(CallbackStatusEnum.SUCCESS.name(),
+                callbackLogRepository.findByEventId(success.getEventId()).getCallbackStatus());
+        ProcessCallbackLogEntity failedLog = callbackLogRepository.findByEventId(failed.getEventId());
+        assertEquals(CallbackStatusEnum.FAILED.name(), failedLog.getCallbackStatus());
+        assertEquals(Integer.valueOf(1), failedLog.getRetryCount());
+        assertEquals("remote failed", failedLog.getLastError());
     }
 
     @Test
@@ -115,7 +113,8 @@ class CallbackOutboxServiceTest {
         query.setInstanceId("instance-1");
         query.setCallbackStatus(CallbackStatusEnum.PENDING);
 
-        CallbackLogDTO dto = new DefaultCallbackService(callbackLogRepository, callbackLogMapper, outboxService)
+        CallbackLogDTO dto = new DefaultCallbackService(callbackLogRepository, callbackLogMapper,
+                Collections.<WorkflowCallbackHandler>emptyList())
                 .queryCallbackLogs(query).getRecords().get(0);
 
         assertEquals(event.getEventId(), dto.getEventId());

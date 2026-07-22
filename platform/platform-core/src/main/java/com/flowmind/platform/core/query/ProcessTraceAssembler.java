@@ -1,5 +1,7 @@
 package com.flowmind.platform.core.query;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
@@ -16,6 +18,10 @@ import java.util.Map;
  */
 @Component
 public class ProcessTraceAssembler {
+
+    private static final TypeReference<Map<String, Object>> MAP_TYPE =
+            new TypeReference<Map<String, Object>>() {
+            };
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
@@ -70,10 +76,8 @@ public class ProcessTraceAssembler {
             return new LinkedHashMap<String, Object>();
         }
         try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> variables = objectMapper.readValue(json, Map.class);
-            return new LinkedHashMap<String, Object>(variables);
-        } catch (Exception ex) {
+            return objectMapper.readValue(json, MAP_TYPE);
+        } catch (JsonProcessingException ex) {
             throw new IllegalStateException("history variables snapshot json is invalid", ex);
         }
     }

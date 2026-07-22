@@ -3,7 +3,6 @@ package com.flowmind.platform.core.definition;
 import com.flowmind.platform.api.enums.OperationStatusEnum;
 import com.flowmind.platform.persistence.entity.ProcessOperationRecordEntity;
 import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -171,23 +170,9 @@ public class OperationIdempotencyService {
                                                       LocalDateTime now) {
         ProcessOperationRecordEntity existing = operationRecordRepository.findByOperationId(operationId);
         if (existing == null) {
-            try {
-                return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW,
-                        begin(operationId, instanceId, taskId, actionType, operatorId, requestHash, now));
-            } catch (DataIntegrityViolationException ex) {
-                existing = operationRecordRepository.findByOperationId(operationId);
-                if (existing == null) {
-                    throw ex;
-                }
-            }
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW,
+                    begin(operationId, instanceId, taskId, actionType, operatorId, requestHash, now));
         }
-        return decideExisting(existing, actionType, requestHash, now);
-    }
-
-    private OperationIdempotencyDecision decideExisting(ProcessOperationRecordEntity existing,
-                                                        String actionType,
-                                                        String requestHash,
-                                                        LocalDateTime now) {
         if (!actionType.equals(existing.getActionType()) || !requestHash.equals(existing.getRequestHash())) {
             return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.CONFLICT, existing);
         }

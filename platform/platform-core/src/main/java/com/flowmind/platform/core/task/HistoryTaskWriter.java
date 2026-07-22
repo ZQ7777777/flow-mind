@@ -12,7 +12,6 @@ import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -153,19 +152,8 @@ public class HistoryTaskWriter {
             return existing;
         }
         ProcessHistoryTaskEntity entity = toEntity(command);
-        try {
-            historyTaskRepository.insert(entity);
-            return entity;
-        } catch (DataIntegrityViolationException ex) {
-            existing = historyTaskRepository.findByTaskActionOperation(
-                    command.getTask().getId(),
-                    command.getActionType().name(),
-                    command.getOperationId());
-            if (existing != null) {
-                return existing;
-            }
-            throw ex;
-        }
+        historyTaskRepository.insert(entity);
+        return entity;
     }
 
     /**
@@ -235,7 +223,7 @@ public class HistoryTaskWriter {
         }
         try {
             return objectMapper.writeValueAsString(variablesSnapshot);
-        } catch (Exception ex) {
+        } catch (JsonProcessingException ex) {
             throw new RuntimeValidationException(RuntimeErrorCodes.HISTORY_ARCHIVE_INVALID,
                     "variables snapshot json write failed", ex);
         }
