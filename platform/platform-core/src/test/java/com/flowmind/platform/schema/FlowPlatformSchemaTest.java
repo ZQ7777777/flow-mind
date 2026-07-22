@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FlowPlatformSchemaTest {
 
     private static final String SCHEMA = "/schema/sqlite/001_init_flow_platform.sql";
+    private static final String M2_OPERATION_MIGRATION = "/schema/sqlite/002_m2_runtime_operation_actions.sql";
 
     @Test
     void schemaInitializesAndEnforcesDefinitionConstraints() throws Exception {
@@ -115,6 +116,10 @@ class FlowPlatformSchemaTest {
             executeSchema(connection);
 
             assertDoesNotThrow(() -> insertOperationRecord(connection, "record-001", "operation-001", "APPROVE"));
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-start-and-submit",
+                    "operation-start-and-submit", "START_AND_SUBMIT"));
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-variables",
+                    "operation-variables", "UPDATE_VARIABLES"));
             for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
                 String suffix = actionType.name();
                 assertDoesNotThrow(() -> insertOperationRecord(connection, "record-" + suffix,
@@ -122,6 +127,28 @@ class FlowPlatformSchemaTest {
             }
             assertThrows(SQLException.class,
                     () -> insertOperationRecord(connection, "record-003", "operation-003", "SAVE_GRAPH"));
+        }
+    }
+
+    @Test
+    void m2OperationMigrationPreservesExistingRecordsAndAddsRuntimeActions() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            createPreM2OperationRecordTable(connection);
+            insertOperationRecord(connection, "record-approve", "operation-approve", "APPROVE");
+
+            executeScript(connection, M2_OPERATION_MIGRATION);
+
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-start-and-submit",
+                    "operation-start-and-submit", "START_AND_SUBMIT"));
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-variables",
+                    "operation-variables", "UPDATE_VARIABLES"));
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT action_type FROM process_operation_record WHERE id = 'record-approve'")) {
+                assertTrue(resultSet.next());
+                assertEquals("APPROVE", resultSet.getString("action_type"));
+                assertFalse(resultSet.next());
+            }
         }
     }
 
@@ -142,10 +169,14 @@ class FlowPlatformSchemaTest {
     }
 
     private static void executeSchema(Connection connection) throws IOException, SQLException {
+        executeScript(connection, SCHEMA);
+    }
+
+    private static void executeScript(Connection connection, String resourcePath) throws IOException, SQLException {
         String sql;
-        try (InputStream input = FlowPlatformSchemaTest.class.getResourceAsStream(SCHEMA)) {
+        try (InputStream input = FlowPlatformSchemaTest.class.getResourceAsStream(resourcePath)) {
             if (input == null) {
-                throw new IOException("Schema resource not found: " + SCHEMA);
+                throw new IOException("Schema resource not found: " + resourcePath);
             }
             ByteArrayOutputStream output = new ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
@@ -161,6 +192,25 @@ class FlowPlatformSchemaTest {
                     statement.execute(command);
                 }
             }
+        }
+    }
+
+    private static void createPreM2OperationRecordTable(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE process_operation_record ("
+                    + "id TEXT PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE, instance_id TEXT, task_id TEXT, "
+                    + "action_type TEXT NOT NULL CHECK (action_type IN ('START', 'SEND', 'APPROVE', 'REJECT', "
+                    + "'RETURN', 'WITHDRAW', 'DIRECT_SEND', 'TRANSFER', 'ADD_SIGN', 'JUMP', 'TERMINATE', 'CLAIM', "
+                    + "'UNCLAIM', 'CANCEL', 'FORCE_COMPLETE', 'ARCHIVE', 'ENABLE_GRAY', 'DISABLE_GRAY', 'REMIND', "
+                    + "'ALERT_HANDLE', 'DEFINITION_CREATE', 'DEFINITION_SAVE_GRAPH', 'DEFINITION_COPY', "
+                    + "'DEFINITION_DELETE', 'DEFINITION_VALIDATE_FOR_PUBLISH', 'DEFINITION_PUBLISH', "
+                    + "'DEFINITION_ACTIVATE', 'DEFINITION_DEACTIVATE', 'DEFINITION_ARCHIVE', "
+                    + "'DEFINITION_ENABLE_GRAY', 'DEFINITION_DISABLE_GRAY')), operator_id TEXT NOT NULL, "
+                    + "request_hash TEXT NOT NULL, operation_status TEXT NOT NULL DEFAULT 'PROCESSING' "
+                    + "CHECK (operation_status IN ('PROCESSING', 'SUCCESS', 'FAILED')), result_json TEXT, "
+                    + "error_code TEXT, processing_expires_at TEXT NOT NULL, expires_at TEXT NOT NULL, "
+                    + "created_at TEXT NOT NULL DEFAULT (datetime('now')), "
+                    + "updated_at TEXT NOT NULL DEFAULT (datetime('now')))");
         }
     }
 

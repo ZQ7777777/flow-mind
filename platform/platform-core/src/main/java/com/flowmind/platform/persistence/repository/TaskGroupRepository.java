@@ -1,7 +1,10 @@
 package com.flowmind.platform.persistence.repository;
 
+import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+
+import java.util.List;
 
 /**
  * 任务组计数、状态和并行分支到达的原子条件更新仓储。
@@ -21,6 +24,36 @@ public class TaskGroupRepository {
     /** 创建任务组仓储。 */
     public TaskGroupRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /** 插入会签、或签或并行网关任务组。 */
+    public int insert(ProcessTaskGroupEntity entity) {
+        return jdbcTemplate.update("INSERT INTO process_task_group "
+                        + "(id, instance_id, node_code, join_node_code, parent_group_id, parent_branch_key, "
+                        + "group_type, total_count, completed_count, branch_state_json, group_status, "
+                        + "lock_version, created_at, completed_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, COALESCE(?, 'ACTIVE'), "
+                        + "COALESCE(?, 0), COALESCE(?, datetime('now')), ?)",
+                entity.getId(), entity.getInstanceId(), entity.getNodeCode(), entity.getJoinNodeCode(),
+                entity.getParentGroupId(), entity.getParentBranchKey(), entity.getGroupType(),
+                entity.getTotalCount(), entity.getCompletedCount(), entity.getBranchStateJson(),
+                entity.getGroupStatus(), entity.getLockVersion(),
+                DefinitionRowMappers.toDbString(entity.getCreatedAt()),
+                DefinitionRowMappers.toDbString(entity.getCompletedAt()));
+    }
+
+    /** 按任务组 ID 查询；不存在时返回 {@code null}。 */
+    public ProcessTaskGroupEntity findById(String id) {
+        List<ProcessTaskGroupEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_task_group WHERE id = ?", RuntimeRowMappers.TASK_GROUP, id);
+        return results.isEmpty() ? null : results.get(0);
+    }
+
+    /** 统计实例下仍处于 ACTIVE 状态的任务组数量。 */
+    public long countActiveByInstanceId(String instanceId) {
+        Long count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_task_group "
+                        + "WHERE instance_id = ? AND group_status = 'ACTIVE'", Long.class, instanceId);
+        return count == null ? 0L : count.longValue();
     }
 
     /**
