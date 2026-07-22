@@ -6,6 +6,7 @@ import com.flowmind.platform.api.enums.InstanceStatusEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
 import com.flowmind.platform.api.request.ApproverResolveRequest;
+import com.flowmind.platform.api.request.OperationRequest;
 import com.flowmind.platform.api.request.StartProcessRequest;
 import com.flowmind.platform.api.request.TaskOperationRequest;
 import com.flowmind.platform.api.request.UpdateVariablesRequest;
@@ -64,6 +65,22 @@ public class RuntimeRequestValidator {
      * @return 可信当前用户
      */
     public UserContext validateVariableUpdate(UpdateVariablesRequest request, ProcessInstanceEntity instance) {
+        UserContext currentUser = validateVariableUpdateIdentity(request);
+        validateVariableUpdate(request, instance, currentUser);
+        return currentUser;
+    }
+
+    /**
+     * 仅校验变量更新请求自身及操作人身份。
+     *
+     * <p>调用方应在创建幂等决定前调用本方法，这样成功重放无需依赖实例仍处于可更新状态。
+     * 首次执行时仍必须继续调用 {@link #validateVariableUpdate(UpdateVariablesRequest,
+     * ProcessInstanceEntity, UserContext)} 校验实例状态。</p>
+     *
+     * @param request 变量更新请求
+     * @return 已校验的可信当前用户
+     */
+    public UserContext validateVariableUpdateIdentity(UpdateVariablesRequest request) {
         requireOperationId(request);
         requireText(request.getInstanceId(), "instanceId");
         requireText(request.getOperatorUserId(), "operatorUserId");
@@ -72,6 +89,22 @@ public class RuntimeRequestValidator {
         }
         UserContext currentUser = currentUser();
         requireCurrentUserMatches(request.getOperatorUserId(), currentUser, "operatorUserId");
+        return currentUser;
+    }
+
+    /**
+     * 校验变量更新目标实例及其运行状态，调用方已经完成身份校验时使用。
+     *
+     * @param request     变量更新请求
+     * @param instance    已加载流程实例
+     * @param currentUser 已校验的可信当前用户
+     */
+    public void validateVariableUpdate(UpdateVariablesRequest request,
+                                        ProcessInstanceEntity instance,
+                                        UserContext currentUser) {
+        if (currentUser == null) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "current user is required");
+        }
         if (instance == null || !request.getInstanceId().equals(instance.getId())) {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "process instance does not exist");
         }
@@ -80,7 +113,6 @@ public class RuntimeRequestValidator {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
                     "variables cannot be updated for the current instance status");
         }
-        return currentUser;
     }
 
     /**
@@ -94,6 +126,21 @@ public class RuntimeRequestValidator {
     public UserContext validateTaskAction(TaskOperationRequest request,
                                           ProcessInstanceEntity instance,
                                           ProcessActiveTaskEntity task) {
+        UserContext currentUser = validateTaskIdentity(request);
+        validateTaskAction(request, instance, task, currentUser);
+        return currentUser;
+    }
+
+    /**
+     * 仅校验任务动作请求自身及操作人身份。
+     *
+     * <p>成功幂等重放发生时，原活动任务已经进入终态，因此必须先完成本校验并读取幂等记录，
+     * 不能要求原任务仍为活动状态。</p>
+     *
+     * @param request 任务动作请求
+     * @return 已校验的可信当前用户
+     */
+    public UserContext validateTaskIdentity(TaskOperationRequest request) {
         requireOperationId(request);
         requireText(request.getTaskId(), "taskId");
         requireText(request.getOperatorUserId(), "operatorUserId");
@@ -103,6 +150,24 @@ public class RuntimeRequestValidator {
         }
         UserContext currentUser = currentUser();
         requireCurrentUserMatches(request.getOperatorUserId(), currentUser, "operatorUserId");
+        return currentUser;
+    }
+
+    /**
+     * 校验任务、实例状态和候选人权限，调用方已经完成身份校验时使用。
+     *
+     * @param request     任务动作请求
+     * @param instance    任务所属流程实例
+     * @param task        当前活动任务
+     * @param currentUser 已校验的可信当前用户
+     */
+    public void validateTaskAction(TaskOperationRequest request,
+                                   ProcessInstanceEntity instance,
+                                   ProcessActiveTaskEntity task,
+                                   UserContext currentUser) {
+        if (currentUser == null) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "current user is required");
+        }
         if (task == null || !request.getTaskId().equals(task.getId())) {
             throw new RuntimeStateException(RuntimeErrorCodes.TASK_NOT_FOUND, "active task does not exist");
         }
@@ -121,7 +186,6 @@ public class RuntimeRequestValidator {
                     "expectedTaskVersion does not match active task");
         }
         assertTaskPermission(task, currentUser.getUserId());
-        return currentUser;
     }
 
     /**
@@ -195,7 +259,7 @@ public class RuntimeRequestValidator {
         }
     }
 
-    private void requireOperationId(com.flowmind.platform.api.request.OperationRequest request) {
+    private void requireOperationId(OperationRequest request) {
         if (request == null) {
             throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "operation request is required");
         }
