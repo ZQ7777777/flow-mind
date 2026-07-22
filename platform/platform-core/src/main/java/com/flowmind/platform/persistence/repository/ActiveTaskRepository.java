@@ -96,14 +96,6 @@ public class ActiveTaskRepository {
         return updateTerminalStatus(id, expectedLockVersion, "COMPLETED");
     }
 
-    /** 按活动任务 ID 读取完整任务上下文；不存在时返回 null。 */
-    public ProcessActiveTaskEntity findById(String id) {
-        List<ProcessActiveTaskEntity> results = jdbcTemplate.query(
-                "SELECT * FROM process_active_task WHERE id = ?",
-                ROW_MAPPER, id);
-        return results.isEmpty() ? null : results.get(0);
-    }
-
     /** 按实例 ID 读取活动任务，按创建时间和 ID 稳定排序。 */
     public List<ProcessActiveTaskEntity> findByInstanceId(String instanceId) {
         return jdbcTemplate.query("SELECT * FROM process_active_task "
