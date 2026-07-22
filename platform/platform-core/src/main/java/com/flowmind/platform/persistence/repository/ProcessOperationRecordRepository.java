@@ -121,6 +121,48 @@ public class ProcessOperationRecordRepository {
     }
 
     /**
+     * 原子接管已过期的 PROCESSING 租约。
+     *
+     * <p>过期判断被放入 UPDATE 条件中，多个恢复请求同时到达时至多一个请求会更新成功。</p>
+     *
+     * @param operationId         客户端幂等操作号
+     * @param now                 本次接管时观察的业务时间
+     * @param processingExpiresAt 接管后的新租约截止时间
+     * @return 成功取得接管权时返回 {@code 1}，否则返回 {@code 0}
+     */
+    public int takeOverExpiredProcessingLease(String operationId,
+                                              java.time.LocalDateTime now,
+                                              java.time.LocalDateTime processingExpiresAt) {
+        return jdbcTemplate.update("UPDATE process_operation_record "
+                        + "SET processing_expires_at = ?, updated_at = ? "
+                        + "WHERE operation_id = ? AND operation_status = 'PROCESSING' "
+                        + "AND processing_expires_at <= ?",
+                DefinitionRowMappers.toDbString(processingExpiresAt),
+                DefinitionRowMappers.toDbString(now),
+                operationId,
+                DefinitionRowMappers.toDbString(now));
+    }
+
+    /**
+     * 为幂等记录补充实例和任务目标，并拒绝与已绑定目标不一致的覆盖。
+     *
+     * @param operationId 幂等操作号
+     * @param instanceId  流程实例 ID，可为空
+     * @param taskId      活动任务 ID，可为空
+     * @return 成功绑定或原目标一致时返回受影响行数
+     */
+    public int bindTargetIfCompatible(String operationId, String instanceId, String taskId) {
+        return jdbcTemplate.update("UPDATE process_operation_record "
+                        + "SET instance_id = COALESCE(instance_id, ?), task_id = COALESCE(task_id, ?), "
+                        + "updated_at = datetime('now') WHERE operation_id = ? "
+                        + "AND (? IS NULL OR instance_id IS NULL OR instance_id = ?) "
+                        + "AND (? IS NULL OR task_id IS NULL OR task_id = ?)",
+                instanceId, taskId, operationId,
+                instanceId, instanceId,
+                taskId, taskId);
+    }
+
+    /**
      * Extends an expired PROCESSING lease with CAS semantics. The update succeeds only when the lease observed by the
      * caller is still the current database value.
      */

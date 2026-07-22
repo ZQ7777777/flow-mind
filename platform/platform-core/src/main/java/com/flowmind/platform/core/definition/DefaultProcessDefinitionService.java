@@ -228,34 +228,165 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         return modelValidator.validate(getDefinition(definitionId));
     }
 
+    /**
+     * 发布流程定义草稿。
+     *
+     * <p>M3 阶段只支持全量版本生命周期，因此发布前要求定义仍处于 DRAFT + INACTIVE + OFF，
+     * 并复用发布校验保证节点、连线等流程图结构可执行。操作完成后写入幂等成功记录、
+     * 审计日志并失效该定义的流程图缓存。</p>
+     *
+     * @param request 定义生命周期操作请求，包含定义 ID、操作人和幂等操作号
+     * @return 发布后的流程定义信息
+     */
     @Override
+    @Transactional
     public ProcessDefinitionDTO publish(DefinitionOperationRequest request) {
-        throw new UnsupportedOperationException("publish is not implemented in M1.3");
+        DefinitionRequestValidator.validateDefinitionOperation(request);
+        String actionType = DefinitionActionTypeEnum.PUBLISH.getOperationActionType();
+        OperationIdempotencyDecision decision = beginDefinitionLifecycleOperation(request, actionType,
+                hashLifecycleRequest("PUBLISH", request));
+        if (OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
+            return replayLifecycleDefinition(decision.getRecord());
+        }
+        rejectNonExecutableOperation(decision);
+
+        ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
+        ensureGrayOff(definition);
+        ValidationResult validationResult = validateForPublish(definition.getId());
+        if (validationResult != null && !validationResult.isValid()) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                    firstValidationMessage(validationResult));
+        }
+        if (definitionRepository.publish(definition.getId(), request.getOperatorUserId()) != 1) {
+            throw lifecycleStateException("definition must be DRAFT + INACTIVE + OFF before publish");
+        }
+        return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
     }
 
+    /**
+     * 激活已发布的全量流程定义。
+     *
+     * <p>同一个流程编码在 M3 只允许一个全量激活版本。激活新版本前会先停用同流程编码下
+     * 其他 ACTIVE + OFF 版本，并同时失效新旧定义缓存，避免后续启动流程继续命中过期图。</p>
+     *
+     * @param request 定义生命周期操作请求，包含定义 ID、操作人和幂等操作号
+     * @return 激活后的流程定义信息
+     */
     @Override
+    @Transactional
     public ProcessDefinitionDTO activate(DefinitionOperationRequest request) {
-        throw new UnsupportedOperationException("activate is not implemented in M1.3");
+        DefinitionRequestValidator.validateDefinitionOperation(request);
+        String actionType = DefinitionActionTypeEnum.ACTIVATE.getOperationActionType();
+        OperationIdempotencyDecision decision = beginDefinitionLifecycleOperation(request, actionType,
+                hashLifecycleRequest("ACTIVATE", request));
+        if (OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
+            return replayLifecycleDefinition(decision.getRecord());
+        }
+        rejectNonExecutableOperation(decision);
+
+        ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
+        ensureGrayOff(definition);
+        if (!DefinitionStatusEnum.PUBLISHED.name().equals(definition.getDefinitionStatus())
+                || !ActivationStatusEnum.INACTIVE.name().equals(definition.getActivationStatus())) {
+            throw lifecycleStateException("definition must be PUBLISHED + INACTIVE + OFF before activate");
+        }
+        ProcessDefinitionEntity oldActive = definitionRepository.findActiveFullByProcessCode(definition.getProcessCode());
+        // 先停用旧全量版本，再激活目标版本；二者处于同一事务内，保证对外只有一个 ACTIVE 全量版本。
+        definitionRepository.deactivateActiveFullByProcessCode(definition.getProcessCode(), definition.getId(),
+                request.getOperatorUserId());
+        if (definitionRepository.activateFull(definition.getId(), request.getOperatorUserId()) != 1) {
+            throw lifecycleStateException("definition activation failed");
+        }
+        List<String> additionalInvalidations = new ArrayList<String>();
+        if (oldActive != null && !definition.getId().equals(oldActive.getId())) {
+            additionalInvalidations.add(oldActive.getId());
+        }
+        return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), additionalInvalidations);
     }
 
+    /**
+     * 停用已激活的全量流程定义。
+     *
+     * <p>停用只改变定义选择状态，不删除定义、节点、连线或历史实例数据。停用后新建实例不会再
+     * 通过全量激活版本选择命中该定义，已有实例仍按各自绑定的定义继续流转。</p>
+     *
+     * @param request 定义生命周期操作请求，包含定义 ID、操作人和幂等操作号
+     * @return 停用后的流程定义信息
+     */
     @Override
+    @Transactional
     public ProcessDefinitionDTO deactivate(DefinitionOperationRequest request) {
-        throw new UnsupportedOperationException("deactivate is not implemented in M1.3");
+        DefinitionRequestValidator.validateDefinitionOperation(request);
+        String actionType = DefinitionActionTypeEnum.DEACTIVATE.getOperationActionType();
+        OperationIdempotencyDecision decision = beginDefinitionLifecycleOperation(request, actionType,
+                hashLifecycleRequest("DEACTIVATE", request));
+        if (OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
+            return replayLifecycleDefinition(decision.getRecord());
+        }
+        rejectNonExecutableOperation(decision);
+
+        ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
+        ensureGrayOff(definition);
+        if (definitionRepository.deactivate(definition.getId(), request.getOperatorUserId()) != 1) {
+            throw lifecycleStateException("definition must be PUBLISHED + ACTIVE + OFF before deactivate");
+        }
+        return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
     }
 
+    /**
+     * 归档已发布且未激活的全量流程定义。
+     *
+     * <p>归档是定义生命周期终态之一，要求定义已停用，避免正在作为全量入口的版本被归档。
+     * 归档时记录归档人和归档时间，并强制保持灰度状态为 OFF。</p>
+     *
+     * @param request 定义生命周期操作请求，包含定义 ID、操作人和幂等操作号
+     * @return 归档后的流程定义信息
+     */
     @Override
+    @Transactional
     public ProcessDefinitionDTO archive(DefinitionOperationRequest request) {
-        throw new UnsupportedOperationException("archive is not implemented in M1.3");
+        DefinitionRequestValidator.validateDefinitionOperation(request);
+        String actionType = DefinitionActionTypeEnum.ARCHIVE.getOperationActionType();
+        OperationIdempotencyDecision decision = beginDefinitionLifecycleOperation(request, actionType,
+                hashLifecycleRequest("ARCHIVE", request));
+        if (OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
+            return replayLifecycleDefinition(decision.getRecord());
+        }
+        rejectNonExecutableOperation(decision);
+
+        ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
+        ensureGrayOff(definition);
+        LocalDateTime now = LocalDateTime.now();
+        if (definitionRepository.archive(definition.getId(), request.getOperatorUserId(), now) != 1) {
+            throw lifecycleStateException("definition must be PUBLISHED + INACTIVE + OFF before archive");
+        }
+        return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
     }
 
+    /**
+     * 启用灰度发布。
+     *
+     * <p>M3 编码计划明确暂不实现灰度能力，因此该方法保留接口契约并显式拒绝调用。</p>
+     *
+     * @param request 灰度发布请求
+     * @return 不返回，当前阶段固定抛出 UnsupportedOperationException
+     */
     @Override
     public ProcessDefinitionDTO enableGray(GrayReleaseRequest request) {
-        throw new UnsupportedOperationException("enableGray is not implemented in M1.3");
+        throw new UnsupportedOperationException("enableGray is not implemented in M3 because gray release is excluded");
     }
 
+    /**
+     * 关闭灰度发布。
+     *
+     * <p>M3 编码计划明确暂不实现灰度能力，因此该方法保留接口契约并显式拒绝调用。</p>
+     *
+     * @param request 定义生命周期操作请求
+     * @return 不返回，当前阶段固定抛出 UnsupportedOperationException
+     */
     @Override
     public ProcessDefinitionDTO disableGray(DefinitionOperationRequest request) {
-        throw new UnsupportedOperationException("disableGray is not implemented in M1.3");
+        throw new UnsupportedOperationException("disableGray is not implemented in M3 because gray release is excluded");
     }
 
     @Override
@@ -503,6 +634,154 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         return ProcessDefinitionMapper.toDto(entity);
     }
 
+    /**
+     * 根据已成功的生命周期幂等记录重放返回值。
+     *
+     * @param existing 已存在的成功幂等记录，resultJson 中保存定义 ID
+     * @return 当前数据库中的流程定义信息
+     */
+    private ProcessDefinitionDTO replayLifecycleDefinition(ProcessOperationRecordEntity existing) {
+        String definitionId = JsonCodec.extractDefinitionId(existing.getResultJson());
+        ProcessDefinitionEntity entity = definitionRepository.findById(definitionId);
+        if (entity == null) {
+            throw new IllegalStateException("idempotent definition result not found");
+        }
+        return ProcessDefinitionMapper.toDto(entity);
+    }
+
+    /**
+     * 开始定义生命周期幂等操作。
+     *
+     * @param request     原始生命周期请求
+     * @param actionType  操作类型，典型值为 DEFINITION_PUBLISH、DEFINITION_ACTIVATE
+     * @param requestHash 请求摘要，用于识别同一 operationId 下的参数冲突
+     * @return 幂等决策结果
+     */
+    private OperationIdempotencyDecision beginDefinitionLifecycleOperation(DefinitionOperationRequest request,
+                                                                          String actionType,
+                                                                          String requestHash) {
+        return idempotencyService.beginOrReplay(request.getOperationId(), actionType,
+                request.getOperatorUserId(), requestHash, LocalDateTime.now());
+    }
+
+    /**
+     * 完成定义生命周期操作的公共收尾。
+     *
+     * <p>该方法统一处理重新读取最新状态、写审计日志、标记幂等成功和缓存失效。激活操作可能
+     * 同时影响旧全量版本，因此允许传入额外需要失效缓存的定义 ID。</p>
+     *
+     * @param request                 原始生命周期请求
+     * @param actionType              操作类型
+     * @param definitionId            本次操作目标定义 ID
+     * @param additionalInvalidations 额外需要失效流程图缓存的定义 ID，可为空
+     * @return 操作完成后的最新流程定义信息
+     */
+    private ProcessDefinitionDTO completeDefinitionLifecycleOperation(DefinitionOperationRequest request,
+                                                                     String actionType,
+                                                                     String definitionId,
+                                                                     List<String> additionalInvalidations) {
+        ProcessDefinitionEntity latest = definitionRepository.findById(definitionId);
+        if (latest == null) {
+            throw new IllegalStateException("definition disappeared during lifecycle operation");
+        }
+        definitionRepository.insertAuditLog(newId(), null, request.getOperationId(),
+                OperationTargetTypeEnum.DEFINITION.name(), definitionId, actionType,
+                request.getOperatorUserId(), lifecycleAuditDetail(latest), LocalDateTime.now());
+        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(definitionId));
+        registerGraphCacheInvalidation(definitionId);
+        if (additionalInvalidations != null) {
+            for (String additionalDefinitionId : additionalInvalidations) {
+                if (hasText(additionalDefinitionId) && !definitionId.equals(additionalDefinitionId)) {
+                    registerGraphCacheInvalidation(additionalDefinitionId);
+                }
+            }
+        }
+        return ProcessDefinitionMapper.toDto(latest);
+    }
+
+    /**
+     * 查询流程定义并在不存在时转换为统一业务异常。
+     *
+     * @param definitionId 流程定义 ID
+     * @return 已存在的流程定义实体
+     */
+    private ProcessDefinitionEntity requireDefinition(String definitionId) {
+        ProcessDefinitionEntity definition = definitionRepository.findById(definitionId);
+        if (definition == null) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_NOT_FOUND,
+                    "definition not found: " + definitionId);
+        }
+        return definition;
+    }
+
+    /**
+     * 校验当前定义未处于灰度状态。
+     *
+     * @param definition 待检查的流程定义实体
+     */
+    private void ensureGrayOff(ProcessDefinitionEntity definition) {
+        if (!GrayStatusEnum.OFF.name().equals(definition.getGrayStatus())) {
+            throw lifecycleStateException("gray definition lifecycle is not implemented in M3");
+        }
+    }
+
+    /**
+     * 创建生命周期状态不允许变更时使用的统一异常。
+     *
+     * @param message 具体状态约束说明
+     * @return 定义不可编辑异常
+     */
+    private DefinitionStateException lifecycleStateException(String message) {
+        return new DefinitionStateException(DefinitionErrorCodes.DEFINITION_NOT_EDITABLE, message);
+    }
+
+    /**
+     * 提取发布校验的首个错误信息。
+     *
+     * @param validationResult 发布校验结果
+     * @return 用于异常消息展示的错误编码和说明
+     */
+    private String firstValidationMessage(ValidationResult validationResult) {
+        if (validationResult == null || validationResult.getIssues() == null
+                || validationResult.getIssues().isEmpty()) {
+            return "definition publish validation failed";
+        }
+        ValidationResult.Issue issue = validationResult.getIssues().get(0);
+        String code = hasText(issue.getCode()) ? issue.getCode() : DefinitionErrorCodes.DEFINITION_INVALID;
+        String message = hasText(issue.getMessage()) ? issue.getMessage() : "definition publish validation failed";
+        return code + ": " + message;
+    }
+
+    /**
+     * 构造生命周期审计详情 JSON。
+     *
+     * @param latest 生命周期操作后的最新定义实体
+     * @return 包含定义状态、激活状态和灰度状态的 JSON 字符串
+     */
+    private String lifecycleAuditDetail(ProcessDefinitionEntity latest) {
+        StringBuilder builder = new StringBuilder();
+        builder.append('{');
+        appendJsonField(builder, "definitionStatus", latest.getDefinitionStatus());
+        builder.append(',');
+        appendJsonField(builder, "activationStatus", latest.getActivationStatus());
+        builder.append(',');
+        appendJsonField(builder, "grayStatus", latest.getGrayStatus());
+        builder.append('}');
+        return builder.toString();
+    }
+
+    /**
+     * 向审计 JSON 中追加字符串字段。
+     *
+     * @param builder   JSON 字符串构造器
+     * @param fieldName 字段名
+     * @param value     字段值，null 会按空字符串写入
+     */
+    private void appendJsonField(StringBuilder builder, String fieldName, String value) {
+        builder.append('"').append(fieldName).append('"').append(':');
+        builder.append('"').append(value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"")).append('"');
+    }
+
     private OperationResult replayDeleteDefinition(ProcessOperationRecordEntity existing) {
         return deleteOperationResult(existing.getOperationId(),
                 JsonCodec.extractDefinitionId(existing.getResultJson()), true);
@@ -557,6 +836,21 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
 
     private String hashDeleteRequest(DefinitionOperationRequest request) {
         StringBuilder builder = new StringBuilder("DELETE|");
+        appendPart(builder, request.getDefinitionId());
+        appendPart(builder, request.getOperatorUserId());
+        return sha256(builder.toString());
+    }
+
+    /**
+     * 计算生命周期操作幂等摘要。
+     *
+     * @param action  生命周期动作，典型值为 PUBLISH、ACTIVATE、DEACTIVATE、ARCHIVE
+     * @param request 生命周期操作请求
+     * @return 可用于幂等冲突判断的 SHA-256 摘要
+     */
+    private String hashLifecycleRequest(String action, DefinitionOperationRequest request) {
+        StringBuilder builder = new StringBuilder(action);
+        builder.append('|');
         appendPart(builder, request.getDefinitionId());
         appendPart(builder, request.getOperatorUserId());
         return sha256(builder.toString());

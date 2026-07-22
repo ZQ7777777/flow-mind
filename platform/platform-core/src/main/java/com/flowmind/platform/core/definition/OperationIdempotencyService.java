@@ -3,6 +3,7 @@ package com.flowmind.platform.core.definition;
 import com.flowmind.platform.api.enums.OperationStatusEnum;
 import com.flowmind.platform.persistence.entity.ProcessOperationRecordEntity;
 import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,34 +63,34 @@ public class OperationIdempotencyService {
      * @param now         业务操作开始时间，用于派生 PROCESSING 租约时间和记录保留时间
      * @return 已插入的操作记录实体
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public ProcessOperationRecordEntity begin(String operationId,
                                               String actionType,
                                               String operatorId,
                                               String requestHash,
                                               LocalDateTime now) {
-        return begin(operationId, null, null, actionType, operatorId, requestHash, now);
+        return begin(operationId, actionType, operatorId, requestHash, null, null, now);
     }
 
     /**
-     * 创建带运行期实例和任务上下文的 PROCESSING 幂等记录。
+     * 创建带有运行时实例或任务目标绑定的 PROCESSING 幂等记录。
      *
-     * @param operationId 客户端传入的幂等操作号，作为幂等记录唯一键
-     * @param instanceId  运行期实例 ID；定义期操作或实例创建前可为空
-     * @param taskId      运行期任务 ID；实例级动作可为空
-     * @param actionType  操作动作类型
+     * @param operationId 幂等操作号
+     * @param actionType  动作类型
      * @param operatorId  操作人 ID
-     * @param requestHash 规范化后的请求摘要
+     * @param requestHash 规范化请求摘要
+     * @param instanceId  流程实例目标，可为空
+     * @param taskId      活动任务目标，可为空
      * @param now         业务操作开始时间
-     * @return 已插入的操作记录实体
+     * @return 已插入的幂等记录
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public ProcessOperationRecordEntity begin(String operationId,
-                                              String instanceId,
-                                              String taskId,
                                               String actionType,
                                               String operatorId,
                                               String requestHash,
+                                              String instanceId,
+                                              String taskId,
                                               LocalDateTime now) {
         ProcessOperationRecordEntity operation = new ProcessOperationRecordEntity();
         operation.setId(newId());
@@ -139,41 +140,87 @@ public class OperationIdempotencyService {
      * @param now         当前业务时间
      * @return 幂等决策结果
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public OperationIdempotencyDecision beginOrReplay(String operationId,
                                                       String actionType,
                                                       String operatorId,
                                                       String requestHash,
                                                       LocalDateTime now) {
-        return beginOrReplay(operationId, null, null, actionType, operatorId, requestHash, now);
+        return beginOrReplay(operationId, actionType, operatorId, requestHash, null, null, now);
     }
 
     /**
-     * 创建或判断带运行期上下文的幂等操作记录。
+     * 创建或判断带实例、任务目标绑定的幂等操作。
      *
-     * @param operationId 客户端传入的幂等操作号
-     * @param instanceId  运行期实例 ID；定义期操作或实例创建前可为空
-     * @param taskId      运行期任务 ID；实例级动作可为空
-     * @param actionType  操作动作类型
+     * <p>首次插入遭遇唯一键竞争时，立即重新读取赢家记录；过期租约通过条件更新争取接管权，
+     * 因此并发调用不会同时得到可执行决定。</p>
+     *
+     * @param operationId 幂等操作号
+     * @param actionType  动作类型
      * @param operatorId  操作人 ID
-     * @param requestHash 规范化后的请求摘要
+     * @param requestHash 规范化请求摘要
+     * @param instanceId  流程实例目标，可为空
+     * @param taskId      活动任务目标，可为空
      * @param now         当前业务时间
      * @return 幂等决策结果
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public OperationIdempotencyDecision beginOrReplay(String operationId,
-                                                      String instanceId,
-                                                      String taskId,
-                                                      String actionType,
-                                                      String operatorId,
-                                                      String requestHash,
-                                                      LocalDateTime now) {
+                                                       String actionType,
+                                                       String operatorId,
+                                                       String requestHash,
+                                                       String instanceId,
+                                                       String taskId,
+                                                       LocalDateTime now) {
         ProcessOperationRecordEntity existing = operationRecordRepository.findByOperationId(operationId);
         if (existing == null) {
-            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW,
-                    begin(operationId, instanceId, taskId, actionType, operatorId, requestHash, now));
+            try {
+                return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW,
+                        begin(operationId, actionType, operatorId, requestHash, instanceId, taskId, now));
+            } catch (DataAccessException ex) {
+                existing = operationRecordRepository.findByOperationId(operationId);
+                if (existing == null) {
+                    throw ex;
+                }
+            }
         }
-        if (!actionType.equals(existing.getActionType()) || !requestHash.equals(existing.getRequestHash())) {
+        if (actionType.equals(existing.getActionType()) && requestHash.equals(existing.getRequestHash())
+                && needsTargetBinding(existing, instanceId, taskId)) {
+            operationRecordRepository.bindTargetIfCompatible(operationId, instanceId, taskId);
+            existing = operationRecordRepository.findByOperationId(operationId);
+            if (existing == null) {
+                throw new IllegalStateException("operation record disappeared during target binding");
+            }
+        }
+        return decideExisting(existing, actionType, requestHash, instanceId, taskId, now, true);
+    }
+
+    /**
+     * 补充运行时目标绑定，目标不一致时不允许覆盖原记录。
+     *
+     * @param operationId 幂等操作号
+     * @param instanceId  流程实例 ID，可为空
+     * @param taskId      活动任务 ID，可为空
+     */
+    public void bindTarget(String operationId, String instanceId, String taskId) {
+        ProcessOperationRecordEntity existing = operationRecordRepository.findByOperationId(operationId);
+        if (existing == null || !targetsMatch(existing, instanceId, taskId)
+                || operationRecordRepository.bindTargetIfCompatible(operationId, instanceId, taskId) != 1) {
+            throw new DefinitionValidationException(DefinitionErrorCodes.OPERATION_ID_CONFLICT,
+                    "operation target does not match existing record");
+        }
+    }
+
+    /** 将已有记录归类为可执行、重放或冻结错误决定。 */
+    private OperationIdempotencyDecision decideExisting(ProcessOperationRecordEntity existing,
+                                                         String actionType,
+                                                         String requestHash,
+                                                         String instanceId,
+                                                         String taskId,
+                                                         LocalDateTime now,
+                                                         boolean allowTakeOver) {
+        if (!actionType.equals(existing.getActionType()) || !requestHash.equals(existing.getRequestHash())
+                || !targetsMatch(existing, instanceId, taskId)) {
             return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.CONFLICT, existing);
         }
         if (OperationStatusEnum.SUCCESS.name().equals(existing.getOperationStatus())) {
@@ -185,14 +232,35 @@ public class OperationIdempotencyService {
         if (existing.getProcessingExpiresAt() != null && existing.getProcessingExpiresAt().isAfter(now)) {
             return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.IN_PROGRESS, existing);
         }
-
-        int updated = operationRecordRepository.extendProcessingLeaseIfExpired(operationId,
-                existing.getProcessingExpiresAt(), now, now.plusMinutes(PROCESSING_LEASE_MINUTES));
-        ProcessOperationRecordEntity refreshed = operationRecordRepository.findByOperationId(operationId);
-        if (updated == 1) {
-            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.TAKE_OVER, refreshed);
+        if (!allowTakeOver) {
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.IN_PROGRESS, existing);
         }
-        return decisionForCurrentRecord(refreshed, now);
+
+        int affected = operationRecordRepository.takeOverExpiredProcessingLease(existing.getOperationId(), now,
+                now.plusMinutes(PROCESSING_LEASE_MINUTES));
+        ProcessOperationRecordEntity latest = operationRecordRepository.findByOperationId(existing.getOperationId());
+        if (affected == 1 && latest != null) {
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.TAKE_OVER, latest);
+        }
+        if (latest == null) {
+            throw new IllegalStateException("operation record disappeared during lease takeover");
+        }
+        return decideExisting(latest, actionType, requestHash, instanceId, taskId, now, false);
+    }
+
+    /** 仅在调用方提供且记录已绑定的同类目标不同时时拒绝。 */
+    private boolean targetsMatch(ProcessOperationRecordEntity existing, String instanceId, String taskId) {
+        return targetMatches(existing.getInstanceId(), instanceId)
+                && targetMatches(existing.getTaskId(), taskId);
+    }
+
+    private boolean targetMatches(String existingTarget, String requestedTarget) {
+        return requestedTarget == null || existingTarget == null || requestedTarget.equals(existingTarget);
+    }
+
+    private boolean needsTargetBinding(ProcessOperationRecordEntity existing, String instanceId, String taskId) {
+        return (instanceId != null && existing.getInstanceId() == null)
+                || (taskId != null && existing.getTaskId() == null);
     }
 
     /**

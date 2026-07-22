@@ -5,6 +5,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -14,6 +16,9 @@ import java.util.List;
  *
  * <p>所有方法返回受影响行数。返回 1 表示取得任务修改权；返回 0 表示任务不存在、
  * 状态不允许或版本已过期，调用方应映射为 {@link RepositoryConflictCodes#TASK_CONCURRENT_MODIFIED}。</p>
+ *
+ * @author Yuxin Xu
+ * @since 2026-07-15
  */
 @Repository
 public class ActiveTaskRepository {
@@ -46,6 +51,44 @@ public class ActiveTaskRepository {
     /** 创建活动任务仓储。 */
     public ActiveTaskRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /** 插入一条运行中的任务记录。 */
+    public int insert(ProcessActiveTaskEntity entity) {
+        return jdbcTemplate.update("INSERT INTO process_active_task "
+                        + "(id, instance_id, definition_id, node_code, candidate_user_ids, assignee_user_id, "
+                        + "assignee_user_name, delegate_from_user_id, task_status, task_group_id, branch_key, "
+                        + "lock_version, created_at, due_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'ACTIVE'), ?, ?, "
+                        + "COALESCE(?, 0), COALESCE(?, datetime('now')), ?)",
+                entity.getId(), entity.getInstanceId(), entity.getDefinitionId(), entity.getNodeCode(),
+                entity.getCandidateUserIds(), entity.getAssigneeUserId(), entity.getAssigneeUserName(),
+                entity.getDelegateFromUserId(), entity.getTaskStatus(), entity.getTaskGroupId(),
+                entity.getBranchKey(), entity.getLockVersion(),
+                DefinitionRowMappers.toDbString(entity.getCreatedAt()),
+                DefinitionRowMappers.toDbString(entity.getDueAt()));
+    }
+
+    /** 按任务 ID 查询；不存在时返回 {@code null}。 */
+    public ProcessActiveTaskEntity findById(String id) {
+        List<ProcessActiveTaskEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_active_task WHERE id = ?", RuntimeRowMappers.ACTIVE_TASK, id);
+        return results.isEmpty() ? null : results.get(0);
+    }
+
+    /** 按创建时间和 ID 稳定读取实例下的待办或已认领任务。 */
+    public List<ProcessActiveTaskEntity> findOpenByInstanceId(String instanceId) {
+        return jdbcTemplate.query("SELECT * FROM process_active_task WHERE instance_id = ? "
+                        + "AND task_status IN ('ACTIVE', 'CLAIMED') ORDER BY created_at ASC, id ASC",
+                RuntimeRowMappers.ACTIVE_TASK, instanceId);
+    }
+
+    /** 统计实例下状态为 ACTIVE 或 CLAIMED 的任务数量。 */
+    public long countOpenByInstanceId(String instanceId) {
+        Long count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_active_task "
+                        + "WHERE instance_id = ? AND task_status IN ('ACTIVE', 'CLAIMED')",
+                Long.class, instanceId);
+        return count == null ? 0L : count.longValue();
     }
 
     /** 将 ACTIVE 或 CLAIMED 任务原子标记为 COMPLETED。 */

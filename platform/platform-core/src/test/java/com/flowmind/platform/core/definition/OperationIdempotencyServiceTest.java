@@ -7,6 +7,7 @@ import com.flowmind.platform.persistence.repository.ProcessOperationRecordReposi
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
@@ -25,6 +26,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class OperationIdempotencyServiceTest {
 
@@ -162,6 +167,11 @@ class OperationIdempotencyServiceTest {
                 "operator-001",
                 "hash-001",
                 now.plusMinutes(6));
+        OperationIdempotencyDecision secondTakeoverAttempt = service.beginOrReplay("operation-decision",
+                DefinitionActionTypeEnum.SAVE_GRAPH.getOperationActionType(),
+                "operator-001",
+                "hash-001",
+                now.plusMinutes(6));
         service.markFailed("operation-decision", "FLOW_DEFINITION_INVALID");
         OperationIdempotencyDecision failed = service.beginOrReplay("operation-decision",
                 DefinitionActionTypeEnum.SAVE_GRAPH.getOperationActionType(),
@@ -174,8 +184,62 @@ class OperationIdempotencyServiceTest {
         assertEquals(OperationIdempotencyDecisionType.CONFLICT, conflict.getType());
         assertEquals(OperationIdempotencyDecisionType.TAKE_OVER, takeover.getType());
         assertEquals(now.plusMinutes(11), takeover.getRecord().getProcessingExpiresAt());
+        assertEquals(OperationIdempotencyDecisionType.IN_PROGRESS, secondTakeoverAttempt.getType());
         assertEquals(OperationIdempotencyDecisionType.REPLAY_FAILED, failed.getType());
         assertEquals("FLOW_DEFINITION_INVALID", failed.getRecord().getErrorCode());
+    }
+
+    @Test
+    void runtimeTargetBindingRejectsConflictingInstanceOrTask() {
+        LocalDateTime now = LocalDateTime.of(2026, 7, 17, 10, 0);
+
+        OperationIdempotencyDecision created = service.beginOrReplay("operation-target",
+                "APPROVE", "operator-001", "hash-001", "instance-001", "task-001", now);
+        OperationIdempotencyDecision matching = service.beginOrReplay("operation-target",
+                "APPROVE", "operator-001", "hash-001", "instance-001", "task-001",
+                now.plusMinutes(1));
+        OperationIdempotencyDecision conflicting = service.beginOrReplay("operation-target",
+                "APPROVE", "operator-001", "hash-001", "instance-002", "task-001",
+                now.plusMinutes(1));
+
+        assertEquals(OperationIdempotencyDecisionType.NEW, created.getType());
+        assertEquals("instance-001", created.getRecord().getInstanceId());
+        assertEquals("task-001", created.getRecord().getTaskId());
+        assertEquals(OperationIdempotencyDecisionType.IN_PROGRESS, matching.getType());
+        assertEquals(OperationIdempotencyDecisionType.CONFLICT, conflicting.getType());
+    }
+
+    @Test
+    void matchingRetryCanFillAnInitiallyUnknownRuntimeTarget() {
+        LocalDateTime now = LocalDateTime.of(2026, 7, 17, 10, 0);
+        service.beginOrReplay("operation-bind-later", "START", "operator-001", "hash-001", now);
+
+        OperationIdempotencyDecision retry = service.beginOrReplay("operation-bind-later", "START",
+                "operator-001", "hash-001", "instance-001", null, now.plusMinutes(1));
+
+        assertEquals(OperationIdempotencyDecisionType.IN_PROGRESS, retry.getType());
+        assertEquals("instance-001", retry.getRecord().getInstanceId());
+    }
+
+    @Test
+    void uniqueInsertRaceIsReloadedAsExistingOperationDecision() {
+        ProcessOperationRecordRepository racedRepository = mock(ProcessOperationRecordRepository.class);
+        ProcessOperationRecordEntity winner = new ProcessOperationRecordEntity();
+        winner.setOperationId("operation-race");
+        winner.setActionType("APPROVE");
+        winner.setRequestHash("hash-001");
+        winner.setOperationStatus(OperationStatusEnum.PROCESSING.name());
+        winner.setProcessingExpiresAt(LocalDateTime.of(2026, 7, 17, 10, 5));
+        when(racedRepository.findByOperationId("operation-race")).thenReturn(null, winner);
+        doThrow(new DuplicateKeyException("operation_id unique constraint"))
+                .when(racedRepository).insert(any(ProcessOperationRecordEntity.class));
+        OperationIdempotencyService racedService = new OperationIdempotencyService(racedRepository);
+
+        OperationIdempotencyDecision decision = racedService.beginOrReplay("operation-race", "APPROVE",
+                "operator-001", "hash-001", LocalDateTime.of(2026, 7, 17, 10, 0));
+
+        assertEquals(OperationIdempotencyDecisionType.IN_PROGRESS, decision.getType());
+        assertEquals(winner, decision.getRecord());
     }
 
     @Test
