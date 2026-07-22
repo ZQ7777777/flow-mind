@@ -271,11 +271,15 @@ class DefaultProcessDefinitionServiceTest {
         processDefinitionCache.clear();
 
         assertThrows(IllegalArgumentException.class,
-                () -> publish(lifecycleRequest(created.getId(), "operation-publish-001")));
+                () -> service.publish(lifecycleRequest(created.getId(), "operation-publish-001")));
+        assertThrows(IllegalStateException.class,
+                () -> service.publish(lifecycleRequest(created.getId(), "operation-publish-001")));
 
         ProcessDefinitionEntity persisted = definitionRepository.findById(created.getId());
         assertEquals(DefinitionStatusEnum.DRAFT.name(), persisted.getDefinitionStatus());
-        assertEquals(0L, countRowsByOperationId("operation-publish-001"));
+        assertEquals(1L, countRowsByOperationId("operation-publish-001"));
+        assertEquals("FAILED", operationStatus("operation-publish-001"));
+        assertEquals(DefinitionErrorCodes.DEFINITION_INVALID, operationErrorCode("operation-publish-001"));
         assertEquals(0L, countAuditRows("operation-publish-001", "DEFINITION_PUBLISH"));
         assertEquals(0, processDefinitionCache.definitionIds.size());
     }
@@ -300,6 +304,23 @@ class DefaultProcessDefinitionServiceTest {
         assertTrue(processDefinitionCache.definitionIds.contains(first.getId()));
         assertTrue(processDefinitionCache.definitionIds.contains(second.getId()));
         assertEquals(1L, countAuditRows("operation-activate-002", "DEFINITION_ACTIVATE"));
+    }
+
+    @Test
+    void publishReplayAfterActivationReturnsFirstPublishedSnapshot() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        saveGraph(created.getId(), simpleLinearGraph("operation-save-001"));
+        ProcessDefinitionDTO published = publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+        activate(lifecycleRequest(created.getId(), "operation-activate-001"));
+        processDefinitionCache.clear();
+
+        ProcessDefinitionDTO replay = publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+
+        assertEquals(ActivationStatusEnum.INACTIVE, published.getActivationStatus());
+        assertEquals(ActivationStatusEnum.INACTIVE, replay.getActivationStatus());
+        assertEquals(ActivationStatusEnum.ACTIVE,
+                definitionRepository.findById(created.getId()).getActivationStatus());
+        assertEquals(0, processDefinitionCache.definitionIds.size());
     }
 
     @Test
@@ -494,11 +515,17 @@ class DefaultProcessDefinitionServiceTest {
         processDefinitionCache.clear();
 
         assertThrows(RuntimeException.class,
-                () -> saveGraph(created.getId(), graphWithDuplicateFormFields("operation-save-002")));
+                () -> service.saveGraph(created.getId(), graphWithDuplicateFormFields("operation-save-002")));
+        assertThrows(IllegalStateException.class,
+                () -> service.saveGraph(created.getId(), graphWithDuplicateFormFields("operation-save-002")));
 
         ProcessDefinitionDetailDTO detail = service.getDefinition(created.getId());
         assertEquals(Arrays.asList("start", "review", "end"), nodeCodes(detail));
         assertEquals(Arrays.asList("edge-start-review", "edge-review-end"), edgeCodes(detail));
+        assertEquals(1L, countRowsByOperationId("operation-save-002"));
+        assertEquals("FAILED", operationStatus("operation-save-002"));
+        assertEquals(FrozenValidationErrorCodes.FORM_FIELD_CODE_DUPLICATED,
+                operationErrorCode("operation-save-002"));
         assertEquals(0, processDefinitionCache.definitionIds.size());
     }
 
@@ -509,7 +536,12 @@ class DefaultProcessDefinitionServiceTest {
                 created.getId());
 
         assertThrows(IllegalStateException.class,
-                () -> saveGraph(created.getId(), simpleLinearGraph("operation-save-001")));
+                () -> service.saveGraph(created.getId(), simpleLinearGraph("operation-save-001")));
+        assertThrows(IllegalStateException.class,
+                () -> service.saveGraph(created.getId(), simpleLinearGraph("operation-save-001")));
+        assertEquals(1L, countRowsByOperationId("operation-save-001"));
+        assertEquals("FAILED", operationStatus("operation-save-001"));
+        assertEquals(DefinitionErrorCodes.DEFINITION_NOT_EDITABLE, operationErrorCode("operation-save-001"));
         assertEquals(0, processDefinitionCache.definitionIds.size());
     }
 
@@ -706,10 +738,14 @@ class DefaultProcessDefinitionServiceTest {
                 created.getId());
 
         assertThrows(IllegalStateException.class,
-                () -> deleteDefinition(deleteRequest(created.getId(), "operation-delete-001")));
+                () -> service.deleteDefinition(deleteRequest(created.getId(), "operation-delete-001")));
+        assertThrows(IllegalStateException.class,
+                () -> service.deleteDefinition(deleteRequest(created.getId(), "operation-delete-001")));
 
         assertNotNull(definitionRepository.findById(created.getId()));
-        assertEquals(0L, countRowsByOperationId("operation-delete-001"));
+        assertEquals(1L, countRowsByOperationId("operation-delete-001"));
+        assertEquals("FAILED", operationStatus("operation-delete-001"));
+        assertEquals(DefinitionErrorCodes.DEFINITION_NOT_EDITABLE, operationErrorCode("operation-delete-001"));
         assertEquals(0, processDefinitionCache.definitionIds.size());
     }
 
@@ -1194,6 +1230,18 @@ class DefaultProcessDefinitionServiceTest {
                 "SELECT COUNT(*) FROM process_operation_record WHERE operation_id = ?",
                 Long.class, operationId);
         return count == null ? 0L : count.longValue();
+    }
+
+    private String operationStatus(String operationId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT operation_status FROM process_operation_record WHERE operation_id = ?",
+                String.class, operationId);
+    }
+
+    private String operationErrorCode(String operationId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT error_code FROM process_operation_record WHERE operation_id = ?",
+                String.class, operationId);
     }
 
     private long countAuditRows(String operationId, String actionType) {

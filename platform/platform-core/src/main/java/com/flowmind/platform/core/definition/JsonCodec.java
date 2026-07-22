@@ -3,7 +3,12 @@ package com.flowmind.platform.core.definition;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.flowmind.platform.api.dto.ProcessDefinitionDTO;
+import com.flowmind.platform.api.enums.ActivationStatusEnum;
+import com.flowmind.platform.api.enums.DefinitionStatusEnum;
+import com.flowmind.platform.api.enums.GrayStatusEnum;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -19,6 +24,7 @@ import java.util.Map;
 final class JsonCodec {
 
     private static final String RESULT_DEFINITION_ID = "definitionId";
+    private static final String RESULT_DEFINITION = "definition";
     private static final String RESULT_DELETED = "deleted";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -34,6 +40,17 @@ final class JsonCodec {
     static String definitionResult(String definitionId) {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put(RESULT_DEFINITION_ID, definitionId);
+        return write(result);
+    }
+
+    /** Builds an idempotent result payload with the first returned definition snapshot. */
+    static String definitionResult(ProcessDefinitionDTO definition) {
+        if (definition == null) {
+            return definitionResult((String) null);
+        }
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put(RESULT_DEFINITION_ID, definition.getId());
+        result.put(RESULT_DEFINITION, snapshotDefinition(definition));
         return write(result);
     }
 
@@ -65,6 +82,25 @@ final class JsonCodec {
             JsonNode definitionId = root.get(RESULT_DEFINITION_ID);
             return definitionId == null || definitionId.isNull() ? null : definitionId.asText();
         } catch (JsonProcessingException ex) {
+            return null;
+        }
+    }
+
+    /** Reads the first returned definition snapshot from a new-format idempotent result payload. */
+    static ProcessDefinitionDTO extractDefinition(String resultJson) {
+        if (resultJson == null || resultJson.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(resultJson);
+            JsonNode definition = root.get(RESULT_DEFINITION);
+            if (definition == null || definition.isNull()) {
+                return null;
+            }
+            return parseDefinition(definition);
+        } catch (JsonProcessingException ex) {
+            return null;
+        } catch (RuntimeException ex) {
             return null;
         }
     }
@@ -121,5 +157,67 @@ final class JsonCodec {
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("json write failed", ex);
         }
+    }
+
+    private static Map<String, Object> snapshotDefinition(ProcessDefinitionDTO definition) {
+        Map<String, Object> snapshot = new LinkedHashMap<String, Object>();
+        snapshot.put("id", definition.getId());
+        snapshot.put("processCode", definition.getProcessCode());
+        snapshot.put("processName", definition.getProcessName());
+        snapshot.put("systemCode", definition.getSystemCode());
+        snapshot.put("version", definition.getVersion());
+        snapshot.put("definitionStatus", definition.getDefinitionStatus() == null ? null : definition.getDefinitionStatus().name());
+        snapshot.put("activationStatus", definition.getActivationStatus() == null ? null : definition.getActivationStatus().name());
+        snapshot.put("grayStatus", definition.getGrayStatus() == null ? null : definition.getGrayStatus().name());
+        snapshot.put("grayRuleConfig", definition.getGrayRuleConfig());
+        snapshot.put("createdBy", definition.getCreatedBy());
+        snapshot.put("createdAt", definition.getCreatedAt() == null ? null : definition.getCreatedAt().toString());
+        snapshot.put("updatedBy", definition.getUpdatedBy());
+        snapshot.put("updatedAt", definition.getUpdatedAt() == null ? null : definition.getUpdatedAt().toString());
+        return snapshot;
+    }
+
+    private static ProcessDefinitionDTO parseDefinition(JsonNode definition) {
+        ProcessDefinitionDTO dto = new ProcessDefinitionDTO();
+        dto.setId(text(definition, "id"));
+        dto.setProcessCode(text(definition, "processCode"));
+        dto.setProcessName(text(definition, "processName"));
+        dto.setSystemCode(text(definition, "systemCode"));
+        dto.setVersion(integer(definition, "version"));
+        dto.setDefinitionStatus(definitionStatus(text(definition, "definitionStatus")));
+        dto.setActivationStatus(activationStatus(text(definition, "activationStatus")));
+        dto.setGrayStatus(grayStatus(text(definition, "grayStatus")));
+        dto.setGrayRuleConfig(text(definition, "grayRuleConfig"));
+        dto.setCreatedBy(text(definition, "createdBy"));
+        dto.setCreatedAt(localDateTime(text(definition, "createdAt")));
+        dto.setUpdatedBy(text(definition, "updatedBy"));
+        dto.setUpdatedAt(localDateTime(text(definition, "updatedAt")));
+        return dto;
+    }
+
+    private static String text(JsonNode root, String fieldName) {
+        JsonNode value = root.get(fieldName);
+        return value == null || value.isNull() ? null : value.asText();
+    }
+
+    private static Integer integer(JsonNode root, String fieldName) {
+        JsonNode value = root.get(fieldName);
+        return value == null || value.isNull() ? null : Integer.valueOf(value.asInt());
+    }
+
+    private static LocalDateTime localDateTime(String value) {
+        return value == null || value.trim().isEmpty() ? null : LocalDateTime.parse(value);
+    }
+
+    private static DefinitionStatusEnum definitionStatus(String value) {
+        return value == null || value.trim().isEmpty() ? null : DefinitionStatusEnum.valueOf(value);
+    }
+
+    private static ActivationStatusEnum activationStatus(String value) {
+        return value == null || value.trim().isEmpty() ? null : ActivationStatusEnum.valueOf(value);
+    }
+
+    private static GrayStatusEnum grayStatus(String value) {
+        return value == null || value.trim().isEmpty() ? null : GrayStatusEnum.valueOf(value);
     }
 }
