@@ -24,6 +24,13 @@ public final class DefinitionGraphIndex {
 
     /** 节点稳定排序规则。 */
     private static final Comparator<ProcessNodeDTO> NODE_ORDER = new Comparator<ProcessNodeDTO>() {
+        /**
+         * 按运行时和校验共用的稳定规则比较节点。
+         *
+         * @param left 左侧节点
+         * @param right 右侧节点
+         * @return 排序比较结果
+         */
         @Override
         public int compare(ProcessNodeDTO left, ProcessNodeDTO right) {
             int order = compareNullableInteger(left.getSortOrder(), right.getSortOrder());
@@ -49,6 +56,13 @@ public final class DefinitionGraphIndex {
     };
     /** 连线稳定排序规则。 */
     private static final Comparator<ProcessEdgeDTO> EDGE_ORDER = new Comparator<ProcessEdgeDTO>() {
+        /**
+         * 按运行时和校验共用的稳定规则比较连线。
+         *
+         * @param left 左侧连线
+         * @param right 右侧连线
+         * @return 排序比较结果
+         */
         @Override
         public int compare(ProcessEdgeDTO left, ProcessEdgeDTO right) {
             int order = compareNullableInteger(left.getSortOrder(), right.getSortOrder());
@@ -90,6 +104,12 @@ public final class DefinitionGraphIndex {
     /** 原连线列表中的空元素数量。 */
     private final int nullEdgeCount;
 
+    /**
+     * 基于节点和连线集合创建只读索引。
+     *
+     * @param sourceNodes 原始节点集合
+     * @param sourceEdges 原始连线集合
+     */
     private DefinitionGraphIndex(List<ProcessNodeDTO> sourceNodes,
                                  List<ProcessEdgeDTO> sourceEdges) {
         NodeCollection nodeCollection = sortNodes(sourceNodes);
@@ -149,6 +169,26 @@ public final class DefinitionGraphIndex {
      */
     public Map<String, ProcessEdgeDTO> getEdgesByCode() {
         return edgesByCode;
+    }
+
+    /**
+     * 按节点编码读取节点。
+     *
+     * @param nodeCode 节点编码
+     * @return 节点；不存在时返回 null
+     */
+    public ProcessNodeDTO getNode(String nodeCode) {
+        return nodesByCode.get(nodeCode);
+    }
+
+    /**
+     * 按连线编码读取连线。
+     *
+     * @param edgeCode 连线编码
+     * @return 连线；不存在时返回 null
+     */
+    public ProcessEdgeDTO getEdge(String edgeCode) {
+        return edgesByCode.get(edgeCode);
     }
 
     /**
@@ -224,6 +264,12 @@ public final class DefinitionGraphIndex {
         return nullEdgeCount;
     }
 
+    /**
+     * 按节点类型筛选稳定排序后的节点。
+     *
+     * @param nodeType 节点类型
+     * @return 指定类型的只读节点列表
+     */
     private List<ProcessNodeDTO> nodesOfType(NodeTypeEnum nodeType) {
         List<ProcessNodeDTO> matched = new ArrayList<ProcessNodeDTO>();
         for (ProcessNodeDTO node : nodes) {
@@ -234,6 +280,12 @@ public final class DefinitionGraphIndex {
         return Collections.unmodifiableList(matched);
     }
 
+    /**
+     * 过滤空节点并按稳定规则排序。
+     *
+     * @param source 原始节点集合
+     * @return 排序结果和空元素数量
+     */
     private static NodeCollection sortNodes(List<ProcessNodeDTO> source) {
         List<ProcessNodeDTO> copied = new ArrayList<ProcessNodeDTO>();
         int nullCount = 0;
@@ -250,6 +302,12 @@ public final class DefinitionGraphIndex {
         return new NodeCollection(Collections.unmodifiableList(copied), nullCount);
     }
 
+    /**
+     * 过滤空连线并按稳定规则排序。
+     *
+     * @param source 原始连线集合
+     * @return 排序结果和空元素数量
+     */
     private static EdgeCollection sortEdges(List<ProcessEdgeDTO> source) {
         List<ProcessEdgeDTO> copied = new ArrayList<ProcessEdgeDTO>();
         int nullCount = 0;
@@ -266,6 +324,12 @@ public final class DefinitionGraphIndex {
         return new EdgeCollection(Collections.unmodifiableList(copied), nullCount);
     }
 
+    /**
+     * 按节点编码构建只读节点索引。
+     *
+     * @param nodes 稳定排序后的节点集合
+     * @return 节点编码到节点的只读映射
+     */
     private static Map<String, ProcessNodeDTO> indexNodes(List<ProcessNodeDTO> nodes) {
         Map<String, ProcessNodeDTO> indexed = new LinkedHashMap<String, ProcessNodeDTO>();
         for (ProcessNodeDTO node : nodes) {
@@ -276,6 +340,12 @@ public final class DefinitionGraphIndex {
         return Collections.unmodifiableMap(indexed);
     }
 
+    /**
+     * 按连线编码构建只读连线索引。
+     *
+     * @param edges 稳定排序后的连线集合
+     * @return 连线编码到连线的只读映射
+     */
     private static Map<String, ProcessEdgeDTO> indexEdges(List<ProcessEdgeDTO> edges) {
         Map<String, ProcessEdgeDTO> indexed = new LinkedHashMap<String, ProcessEdgeDTO>();
         for (ProcessEdgeDTO edge : edges) {
@@ -286,6 +356,14 @@ public final class DefinitionGraphIndex {
         return Collections.unmodifiableMap(indexed);
     }
 
+    /**
+     * 按来源或目标节点构建连线邻接表。
+     *
+     * @param edges 稳定排序后的连线集合
+     * @param nodesByCode 节点编码索引
+     * @param outgoing true 表示按来源节点索引，false 表示按目标节点索引
+     * @return 节点编码到只读连线列表的只读映射
+     */
     private static Map<String, List<ProcessEdgeDTO>> indexEdgesByNode(
             List<ProcessEdgeDTO> edges,
             Map<String, ProcessNodeDTO> nodesByCode,
@@ -311,12 +389,26 @@ public final class DefinitionGraphIndex {
         return Collections.unmodifiableMap(immutable);
     }
 
+    /**
+     * 从邻接表读取指定节点的连线列表。
+     *
+     * @param edgesByNode 邻接表
+     * @param nodeCode 节点编码
+     * @return 指定节点的连线列表，不存在时返回空列表
+     */
     private static List<ProcessEdgeDTO> edgesOf(Map<String, List<ProcessEdgeDTO>> edgesByNode,
                                                 String nodeCode) {
         List<ProcessEdgeDTO> nodeEdges = edgesByNode.get(nodeCode);
         return nodeEdges == null ? Collections.<ProcessEdgeDTO>emptyList() : nodeEdges;
     }
 
+    /**
+     * 比较可空整数，null 排在非 null 之后。
+     *
+     * @param left 左侧值
+     * @param right 右侧值
+     * @return 排序比较结果
+     */
     private static int compareNullableInteger(Integer left, Integer right) {
         if (left == right) {
             return 0;
@@ -330,6 +422,13 @@ public final class DefinitionGraphIndex {
         return left.compareTo(right);
     }
 
+    /**
+     * 比较可空字符串，null 排在非 null 之后。
+     *
+     * @param left 左侧值
+     * @param right 右侧值
+     * @return 排序比较结果
+     */
     private static int compareNullableString(String left, String right) {
         if (left == right) {
             return 0;
@@ -343,6 +442,13 @@ public final class DefinitionGraphIndex {
         return left.compareTo(right);
     }
 
+    /**
+     * 比较可空布尔值，null 排在非 null 之后。
+     *
+     * @param left 左侧值
+     * @param right 右侧值
+     * @return 排序比较结果
+     */
     private static int compareNullableBoolean(Boolean left, Boolean right) {
         if (left == right) {
             return 0;
@@ -356,14 +462,32 @@ public final class DefinitionGraphIndex {
         return left.compareTo(right);
     }
 
+    /**
+     * 获取节点类型枚举名称。
+     *
+     * @param node 节点
+     * @return 节点类型名称；节点类型为空时返回 null
+     */
     private static String nodeTypeName(ProcessNodeDTO node) {
         return node.getNodeType() == null ? null : node.getNodeType().name();
     }
 
+    /**
+     * 获取审批规则类型枚举名称。
+     *
+     * @param node 节点
+     * @return 审批规则类型名称；规则类型为空时返回 null
+     */
     private static String approverRuleTypeName(ProcessNodeDTO node) {
         return node.getApproverRuleType() == null ? null : node.getApproverRuleType().name();
     }
 
+    /**
+     * 判断字符串是否为空白。
+     *
+     * @param value 待判断字符串
+     * @return 字符串为 null 或去空格后为空时返回 true
+     */
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }
@@ -375,6 +499,12 @@ public final class DefinitionGraphIndex {
         /** 空元素数量。 */
         private final int nullElementCount;
 
+        /**
+         * 创建节点排序结果。
+         *
+         * @param nodes 排序后的节点
+         * @param nullElementCount 空元素数量
+         */
         private NodeCollection(List<ProcessNodeDTO> nodes, int nullElementCount) {
             this.nodes = nodes;
             this.nullElementCount = nullElementCount;
@@ -388,6 +518,12 @@ public final class DefinitionGraphIndex {
         /** 空元素数量。 */
         private final int nullElementCount;
 
+        /**
+         * 创建连线排序结果。
+         *
+         * @param edges 排序后的连线
+         * @param nullElementCount 空元素数量
+         */
         private EdgeCollection(List<ProcessEdgeDTO> edges, int nullElementCount) {
             this.edges = edges;
             this.nullElementCount = nullElementCount;
