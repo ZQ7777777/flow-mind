@@ -39,6 +39,25 @@ public final class RuntimeJsonCodec {
         }
     }
 
+    /**
+     * 将幂等记录中的成功结果恢复为指定 DTO 类型。
+     *
+     * @param json       已保存的 JSON 结果
+     * @param targetType 目标 DTO 类型
+     * @param <T>        目标 DTO 泛型
+     * @return 反序列化后的 DTO
+     */
+    public static <T> T read(String json, Class<T> targetType) {
+        if (isBlank(json) || targetType == null) {
+            throw new IllegalArgumentException("Runtime result JSON and target type are required");
+        }
+        try {
+            return OBJECT_MAPPER.readValue(json, targetType);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalArgumentException("Unable to read runtime result JSON", ex);
+        }
+    }
+
     /** 读取变量或分支状态对象；空值和空白值按空对象处理。 */
     public static Map<String, Object> readObjectMap(String json) {
         if (isBlank(json)) {
