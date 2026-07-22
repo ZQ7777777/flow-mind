@@ -98,7 +98,7 @@ platform-core/src/test/java/com/flowmind/platform
   -> CallbackOutboxService 写 process_callback_log(PENDING)
   -> OperationIdempotencyService.markSuccess
   -> 事务提交
-  -> CallbackService.publishCallback 更新 SUCCESS/FAILED
+  -> 后续扫描器或投递组件处理 PENDING 回调
 ```
 
 ## 统一编码规则
@@ -276,7 +276,7 @@ platform-core/src/test/java/com/flowmind/platform
 
 提示词：
 
-“请实现 M2 回调日志 Outbox。回调日志使用 `process_callback_log`，`event_id` 是唯一幂等键。事件类型必须使用现有 `WorkflowEventTypeEnum`，不得新增自由字符串事件类型。`CallbackOutboxService` 只在主事务内写 `PENDING`，不调用外部 SPI。事务提交后由 `CallbackService.publishCallback` 调用 `WorkflowCallbackHandler`，成功标记 `SUCCESS`，失败标记 `FAILED + retry_count + last_error`，失败不得回滚主流程。”
+“请实现 M2 回调日志 Outbox。回调日志使用 `process_callback_log`，`event_id` 是唯一幂等键。事件类型必须使用现有 `WorkflowEventTypeEnum`，不得新增自由字符串事件类型。`CallbackService.publishCallback` 在 M2 只允许在当前主事务内写 `PENDING` Outbox，不同步调用 `WorkflowCallbackHandler`，不开启独立事务，不在该方法内标记 `SUCCESS/FAILED`。”
 
 实现要点：
 
@@ -295,8 +295,8 @@ platform-core/src/test/java/com/flowmind/platform
 
 - 插入 `PENDING` 成功。
 - 重复 `eventId` 幂等处理正确。
-- 投递成功更新 `SUCCESS`。
-- 投递失败更新 `FAILED`、增加 `retry_count`、记录 `last_error`。
+- `publishCallback` 只写入 `PENDING`。
+- 投递成功更新 `SUCCESS`、投递失败更新 `FAILED + retry_count + last_error` 留给后续扫描器或投递组件。
 - `queryCallbackLogs` 支持实例、事件类型、状态和分页。
 
 建议提交：`feat: add callback outbox`

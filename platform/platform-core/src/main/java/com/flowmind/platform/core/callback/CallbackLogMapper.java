@@ -58,7 +58,7 @@ public class CallbackLogMapper {
     public String toPayloadJson(WorkflowEvent event) {
         try {
             return objectMapper.writeValueAsString(event);
-        } catch (JsonProcessingException ex) {
+        } catch (Exception ex) {
             throw new IllegalStateException("workflow event json write failed", ex);
         }
     }

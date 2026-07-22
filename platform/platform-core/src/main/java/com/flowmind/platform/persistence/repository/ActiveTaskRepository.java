@@ -2,6 +2,7 @@ package com.flowmind.platform.persistence.repository;
 
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementSetter;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
@@ -57,7 +58,7 @@ public class ActiveTaskRepository {
     public ProcessActiveTaskEntity findById(String id) {
         List<ProcessActiveTaskEntity> results = jdbcTemplate.query(
                 "SELECT * FROM process_active_task WHERE id = ?",
-                ROW_MAPPER, id);
+                stringParam(id), ROW_MAPPER);
         return results.isEmpty() ? null : results.get(0);
     }
 
@@ -65,7 +66,7 @@ public class ActiveTaskRepository {
     public List<ProcessActiveTaskEntity> findByInstanceId(String instanceId) {
         return jdbcTemplate.query("SELECT * FROM process_active_task "
                         + "WHERE instance_id = ? ORDER BY created_at ASC, id ASC",
-                ROW_MAPPER, instanceId);
+                stringParam(instanceId), ROW_MAPPER);
     }
 
     /** 将 ACTIVE 或 CLAIMED 任务原子标记为 CANCELED。 */
@@ -107,5 +108,9 @@ public class ActiveTaskRepository {
                 "UPDATE process_active_task SET task_status = ?, lock_version = lock_version + 1 "
                         + "WHERE id = ? AND task_status IN ('ACTIVE', 'CLAIMED') AND lock_version = ?",
                 targetStatus, id, expectedLockVersion);
+    }
+
+    private PreparedStatementSetter stringParam(String value) {
+        return preparedStatement -> preparedStatement.setString(1, value);
     }
 }
