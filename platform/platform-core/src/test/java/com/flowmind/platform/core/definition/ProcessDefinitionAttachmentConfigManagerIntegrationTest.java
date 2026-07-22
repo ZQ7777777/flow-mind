@@ -190,6 +190,39 @@ class ProcessDefinitionAttachmentConfigManagerIntegrationTest {
     }
 
     @Test
+    void activateDraftGroupActivatesOnlyTheUniqueDraftGroup() {
+        manager.saveDraftGroup("definition-source", "config-group-draft",
+                Collections.singletonList(config("template-receipt", "receipt", 10)),
+                userTaskNodes(), "tester");
+
+        ValidationResult result = manager.activateDraftGroup("definition-source", userTaskNodes(), "tester");
+
+        assertTrue(result.isValid());
+        List<ProcessAttachmentTemplateDTO> active = manager.findActiveByDefinitionId("definition-source");
+        assertEquals(1, active.size());
+        assertEquals("config-group-draft", active.get(0).getAttachmentConfigId());
+    }
+
+    @Test
+    void activateDraftGroupRejectsAmbiguousDraftGroupsWithoutChangingTheirStatus() {
+        manager.saveDraftGroup("definition-source", "config-group-first",
+                Collections.singletonList(config("template-receipt", "receipt", 10)),
+                userTaskNodes(), "tester");
+        manager.saveDraftGroup("definition-source", "config-group-second",
+                Collections.singletonList(config("template-license", "license", 20)),
+                userTaskNodes(), "tester");
+
+        ValidationResult result = manager.activateDraftGroup("definition-source", userTaskNodes(), "tester");
+
+        assertFalse(result.isValid());
+        assertTrue(containsStatus(manager.findDraftByDefinitionId("definition-source"),
+                "config-group-first", AttachmentConfigStatusEnum.DRAFT));
+        assertTrue(containsStatus(manager.findDraftByDefinitionId("definition-source"),
+                "config-group-second", AttachmentConfigStatusEnum.DRAFT));
+        assertTrue(manager.findActiveByDefinitionId("definition-source").isEmpty());
+    }
+
+    @Test
     void emptyDraftGroupClearsOnlySpecifiedDraftGroup() {
         manager.saveDraftGroup("definition-source", "config-group-first",
                 Collections.singletonList(config("template-receipt", "receipt", 10)),

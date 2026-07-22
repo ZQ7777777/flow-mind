@@ -7,6 +7,7 @@ import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.request.ApproverResolveRequest;
+import com.flowmind.platform.api.spi.ConditionExpressionEvaluator;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
 import org.junit.jupiter.api.Test;
 
@@ -25,7 +26,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RuntimeDefinitionConfigurationTest {
 
     private final RuntimeNodeConfigReader nodeConfigReader = new RuntimeNodeConfigReader();
-    private final ApproverResolveRequestFactory requestFactory = new ApproverResolveRequestFactory();
+    private final ApproverResolveRequestFactory requestFactory =
+            new ApproverResolveRequestFactory(nodeConfigReader);
     private final ConditionExpressionEvaluator expressionEvaluator = new SimpleConditionExpressionEvaluator();
 
     /**

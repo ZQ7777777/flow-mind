@@ -2,6 +2,7 @@ package com.flowmind.platform.core.runtime;
 
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.request.ApproverResolveRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -23,15 +24,12 @@ public class ApproverResolveRequestFactory {
     /**
      * 使用默认节点配置读取器创建工厂。
      */
-    public ApproverResolveRequestFactory() {
-        this(new RuntimeNodeConfigReader());
-    }
-
     /**
      * 使用指定节点配置读取器创建工厂。
      *
      * @param nodeConfigReader 节点配置读取器
      */
+    @Autowired
     public ApproverResolveRequestFactory(RuntimeNodeConfigReader nodeConfigReader) {
         this.nodeConfigReader = nodeConfigReader;
     }

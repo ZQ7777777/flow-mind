@@ -1,5 +1,7 @@
 package com.flowmind.platform.core.runtime;
 
+import com.flowmind.platform.api.spi.ConditionExpressionEvaluator;
+
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;

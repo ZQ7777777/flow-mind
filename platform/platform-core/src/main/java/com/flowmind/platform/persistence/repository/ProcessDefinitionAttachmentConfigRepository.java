@@ -93,8 +93,7 @@ public class ProcessDefinitionAttachmentConfigRepository {
                 (PreparedStatement preparedStatement) -> {
                     preparedStatement.setString(1, definitionId);
                     preparedStatement.setString(2, attachmentConfigId);
-                },
-                rowMapper());
+                }, rowMapper());
     }
 
     public int copyToDefinition(String sourceDefinitionId, String targetDefinitionId) {
