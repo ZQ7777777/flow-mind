@@ -7,6 +7,7 @@ import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
+import com.flowmind.platform.api.request.ApproverResolveRequest;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
@@ -40,6 +41,7 @@ class RuntimeNodeAdvancerTest {
     private RuntimeRequestValidator requestValidator;
     private com.flowmind.platform.api.spi.ApproverResolver approverResolver;
     private com.flowmind.platform.api.spi.ConditionExpressionEvaluator conditionEvaluator;
+    private ApproverResolveRequestFactory approverResolveRequestFactory;
     private RuntimeNodeAdvancer advancer;
 
     @BeforeEach
@@ -50,8 +52,9 @@ class RuntimeNodeAdvancerTest {
         requestValidator = new RuntimeRequestValidator(() -> null);
         approverResolver = mock(com.flowmind.platform.api.spi.ApproverResolver.class);
         conditionEvaluator = mock(com.flowmind.platform.api.spi.ConditionExpressionEvaluator.class);
+        approverResolveRequestFactory = new ApproverResolveRequestFactory(new RuntimeNodeConfigReader());
         advancer = new RuntimeNodeAdvancer(activeTaskRepository, taskGroupRepository, instanceRepository,
-                requestValidator, approverResolver, conditionEvaluator);
+                requestValidator, approverResolver, conditionEvaluator, approverResolveRequestFactory);
         when(activeTaskRepository.insert(any(ProcessActiveTaskEntity.class))).thenReturn(1);
         when(activeTaskRepository.findOpenByInstanceId("instance-1"))
                 .thenReturn(Collections.<ProcessActiveTaskEntity>emptyList());
@@ -79,6 +82,10 @@ class RuntimeNodeAdvancerTest {
         assertEquals("[\"manager-1\",\"manager-2\"]", task.getCandidateUserIds());
         assertEquals(1, result.getCreatedTasks().size());
         assertEquals("Review", result.getCreatedTasks().get(0).getNodeName());
+        ArgumentCaptor<ApproverResolveRequest> requestCaptor = ArgumentCaptor.forClass(ApproverResolveRequest.class);
+        verify(approverResolver).resolveApprovers(requestCaptor.capture());
+        assertEquals(Collections.singletonList("user-1"), requestCaptor.getValue()
+                .getApproverRuleConfig().get("userIds"));
         verify(instanceRepository).updateCurrentNodeCodes("instance-1", "[\"review\"]");
     }
 
@@ -103,6 +110,26 @@ class RuntimeNodeAdvancerTest {
         assertEquals("second", result.getCreatedTasks().get(0).getNodeCode());
         verify(conditionEvaluator).evaluate("first", Collections.<String, Object>emptyMap());
         verify(conditionEvaluator).evaluate("second", Collections.<String, Object>emptyMap());
+    }
+
+    @Test
+    void exclusiveGatewayUsesSimpleSpiEvaluatorWithRuntimeVariables() {
+        RuntimeNodeAdvancer productionAdvancer = new RuntimeNodeAdvancer(activeTaskRepository,
+                taskGroupRepository, instanceRepository, requestValidator, approverResolver,
+                new SimpleConditionExpressionEvaluator(), approverResolveRequestFactory);
+        ProcessInstanceEntity runtimeInstance = instance();
+        runtimeInstance.setVariablesJson("{\"amount\":120000}");
+        ProcessEdgeDTO highAmount = conditionalEdge("high-amount", "route", "high-task", "amount > 100000");
+        ProcessEdgeDTO defaultEdge = edge("default", "route", "default-task");
+        defaultEdge.setDefaultEdge(Boolean.TRUE);
+        when(approverResolver.resolveApprovers(any()))
+                .thenReturn(Collections.singletonList(new UserDTO("u-1", "User")));
+
+        RuntimeAdvanceResult result = productionAdvancer.advanceToNode(runtimeInstance, definition(
+                nodes(node("route", NodeTypeEnum.EXCLUSIVE_GATEWAY), userTask("high-task"),
+                        userTask("default-task")), edges(highAmount, defaultEdge)), "route", null, null);
+
+        assertEquals("high-task", result.getCreatedTasks().get(0).getNodeCode());
     }
 
     @Test
@@ -159,7 +186,7 @@ class RuntimeNodeAdvancerTest {
         ProcessEdgeDTO defaultEdge = edge("default", "route", "default-task");
         defaultEdge.setDefaultEdge(Boolean.TRUE);
         RuntimeNodeAdvancer withoutEvaluator = new RuntimeNodeAdvancer(activeTaskRepository, taskGroupRepository,
-                instanceRepository, requestValidator, approverResolver, null);
+                instanceRepository, requestValidator, approverResolver, null, approverResolveRequestFactory);
 
         RuntimeStateException error = assertThrows(RuntimeStateException.class,
                 () -> withoutEvaluator.advanceToNode(instance(), definition(
@@ -334,7 +361,7 @@ class RuntimeNodeAdvancerTest {
         ProcessNodeDTO node = node(code, NodeTypeEnum.USER_TASK);
         node.setNodeName(Character.toUpperCase(code.charAt(0)) + code.substring(1));
         node.setApproverRuleType(ApproverRuleTypeEnum.USER);
-        node.setApproverRuleConfig("{}");
+        node.setApproverRuleConfig("{\"userIds\":[\"user-1\"]}");
         node.setMultiInstanceMode(MultiInstanceModeEnum.SINGLE);
         return node;
     }

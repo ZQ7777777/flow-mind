@@ -9,6 +9,7 @@ import com.flowmind.platform.api.dto.ValidationResult;
 import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
 import com.flowmind.platform.api.enums.AttachmentTemplateStatusEnum;
 import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigValidator;
+import com.flowmind.platform.core.validation.FrozenValidationErrorCodes;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
@@ -17,8 +18,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -147,16 +150,53 @@ public class ProcessDefinitionAttachmentConfigManager {
                                           List<ProcessNodeDTO> currentNodes,
                                           String operatorUserId) {
         List<ProcessDefinitionAttachmentConfigEntity> groupEntities =
-                attachmentConfigRepository.findByAttachmentConfigId(attachmentConfigId);
+                attachmentConfigRepository.findByDefinitionIdAndAttachmentConfigId(definitionId, attachmentConfigId);
         List<ProcessAttachmentConfigDTO> configs = toConfigDtos(groupEntities);
         ValidationResult result = attachmentConfigValidator.validate(configs, currentNodes);
         if (!result.isValid()) {
             return result;
         }
         if (!groupEntities.isEmpty()) {
-            attachmentConfigRepository.activateGroup(definitionId, attachmentConfigId, operatorUserId);
+            int activatedRows = attachmentConfigRepository.activateGroup(definitionId, attachmentConfigId,
+                    operatorUserId);
+            if (activatedRows != groupEntities.size()) {
+                return invalidResult("attachment configuration group activation did not update every configured row");
+            }
         }
         return result;
+    }
+
+    /**
+     * 激活定义下唯一的草稿附件配置组。
+     *
+     * <p>流程图保存的正常路径最多只会留下一个草稿组。若发现多个草稿组，拒绝激活而不是
+     * 任意选择其中一个，以保证运行时实例冻结到可追溯且确定的附件配置。</p>
+     *
+     * @param definitionId 流程定义 ID
+     * @param currentNodes 当前流程定义节点列表
+     * @param operatorUserId 操作人用户 ID
+     * @return 附件配置校验结果；没有附件配置时返回通过结果
+     */
+    @Transactional
+    public ValidationResult activateDraftGroup(String definitionId,
+                                               List<ProcessNodeDTO> currentNodes,
+                                               String operatorUserId) {
+        List<ProcessDefinitionAttachmentConfigEntity> draftEntities =
+                attachmentConfigRepository.findByDefinitionIdAndStatus(
+                        definitionId, AttachmentConfigStatusEnum.DRAFT.name());
+        if (draftEntities.isEmpty()) {
+            return validResult();
+        }
+        Set<String> groupIds = new LinkedHashSet<String>();
+        for (ProcessDefinitionAttachmentConfigEntity entity : draftEntities) {
+            if (entity != null && !isBlank(entity.getAttachmentConfigId())) {
+                groupIds.add(entity.getAttachmentConfigId());
+            }
+        }
+        if (groupIds.size() != 1) {
+            return invalidResult("definition must have exactly one draft attachment configuration group");
+        }
+        return activateGroup(definitionId, groupIds.iterator().next(), currentNodes, operatorUserId);
     }
 
     /**
@@ -345,6 +385,22 @@ public class ProcessDefinitionAttachmentConfigManager {
             }
         }
         return UUID.randomUUID().toString();
+    }
+
+    private ValidationResult validResult() {
+        ValidationResult result = new ValidationResult();
+        result.setValid(true);
+        return result;
+    }
+
+    private ValidationResult invalidResult(String message) {
+        ValidationResult result = validResult();
+        ValidationResult.Issue issue = new ValidationResult.Issue();
+        issue.setCode(FrozenValidationErrorCodes.MODEL_ATTACHMENT_CONFIGURATION_INVALID);
+        issue.setMessage(message);
+        result.getIssues().add(issue);
+        result.setValid(false);
+        return result;
     }
 
     /**

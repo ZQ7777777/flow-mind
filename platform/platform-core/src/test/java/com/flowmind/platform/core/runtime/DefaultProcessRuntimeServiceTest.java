@@ -6,10 +6,12 @@ import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.dto.ProcessAttachmentTemplateDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
+import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
@@ -136,6 +138,28 @@ class DefaultProcessRuntimeServiceTest {
         verify(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull());
         verify(callbackService).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
+    }
+
+    @Test
+    void startProcessFreezesTheActivatedAttachmentConfigurationGroup() {
+        StartProcessRequest request = startRequest("operation-start-with-attachments");
+        UserContext starter = user("starter", "Starter");
+        ProcessDefinitionDetailDTO definition = definition(starterTask("apply"));
+        ProcessAttachmentTemplateDTO attachment = new ProcessAttachmentTemplateDTO();
+        attachment.setAttachmentConfigId("attachment-group-001");
+        attachment.setConfigStatus(AttachmentConfigStatusEnum.ACTIVE);
+        definition.setAttachmentTemplates(Collections.singletonList(attachment));
+        when(requestValidator.validateStart(request)).thenReturn(starter);
+        when(operationExecutor.begin(eq(request), eq(RuntimeOperationTypes.START_PROCESS), eq("starter"), isNull(), isNull(),
+                any(LocalDateTime.class))).thenReturn(newDecision());
+        when(definitionLoader.loadForStart("expense")).thenReturn(definition);
+        when(instanceRepository.insert(any(ProcessInstanceEntity.class))).thenReturn(1);
+
+        service.startProcess(request);
+
+        ArgumentCaptor<ProcessInstanceEntity> instanceCaptor = ArgumentCaptor.forClass(ProcessInstanceEntity.class);
+        verify(instanceRepository).insert(instanceCaptor.capture());
+        assertEquals("attachment-group-001", instanceCaptor.getValue().getAttachmentConfigId());
     }
 
     @Test

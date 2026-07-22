@@ -85,6 +85,17 @@ public class ProcessDefinitionAttachmentConfigRepository {
                 rowMapper());
     }
 
+    public List<ProcessDefinitionAttachmentConfigEntity> findByDefinitionIdAndAttachmentConfigId(
+            String definitionId, String attachmentConfigId) {
+        return jdbcTemplate.query(selectSql()
+                        + " WHERE definition_id = ? AND attachment_config_id = ? "
+                        + "ORDER BY sort_order ASC, attachment_code ASC",
+                (PreparedStatement preparedStatement) -> {
+                    preparedStatement.setString(1, definitionId);
+                    preparedStatement.setString(2, attachmentConfigId);
+                }, rowMapper());
+    }
+
     public int copyToDefinition(String sourceDefinitionId, String targetDefinitionId) {
         List<ProcessDefinitionAttachmentConfigEntity> sourceConfigs = findByDefinitionId(sourceDefinitionId);
         Map<String, String> groupIdMapping = new LinkedHashMap<String, String>();
