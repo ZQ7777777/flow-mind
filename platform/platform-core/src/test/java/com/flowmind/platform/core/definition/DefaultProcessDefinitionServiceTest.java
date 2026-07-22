@@ -283,6 +283,23 @@ class DefaultProcessDefinitionServiceTest {
     }
 
     @Test
+    void publishReplayAfterActivationReturnsFirstPublishedSnapshot() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        saveGraph(created.getId(), simpleLinearGraph("operation-save-001"));
+        ProcessDefinitionDTO published = publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+        activate(lifecycleRequest(created.getId(), "operation-activate-001"));
+        processDefinitionCache.clear();
+
+        ProcessDefinitionDTO replay = publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+
+        assertEquals(ActivationStatusEnum.INACTIVE, published.getActivationStatus());
+        assertEquals(ActivationStatusEnum.INACTIVE, replay.getActivationStatus());
+        assertEquals(ActivationStatusEnum.ACTIVE,
+                definitionRepository.findById(created.getId()).getActivationStatus());
+        assertEquals(0, processDefinitionCache.definitionIds.size());
+    }
+
+    @Test
     void deactivateActiveDefinitionKeepsExistingInstanceAndStopsNewFullVersionSelection() {
         ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
         saveGraph(created.getId(), simpleLinearGraph("operation-save-001"));

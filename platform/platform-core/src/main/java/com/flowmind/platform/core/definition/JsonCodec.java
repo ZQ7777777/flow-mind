@@ -3,6 +3,9 @@ package com.flowmind.platform.core.definition;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.flowmind.platform.api.dto.ProcessDefinitionDTO;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -19,8 +22,11 @@ import java.util.Map;
 final class JsonCodec {
 
     private static final String RESULT_DEFINITION_ID = "definitionId";
+    private static final String RESULT_DEFINITION = "definition";
     private static final String RESULT_DELETED = "deleted";
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private JsonCodec() {
     }
@@ -34,6 +40,17 @@ final class JsonCodec {
     static String definitionResult(String definitionId) {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put(RESULT_DEFINITION_ID, definitionId);
+        return write(result);
+    }
+
+    /** Builds an idempotent result payload with the first returned definition snapshot. */
+    static String definitionResult(ProcessDefinitionDTO definition) {
+        if (definition == null) {
+            return definitionResult((String) null);
+        }
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put(RESULT_DEFINITION_ID, definition.getId());
+        result.put(RESULT_DEFINITION, definition);
         return write(result);
     }
 
@@ -64,6 +81,23 @@ final class JsonCodec {
             JsonNode root = OBJECT_MAPPER.readTree(resultJson);
             JsonNode definitionId = root.get(RESULT_DEFINITION_ID);
             return definitionId == null || definitionId.isNull() ? null : definitionId.asText();
+        } catch (JsonProcessingException ex) {
+            return null;
+        }
+    }
+
+    /** Reads the first returned definition snapshot from a new-format idempotent result payload. */
+    static ProcessDefinitionDTO extractDefinition(String resultJson) {
+        if (resultJson == null || resultJson.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(resultJson);
+            JsonNode definition = root.get(RESULT_DEFINITION);
+            if (definition == null || definition.isNull()) {
+                return null;
+            }
+            return OBJECT_MAPPER.treeToValue(definition, ProcessDefinitionDTO.class);
         } catch (JsonProcessingException ex) {
             return null;
         }

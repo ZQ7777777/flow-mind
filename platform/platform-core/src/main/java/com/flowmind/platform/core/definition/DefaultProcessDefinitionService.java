@@ -152,8 +152,9 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         definitionRepository.insert(entity);
 
         //将幂等操作标记为成功
-        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(entity.getId()));
-        return ProcessDefinitionMapper.toDto(entity);
+        ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(entity);
+        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
+        return result;
     }
 
     /**
@@ -217,10 +218,11 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
 
         //标记幂等操作成功
-        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(definitionId));
+        ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(definitionRepository.findById(definitionId));
+        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
         //注册流程图缓存失效
         registerGraphCacheInvalidation(definition.getId());
-        return ProcessDefinitionMapper.toDto(definitionRepository.findById(definitionId));
+        return result;
     }
 
     @Override
@@ -421,9 +423,10 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         formFieldManager.copyFormFields(definitionId, copied.getId());
         attachmentConfigManager.copyAttachmentConfigs(definitionId, copied.getId());
 
-        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(copied.getId()));
+        ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(copied);
+        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
         registerGraphCacheInvalidation(copied.getId());
-        return ProcessDefinitionMapper.toDto(copied);
+        return result;
     }
 
     @Override
@@ -597,6 +600,10 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     }
 
     private ProcessDefinitionDTO replaySaveGraph(ProcessOperationRecordEntity existing) {
+        ProcessDefinitionDTO result = JsonCodec.extractDefinition(existing.getResultJson());
+        if (result != null) {
+            return result;
+        }
         String definitionId = JsonCodec.extractDefinitionId(existing.getResultJson());
         ProcessDefinitionEntity entity = definitionRepository.findById(definitionId);
         if (entity == null) {
@@ -626,6 +633,10 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     }
 
     private ProcessDefinitionDTO replayCopyDefinition(ProcessOperationRecordEntity existing) {
+        ProcessDefinitionDTO result = JsonCodec.extractDefinition(existing.getResultJson());
+        if (result != null) {
+            return result;
+        }
         String definitionId = JsonCodec.extractDefinitionId(existing.getResultJson());
         ProcessDefinitionEntity entity = definitionRepository.findById(definitionId);
         if (entity == null) {
@@ -641,6 +652,10 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
      * @return 当前数据库中的流程定义信息
      */
     private ProcessDefinitionDTO replayLifecycleDefinition(ProcessOperationRecordEntity existing) {
+        ProcessDefinitionDTO result = JsonCodec.extractDefinition(existing.getResultJson());
+        if (result != null) {
+            return result;
+        }
         String definitionId = JsonCodec.extractDefinitionId(existing.getResultJson());
         ProcessDefinitionEntity entity = definitionRepository.findById(definitionId);
         if (entity == null) {
@@ -687,7 +702,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         definitionRepository.insertAuditLog(newId(), null, request.getOperationId(),
                 OperationTargetTypeEnum.DEFINITION.name(), definitionId, actionType,
                 request.getOperatorUserId(), lifecycleAuditDetail(latest), LocalDateTime.now());
-        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(definitionId));
+        ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(latest);
+        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
         registerGraphCacheInvalidation(definitionId);
         if (additionalInvalidations != null) {
             for (String additionalDefinitionId : additionalInvalidations) {
@@ -696,7 +712,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                 }
             }
         }
-        return ProcessDefinitionMapper.toDto(latest);
+        return result;
     }
 
     /**
@@ -802,6 +818,10 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     }
 
     private ProcessDefinitionDTO replayCreateDefinition(ProcessOperationRecordEntity existing) {
+        ProcessDefinitionDTO result = JsonCodec.extractDefinition(existing.getResultJson());
+        if (result != null) {
+            return result;
+        }
         String definitionId = JsonCodec.extractDefinitionId(existing.getResultJson());
         ProcessDefinitionEntity entity = definitionRepository.findById(definitionId);
         if (entity == null) {
