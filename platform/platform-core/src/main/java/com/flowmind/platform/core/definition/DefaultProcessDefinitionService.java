@@ -132,29 +132,37 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         rejectNonExecutableOperation(decision);
 
-        //查询最大版本号，如果没有旧版本，则新创建的定义版本号是1
-        Integer maxVersion = definitionRepository.findMaxVersionByProcessCode(request.getProcessCode());
-        ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
-        entity.setId(newId());
-        entity.setProcessCode(request.getProcessCode());
-        entity.setProcessName(request.getProcessName());
-        entity.setSystemCode(request.getSystemCode());
-        entity.setVersion(Integer.valueOf(maxVersion == null ? 1 : maxVersion.intValue() + 1));
-        entity.setDefinitionStatus(DefinitionStatusEnum.DRAFT.name());
-        entity.setActivationStatus(ActivationStatusEnum.INACTIVE.name());
-        entity.setGrayStatus(GrayStatusEnum.OFF.name());
-        entity.setRemark(request.getRemark());
-        entity.setCreatedBy(request.getOperatorUserId());
-        entity.setCreatedAt(now);
-        entity.setUpdatedBy(request.getOperatorUserId());
-        entity.setUpdatedAt(now);
-        //将实体类存到数据库
-        definitionRepository.insert(entity);
+        try {
+            //查询最大版本号，如果没有旧版本，则新创建的定义版本号是1
+            Integer maxVersion = definitionRepository.findMaxVersionByProcessCode(request.getProcessCode());
+            ProcessDefinitionEntity entity = new ProcessDefinitionEntity();
+            entity.setId(newId());
+            entity.setProcessCode(request.getProcessCode());
+            entity.setProcessName(request.getProcessName());
+            entity.setSystemCode(request.getSystemCode());
+            entity.setVersion(Integer.valueOf(maxVersion == null ? 1 : maxVersion.intValue() + 1));
+            entity.setDefinitionStatus(DefinitionStatusEnum.DRAFT.name());
+            entity.setActivationStatus(ActivationStatusEnum.INACTIVE.name());
+            entity.setGrayStatus(GrayStatusEnum.OFF.name());
+            entity.setRemark(request.getRemark());
+            entity.setCreatedBy(request.getOperatorUserId());
+            entity.setCreatedAt(now);
+            entity.setUpdatedBy(request.getOperatorUserId());
+            entity.setUpdatedAt(now);
+            //将实体类存到数据库
+            definitionRepository.insert(entity);
 
-        //将幂等操作标记为成功
-        ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(entity);
-        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
-        return result;
+            //将幂等操作标记为成功
+            ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(entity);
+            idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
+            return result;
+        } catch (DefinitionValidationException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        } catch (DefinitionStateException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        }
     }
 
     /**
@@ -171,15 +179,6 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                     "definitionId must not be empty");
         }
         DefinitionRequestValidator.validateSaveGraph(request);
-
-        //校验流程定义是否可编辑
-        ProcessDefinitionEntity definition = definitionRepository.findById(definitionId);
-        if (definition == null) {
-            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_NOT_FOUND,
-                    "definition not found: " + definitionId);
-        }
-        statusValidator.validateEditable(definition.getDefinitionStatus(),
-                definition.getActivationStatus(), definition.getGrayStatus());
 
         //归一化节点、连线、表单字段和附件配置，避免前端传入数据缺字段导致哈希计算有误
         LocalDateTime now = LocalDateTime.now();
@@ -200,29 +199,45 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
             return replaySaveGraph(decision.getRecord());
         }
         rejectNonExecutableOperation(decision);
-        ensureValid(formFieldManager.validateFormFields(formFields));
-        ensureValid(attachmentConfigManager.validateAttachmentConfigs(attachmentConfigs, nodes));
+        try {
+            //校验流程定义是否可编辑
+            ProcessDefinitionEntity definition = definitionRepository.findById(definitionId);
+            if (definition == null) {
+                throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_NOT_FOUND,
+                        "definition not found: " + definitionId);
+            }
+            statusValidator.validateEditable(definition.getDefinitionStatus(),
+                    definition.getActivationStatus(), definition.getGrayStatus());
+            ensureValid(formFieldManager.validateFormFields(formFields));
+            ensureValid(attachmentConfigManager.validateAttachmentConfigs(attachmentConfigs, nodes));
 
-        //删除全部旧图元素，批量插入新图元素
-        edgeRepository.deleteByDefinitionId(definitionId);
-        nodeRepository.deleteByDefinitionId(definitionId);
-        nodeRepository.batchInsert(ProcessDefinitionMapper.toNodeEntities(nodes));
-        edgeRepository.batchInsert(ProcessDefinitionMapper.toEdgeEntities(edges));
-        definitionRepository.touchUpdated(definitionId, request.getOperatorUserId());
-        ensureValid(formFieldManager.saveFormFields(definitionId, formFields));
-        if (attachmentConfigs.isEmpty()) {
-            attachmentConfigManager.deleteAttachmentConfigs(definitionId);
-        } else {
-            ensureValid(attachmentConfigManager.saveDraftGroup(definitionId, null, attachmentConfigs, nodes,
-                    request.getOperatorUserId()));
+            //删除全部旧图元素，批量插入新图元素
+            edgeRepository.deleteByDefinitionId(definitionId);
+            nodeRepository.deleteByDefinitionId(definitionId);
+            nodeRepository.batchInsert(ProcessDefinitionMapper.toNodeEntities(nodes));
+            edgeRepository.batchInsert(ProcessDefinitionMapper.toEdgeEntities(edges));
+            definitionRepository.touchUpdated(definitionId, request.getOperatorUserId());
+            ensureValid(formFieldManager.saveFormFields(definitionId, formFields));
+            if (attachmentConfigs.isEmpty()) {
+                attachmentConfigManager.deleteAttachmentConfigs(definitionId);
+            } else {
+                ensureValid(attachmentConfigManager.saveDraftGroup(definitionId, null, attachmentConfigs, nodes,
+                        request.getOperatorUserId()));
+            }
+
+            //标记幂等操作成功
+            ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(definitionRepository.findById(definitionId));
+            idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
+            //注册流程图缓存失效
+            registerGraphCacheInvalidation(definition.getId());
+            return result;
+        } catch (DefinitionValidationException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        } catch (DefinitionStateException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
         }
-
-        //标记幂等操作成功
-        ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(definitionRepository.findById(definitionId));
-        idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
-        //注册流程图缓存失效
-        registerGraphCacheInvalidation(definition.getId());
-        return result;
     }
 
     @Override
@@ -252,17 +267,25 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         rejectNonExecutableOperation(decision);
 
-        ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
-        ensureGrayOff(definition);
-        ValidationResult validationResult = validateForPublish(definition.getId());
-        if (validationResult != null && !validationResult.isValid()) {
-            throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
-                    firstValidationMessage(validationResult));
+        try {
+            ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
+            ensureGrayOff(definition);
+            ValidationResult validationResult = validateForPublish(definition.getId());
+            if (validationResult != null && !validationResult.isValid()) {
+                throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                        firstValidationMessage(validationResult));
+            }
+            if (definitionRepository.publish(definition.getId(), request.getOperatorUserId()) != 1) {
+                throw lifecycleStateException("definition must be DRAFT + INACTIVE + OFF before publish");
+            }
+            return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
+        } catch (DefinitionValidationException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        } catch (DefinitionStateException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
         }
-        if (definitionRepository.publish(definition.getId(), request.getOperatorUserId()) != 1) {
-            throw lifecycleStateException("definition must be DRAFT + INACTIVE + OFF before publish");
-        }
-        return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
     }
 
     /**
@@ -286,6 +309,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         rejectNonExecutableOperation(decision);
 
+        try {
         ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
         ensureGrayOff(definition);
         if (!DefinitionStatusEnum.PUBLISHED.name().equals(definition.getDefinitionStatus())
@@ -304,6 +328,13 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
             additionalInvalidations.add(oldActive.getId());
         }
         return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), additionalInvalidations);
+        } catch (DefinitionValidationException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        } catch (DefinitionStateException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        }
     }
 
     /**
@@ -327,12 +358,20 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         rejectNonExecutableOperation(decision);
 
+        try {
         ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
         ensureGrayOff(definition);
         if (definitionRepository.deactivate(definition.getId(), request.getOperatorUserId()) != 1) {
             throw lifecycleStateException("definition must be PUBLISHED + ACTIVE + OFF before deactivate");
         }
         return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
+        } catch (DefinitionValidationException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        } catch (DefinitionStateException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        }
     }
 
     /**
@@ -356,6 +395,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         rejectNonExecutableOperation(decision);
 
+        try {
         ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
         ensureGrayOff(definition);
         LocalDateTime now = LocalDateTime.now();
@@ -363,6 +403,13 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
             throw lifecycleStateException("definition must be PUBLISHED + INACTIVE + OFF before archive");
         }
         return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
+        } catch (DefinitionValidationException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        } catch (DefinitionStateException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        }
     }
 
     /**
@@ -409,6 +456,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         rejectNonExecutableOperation(decision);
 
+        try {
         ProcessDefinitionEntity source = definitionRepository.findById(definitionId);
         if (source == null) {
             throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_NOT_FOUND,
@@ -427,6 +475,13 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
         registerGraphCacheInvalidation(copied.getId());
         return result;
+        } catch (DefinitionValidationException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        } catch (DefinitionStateException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        }
     }
 
     @Override
@@ -443,6 +498,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         rejectNonExecutableOperation(decision);
 
+        try {
         ProcessDefinitionEntity definition = definitionRepository.findById(request.getDefinitionId());
         if (definition == null) {
             throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_NOT_FOUND,
@@ -472,6 +528,13 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         idempotencyService.markSuccess(request.getOperationId(), JsonCodec.deleteResult(definition.getId()));
         registerGraphCacheInvalidation(definition.getId());
         return deleteOperationResult(request.getOperationId(), definition.getId(), false);
+        } catch (DefinitionValidationException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        } catch (DefinitionStateException ex) {
+            markDeterministicFailure(decision, request.getOperationId(), ex);
+            throw ex;
+        }
     }
 
     /**
@@ -630,6 +693,30 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                     ? DefinitionErrorCodes.DEFINITION_INVALID : decision.getRecord().getErrorCode();
             throw new DefinitionStateException(errorCode, "operation has already failed: " + errorCode);
         }
+    }
+
+    private void markDeterministicFailure(OperationIdempotencyDecision decision,
+                                          String operationId,
+                                          DefinitionValidationException exception) {
+        markDeterministicFailure(decision, operationId, exception.getErrorCode());
+    }
+
+    private void markDeterministicFailure(OperationIdempotencyDecision decision,
+                                          String operationId,
+                                          DefinitionStateException exception) {
+        markDeterministicFailure(decision, operationId, exception.getErrorCode());
+    }
+
+    private void markDeterministicFailure(OperationIdempotencyDecision decision,
+                                          String operationId,
+                                          String errorCode) {
+        if (decision == null || !hasText(operationId)
+                || (!OperationIdempotencyDecisionType.NEW.equals(decision.getType())
+                && !OperationIdempotencyDecisionType.TAKE_OVER.equals(decision.getType()))) {
+            return;
+        }
+        idempotencyService.markFailed(operationId,
+                hasText(errorCode) ? errorCode : DefinitionErrorCodes.DEFINITION_INVALID);
     }
 
     private ProcessDefinitionDTO replayCopyDefinition(ProcessOperationRecordEntity existing) {
