@@ -414,7 +414,7 @@ flowchart TD
 
 每个状态变化都要：重新读取当前状态、校验合法转换、在同一事务更新状态并写审计/幂等结果、提交后清缓存。激活不能只在应用层“先查再写”，必须由事务和约束保证同一编码只有一个全量激活版本。
 
-返回结果含最新的定义、激活和灰度状态。非法状态转换返回 `FLOW_INVALID_ACTION`；发布校验不通过返回 `FLOW_DEFINITION_INVALID`。
+返回结果含最新的定义、激活和灰度状态。定义生命周期非法状态转换返回 `FLOW_DEFINITION_NOT_EDITABLE`；发布校验不通过返回 `FLOW_DEFINITION_INVALID`。
 
 ### 6.3 灰度发布
 
@@ -754,6 +754,7 @@ public interface DefinitionExtensionLifecycle {
 | ------------------------------------- | -------------------------- |
 | `FLOW_DEFINITION_NOT_FOUND`           | 定义不存在                 |
 | `FLOW_DEFINITION_INVALID`             | 定义或配置校验失败         |
+| `FLOW_DEFINITION_NOT_EDITABLE`        | 定义当前状态不允许编辑、删除或生命周期动作 |
 | `FLOW_NODE_NOT_FOUND`                 | 节点或连线引用不存在       |
 | `FLOW_OPERATION_ID_REQUIRED`          | 修改请求缺少幂等号         |
 | `FLOW_OPERATION_ID_CONFLICT`          | 同一幂等号对应不同请求     |
@@ -764,7 +765,7 @@ public interface DefinitionExtensionLifecycle {
 | `FLOW_TASK_GROUP_CONCURRENT_MODIFIED` | 或签任务组乐观锁冲突       |
 | `FLOW_INVALID_ACTION`                 | 当前状态不允许操作         |
 
-若需要新增“定义不可编辑、版本冲突”等实现级错误码，必须先经过三方接口评审再加入公共枚举。
+若需要新增“版本冲突”等其他实现级错误码，必须先经过三方接口评审再加入公共枚举。
 
 ## 13. 建议实施顺序与完成标准
 
