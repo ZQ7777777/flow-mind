@@ -36,6 +36,23 @@ public class ProcessDefinitionRepository {
     }
 
     /**
+     * 按流程编码读取唯一的全量激活定义，仅供新流程实例启动时选择版本。
+     *
+     * <p>已存在实例必须按其冻结的 definitionId 读取，不得调用此方法重新选版。</p>
+     *
+     * @param processCode 流程编码
+     * @return 已发布、已激活且未开启灰度的定义；不存在时返回 {@code null}
+     */
+    public ProcessDefinitionEntity findActiveFullByProcessCode(String processCode) {
+        List<ProcessDefinitionEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_definition WHERE process_code = ? "
+                        + "AND definition_status = 'PUBLISHED' "
+                        + "AND activation_status = 'ACTIVE' AND gray_status = 'OFF'",
+                DefinitionRowMappers.DEFINITION, processCode);
+        return results.isEmpty() ? null : results.get(0);
+    }
+
+    /**
      * 查询流程编码最大的版本号
      * @param processCode
      * @return 最大版本号

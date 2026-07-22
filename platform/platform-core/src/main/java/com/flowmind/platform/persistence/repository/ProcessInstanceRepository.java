@@ -1,0 +1,69 @@
+package com.flowmind.platform.persistence.repository;
+
+import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * 流程运行实例的持久化仓储，只提供实例生命周期中的基础读写原语。
+ *
+ * @author FlowMind
+ * @since 2026-07-22
+ */
+@Repository
+public class ProcessInstanceRepository {
+
+    private final JdbcTemplate jdbcTemplate;
+
+    /** 创建流程实例仓储。 */
+    public ProcessInstanceRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /** 插入流程实例快照。 */
+    public int insert(ProcessInstanceEntity entity) {
+        return jdbcTemplate.update("INSERT INTO process_instance "
+                        + "(id, definition_id, attachment_config_id, process_code, process_name, version, "
+                        + "instance_title, business_key, starter_user_id, starter_user_name, starter_dept_id, "
+                        + "current_node_codes, variables_json, instance_status, started_at, ended_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'NOT_STARTED'), ?, ?)",
+                entity.getId(), entity.getDefinitionId(), entity.getAttachmentConfigId(), entity.getProcessCode(),
+                entity.getProcessName(), entity.getVersion(), entity.getInstanceTitle(), entity.getBusinessKey(),
+                entity.getStarterUserId(), entity.getStarterUserName(), entity.getStarterDeptId(),
+                entity.getCurrentNodeCodes(), entity.getVariablesJson(), entity.getInstanceStatus(),
+                DefinitionRowMappers.toDbString(entity.getStartedAt()),
+                DefinitionRowMappers.toDbString(entity.getEndedAt()));
+    }
+
+    /** 按实例 ID 查询；不存在时返回 {@code null}。 */
+    public ProcessInstanceEntity findById(String id) {
+        List<ProcessInstanceEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_instance WHERE id = ?", RuntimeRowMappers.INSTANCE, id);
+        return results.isEmpty() ? null : results.get(0);
+    }
+
+    /**
+     * 覆盖变量 JSON，仅允许未开始或运行中的实例更新。
+     * JSON 的读取、浅合并和序列化由运行时 Service 负责。
+     */
+    public int updateVariablesJson(String id, String variablesJson) {
+        return jdbcTemplate.update("UPDATE process_instance SET variables_json = ? WHERE id = ? "
+                + "AND instance_status IN ('NOT_STARTED', 'RUNNING')", variablesJson, id);
+    }
+
+    /** 覆盖当前节点编码 JSON，仅允许未开始或运行中的实例更新。 */
+    public int updateCurrentNodeCodes(String id, String currentNodeCodes) {
+        return jdbcTemplate.update("UPDATE process_instance SET current_node_codes = ? WHERE id = ? "
+                + "AND instance_status IN ('NOT_STARTED', 'RUNNING')", currentNodeCodes, id);
+    }
+
+    /** 将运行中的实例办结；重复办结或非运行态实例返回 0。 */
+    public int complete(String id, LocalDateTime endedAt) {
+        return jdbcTemplate.update("UPDATE process_instance SET instance_status = 'COMPLETED', ended_at = ? "
+                        + "WHERE id = ? AND instance_status = 'RUNNING'",
+                DefinitionRowMappers.toDbString(endedAt), id);
+    }
+}
