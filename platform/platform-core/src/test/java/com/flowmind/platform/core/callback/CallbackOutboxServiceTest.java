@@ -6,7 +6,6 @@ import com.flowmind.platform.api.dto.WorkflowEvent;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.CallbackStatusEnum;
 import com.flowmind.platform.api.enums.WorkflowEventTypeEnum;
-import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
 import com.flowmind.platform.core.runtime.RuntimeValidationException;
 import com.flowmind.platform.persistence.entity.ProcessCallbackLogEntity;
@@ -22,8 +21,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
-import java.util.Arrays;
-import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -79,30 +76,18 @@ class CallbackOutboxServiceTest {
     }
 
     @Test
-    void callbackServiceUpdatesSuccessAndFailedStatusWithoutThrowingFailure() {
-        WorkflowEvent success = event("op-001:TASK_COMPLETED:1", WorkflowEventTypeEnum.TASK_COMPLETED);
-        WorkflowEvent failed = event("op-002:TASK_COMPLETED:1", WorkflowEventTypeEnum.TASK_COMPLETED);
-        outboxService.appendPending(success);
-        outboxService.appendPending(failed);
-        DefaultCallbackService successService = new DefaultCallbackService(callbackLogRepository,
-                callbackLogMapper, Collections.<WorkflowCallbackHandler>emptyList());
-        DefaultCallbackService failedService = new DefaultCallbackService(callbackLogRepository,
-                callbackLogMapper, Arrays.<WorkflowCallbackHandler>asList(new WorkflowCallbackHandler() {
-                    @Override
-                    public void handle(WorkflowEvent event) {
-                        throw new IllegalStateException("remote failed");
-                    }
-                }));
+    void callbackServiceOnlyAppendsPendingOutboxEvent() {
+        WorkflowEvent event = event("op-001:TASK_COMPLETED:1", WorkflowEventTypeEnum.TASK_COMPLETED);
+        DefaultCallbackService callbackService = new DefaultCallbackService(callbackLogRepository,
+                callbackLogMapper, outboxService);
 
-        successService.publishCallback(success);
-        failedService.publishCallback(failed);
+        callbackService.publishCallback(event);
+        callbackService.publishCallback(event);
 
-        assertEquals(CallbackStatusEnum.SUCCESS.name(),
-                callbackLogRepository.findByEventId(success.getEventId()).getCallbackStatus());
-        ProcessCallbackLogEntity failedLog = callbackLogRepository.findByEventId(failed.getEventId());
-        assertEquals(CallbackStatusEnum.FAILED.name(), failedLog.getCallbackStatus());
-        assertEquals(Integer.valueOf(1), failedLog.getRetryCount());
-        assertEquals("remote failed", failedLog.getLastError());
+        ProcessCallbackLogEntity log = callbackLogRepository.findByEventId(event.getEventId());
+        assertEquals(CallbackStatusEnum.PENDING.name(), log.getCallbackStatus());
+        assertEquals(Integer.valueOf(0), log.getRetryCount());
+        assertEquals(1, callbackLogRepository.findPending(10).size());
     }
 
     @Test
@@ -113,8 +98,7 @@ class CallbackOutboxServiceTest {
         query.setInstanceId("instance-1");
         query.setCallbackStatus(CallbackStatusEnum.PENDING);
 
-        CallbackLogDTO dto = new DefaultCallbackService(callbackLogRepository, callbackLogMapper,
-                Collections.<WorkflowCallbackHandler>emptyList())
+        CallbackLogDTO dto = new DefaultCallbackService(callbackLogRepository, callbackLogMapper, outboxService)
                 .queryCallbackLogs(query).getRecords().get(0);
 
         assertEquals(event.getEventId(), dto.getEventId());

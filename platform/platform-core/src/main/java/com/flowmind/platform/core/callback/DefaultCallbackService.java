@@ -5,11 +5,12 @@ import com.flowmind.platform.api.dto.CallbackLogQuery;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.WorkflowEvent;
 import com.flowmind.platform.api.service.CallbackService;
-import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.core.query.PageQueryNormalizer;
 import com.flowmind.platform.persistence.entity.ProcessCallbackLogEntity;
 import com.flowmind.platform.persistence.repository.ProcessCallbackLogRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,30 +23,20 @@ public class DefaultCallbackService implements CallbackService {
 
     private final ProcessCallbackLogRepository callbackLogRepository;
     private final CallbackLogMapper callbackLogMapper;
-    private final List<WorkflowCallbackHandler> callbackHandlers;
+    private final CallbackOutboxService callbackOutboxService;
 
     public DefaultCallbackService(ProcessCallbackLogRepository callbackLogRepository,
                                   CallbackLogMapper callbackLogMapper,
-                                  List<WorkflowCallbackHandler> callbackHandlers) {
+                                  CallbackOutboxService callbackOutboxService) {
         this.callbackLogRepository = callbackLogRepository;
         this.callbackLogMapper = callbackLogMapper;
-        this.callbackHandlers = callbackHandlers == null
-                ? new ArrayList<WorkflowCallbackHandler>() : callbackHandlers;
+        this.callbackOutboxService = callbackOutboxService;
     }
 
     @Override
+    @Transactional(propagation = Propagation.MANDATORY)
     public void publishCallback(WorkflowEvent event) {
-        if (event == null || event.getEventId() == null || event.getEventId().trim().isEmpty()) {
-            throw new IllegalArgumentException("eventId must not be empty");
-        }
-        try {
-            for (WorkflowCallbackHandler handler : callbackHandlers) {
-                handler.handle(event);
-            }
-            callbackLogRepository.markSuccess(event.getEventId());
-        } catch (RuntimeException ex) {
-            callbackLogRepository.markFailed(event.getEventId(), truncate(ex.getMessage()));
-        }
+        callbackOutboxService.appendPending(event);
     }
 
     @Override
@@ -65,12 +56,5 @@ public class DefaultCallbackService implements CallbackService {
         result.setTotal(Long.valueOf(total));
         result.setTotalPages(Integer.valueOf((int) ((total + pageSize - 1) / pageSize)));
         return result;
-    }
-
-    private String truncate(String message) {
-        if (message == null) {
-            return null;
-        }
-        return message.length() <= 1000 ? message : message.substring(0, 1000);
     }
 }

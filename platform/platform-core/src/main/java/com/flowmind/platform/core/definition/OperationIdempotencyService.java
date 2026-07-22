@@ -186,9 +186,13 @@ public class OperationIdempotencyService {
             return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.IN_PROGRESS, existing);
         }
 
-        operationRecordRepository.extendProcessingLease(operationId, now.plusMinutes(PROCESSING_LEASE_MINUTES));
-        ProcessOperationRecordEntity takenOver = operationRecordRepository.findByOperationId(operationId);
-        return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.TAKE_OVER, takenOver);
+        int updated = operationRecordRepository.extendProcessingLeaseIfExpired(operationId,
+                existing.getProcessingExpiresAt(), now, now.plusMinutes(PROCESSING_LEASE_MINUTES));
+        ProcessOperationRecordEntity refreshed = operationRecordRepository.findByOperationId(operationId);
+        if (updated == 1) {
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.TAKE_OVER, refreshed);
+        }
+        return decisionForCurrentRecord(refreshed, now);
     }
 
     /**
@@ -212,6 +216,23 @@ public class OperationIdempotencyService {
                     ? existing.getErrorCode() : DefinitionErrorCodes.OPERATION_IN_PROGRESS;
             throw new DefinitionStateException(errorCode, "operation is still processing or failed");
         }
+    }
+
+    private OperationIdempotencyDecision decisionForCurrentRecord(ProcessOperationRecordEntity record,
+                                                                  LocalDateTime now) {
+        if (record == null) {
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.IN_PROGRESS, null);
+        }
+        if (OperationStatusEnum.SUCCESS.name().equals(record.getOperationStatus())) {
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.REPLAY_SUCCESS, record);
+        }
+        if (OperationStatusEnum.FAILED.name().equals(record.getOperationStatus())) {
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.REPLAY_FAILED, record);
+        }
+        if (record.getProcessingExpiresAt() != null && record.getProcessingExpiresAt().isAfter(now)) {
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.IN_PROGRESS, record);
+        }
+        return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.IN_PROGRESS, record);
     }
 
     private String newId() {

@@ -121,6 +121,24 @@ public class ProcessOperationRecordRepository {
     }
 
     /**
+     * Extends an expired PROCESSING lease with CAS semantics. The update succeeds only when the lease observed by the
+     * caller is still the current database value.
+     */
+    public int extendProcessingLeaseIfExpired(String operationId,
+                                              LocalDateTime observedProcessingExpiresAt,
+                                              LocalDateTime now,
+                                              LocalDateTime newProcessingExpiresAt) {
+        return jdbcTemplate.update("UPDATE process_operation_record "
+                        + "SET processing_expires_at = ?, updated_at = datetime('now') "
+                        + "WHERE operation_id = ? AND operation_status = 'PROCESSING' "
+                        + "AND processing_expires_at = ? AND processing_expires_at <= ?",
+                DefinitionRowMappers.toDbString(newProcessingExpiresAt),
+                operationId,
+                DefinitionRowMappers.toDbString(observedProcessingExpiresAt),
+                DefinitionRowMappers.toDbString(now));
+    }
+
+    /**
      * 查询已超过保留窗口的幂等记录，供后续清理任务使用。
      *
      * @param now   当前时间
