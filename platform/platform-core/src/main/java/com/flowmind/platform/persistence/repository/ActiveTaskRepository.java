@@ -1,19 +1,45 @@
 package com.flowmind.platform.persistence.repository;
 
+import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.List;
 
 /**
  * 活动任务的原子条件更新仓储。
  *
  * <p>所有方法返回受影响行数。返回 1 表示取得任务修改权；返回 0 表示任务不存在、
  * 状态不允许或版本已过期，调用方应映射为 {@link RepositoryConflictCodes#TASK_CONCURRENT_MODIFIED}。</p>
- *
- * @author Yuxin Xu
- * @since 2026-07-15
  */
 @Repository
 public class ActiveTaskRepository {
+
+    private static final RowMapper<ProcessActiveTaskEntity> ROW_MAPPER =
+            new RowMapper<ProcessActiveTaskEntity>() {
+                @Override
+                public ProcessActiveTaskEntity mapRow(ResultSet resultSet, int rowNum) throws SQLException {
+                    ProcessActiveTaskEntity entity = new ProcessActiveTaskEntity();
+                    entity.setId(resultSet.getString("id"));
+                    entity.setInstanceId(resultSet.getString("instance_id"));
+                    entity.setDefinitionId(resultSet.getString("definition_id"));
+                    entity.setNodeCode(resultSet.getString("node_code"));
+                    entity.setCandidateUserIds(resultSet.getString("candidate_user_ids"));
+                    entity.setAssigneeUserId(resultSet.getString("assignee_user_id"));
+                    entity.setAssigneeUserName(resultSet.getString("assignee_user_name"));
+                    entity.setDelegateFromUserId(resultSet.getString("delegate_from_user_id"));
+                    entity.setTaskStatus(resultSet.getString("task_status"));
+                    entity.setTaskGroupId(resultSet.getString("task_group_id"));
+                    entity.setBranchKey(resultSet.getString("branch_key"));
+                    entity.setLockVersion(Long.valueOf(resultSet.getLong("lock_version")));
+                    entity.setCreatedAt(DefinitionRowMappers.toLocalDateTime(resultSet.getString("created_at")));
+                    entity.setDueAt(DefinitionRowMappers.toLocalDateTime(resultSet.getString("due_at")));
+                    return entity;
+                }
+            };
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -25,6 +51,21 @@ public class ActiveTaskRepository {
     /** 将 ACTIVE 或 CLAIMED 任务原子标记为 COMPLETED。 */
     public int complete(String id, long expectedLockVersion) {
         return updateTerminalStatus(id, expectedLockVersion, "COMPLETED");
+    }
+
+    /** 按活动任务 ID 读取完整任务上下文；不存在时返回 null。 */
+    public ProcessActiveTaskEntity findById(String id) {
+        List<ProcessActiveTaskEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_active_task WHERE id = ?",
+                ROW_MAPPER, id);
+        return results.isEmpty() ? null : results.get(0);
+    }
+
+    /** 按实例 ID 读取活动任务，按创建时间和 ID 稳定排序。 */
+    public List<ProcessActiveTaskEntity> findByInstanceId(String instanceId) {
+        return jdbcTemplate.query("SELECT * FROM process_active_task "
+                        + "WHERE instance_id = ? ORDER BY created_at ASC, id ASC",
+                ROW_MAPPER, instanceId);
     }
 
     /** 将 ACTIVE 或 CLAIMED 任务原子标记为 CANCELED。 */

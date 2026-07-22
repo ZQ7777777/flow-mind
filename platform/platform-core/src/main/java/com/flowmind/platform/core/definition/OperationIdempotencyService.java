@@ -68,9 +68,34 @@ public class OperationIdempotencyService {
                                               String operatorId,
                                               String requestHash,
                                               LocalDateTime now) {
+        return begin(operationId, null, null, actionType, operatorId, requestHash, now);
+    }
+
+    /**
+     * 创建带运行期实例和任务上下文的 PROCESSING 幂等记录。
+     *
+     * @param operationId 客户端传入的幂等操作号，作为幂等记录唯一键
+     * @param instanceId  运行期实例 ID；定义期操作或实例创建前可为空
+     * @param taskId      运行期任务 ID；实例级动作可为空
+     * @param actionType  操作动作类型
+     * @param operatorId  操作人 ID
+     * @param requestHash 规范化后的请求摘要
+     * @param now         业务操作开始时间
+     * @return 已插入的操作记录实体
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ProcessOperationRecordEntity begin(String operationId,
+                                              String instanceId,
+                                              String taskId,
+                                              String actionType,
+                                              String operatorId,
+                                              String requestHash,
+                                              LocalDateTime now) {
         ProcessOperationRecordEntity operation = new ProcessOperationRecordEntity();
         operation.setId(newId());
         operation.setOperationId(operationId);
+        operation.setInstanceId(instanceId);
+        operation.setTaskId(taskId);
         operation.setActionType(actionType);
         operation.setOperatorId(operatorId);
         operation.setRequestHash(requestHash);
@@ -120,10 +145,33 @@ public class OperationIdempotencyService {
                                                       String operatorId,
                                                       String requestHash,
                                                       LocalDateTime now) {
+        return beginOrReplay(operationId, null, null, actionType, operatorId, requestHash, now);
+    }
+
+    /**
+     * 创建或判断带运行期上下文的幂等操作记录。
+     *
+     * @param operationId 客户端传入的幂等操作号
+     * @param instanceId  运行期实例 ID；定义期操作或实例创建前可为空
+     * @param taskId      运行期任务 ID；实例级动作可为空
+     * @param actionType  操作动作类型
+     * @param operatorId  操作人 ID
+     * @param requestHash 规范化后的请求摘要
+     * @param now         当前业务时间
+     * @return 幂等决策结果
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public OperationIdempotencyDecision beginOrReplay(String operationId,
+                                                      String instanceId,
+                                                      String taskId,
+                                                      String actionType,
+                                                      String operatorId,
+                                                      String requestHash,
+                                                      LocalDateTime now) {
         ProcessOperationRecordEntity existing = operationRecordRepository.findByOperationId(operationId);
         if (existing == null) {
             return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW,
-                    begin(operationId, actionType, operatorId, requestHash, now));
+                    begin(operationId, instanceId, taskId, actionType, operatorId, requestHash, now));
         }
         if (!actionType.equals(existing.getActionType()) || !requestHash.equals(existing.getRequestHash())) {
             return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.CONFLICT, existing);

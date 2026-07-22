@@ -19,6 +19,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -68,6 +69,39 @@ class OperationIdempotencyServiceTest {
         assertEquals(now.plusDays(1), record.getExpiresAt());
         assertEquals(now, record.getCreatedAt());
         assertEquals(now, record.getUpdatedAt());
+    }
+
+    @Test
+    void runtimeBeginStoresInstanceAndTaskContext() {
+        LocalDateTime now = LocalDateTime.of(2026, 7, 17, 10, 0);
+
+        OperationIdempotencyDecision decision = service.beginOrReplay("operation-runtime",
+                "instance-001",
+                "task-001",
+                "APPROVE",
+                "operator-001",
+                "hash-runtime",
+                now);
+
+        assertEquals(OperationIdempotencyDecisionType.NEW, decision.getType());
+        ProcessOperationRecordEntity record = repository.findByOperationId("operation-runtime");
+        assertEquals("instance-001", record.getInstanceId());
+        assertEquals("task-001", record.getTaskId());
+        assertEquals("APPROVE", record.getActionType());
+    }
+
+    @Test
+    void repositoryFindExpiredReturnsRetentionExpiredRecords() {
+        LocalDateTime base = LocalDateTime.of(2026, 7, 17, 10, 0);
+        service.begin("operation-expired-1", "APPROVE", "operator-001", "hash-1", base.minusDays(2));
+        service.begin("operation-expired-2", "APPROVE", "operator-001", "hash-2", base.minusDays(3));
+        service.begin("operation-live", "APPROVE", "operator-001", "hash-3", base);
+
+        List<ProcessOperationRecordEntity> records = repository.findExpired(base.minusHours(12), 10);
+
+        assertEquals(2, records.size());
+        assertEquals("operation-expired-2", records.get(0).getOperationId());
+        assertEquals("operation-expired-1", records.get(1).getOperationId());
     }
 
     @Test

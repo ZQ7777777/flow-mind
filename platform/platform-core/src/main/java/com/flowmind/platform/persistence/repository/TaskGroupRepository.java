@@ -1,7 +1,13 @@
 package com.flowmind.platform.persistence.repository;
 
+import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.List;
 
 /**
  * 任务组计数、状态和并行分支到达的原子条件更新仓储。
@@ -15,6 +21,29 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 public class TaskGroupRepository {
+
+    private static final RowMapper<ProcessTaskGroupEntity> ROW_MAPPER =
+            new RowMapper<ProcessTaskGroupEntity>() {
+                @Override
+                public ProcessTaskGroupEntity mapRow(ResultSet resultSet, int rowNum) throws SQLException {
+                    ProcessTaskGroupEntity entity = new ProcessTaskGroupEntity();
+                    entity.setId(resultSet.getString("id"));
+                    entity.setInstanceId(resultSet.getString("instance_id"));
+                    entity.setNodeCode(resultSet.getString("node_code"));
+                    entity.setJoinNodeCode(resultSet.getString("join_node_code"));
+                    entity.setParentGroupId(resultSet.getString("parent_group_id"));
+                    entity.setParentBranchKey(resultSet.getString("parent_branch_key"));
+                    entity.setGroupType(resultSet.getString("group_type"));
+                    entity.setTotalCount(Integer.valueOf(resultSet.getInt("total_count")));
+                    entity.setCompletedCount(Integer.valueOf(resultSet.getInt("completed_count")));
+                    entity.setBranchStateJson(resultSet.getString("branch_state_json"));
+                    entity.setGroupStatus(resultSet.getString("group_status"));
+                    entity.setLockVersion(Long.valueOf(resultSet.getLong("lock_version")));
+                    entity.setCreatedAt(DefinitionRowMappers.toLocalDateTime(resultSet.getString("created_at")));
+                    entity.setCompletedAt(DefinitionRowMappers.toLocalDateTime(resultSet.getString("completed_at")));
+                    return entity;
+                }
+            };
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -38,6 +67,14 @@ public class TaskGroupRepository {
                         + "WHERE id = ? AND group_status = 'ACTIVE' "
                         + "AND completed_count < total_count AND lock_version = ?",
                 id, expectedLockVersion);
+    }
+
+    /** 按任务组 ID 读取完整任务组上下文；不存在时返回 null。 */
+    public ProcessTaskGroupEntity findById(String id) {
+        List<ProcessTaskGroupEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_task_group WHERE id = ?",
+                ROW_MAPPER, id);
+        return results.isEmpty() ? null : results.get(0);
     }
 
     /**

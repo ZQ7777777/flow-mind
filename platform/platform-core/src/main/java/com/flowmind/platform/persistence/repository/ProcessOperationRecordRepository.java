@@ -7,6 +7,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -117,5 +118,21 @@ public class ProcessOperationRecordRepository {
                         + "SET processing_expires_at = ?, updated_at = datetime('now') "
                         + "WHERE operation_id = ? AND operation_status = 'PROCESSING'",
                 DefinitionRowMappers.toDbString(processingExpiresAt), operationId);
+    }
+
+    /**
+     * 查询已超过保留窗口的幂等记录，供后续清理任务使用。
+     *
+     * @param now   当前时间
+     * @param limit 最大返回条数；小于等于 0 时返回空列表
+     * @return 按过期时间稳定排序的幂等记录
+     */
+    public List<ProcessOperationRecordEntity> findExpired(LocalDateTime now, int limit) {
+        if (limit <= 0) {
+            return java.util.Collections.emptyList();
+        }
+        return jdbcTemplate.query("SELECT * FROM process_operation_record "
+                        + "WHERE expires_at <= ? ORDER BY expires_at ASC, created_at ASC, id ASC LIMIT ?",
+                ROW_MAPPER, DefinitionRowMappers.toDbString(now), Integer.valueOf(limit));
     }
 }
