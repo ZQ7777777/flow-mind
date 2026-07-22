@@ -13,14 +13,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 发布校验期间使用的只读流程图索引。
+ * 定义校验和运行时推进共用的只读流程图索引。
  *
- * <p>索引只整理正式 DTO 的节点和连线集合，不复制领域模型，也不承担持久化或运行时加载职责。</p>
+ * <p>索引只整理正式 DTO 的节点和连线集合，不复制领域模型，也不承担持久化、定义加载或状态变更职责。</p>
  *
  * @author FlowMind
  * @since 2026-07-20
  */
-final class DefinitionGraphIndex {
+public final class DefinitionGraphIndex {
 
     /** 节点稳定排序规则。 */
     private static final Comparator<ProcessNodeDTO> NODE_ORDER = new Comparator<ProcessNodeDTO>() {
@@ -110,7 +110,7 @@ final class DefinitionGraphIndex {
      * @param definition 流程定义详情，可为空
      * @return 只读流程图索引
      */
-    static DefinitionGraphIndex from(ProcessDefinitionDetailDTO definition) {
+    public static DefinitionGraphIndex from(ProcessDefinitionDetailDTO definition) {
         return new DefinitionGraphIndex(definition == null ? null : definition.getNodes(),
                 definition == null ? null : definition.getEdges());
     }
@@ -120,7 +120,7 @@ final class DefinitionGraphIndex {
      *
      * @return 非空节点列表
      */
-    List<ProcessNodeDTO> getNodes() {
+    public List<ProcessNodeDTO> getNodes() {
         return nodes;
     }
 
@@ -129,7 +129,7 @@ final class DefinitionGraphIndex {
      *
      * @return 非空连线列表
      */
-    List<ProcessEdgeDTO> getEdges() {
+    public List<ProcessEdgeDTO> getEdges() {
         return edges;
     }
 
@@ -138,7 +138,7 @@ final class DefinitionGraphIndex {
      *
      * @return 节点编码到节点的只读映射
      */
-    Map<String, ProcessNodeDTO> getNodesByCode() {
+    public Map<String, ProcessNodeDTO> getNodesByCode() {
         return nodesByCode;
     }
 
@@ -147,7 +147,7 @@ final class DefinitionGraphIndex {
      *
      * @return 连线编码到连线的只读映射
      */
-    Map<String, ProcessEdgeDTO> getEdgesByCode() {
+    public Map<String, ProcessEdgeDTO> getEdgesByCode() {
         return edgesByCode;
     }
 
@@ -157,7 +157,7 @@ final class DefinitionGraphIndex {
      * @param nodeCode 节点编码
      * @return 稳定排序后的出线列表
      */
-    List<ProcessEdgeDTO> getOutgoingEdges(String nodeCode) {
+    public List<ProcessEdgeDTO> getOutgoingEdges(String nodeCode) {
         return edgesOf(outgoingEdges, nodeCode);
     }
 
@@ -167,7 +167,7 @@ final class DefinitionGraphIndex {
      * @param nodeCode 节点编码
      * @return 稳定排序后的入线列表
      */
-    List<ProcessEdgeDTO> getIncomingEdges(String nodeCode) {
+    public List<ProcessEdgeDTO> getIncomingEdges(String nodeCode) {
         return edgesOf(incomingEdges, nodeCode);
     }
 
@@ -176,7 +176,7 @@ final class DefinitionGraphIndex {
      *
      * @return 开始节点列表
      */
-    List<ProcessNodeDTO> getStartNodes() {
+    public List<ProcessNodeDTO> getStartNodes() {
         return nodesOfType(NodeTypeEnum.START);
     }
 
@@ -185,7 +185,7 @@ final class DefinitionGraphIndex {
      *
      * @return 结束节点列表
      */
-    List<ProcessNodeDTO> getEndNodes() {
+    public List<ProcessNodeDTO> getEndNodes() {
         return nodesOfType(NodeTypeEnum.END);
     }
 
@@ -194,7 +194,7 @@ final class DefinitionGraphIndex {
      *
      * @return 排他和并行网关节点列表
      */
-    List<ProcessNodeDTO> getGatewayNodes() {
+    public List<ProcessNodeDTO> getGatewayNodes() {
         List<ProcessNodeDTO> gateways = new ArrayList<ProcessNodeDTO>();
         for (ProcessNodeDTO node : nodes) {
             if (NodeTypeEnum.EXCLUSIVE_GATEWAY.equals(node.getNodeType())
@@ -211,7 +211,7 @@ final class DefinitionGraphIndex {
      *
      * @return 空节点数量
      */
-    int getNullNodeCount() {
+    public int getNullNodeCount() {
         return nullNodeCount;
     }
 
@@ -220,7 +220,7 @@ final class DefinitionGraphIndex {
      *
      * @return 空连线数量
      */
-    int getNullEdgeCount() {
+    public int getNullEdgeCount() {
         return nullEdgeCount;
     }
 
