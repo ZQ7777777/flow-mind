@@ -290,6 +290,9 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                 || !ActivationStatusEnum.INACTIVE.name().equals(definition.getActivationStatus())) {
             throw lifecycleStateException("definition must be PUBLISHED + INACTIVE + OFF before activate");
         }
+        ensureValid(attachmentConfigManager.activateDraftGroup(definition.getId(),
+                ProcessDefinitionMapper.toNodeDtos(nodeRepository.findByDefinitionId(definition.getId())),
+                request.getOperatorUserId()));
         ProcessDefinitionEntity oldActive = definitionRepository.findActiveFullByProcessCode(definition.getProcessCode());
         // 先停用旧全量版本，再激活目标版本；二者处于同一事务内，保证对外只有一个 ACTIVE 全量版本。
         definitionRepository.deactivateActiveFullByProcessCode(definition.getProcessCode(), definition.getId(),

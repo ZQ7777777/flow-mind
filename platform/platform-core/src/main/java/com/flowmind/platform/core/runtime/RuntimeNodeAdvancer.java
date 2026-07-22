@@ -9,7 +9,6 @@ import com.flowmind.platform.api.enums.BranchStatusEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.enums.TaskGroupTypeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
-import com.flowmind.platform.api.request.ApproverResolveRequest;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.ConditionExpressionEvaluator;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
@@ -56,6 +55,7 @@ public class RuntimeNodeAdvancer {
     private final RuntimeRequestValidator requestValidator;
     private final ApproverResolver approverResolver;
     private final ConditionExpressionEvaluator conditionExpressionEvaluator;
+    private final ApproverResolveRequestFactory approverResolveRequestFactory;
 
     /** 创建统一节点推进器。 */
     public RuntimeNodeAdvancer(ActiveTaskRepository activeTaskRepository,
@@ -63,13 +63,15 @@ public class RuntimeNodeAdvancer {
                                ProcessInstanceRepository instanceRepository,
                                RuntimeRequestValidator requestValidator,
                                ApproverResolver approverResolver,
-                               ConditionExpressionEvaluator conditionExpressionEvaluator) {
+                               ConditionExpressionEvaluator conditionExpressionEvaluator,
+                               ApproverResolveRequestFactory approverResolveRequestFactory) {
         this.activeTaskRepository = activeTaskRepository;
         this.taskGroupRepository = taskGroupRepository;
         this.instanceRepository = instanceRepository;
         this.requestValidator = requestValidator;
         this.approverResolver = approverResolver;
         this.conditionExpressionEvaluator = conditionExpressionEvaluator;
+        this.approverResolveRequestFactory = approverResolveRequestFactory;
     }
 
     /**
@@ -90,7 +92,7 @@ public class RuntimeNodeAdvancer {
         assertInput(instance, definition, targetNodeCode, taskGroupId, branchKey);
         DefinitionGraphIndex graph = DefinitionGraphIndex.from(definition);
         RuntimeAdvanceResult result = new RuntimeAdvanceResult();
-        advance(instance, graph, targetNodeCode, taskGroupId, branchKey,
+        advance(instance, definition, graph, targetNodeCode, taskGroupId, branchKey,
                 new AdvancePathContext(maxAutomaticSteps(graph)), result);
         if (!result.isInstanceCompleted()) {
             refreshCurrentNodeCodes(instance.getId());
@@ -99,6 +101,7 @@ public class RuntimeNodeAdvancer {
     }
 
     private void advance(ProcessInstanceEntity instance,
+                         ProcessDefinitionDetailDTO definition,
                          DefinitionGraphIndex graph,
                          String targetNodeCode,
                          String taskGroupId,
@@ -115,20 +118,20 @@ public class RuntimeNodeAdvancer {
         }
         switch (node.getNodeType()) {
             case USER_TASK:
-                createUserTask(instance, node, taskGroupId, branchKey, result);
+                createUserTask(instance, definition, node, taskGroupId, branchKey, result);
                 return;
             case EXCLUSIVE_GATEWAY:
                 path.enterAutomaticNode(node.getNodeCode());
                 ProcessEdgeDTO selected = selectExclusiveEdge(node, graph, instance);
-                advance(instance, graph, selected.getTargetNodeCode(), taskGroupId, branchKey, path, result);
+                advance(instance, definition, graph, selected.getTargetNodeCode(), taskGroupId, branchKey, path, result);
                 return;
             case PARALLEL_SPLIT_GATEWAY:
                 path.enterAutomaticNode(node.getNodeCode());
-                advanceParallelSplit(instance, node, graph, taskGroupId, branchKey, path, result);
+                advanceParallelSplit(instance, definition, node, graph, taskGroupId, branchKey, path, result);
                 return;
             case PARALLEL_JOIN_GATEWAY:
                 path.enterAutomaticNode(node.getNodeCode());
-                advanceParallelJoin(instance, node, graph, taskGroupId, branchKey, path, result);
+                advanceParallelJoin(instance, definition, node, graph, taskGroupId, branchKey, path, result);
                 return;
             case END:
                 path.enterAutomaticNode(node.getNodeCode());
@@ -142,14 +145,18 @@ public class RuntimeNodeAdvancer {
     }
 
     private void createUserTask(ProcessInstanceEntity instance,
+                                ProcessDefinitionDetailDTO definition,
                                 ProcessNodeDTO node,
                                 String taskGroupId,
                                 String branchKey,
                                 RuntimeAdvanceResult result) {
         Map<String, Object> variables = readObjectMap(instance.getVariablesJson(), "instance variables");
-        ApproverResolveRequest request = new ApproverResolveRequest(instance.getDefinitionId(), instance.getId(),
-                node.getNodeCode(), node.getNodeName(), node.getApproverRuleType(),
-                readObjectMap(node.getApproverRuleConfig(), "approver rule config"), instance.getStarterUserId(),
+        if (approverResolveRequestFactory == null) {
+            throw state(RuntimeErrorCodes.DEFINITION_INVALID,
+                    "approver resolve request factory is not configured");
+        }
+        com.flowmind.platform.api.request.ApproverResolveRequest request = approverResolveRequestFactory.create(
+                definition, instance.getId(), node.getNodeCode(), instance.getStarterUserId(),
                 instance.getStarterDeptId(), variables);
         List<UserDTO> approvers = requestValidator.resolveApprovers(node.getMultiInstanceMode(), approverResolver, request);
         List<String> candidateUserIds = new ArrayList<String>();
@@ -219,6 +226,7 @@ public class RuntimeNodeAdvancer {
     }
 
     private void advanceParallelSplit(ProcessInstanceEntity instance,
+                                      ProcessDefinitionDetailDTO definition,
                                       ProcessNodeDTO node,
                                       DefinitionGraphIndex graph,
                                       String parentGroupId,
@@ -260,12 +268,13 @@ public class RuntimeNodeAdvancer {
             throw state(RuntimeErrorCodes.INVALID_ACTION, "failed to create parallel task group");
         }
         for (ProcessEdgeDTO edge : outgoing) {
-            advance(instance, graph, edge.getTargetNodeCode(), group.getId(), edge.getEdgeCode(),
+            advance(instance, definition, graph, edge.getTargetNodeCode(), group.getId(), edge.getEdgeCode(),
                     path.copyForBranch(), result);
         }
     }
 
     private void advanceParallelJoin(ProcessInstanceEntity instance,
+                                     ProcessDefinitionDetailDTO definition,
                                      ProcessNodeDTO node,
                                      DefinitionGraphIndex graph,
                                      String taskGroupId,
@@ -282,7 +291,7 @@ public class RuntimeNodeAdvancer {
             return;
         }
         ProcessEdgeDTO outgoing = requireSingleOutgoing(node, graph);
-        advance(instance, graph, outgoing.getTargetNodeCode(), completedGroup.getParentGroupId(),
+        advance(instance, definition, graph, outgoing.getTargetNodeCode(), completedGroup.getParentGroupId(),
                 completedGroup.getParentBranchKey(), path, result);
     }
 

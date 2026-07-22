@@ -2,6 +2,7 @@ package com.flowmind.platform.core.definition;
 
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.OperationResult;
+import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.ProcessAttachmentConfigDTO;
 import com.flowmind.platform.api.dto.ProcessAttachmentTemplateDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDTO;
@@ -24,6 +25,14 @@ import com.flowmind.platform.api.request.CreateProcessDefinitionRequest;
 import com.flowmind.platform.api.request.DefinitionOperationRequest;
 import com.flowmind.platform.api.request.GrayReleaseRequest;
 import com.flowmind.platform.api.request.SaveProcessGraphRequest;
+import com.flowmind.platform.api.request.StartProcessRequest;
+import com.flowmind.platform.api.service.AttachmentService;
+import com.flowmind.platform.api.service.CallbackService;
+import com.flowmind.platform.core.runtime.DefaultProcessRuntimeService;
+import com.flowmind.platform.core.runtime.RuntimeDefinitionLoader;
+import com.flowmind.platform.core.runtime.RuntimeNodeAdvancer;
+import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
+import com.flowmind.platform.core.runtime.RuntimeRequestValidator;
 import com.flowmind.platform.core.validation.DefinitionRequestValidator;
 import com.flowmind.platform.core.validation.FrozenValidationErrorCodes;
 import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigValidator;
@@ -31,16 +40,21 @@ import com.flowmind.platform.core.validation.ProcessFormFieldValidator;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionEntity;
 import com.flowmind.platform.persistence.entity.ProcessEdgeEntity;
 import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
+import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
+import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
 import com.flowmind.platform.persistence.repository.ProcessEdgeRepository;
 import com.flowmind.platform.persistence.repository.ProcessFormFieldRepository;
+import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
 import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
@@ -66,6 +80,12 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class DefaultProcessDefinitionServiceTest {
 
@@ -298,6 +318,109 @@ class DefaultProcessDefinitionServiceTest {
         assertEquals(1L, countRows("process_instance"));
         assertEquals(1L, countAuditRows("operation-deactivate-001", "DEFINITION_DEACTIVATE"));
         assertEquals(Collections.singletonList(created.getId()), processDefinitionCache.definitionIds);
+    }
+
+    @Test
+    void activatePublishedDefinitionPromotesAttachmentGroupForRuntimeInstanceFreezing() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        insertAttachmentTemplate();
+        saveGraph(created.getId(), depositGraph("operation-save-001"));
+        publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+
+        activate(lifecycleRequest(created.getId(), "operation-activate-001"));
+
+        ProcessDefinitionDetailDTO activated = service.getDefinition(created.getId());
+        assertEquals(1, activated.getAttachmentTemplates().size());
+        ProcessAttachmentTemplateDTO attachment = activated.getAttachmentTemplates().get(0);
+        assertEquals(AttachmentConfigStatusEnum.ACTIVE, attachment.getConfigStatus());
+        assertEquals("attachment-group-001", attachment.getAttachmentConfigId());
+    }
+
+    @Test
+    void activateRollsBackAttachmentGroupWhenDefinitionActivationFails() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        insertAttachmentTemplate();
+        saveGraph(created.getId(), depositGraph("operation-save-001"));
+        publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+        processDefinitionCache.clear();
+        DefaultProcessDefinitionService failingService = new DefaultProcessDefinitionService(
+                new FailingActivationDefinitionRepository(jdbcTemplate), nodeRepository, edgeRepository,
+                formFieldManager, attachmentConfigManager, new ProcessOperationRecordRepository(jdbcTemplate),
+                processDefinitionCache);
+
+        assertThrows(IllegalStateException.class,
+                () -> activate(failingService, lifecycleRequest(created.getId(), "operation-activate-001")));
+
+        assertEquals(AttachmentConfigStatusEnum.DRAFT,
+                service.getDefinition(created.getId()).getAttachmentTemplates().get(0).getConfigStatus());
+        assertEquals(ActivationStatusEnum.INACTIVE.name(),
+                definitionRepository.findById(created.getId()).getActivationStatus());
+        assertEquals(0L, countRowsByOperationId("operation-activate-001"));
+        assertEquals(0, processDefinitionCache.definitionIds.size());
+    }
+
+    @Test
+    void activateRejectsDefinitionWhenAttachmentGroupUpdateDoesNotAffectEveryRow() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        insertAttachmentTemplate();
+        saveGraph(created.getId(), depositGraph("operation-save-001"));
+        publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+        processDefinitionCache.clear();
+        ProcessDefinitionAttachmentConfigManager failingAttachmentManager =
+                new ProcessDefinitionAttachmentConfigManager(
+                        new NoRowsActivatedAttachmentConfigRepository(jdbcTemplate), attachmentTemplateRepository,
+                        new ProcessDefinitionAttachmentConfigValidator(attachmentTemplateRepository));
+        DefaultProcessDefinitionService failingService = new DefaultProcessDefinitionService(definitionRepository,
+                nodeRepository, edgeRepository, formFieldManager, failingAttachmentManager,
+                new ProcessOperationRecordRepository(jdbcTemplate), processDefinitionCache);
+
+        assertThrows(DefinitionValidationException.class,
+                () -> activate(failingService, lifecycleRequest(created.getId(), "operation-activate-001")));
+
+        assertEquals(AttachmentConfigStatusEnum.DRAFT,
+                service.getDefinition(created.getId()).getAttachmentTemplates().get(0).getConfigStatus());
+        assertEquals(ActivationStatusEnum.INACTIVE.name(),
+                definitionRepository.findById(created.getId()).getActivationStatus());
+        assertEquals(0L, countRowsByOperationId("operation-activate-001"));
+        assertEquals(0, processDefinitionCache.definitionIds.size());
+    }
+
+    @Test
+    void activatedDefinitionStartsInstanceWithFrozenActiveAttachmentGroup() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        insertAttachmentTemplate();
+        saveGraph(created.getId(), depositGraph("operation-save-001"));
+        publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+        activate(lifecycleRequest(created.getId(), "operation-activate-001"));
+
+        ProcessInstanceRepository runtimeInstanceRepository = mock(ProcessInstanceRepository.class);
+        RuntimeDefinitionLoader runtimeDefinitionLoader = new RuntimeDefinitionLoader(definitionRepository, service,
+                new ProcessDefinitionCache());
+        RuntimeRequestValidator runtimeRequestValidator = mock(RuntimeRequestValidator.class);
+        RuntimeOperationExecutor runtimeOperationExecutor = mock(RuntimeOperationExecutor.class);
+        DefaultProcessRuntimeService runtimeService = new DefaultProcessRuntimeService(runtimeInstanceRepository,
+                mock(ActiveTaskRepository.class), mock(HistoryTaskRepository.class), runtimeDefinitionLoader,
+                runtimeRequestValidator, runtimeOperationExecutor, mock(RuntimeNodeAdvancer.class),
+                mock(AttachmentService.class), mock(CallbackService.class));
+        StartProcessRequest startRequest = new StartProcessRequest();
+        startRequest.setOperationId("operation-start-001");
+        startRequest.setProcessCode("deposit");
+        startRequest.setInstanceTitle("Deposit request");
+        startRequest.setStarterUserId("starter-001");
+        startRequest.setStarterDeptId("dept-001");
+        startRequest.setVariables(Collections.<String, Object>emptyMap());
+        UserContext starter = new UserContext("starter-001", "Starter", "dept-001", "Department");
+        when(runtimeRequestValidator.validateStart(startRequest)).thenReturn(starter);
+        when(runtimeOperationExecutor.begin(eq(startRequest), eq("START"),
+                eq("starter-001"), isNull(), isNull(), any(LocalDateTime.class)))
+                .thenReturn(new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW, null));
+        when(runtimeInstanceRepository.insert(any(ProcessInstanceEntity.class))).thenReturn(1);
+
+        runtimeService.startProcess(startRequest);
+
+        ArgumentCaptor<ProcessInstanceEntity> instanceCaptor = ArgumentCaptor.forClass(ProcessInstanceEntity.class);
+        verify(runtimeInstanceRepository).insert(instanceCaptor.capture());
+        assertEquals("attachment-group-001", instanceCaptor.getValue().getAttachmentConfigId());
     }
 
     @Test
@@ -708,7 +831,12 @@ class DefaultProcessDefinitionServiceTest {
     }
 
     private ProcessDefinitionDTO activate(final DefinitionOperationRequest request) {
-        return transactionTemplate.execute(status -> service.activate(request));
+        return activate(service, request);
+    }
+
+    private ProcessDefinitionDTO activate(final DefaultProcessDefinitionService targetService,
+                                          final DefinitionOperationRequest request) {
+        return transactionTemplate.execute(status -> targetService.activate(request));
     }
 
     private ProcessDefinitionDTO deactivate(final DefinitionOperationRequest request) {
@@ -1114,6 +1242,31 @@ class DefaultProcessDefinitionServiceTest {
         @Override
         public int deleteFormFields(String definitionId) {
             throw new RuntimeException("delete form field failure");
+        }
+    }
+
+    private static final class FailingActivationDefinitionRepository extends ProcessDefinitionRepository {
+
+        private FailingActivationDefinitionRepository(JdbcTemplate jdbcTemplate) {
+            super(jdbcTemplate);
+        }
+
+        @Override
+        public int activateFull(String id, String updatedBy) {
+            return 0;
+        }
+    }
+
+    private static final class NoRowsActivatedAttachmentConfigRepository
+            extends ProcessDefinitionAttachmentConfigRepository {
+
+        private NoRowsActivatedAttachmentConfigRepository(JdbcTemplate jdbcTemplate) {
+            super(jdbcTemplate);
+        }
+
+        @Override
+        public int activateGroup(String definitionId, String attachmentConfigId, String updatedBy) {
+            return 0;
         }
     }
 
