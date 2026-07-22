@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -109,6 +110,114 @@ public class ProcessDefinitionRepository {
                 entity.getUpdatedBy(),
                 DefinitionRowMappers.toDbString(entity.getUpdatedAt()),
                 entity.getId());
+    }
+
+    /**
+     * 将草稿定义发布为未激活版本。
+     *
+     * @param id        流程定义 ID
+     * @param updatedBy 操作人 ID
+     * @return 受影响行数，1 表示状态转换成功
+     */
+    public int publish(String id, String updatedBy) {
+        return jdbcTemplate.update("UPDATE process_definition "
+                        + "SET definition_status = 'PUBLISHED', updated_by = ?, updated_at = datetime('now') "
+                        + "WHERE id = ? AND definition_status = 'DRAFT' "
+                        + "AND activation_status = 'INACTIVE' AND gray_status = 'OFF'",
+                updatedBy, id);
+    }
+
+    /**
+     * 将已发布未激活的全量版本激活。
+     *
+     * @param id        流程定义 ID
+     * @param updatedBy 操作人 ID
+     * @return 受影响行数，1 表示状态转换成功
+     */
+    public int activateFull(String id, String updatedBy) {
+        return jdbcTemplate.update("UPDATE process_definition "
+                        + "SET activation_status = 'ACTIVE', updated_by = ?, updated_at = datetime('now') "
+                        + "WHERE id = ? AND definition_status = 'PUBLISHED' "
+                        + "AND activation_status = 'INACTIVE' AND gray_status = 'OFF'",
+                updatedBy, id);
+    }
+
+    /**
+     * 停用已发布且激活的全量版本。
+     *
+     * @param id        流程定义 ID
+     * @param updatedBy 操作人 ID
+     * @return 受影响行数，1 表示状态转换成功
+     */
+    public int deactivate(String id, String updatedBy) {
+        return jdbcTemplate.update("UPDATE process_definition "
+                        + "SET activation_status = 'INACTIVE', updated_by = ?, updated_at = datetime('now') "
+                        + "WHERE id = ? AND definition_status = 'PUBLISHED' "
+                        + "AND activation_status = 'ACTIVE' AND gray_status = 'OFF'",
+                updatedBy, id);
+    }
+
+    /**
+     * 停用同一流程编码下除目标定义外的全量激活版本。
+     *
+     * @param processCode         流程编码
+     * @param excludeDefinitionId 本次即将激活的定义 ID
+     * @param updatedBy           操作人 ID
+     * @return 被停用的旧版本数量
+     */
+    public int deactivateActiveFullByProcessCode(String processCode, String excludeDefinitionId, String updatedBy) {
+        return jdbcTemplate.update("UPDATE process_definition "
+                        + "SET activation_status = 'INACTIVE', updated_by = ?, updated_at = datetime('now') "
+                        + "WHERE process_code = ? AND id <> ? AND definition_status = 'PUBLISHED' "
+                        + "AND activation_status = 'ACTIVE' AND gray_status = 'OFF'",
+                updatedBy, processCode, excludeDefinitionId);
+    }
+
+    /**
+     * 将已发布未激活的全量版本归档。
+     *
+     * @param id         流程定义 ID
+     * @param archivedBy 归档操作人 ID
+     * @param archivedAt 归档时间
+     * @return 受影响行数，1 表示状态转换成功
+     */
+    public int archive(String id, String archivedBy, LocalDateTime archivedAt) {
+        return jdbcTemplate.update("UPDATE process_definition "
+                        + "SET definition_status = 'ARCHIVED', activation_status = 'INACTIVE', gray_status = 'OFF', "
+                        + "archived_by = ?, archived_at = ?, updated_by = ?, updated_at = datetime('now') "
+                        + "WHERE id = ? AND definition_status = 'PUBLISHED' "
+                        + "AND activation_status = 'INACTIVE' AND gray_status = 'OFF'",
+                archivedBy, DefinitionRowMappers.toDbString(archivedAt), archivedBy, id);
+    }
+
+    /**
+     * 写入流程定义生命周期审计日志。
+     *
+     * @param id          审计日志 ID
+     * @param instanceId  关联实例 ID，定义操作通常为空
+     * @param operationId 幂等操作号
+     * @param targetType  目标类型，典型值：DEFINITION
+     * @param targetId    目标定义 ID
+     * @param actionType  动作类型，典型值：DEFINITION_PUBLISH
+     * @param operatorId  操作人 ID
+     * @param detailJson  审计详情 JSON
+     * @param createdAt   审计创建时间
+     * @return 受影响行数
+     */
+    public int insertAuditLog(String id,
+                              String instanceId,
+                              String operationId,
+                              String targetType,
+                              String targetId,
+                              String actionType,
+                              String operatorId,
+                              String detailJson,
+                              LocalDateTime createdAt) {
+        return jdbcTemplate.update("INSERT INTO process_audit_log "
+                        + "(id, instance_id, operation_id, target_type, target_id, action_type, operator_id, "
+                        + "detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+                id, instanceId, operationId, targetType, targetId, actionType, operatorId, detailJson,
+                DefinitionRowMappers.toDbString(createdAt));
     }
 
     /**

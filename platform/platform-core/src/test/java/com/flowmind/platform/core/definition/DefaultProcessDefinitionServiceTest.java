@@ -22,6 +22,7 @@ import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
 import com.flowmind.platform.api.request.CopyProcessDefinitionRequest;
 import com.flowmind.platform.api.request.CreateProcessDefinitionRequest;
 import com.flowmind.platform.api.request.DefinitionOperationRequest;
+import com.flowmind.platform.api.request.GrayReleaseRequest;
 import com.flowmind.platform.api.request.SaveProcessGraphRequest;
 import com.flowmind.platform.core.validation.DefinitionRequestValidator;
 import com.flowmind.platform.core.validation.FrozenValidationErrorCodes;
@@ -220,6 +221,117 @@ class DefaultProcessDefinitionServiceTest {
 
         assertTrue(result.isValid());
         assertTrue(result.getIssues().isEmpty());
+    }
+
+    @Test
+    void publishValidDraftAndReplayWithoutInvalidatingCacheAgain() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        insertAttachmentTemplate();
+        saveGraph(created.getId(), depositGraph("operation-save-001"));
+        processDefinitionCache.clear();
+
+        ProcessDefinitionDTO published = publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+        ProcessDefinitionDTO replay = publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+
+        assertEquals(created.getId(), published.getId());
+        assertEquals(DefinitionStatusEnum.PUBLISHED, published.getDefinitionStatus());
+        assertEquals(ActivationStatusEnum.INACTIVE, published.getActivationStatus());
+        assertEquals(GrayStatusEnum.OFF, published.getGrayStatus());
+        assertEquals(published.getId(), replay.getId());
+        assertEquals(1L, countRowsByOperationId("operation-publish-001"));
+        assertEquals(1L, countAuditRows("operation-publish-001", "DEFINITION_PUBLISH"));
+        assertEquals(Collections.singletonList(created.getId()), processDefinitionCache.definitionIds);
+    }
+
+    @Test
+    void publishRejectsInvalidDraftAndDoesNotPersistSuccessSideEffects() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        saveGraph(created.getId(), simpleLinearGraph("operation-save-001"));
+        jdbcTemplate.update("DELETE FROM process_edge WHERE definition_id = ?", created.getId());
+        processDefinitionCache.clear();
+
+        assertThrows(IllegalArgumentException.class,
+                () -> publish(lifecycleRequest(created.getId(), "operation-publish-001")));
+
+        ProcessDefinitionEntity persisted = definitionRepository.findById(created.getId());
+        assertEquals(DefinitionStatusEnum.DRAFT.name(), persisted.getDefinitionStatus());
+        assertEquals(0L, countRowsByOperationId("operation-publish-001"));
+        assertEquals(0L, countAuditRows("operation-publish-001", "DEFINITION_PUBLISH"));
+        assertEquals(0, processDefinitionCache.definitionIds.size());
+    }
+
+    @Test
+    void activatePublishedDefinitionDeactivatesOldFullVersionAndInvalidatesBothCaches() {
+        ProcessDefinitionDTO first = service.createDefinition(createRequest("operation-001", "deposit"));
+        saveGraph(first.getId(), simpleLinearGraph("operation-save-001"));
+        publish(lifecycleRequest(first.getId(), "operation-publish-001"));
+        activate(lifecycleRequest(first.getId(), "operation-activate-001"));
+        ProcessDefinitionDTO second = copyDefinition(first.getId(), copyRequest("operation-copy-001"));
+        saveGraph(second.getId(), simpleLinearGraph("operation-save-002"));
+        publish(lifecycleRequest(second.getId(), "operation-publish-002"));
+        processDefinitionCache.clear();
+
+        ProcessDefinitionDTO activated = activate(lifecycleRequest(second.getId(), "operation-activate-002"));
+
+        assertEquals(ActivationStatusEnum.ACTIVE, activated.getActivationStatus());
+        assertEquals(ActivationStatusEnum.INACTIVE.name(),
+                definitionRepository.findById(first.getId()).getActivationStatus());
+        assertEquals(second.getId(), definitionRepository.findActiveFullByProcessCode("deposit").getId());
+        assertTrue(processDefinitionCache.definitionIds.contains(first.getId()));
+        assertTrue(processDefinitionCache.definitionIds.contains(second.getId()));
+        assertEquals(1L, countAuditRows("operation-activate-002", "DEFINITION_ACTIVATE"));
+    }
+
+    @Test
+    void deactivateActiveDefinitionKeepsExistingInstanceAndStopsNewFullVersionSelection() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        saveGraph(created.getId(), simpleLinearGraph("operation-save-001"));
+        publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+        activate(lifecycleRequest(created.getId(), "operation-activate-001"));
+        insertRuntimeData(created.getId());
+        processDefinitionCache.clear();
+
+        ProcessDefinitionDTO deactivated = deactivate(lifecycleRequest(created.getId(), "operation-deactivate-001"));
+
+        assertEquals(ActivationStatusEnum.INACTIVE, deactivated.getActivationStatus());
+        assertNull(definitionRepository.findActiveFullByProcessCode("deposit"));
+        assertEquals(1L, countRows("process_instance"));
+        assertEquals(1L, countAuditRows("operation-deactivate-001", "DEFINITION_DEACTIVATE"));
+        assertEquals(Collections.singletonList(created.getId()), processDefinitionCache.definitionIds);
+    }
+
+    @Test
+    void archiveInactivePublishedDefinitionAndRejectFurtherActivation() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        saveGraph(created.getId(), simpleLinearGraph("operation-save-001"));
+        publish(lifecycleRequest(created.getId(), "operation-publish-001"));
+        processDefinitionCache.clear();
+
+        ProcessDefinitionDTO archived = archive(lifecycleRequest(created.getId(), "operation-archive-001"));
+
+        ProcessDefinitionEntity persisted = definitionRepository.findById(created.getId());
+        assertEquals(DefinitionStatusEnum.ARCHIVED, archived.getDefinitionStatus());
+        assertEquals(ActivationStatusEnum.INACTIVE, archived.getActivationStatus());
+        assertEquals("operator-lifecycle", persisted.getArchivedBy());
+        assertNotNull(persisted.getArchivedAt());
+        assertThrows(IllegalStateException.class,
+                () -> activate(lifecycleRequest(created.getId(), "operation-activate-001")));
+        assertEquals(1L, countAuditRows("operation-archive-001", "DEFINITION_ARCHIVE"));
+        assertEquals(Collections.singletonList(created.getId()), processDefinitionCache.definitionIds);
+    }
+
+    @Test
+    void grayReleaseMethodsRemainExplicitlyUnsupportedInM3() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        GrayReleaseRequest enable = new GrayReleaseRequest();
+        enable.setDefinitionId(created.getId());
+        enable.setOperationId("operation-gray-001");
+        enable.setOperatorUserId("operator-lifecycle");
+        enable.setGrayRuleConfig(Collections.<String, Object>singletonMap("ratio", Integer.valueOf(10)));
+
+        assertThrows(UnsupportedOperationException.class, () -> service.enableGray(enable));
+        assertThrows(UnsupportedOperationException.class,
+                () -> service.disableGray(lifecycleRequest(created.getId(), "operation-gray-002")));
     }
 
     @Test
@@ -591,6 +703,22 @@ class DefaultProcessDefinitionServiceTest {
         return transactionTemplate.execute(status -> targetService.deleteDefinition(request));
     }
 
+    private ProcessDefinitionDTO publish(final DefinitionOperationRequest request) {
+        return transactionTemplate.execute(status -> service.publish(request));
+    }
+
+    private ProcessDefinitionDTO activate(final DefinitionOperationRequest request) {
+        return transactionTemplate.execute(status -> service.activate(request));
+    }
+
+    private ProcessDefinitionDTO deactivate(final DefinitionOperationRequest request) {
+        return transactionTemplate.execute(status -> service.deactivate(request));
+    }
+
+    private ProcessDefinitionDTO archive(final DefinitionOperationRequest request) {
+        return transactionTemplate.execute(status -> service.archive(request));
+    }
+
     private static CopyProcessDefinitionRequest copyRequest(String operationId) {
         CopyProcessDefinitionRequest request = new CopyProcessDefinitionRequest();
         request.setOperationId(operationId);
@@ -603,6 +731,14 @@ class DefaultProcessDefinitionServiceTest {
         request.setDefinitionId(definitionId);
         request.setOperationId(operationId);
         request.setOperatorUserId("operator-delete");
+        return request;
+    }
+
+    private static DefinitionOperationRequest lifecycleRequest(String definitionId, String operationId) {
+        DefinitionOperationRequest request = new DefinitionOperationRequest();
+        request.setDefinitionId(definitionId);
+        request.setOperationId(operationId);
+        request.setOperatorUserId("operator-lifecycle");
         return request;
     }
 
@@ -929,6 +1065,13 @@ class DefaultProcessDefinitionServiceTest {
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM process_operation_record WHERE operation_id = ?",
                 Long.class, operationId);
+        return count == null ? 0L : count.longValue();
+    }
+
+    private long countAuditRows(String operationId, String actionType) {
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM process_audit_log WHERE operation_id = ? AND action_type = ?",
+                Long.class, operationId, actionType);
         return count == null ? 0L : count.longValue();
     }
 

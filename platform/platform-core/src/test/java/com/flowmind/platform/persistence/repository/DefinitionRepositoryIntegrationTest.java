@@ -1,7 +1,9 @@
 package com.flowmind.platform.persistence.repository;
 
 import com.flowmind.platform.api.dto.ProcessDefinitionQuery;
+import com.flowmind.platform.api.enums.ActivationStatusEnum;
 import com.flowmind.platform.api.enums.DefinitionStatusEnum;
+import com.flowmind.platform.api.enums.GrayStatusEnum;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionEntity;
 import com.flowmind.platform.persistence.entity.ProcessEdgeEntity;
 import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
@@ -197,6 +199,65 @@ class DefinitionRepositoryIntegrationTest {
                 "Reimburse Instance", "starter", "Starter");
 
         assertTrue(definitionRepository.existsInstanceByDefinitionId("definition-001"));
+    }
+
+    @Test
+    void definitionLifecycleUpdatesStateAndWritesAuditLog() {
+        definitionRepository.insert(definition("definition-001", "deposit", 1, "Deposit V1",
+                LocalDateTime.of(2026, 7, 17, 10, 0)));
+
+        assertEquals(1, definitionRepository.publish("definition-001", "operator-publish"));
+        ProcessDefinitionEntity published = definitionRepository.findById("definition-001");
+        assertEquals(DefinitionStatusEnum.PUBLISHED.name(), published.getDefinitionStatus());
+        assertEquals(ActivationStatusEnum.INACTIVE.name(), published.getActivationStatus());
+        assertEquals(GrayStatusEnum.OFF.name(), published.getGrayStatus());
+        assertEquals("operator-publish", published.getUpdatedBy());
+
+        assertEquals(1, definitionRepository.activateFull("definition-001", "operator-activate"));
+        assertEquals(ActivationStatusEnum.ACTIVE.name(),
+                definitionRepository.findById("definition-001").getActivationStatus());
+
+        assertEquals(1, definitionRepository.deactivate("definition-001", "operator-deactivate"));
+        assertEquals(ActivationStatusEnum.INACTIVE.name(),
+                definitionRepository.findById("definition-001").getActivationStatus());
+
+        assertEquals(1, definitionRepository.archive("definition-001", "operator-archive",
+                LocalDateTime.of(2026, 7, 18, 9, 30)));
+        ProcessDefinitionEntity archived = definitionRepository.findById("definition-001");
+        assertEquals(DefinitionStatusEnum.ARCHIVED.name(), archived.getDefinitionStatus());
+        assertEquals("operator-archive", archived.getArchivedBy());
+        assertEquals(LocalDateTime.of(2026, 7, 18, 9, 30), archived.getArchivedAt());
+
+        assertEquals(1, definitionRepository.insertAuditLog("audit-001", null, "operation-publish-001",
+                "DEFINITION", "definition-001", "DEFINITION_PUBLISH", "operator-publish",
+                "{\"status\":\"PUBLISHED\"}", LocalDateTime.of(2026, 7, 17, 10, 5)));
+        assertEquals(1L, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM process_audit_log WHERE operation_id = ? AND action_type = ?",
+                Long.class, "operation-publish-001", "DEFINITION_PUBLISH").longValue());
+    }
+
+    @Test
+    void activateDeactivatesOtherActiveFullVersionForSameProcessCode() {
+        ProcessDefinitionEntity first = definition("definition-001", "deposit", 1, "Deposit V1",
+                LocalDateTime.of(2026, 7, 17, 10, 0));
+        first.setDefinitionStatus(DefinitionStatusEnum.PUBLISHED.name());
+        first.setActivationStatus(ActivationStatusEnum.ACTIVE.name());
+        definitionRepository.insert(first);
+        ProcessDefinitionEntity second = definition("definition-002", "deposit", 2, "Deposit V2",
+                LocalDateTime.of(2026, 7, 17, 11, 0));
+        second.setDefinitionStatus(DefinitionStatusEnum.PUBLISHED.name());
+        definitionRepository.insert(second);
+
+        assertEquals(1, definitionRepository.deactivateActiveFullByProcessCode(
+                "deposit", "definition-002", "operator-activate"));
+        assertEquals(1, definitionRepository.activateFull("definition-002", "operator-activate"));
+
+        assertEquals(ActivationStatusEnum.INACTIVE.name(),
+                definitionRepository.findById("definition-001").getActivationStatus());
+        assertEquals(ActivationStatusEnum.ACTIVE.name(),
+                definitionRepository.findById("definition-002").getActivationStatus());
+        assertEquals("definition-002",
+                definitionRepository.findActiveFullByProcessCode("deposit").getId());
     }
 
     private ProcessDefinitionEntity definition(String id, String processCode, int version, String processName,
