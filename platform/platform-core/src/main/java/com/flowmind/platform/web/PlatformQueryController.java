@@ -10,6 +10,9 @@ import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
 import com.flowmind.platform.api.service.TaskQueryService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
@@ -23,6 +26,7 @@ import java.util.List;
  * @since 2026-07-23
  */
 @RestController
+@Tag(name = "Platform Query", description = "Task and instance query APIs")
 public class PlatformQueryController {
 
     private final TaskQueryService taskQueryService;
@@ -34,38 +38,47 @@ public class PlatformQueryController {
         this.processRuntimeService = processRuntimeService;
     }
 
+    @Operation(summary = "Query todo tasks")
     @GetMapping("/api/platform/tasks/todo")
     public PageResult<TaskDTO> queryTodoTasks(TodoTaskQuery query) {
         return taskQueryService.queryTodoTasks(query);
     }
 
+    @Operation(summary = "Query completed tasks")
     @GetMapping("/api/platform/tasks/completed")
     public PageResult<HistoryTaskDTO> queryCompletedTasks(CompletedTaskQuery query) {
         return taskQueryService.queryCompletedTasks(query);
     }
 
+    @Operation(summary = "Query started instances")
     @GetMapping("/api/platform/instances/started")
     public PageResult<ProcessInstanceDTO> queryStartedInstances(StartedInstanceQuery query) {
         return taskQueryService.queryStartedInstances(query);
     }
 
+    @Operation(summary = "Query active tasks by instance")
     @GetMapping("/api/platform/instances/{instanceId}/active-tasks")
-    public List<TaskDTO> queryActiveTasks(@PathVariable String instanceId) {
+    public List<TaskDTO> queryActiveTasks(@Parameter(description = "Instance id") @PathVariable String instanceId) {
         return taskQueryService.queryActiveTasks(instanceId);
     }
 
+    @Operation(summary = "Query history tasks by instance")
     @GetMapping("/api/platform/instances/{instanceId}/history-tasks")
-    public List<HistoryTaskDTO> queryHistoryTasks(@PathVariable String instanceId) {
+    public List<HistoryTaskDTO> queryHistoryTasks(
+            @Parameter(description = "Instance id") @PathVariable String instanceId) {
         return taskQueryService.queryHistoryTasks(instanceId);
     }
 
+    @Operation(summary = "Query comments by instance")
     @GetMapping("/api/platform/instances/{instanceId}/comments")
-    public List<ProcessCommentDTO> queryComments(@PathVariable String instanceId) {
+    public List<ProcessCommentDTO> queryComments(
+            @Parameter(description = "Instance id") @PathVariable String instanceId) {
         return taskQueryService.queryComments(instanceId);
     }
 
+    @Operation(summary = "Get process instance")
     @GetMapping("/api/platform/instances/{instanceId}")
-    public ProcessInstanceDTO getInstance(@PathVariable String instanceId) {
+    public ProcessInstanceDTO getInstance(@Parameter(description = "Instance id") @PathVariable String instanceId) {
         return processRuntimeService.getInstance(instanceId);
     }
 }

@@ -29,8 +29,10 @@ import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import io.swagger.v3.oas.models.OpenAPI;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springdoc.core.GroupedOpenApi;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -51,6 +53,9 @@ class PlatformAutoConfigurationTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(PlatformAutoConfiguration.class));
+
+    private final ApplicationContextRunner docsContextRunner = new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(PlatformKnife4jAutoConfiguration.class));
 
     @TempDir
     Path tempDir;
@@ -200,6 +205,27 @@ class PlatformAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(TaskQueryService.class);
                     assertThat(context).doesNotHaveBean(JdbcTemplate.class);
                     assertThat(context).doesNotHaveBean(DataSource.class);
+                });
+    }
+
+    @Test
+    void knife4jDocsAreAutoConfiguredByDefault() {
+        docsContextRunner.run(context -> {
+            assertThat(context).hasSingleBean(OpenAPI.class);
+            assertThat(context.getBean(OpenAPI.class).getInfo().getTitle())
+                    .isEqualTo("Flow Mind Platform API");
+            assertThat(context).hasSingleBean(GroupedOpenApi.class);
+            assertThat(context).hasBean("platformGroupedOpenApi");
+        });
+    }
+
+    @Test
+    void knife4jDocsCanBeDisabled() {
+        docsContextRunner
+                .withPropertyValues("flow-mind.platform.docs.enabled=false")
+                .run(context -> {
+                    assertThat(context).doesNotHaveBean(OpenAPI.class);
+                    assertThat(context).doesNotHaveBean(GroupedOpenApi.class);
                 });
     }
 

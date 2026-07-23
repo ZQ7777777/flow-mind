@@ -1,3 +1,4 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-com.flowmind.platform.starter.PlatformAutoConfiguration
+com.flowmind.platform.starter.PlatformAutoConfiguration,\
+com.flowmind.platform.starter.PlatformKnife4jAutoConfiguration
 

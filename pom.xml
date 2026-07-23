@@ -23,6 +23,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <spring-boot.version>2.7.18</spring-boot.version>
+        <knife4j.version>4.5.0</knife4j.version>
+        <swagger-annotations.version>2.2.9</swagger-annotations.version>
         <sqlite-jdbc.version>3.42.0.0</sqlite-jdbc.version>
         <maven-compiler-plugin.version>3.11.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>2.22.2</maven-surefire-plugin.version>
