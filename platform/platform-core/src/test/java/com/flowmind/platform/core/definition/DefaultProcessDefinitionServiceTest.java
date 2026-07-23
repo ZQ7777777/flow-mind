@@ -318,7 +318,7 @@ class DefaultProcessDefinitionServiceTest {
 
         assertEquals(ActivationStatusEnum.INACTIVE, published.getActivationStatus());
         assertEquals(ActivationStatusEnum.INACTIVE, replay.getActivationStatus());
-        assertEquals(ActivationStatusEnum.ACTIVE,
+        assertEquals(ActivationStatusEnum.ACTIVE.name(),
                 definitionRepository.findById(created.getId()).getActivationStatus());
         assertEquals(0, processDefinitionCache.definitionIds.size());
     }

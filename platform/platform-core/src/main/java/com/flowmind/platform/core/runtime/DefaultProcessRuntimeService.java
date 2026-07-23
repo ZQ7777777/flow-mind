@@ -43,6 +43,7 @@ import com.flowmind.platform.api.dto.OperationResult;
 import com.flowmind.platform.api.dto.WorkflowEvent;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
+import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
@@ -50,7 +51,9 @@ import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -89,6 +92,10 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     private final RuntimeOperationExecutor operationExecutor;
     /** 统一节点推进器。 */
     private final RuntimeNodeAdvancer nodeAdvancer;
+    /** C 线提供的运行状态前置校验器。 */
+    private final RuntimeStateValidator runtimeStateValidator;
+    /** C 线提供的幂等历史任务归档器。 */
+    private final HistoryTaskWriter historyTaskWriter;
     /** 附件校验和保存正式服务，由 C 线提供实现。 */
     private final AttachmentService attachmentService;
     /** 回调 Outbox 正式服务，由 C 线提供实现。 */
@@ -96,6 +103,34 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
 
     /**
      * 创建 M2 运行时服务。
+     */
+    @Autowired
+    public DefaultProcessRuntimeService(ProcessInstanceRepository instanceRepository,
+                                        ActiveTaskRepository activeTaskRepository,
+                                        HistoryTaskRepository historyTaskRepository,
+                                        RuntimeDefinitionLoader definitionLoader,
+                                        RuntimeRequestValidator requestValidator,
+                                        RuntimeOperationExecutor operationExecutor,
+                                        RuntimeNodeAdvancer nodeAdvancer,
+                                        AttachmentService attachmentService,
+                                        CallbackService callbackService,
+                                        RuntimeStateValidator runtimeStateValidator,
+                                        HistoryTaskWriter historyTaskWriter) {
+        this.instanceRepository = instanceRepository;
+        this.activeTaskRepository = activeTaskRepository;
+        this.historyTaskRepository = historyTaskRepository;
+        this.definitionLoader = definitionLoader;
+        this.requestValidator = requestValidator;
+        this.operationExecutor = operationExecutor;
+        this.nodeAdvancer = nodeAdvancer;
+        this.attachmentService = attachmentService;
+        this.callbackService = callbackService;
+        this.runtimeStateValidator = runtimeStateValidator;
+        this.historyTaskWriter = historyTaskWriter;
+    }
+
+    /**
+     * 兼容已有直接构造的单元测试；Spring 运行时始终使用完整构造器接入 C 线协作组件。
      */
     public DefaultProcessRuntimeService(ProcessInstanceRepository instanceRepository,
                                         ActiveTaskRepository activeTaskRepository,
@@ -106,19 +141,13 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         RuntimeNodeAdvancer nodeAdvancer,
                                         AttachmentService attachmentService,
                                         CallbackService callbackService) {
-        this.instanceRepository = instanceRepository;
-        this.activeTaskRepository = activeTaskRepository;
-        this.historyTaskRepository = historyTaskRepository;
-        this.definitionLoader = definitionLoader;
-        this.requestValidator = requestValidator;
-        this.operationExecutor = operationExecutor;
-        this.nodeAdvancer = nodeAdvancer;
-        this.attachmentService = attachmentService;
-        this.callbackService = callbackService;
+        this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
+                operationExecutor, nodeAdvancer, attachmentService, callbackService, null, null);
     }
 
     /** {@inheritDoc} */
     @Override
+    @Transactional
     public ProcessInstanceDTO startProcess(StartProcessRequest request) {
         UserContext starter = requestValidator.validateStart(request);
         OperationIdempotencyDecision decision = operationExecutor.begin(request, RuntimeOperationTypes.START_PROCESS,
@@ -149,6 +178,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
 
     /** {@inheritDoc} */
     @Override
+    @Transactional
     public ProcessInstanceDTO startAndSubmit(StartProcessRequest request) {
         UserContext starter = requestValidator.validateStart(request);
         OperationIdempotencyDecision decision = operationExecutor.begin(request, RuntimeOperationTypes.START_AND_SUBMIT,
@@ -181,18 +211,21 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
 
     /** {@inheritDoc} */
     @Override
+    @Transactional
     public TaskActionResult submitTask(SubmitTaskRequest request) {
         return handleTaskAction(request, ActionTypeEnum.SEND, true);
     }
 
     /** {@inheritDoc} */
     @Override
+    @Transactional
     public TaskActionResult approve(ApproveTaskRequest request) {
         return handleTaskAction(request, ActionTypeEnum.APPROVE, false);
     }
 
     /** {@inheritDoc} */
     @Override
+    @Transactional
     public ProcessInstanceDTO updateVariables(UpdateVariablesRequest request) {
         UserContext operator = requestValidator.validateVariableUpdateIdentity(request);
         OperationIdempotencyDecision decision = operationExecutor.begin(request, RuntimeOperationTypes.UPDATE_VARIABLES,
@@ -322,8 +355,18 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         }
         operationExecutor.assertExecutable(decision);
         try {
-            ProcessActiveTaskEntity task = activeTaskRepository.findById(request.getTaskId());
-            ProcessInstanceEntity instance = task == null ? null : instanceRepository.findById(task.getInstanceId());
+            RuntimeTaskContext taskContext = null;
+            ProcessActiveTaskEntity task;
+            ProcessInstanceEntity instance;
+            if (runtimeStateValidator != null) {
+                taskContext = runtimeStateValidator.validateTaskAction(request.getTaskId(),
+                        request.getExpectedTaskVersion(), actionType, operator);
+                task = taskContext.getTask();
+                instance = taskContext.getInstance();
+            } else {
+                task = activeTaskRepository.findById(request.getTaskId());
+                instance = task == null ? null : instanceRepository.findById(task.getInstanceId());
+            }
             requestValidator.validateTaskAction(request, instance, task, operator);
             operationExecutor.bindTarget(request.getOperationId(), instance.getId(), task.getId());
 
@@ -348,7 +391,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             }
             instance.setVariablesJson(RuntimeJsonCodec.toJson(variables));
 
-            HistoryTaskDTO archivedTask = archiveTask(task, instance, request, operator, actionType, variables);
+            HistoryTaskDTO archivedTask = archiveTask(taskContext, task, instance, request, operator, actionType,
+                    variables);
             RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition,
                     singleOutgoingTarget(definition, node.getNodeCode()), task.getTaskGroupId(), task.getBranchKey());
             TaskActionResult result = new TaskActionResult();
@@ -502,12 +546,18 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         return saveRequest;
     }
 
-    private HistoryTaskDTO archiveTask(ProcessActiveTaskEntity task,
+    private HistoryTaskDTO archiveTask(RuntimeTaskContext taskContext,
+                                       ProcessActiveTaskEntity task,
                                        ProcessInstanceEntity instance,
                                        TaskOperationRequest request,
                                        UserContext operator,
                                        ActionTypeEnum actionType,
                                        Map<String, Object> variables) {
+        if (historyTaskWriter != null && taskContext != null) {
+            ProcessHistoryTaskEntity history = historyTaskWriter.archiveCompletedTask(taskContext, actionType,
+                    request.getComment(), variables, request.getOperationId());
+            return RuntimeModelMapper.toDto(history);
+        }
         ProcessHistoryTaskEntity history = new ProcessHistoryTaskEntity();
         history.setId(UUID.randomUUID().toString());
         history.setInstanceId(instance.getId());
