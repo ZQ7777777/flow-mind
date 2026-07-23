@@ -21,6 +21,16 @@ public class TaskDTO {
     private String instanceId;
     /** 任务所属流程定义的 ID。 */
     private String definitionId;
+    /** 流程定义的业务编码快照。 */
+    private String processCode;
+    /** 流程名称快照。 */
+    private String processName;
+    /** 流程实例标题。 */
+    private String instanceTitle;
+    /** 流程发起人的用户 ID。 */
+    private String starterUserId;
+    /** 流程发起人的名称快照。 */
+    private String starterUserName;
     /** 任务所在用户节点的编码。 */
     private String nodeCode;
     /** 任务所在用户节点的名称。 */

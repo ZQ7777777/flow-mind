@@ -2,6 +2,7 @@ package com.flowmind.platform.persistence.repository;
 
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
 import com.flowmind.platform.core.query.PageQueryNormalizer;
+import com.flowmind.platform.persistence.entity.HistoryTaskQueryEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -41,6 +42,38 @@ public class ProcessHistoryTaskRepository {
                     entity.setStartedAt(DefinitionRowMappers.toLocalDateTime(resultSet.getString("started_at")));
                     entity.setCompletedAt(DefinitionRowMappers.toLocalDateTime(resultSet.getString("completed_at")));
                     entity.setExtraJson(resultSet.getString("extra_json"));
+                    return entity;
+                }
+            };
+
+    private static final RowMapper<HistoryTaskQueryEntity> QUERY_ROW_MAPPER =
+            new RowMapper<HistoryTaskQueryEntity>() {
+                @Override
+                public HistoryTaskQueryEntity mapRow(ResultSet resultSet, int rowNum) throws SQLException {
+                    HistoryTaskQueryEntity entity = new HistoryTaskQueryEntity();
+                    entity.setHistoryTaskId(resultSet.getString("history_task_id"));
+                    entity.setInstanceId(resultSet.getString("instance_id"));
+                    entity.setProcessCode(resultSet.getString("process_code"));
+                    entity.setProcessName(resultSet.getString("process_name"));
+                    entity.setInstanceTitle(resultSet.getString("instance_title"));
+                    entity.setStarterUserId(resultSet.getString("starter_user_id"));
+                    entity.setStarterUserName(resultSet.getString("starter_user_name"));
+                    entity.setOperationId(resultSet.getString("operation_id"));
+                    entity.setActiveTaskId(resultSet.getString("active_task_id"));
+                    entity.setNodeCode(resultSet.getString("node_code"));
+                    entity.setNodeName(resultSet.getString("node_name"));
+                    entity.setTaskGroupId(resultSet.getString("task_group_id"));
+                    entity.setBranchKey(resultSet.getString("branch_key"));
+                    entity.setAssigneeUserId(resultSet.getString("assignee_user_id"));
+                    entity.setAssigneeUserName(resultSet.getString("assignee_user_name"));
+                    entity.setDelegateFromUserId(resultSet.getString("delegate_from_user_id"));
+                    entity.setDelegateFromUserName(resultSet.getString("delegate_from_user_name"));
+                    entity.setHandleType(resultSet.getString("handle_type"));
+                    entity.setActionType(resultSet.getString("action_type"));
+                    entity.setCommentText(resultSet.getString("comment_text"));
+                    entity.setVariablesSnapshot(resultSet.getString("variables_snapshot"));
+                    entity.setStartedAt(DefinitionRowMappers.toLocalDateTime(resultSet.getString("started_at")));
+                    entity.setCompletedAt(DefinitionRowMappers.toLocalDateTime(resultSet.getString("completed_at")));
                     return entity;
                 }
             };
@@ -130,6 +163,39 @@ public class ProcessHistoryTaskRepository {
         return count == null ? 0L : count.longValue();
     }
 
+    /** 分页查询已办任务读模型。 */
+    public List<HistoryTaskQueryEntity> queryCompletedTaskRows(CompletedTaskQuery query) {
+        CompletedTaskQuery normalized = query == null ? new CompletedTaskQuery() : query;
+        int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
+        int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT h.id AS history_task_id, h.instance_id, "
+                + "i.process_code, i.process_name, i.instance_title, i.starter_user_id, i.starter_user_name, "
+                + "h.operation_id, h.active_task_id, h.node_code, n.node_name, h.task_group_id, h.branch_key, "
+                + "h.assignee_user_id, h.assignee_user_name, h.delegate_from_user_id, h.delegate_from_user_name, "
+                + "h.handle_type, h.action_type, h.comment_text, h.variables_snapshot, h.started_at, h.completed_at "
+                + "FROM process_history_task h "
+                + "JOIN process_instance i ON i.id = h.instance_id "
+                + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
+        appendCompletedTaskRowWhere(sql, params, normalized);
+        sql.append(" ORDER BY h.completed_at DESC, h.id DESC LIMIT ? OFFSET ?");
+        params.add(Integer.valueOf(pageSize));
+        params.add(Integer.valueOf((pageNo - 1) * pageSize));
+        return jdbcTemplate.query(sql.toString(), QUERY_ROW_MAPPER, params.toArray());
+    }
+
+    /** 统计已办任务读模型数量。 */
+    public long countCompletedTaskRows(CompletedTaskQuery query) {
+        CompletedTaskQuery normalized = query == null ? new CompletedTaskQuery() : query;
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT COUNT(1) FROM process_history_task h "
+                + "JOIN process_instance i ON i.id = h.instance_id "
+                + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
+        appendCompletedTaskRowWhere(sql, params, normalized);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        return count == null ? 0L : count.longValue();
+    }
+
     public int deleteByInstanceId(String instanceId) {
         return jdbcTemplate.update("DELETE FROM process_history_task WHERE instance_id = ?", instanceId);
     }
@@ -148,5 +214,53 @@ public class ProcessHistoryTaskRepository {
             sql.append("AND i.process_code = ? ");
             params.add(query.getProcessCode());
         }
+    }
+
+    private void appendCompletedTaskRowWhere(StringBuilder sql, List<Object> params, CompletedTaskQuery query) {
+        sql.append("WHERE 1 = 1 ");
+        if (!isBlank(query.getUserId())) {
+            sql.append("AND h.assignee_user_id = ? ");
+            params.add(query.getUserId());
+        }
+        if (!isBlank(query.getProcessCode())) {
+            sql.append("AND i.process_code = ? ");
+            params.add(query.getProcessCode());
+        }
+        if (!isBlank(query.getProcessName())) {
+            sql.append("AND LOWER(i.process_name) LIKE ? ");
+            params.add(like(query.getProcessName()));
+        }
+        if (!isBlank(query.getInstanceTitle())) {
+            sql.append("AND LOWER(i.instance_title) LIKE ? ");
+            params.add(like(query.getInstanceTitle()));
+        }
+        if (!isBlank(query.getStarterUserId())) {
+            sql.append("AND i.starter_user_id = ? ");
+            params.add(query.getStarterUserId());
+        }
+        if (!isBlank(query.getNodeCode())) {
+            sql.append("AND h.node_code = ? ");
+            params.add(query.getNodeCode());
+        }
+        if (!isBlank(query.getActionType())) {
+            sql.append("AND h.action_type = ? ");
+            params.add(query.getActionType());
+        }
+        if (query.getCompletedFrom() != null) {
+            sql.append("AND h.completed_at >= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getCompletedFrom()));
+        }
+        if (query.getCompletedTo() != null) {
+            sql.append("AND h.completed_at <= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getCompletedTo()));
+        }
+    }
+
+    private String like(String value) {
+        return "%" + value.trim().toLowerCase() + "%";
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }

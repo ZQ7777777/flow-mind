@@ -1,5 +1,7 @@
 package com.flowmind.platform.persistence.repository;
 
+import com.flowmind.platform.api.dto.StartedInstanceQuery;
+import com.flowmind.platform.core.query.PageQueryNormalizer;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -8,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.time.LocalDateTime;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -94,5 +97,69 @@ public class ProcessInstanceRepository {
         return jdbcTemplate.update("UPDATE process_instance SET instance_status = 'COMPLETED', ended_at = ? "
                         + "WHERE id = ? AND instance_status = 'RUNNING'",
                 DefinitionRowMappers.toDbString(endedAt), id);
+    }
+
+    /** 分页查询指定发起人的流程实例。 */
+    public List<ProcessInstanceEntity> queryStartedInstances(StartedInstanceQuery query, String starterUserId) {
+        int pageNo = PageQueryNormalizer.normalizePageNo(query.getPageNo());
+        int pageSize = PageQueryNormalizer.normalizePageSize(query.getPageSize());
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT * FROM process_instance WHERE starter_user_id = ? ");
+        params.add(starterUserId);
+        appendStartedFilters(sql, params, query);
+        sql.append("ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?");
+        params.add(Integer.valueOf(pageSize));
+        params.add(Integer.valueOf((pageNo - 1) * pageSize));
+        return jdbcTemplate.query(sql.toString(), ROW_MAPPER, params.toArray());
+    }
+
+    /** 统计指定发起人的流程实例数量。 */
+    public long countStartedInstances(StartedInstanceQuery query, String starterUserId) {
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT COUNT(1) FROM process_instance WHERE starter_user_id = ? ");
+        params.add(starterUserId);
+        appendStartedFilters(sql, params, query);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        return count == null ? 0L : count.longValue();
+    }
+
+    private void appendStartedFilters(StringBuilder sql, List<Object> params, StartedInstanceQuery query) {
+        if (!isBlank(query.getProcessCode())) {
+            sql.append("AND process_code = ? ");
+            params.add(query.getProcessCode());
+        }
+        if (!isBlank(query.getInstanceTitle())) {
+            sql.append("AND LOWER(instance_title) LIKE ? ");
+            params.add(like(query.getInstanceTitle()));
+        }
+        if (!isBlank(query.getBusinessKey())) {
+            sql.append("AND business_key = ? ");
+            params.add(query.getBusinessKey());
+        }
+        if (!isBlank(query.getInstanceStatus())) {
+            sql.append("AND instance_status = ? ");
+            params.add(query.getInstanceStatus());
+        }
+        if (!isBlank(query.getCurrentNodeCode())) {
+            sql.append("AND current_node_codes IS NOT NULL "
+                    + "AND EXISTS (SELECT 1 FROM json_each(current_node_codes) c WHERE c.value = ?) ");
+            params.add(query.getCurrentNodeCode());
+        }
+        if (query.getStartedFrom() != null) {
+            sql.append("AND started_at >= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getStartedFrom()));
+        }
+        if (query.getStartedTo() != null) {
+            sql.append("AND started_at <= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getStartedTo()));
+        }
+    }
+
+    private String like(String value) {
+        return "%" + value.trim().toLowerCase() + "%";
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }
