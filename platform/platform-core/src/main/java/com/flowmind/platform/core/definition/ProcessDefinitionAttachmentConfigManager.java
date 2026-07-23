@@ -90,18 +90,24 @@ public class ProcessDefinitionAttachmentConfigManager {
                                            List<ProcessAttachmentConfigDTO> configs,
                                            List<ProcessNodeDTO> currentNodes,
                                            String operatorUserId) {
-        ValidationResult result = attachmentConfigValidator.validate(configs, currentNodes);
+        List<ProcessAttachmentConfigDTO> safeConfigs = configs == null
+                ? new ArrayList<ProcessAttachmentConfigDTO>() : configs;
+        ValidationResult result = attachmentConfigValidator.validate(safeConfigs, currentNodes);
         if (!result.isValid()) {
             return result;
         }
-        String groupId = resolveGroupId(attachmentConfigId, configs);
-        if (configs == null || configs.isEmpty()) {
+        String groupId = resolveGroupId(attachmentConfigId, safeConfigs);
+        ValidationResult groupIdResult = validateGroupIdConsistency(safeConfigs, groupId);
+        if (!groupIdResult.isValid()) {
+            return groupIdResult;
+        }
+        if (safeConfigs.isEmpty()) {
             attachmentConfigRepository.replaceDraftGroup(definitionId, groupId,
                     new ArrayList<ProcessDefinitionAttachmentConfigEntity>());
             return result;
         }
         attachmentConfigRepository.replaceDraftGroup(definitionId, groupId,
-                toEntities(definitionId, groupId, configs, operatorUserId));
+                toEntities(definitionId, groupId, safeConfigs, operatorUserId));
         return result;
     }
 
@@ -152,6 +158,10 @@ public class ProcessDefinitionAttachmentConfigManager {
                                           String operatorUserId) {
         List<ProcessDefinitionAttachmentConfigEntity> groupEntities =
                 attachmentConfigRepository.findByDefinitionIdAndAttachmentConfigId(definitionId, attachmentConfigId);
+        if (groupEntities.isEmpty()) {
+            return invalidResult(FrozenValidationErrorCodes.ATTACHMENT_CONFIG_REQUIRED,
+                    "attachment configuration group does not exist for definition");
+        }
         List<ProcessAttachmentConfigDTO> configs = toConfigDtos(groupEntities);
         ValidationResult result = attachmentConfigValidator.validate(configs, currentNodes);
         if (!result.isValid()) {

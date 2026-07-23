@@ -81,11 +81,11 @@ class OperationIdempotencyServiceTest {
         LocalDateTime now = LocalDateTime.of(2026, 7, 17, 10, 0);
 
         OperationIdempotencyDecision decision = service.beginOrReplay("operation-runtime",
-                "instance-001",
-                "task-001",
                 "APPROVE",
                 "operator-001",
                 "hash-runtime",
+                "instance-001",
+                "task-001",
                 now);
 
         assertEquals(OperationIdempotencyDecisionType.NEW, decision.getType());

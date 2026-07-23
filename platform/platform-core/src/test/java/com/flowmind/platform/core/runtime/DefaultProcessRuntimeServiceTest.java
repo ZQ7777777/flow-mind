@@ -24,6 +24,7 @@ import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
+import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
@@ -51,6 +52,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -71,6 +73,9 @@ class DefaultProcessRuntimeServiceTest {
     private RuntimeNodeAdvancer nodeAdvancer;
     private AttachmentService attachmentService;
     private CallbackService callbackService;
+    private RuntimeStateValidator runtimeStateValidator;
+    private HistoryTaskWriter historyTaskWriter;
+    private RuntimeTransactionExecutor transactionExecutor;
     private DefaultProcessRuntimeService service;
 
     @BeforeEach
@@ -84,9 +89,19 @@ class DefaultProcessRuntimeServiceTest {
         nodeAdvancer = mock(RuntimeNodeAdvancer.class);
         attachmentService = mock(AttachmentService.class);
         callbackService = mock(CallbackService.class);
+        runtimeStateValidator = mock(RuntimeStateValidator.class);
+        historyTaskWriter = mock(HistoryTaskWriter.class);
+        transactionExecutor = mock(RuntimeTransactionExecutor.class);
+        doAnswer(invocation -> ((RuntimeTransactionWork<?>) invocation.getArgument(0)).execute())
+                .when(transactionExecutor).execute(any(RuntimeTransactionWork.class));
+        when(nodeAdvancer.prepareAdvance(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                anyString(), any(), any())).thenReturn(mock(RuntimeAdvancePreparation.class));
+        when(nodeAdvancer.advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                anyString(), any(), any(), any(RuntimeAdvancePreparation.class)))
+                .thenReturn(new RuntimeAdvanceResult());
         service = new DefaultProcessRuntimeService(instanceRepository, activeTaskRepository, historyTaskRepository,
                 definitionLoader, requestValidator, operationExecutor, nodeAdvancer, attachmentService,
-                callbackService);
+                callbackService, runtimeStateValidator, historyTaskWriter, transactionExecutor);
     }
 
     @Test
@@ -109,10 +124,11 @@ class DefaultProcessRuntimeServiceTest {
         verify(instanceRepository).insert(instanceCaptor.capture());
         assertEquals("NOT_STARTED", instanceCaptor.getValue().getInstanceStatus());
         assertEquals("Starter", instanceCaptor.getValue().getStarterUserName());
-        verify(nodeAdvancer, never()).advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+        verify(nodeAdvancer, never()).prepareAdvance(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
                 anyString(), isNull(), isNull());
         verify(operationExecutor).bindTarget(eq(request.getOperationId()), eq(result.getInstanceId()), isNull());
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
+        verify(transactionExecutor).execute(any(RuntimeTransactionWork.class));
     }
 
     @Test
@@ -126,8 +142,6 @@ class DefaultProcessRuntimeServiceTest {
                 any(LocalDateTime.class))).thenReturn(newDecision());
         when(definitionLoader.loadForStart("expense")).thenReturn(definition);
         when(instanceRepository.insert(any(ProcessInstanceEntity.class))).thenReturn(1);
-        when(nodeAdvancer.advanceToNode(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull()))
-                .thenReturn(new RuntimeAdvanceResult());
         when(instanceRepository.findById(anyString())).thenReturn(persisted);
 
         ProcessInstanceDTO result = service.startAndSubmit(request);
@@ -135,7 +149,9 @@ class DefaultProcessRuntimeServiceTest {
         assertEquals("instance-1", result.getInstanceId());
         assertEquals(InstanceStatusEnum.RUNNING, result.getInstanceStatus());
         assertTrue(result.getCreatedTasks().isEmpty());
-        verify(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull());
+        verify(nodeAdvancer).prepareAdvance(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull());
+        verify(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull(),
+                any(RuntimeAdvancePreparation.class));
         verify(callbackService).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
     }
@@ -180,9 +196,6 @@ class DefaultProcessRuntimeServiceTest {
         when(attachmentService.checkRequiredAttachments(any())).thenReturn(attachmentCheck);
         when(activeTaskRepository.complete("task-apply", 0L)).thenReturn(1);
         when(instanceRepository.updateVariablesJson(eq("instance-1"), anyString())).thenReturn(1);
-        when(historyTaskRepository.insert(any(ProcessHistoryTaskEntity.class))).thenReturn(1);
-        when(nodeAdvancer.advanceToNode(eq(instance), eq(definition), eq("end"), isNull(), isNull()))
-                .thenReturn(new RuntimeAdvanceResult());
         when(instanceRepository.findById("instance-1")).thenReturn(instance, instance);
 
         TaskActionResult result = service.submitTask(request);
@@ -195,7 +208,8 @@ class DefaultProcessRuntimeServiceTest {
         inOrder.verify(attachmentService).saveTaskAttachment(any());
         inOrder.verify(attachmentService).checkRequiredAttachments(any());
         inOrder.verify(activeTaskRepository).complete("task-apply", 0L);
-        verify(historyTaskRepository).insert(any(ProcessHistoryTaskEntity.class));
+        verify(historyTaskWriter).archiveCompletedTask(any(RuntimeTaskContext.class), eq(ActionTypeEnum.SEND),
+                eq(request.getComment()), any(Map.class), eq(request.getOperationId()));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
     }
 
@@ -208,9 +222,6 @@ class DefaultProcessRuntimeServiceTest {
         ProcessDefinitionDetailDTO definition = definition(userTask("manager", ApproverRuleTypeEnum.ROLE));
         prepareTaskAction(request, ActionTypeEnum.APPROVE, manager, task, instance, definition);
         when(activeTaskRepository.complete("task-manager", 0L)).thenReturn(1);
-        when(historyTaskRepository.insert(any(ProcessHistoryTaskEntity.class))).thenReturn(1);
-        when(nodeAdvancer.advanceToNode(eq(instance), eq(definition), eq("end"), isNull(), isNull()))
-                .thenReturn(new RuntimeAdvanceResult());
         when(instanceRepository.findById("instance-1")).thenReturn(instance, instance);
 
         TaskActionResult result = service.approve(request);
@@ -219,6 +230,8 @@ class DefaultProcessRuntimeServiceTest {
         verify(instanceRepository, never()).updateVariablesJson(anyString(), anyString());
         verify(attachmentService, never()).checkRequiredAttachments(any());
         verify(activeTaskRepository).complete("task-manager", 0L);
+        verify(historyTaskWriter).archiveCompletedTask(any(RuntimeTaskContext.class), eq(ActionTypeEnum.APPROVE),
+                eq(request.getComment()), any(Map.class), eq(request.getOperationId()));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
     }
 
@@ -337,6 +350,21 @@ class DefaultProcessRuntimeServiceTest {
                 eq(task.getId()), any(LocalDateTime.class))).thenReturn(newDecision());
         when(activeTaskRepository.findById(task.getId())).thenReturn(task);
         when(instanceRepository.findById(instance.getId())).thenReturn(instance);
+        RuntimeTaskContext context = new RuntimeTaskContext(instance, task, actionType, operator);
+        when(runtimeStateValidator.validateTaskAction(eq(task.getId()), eq(request.getExpectedTaskVersion()),
+                eq(actionType), eq(operator))).thenReturn(context);
+        ProcessHistoryTaskEntity history = new ProcessHistoryTaskEntity();
+        history.setId("history-" + task.getId());
+        history.setInstanceId(instance.getId());
+        history.setOperationId(request.getOperationId());
+        history.setActiveTaskId(task.getId());
+        history.setNodeCode(task.getNodeCode());
+        history.setActionType(actionType.name());
+        history.setCommentText(request.getComment());
+        history.setVariablesSnapshot("{}");
+        history.setCompletedAt(LocalDateTime.now());
+        when(historyTaskWriter.archiveCompletedTask(eq(context), eq(actionType), eq(request.getComment()),
+                any(Map.class), eq(request.getOperationId()))).thenReturn(history);
         when(definitionLoader.loadForInstance(instance)).thenReturn(definition);
     }
 
