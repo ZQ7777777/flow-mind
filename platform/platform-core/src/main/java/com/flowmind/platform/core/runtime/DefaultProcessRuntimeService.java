@@ -17,6 +17,7 @@ import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
 import com.flowmind.platform.api.enums.HandleTypeEnum;
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
+import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
 import com.flowmind.platform.api.enums.WorkflowEventTypeEnum;
 import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
@@ -51,6 +52,8 @@ import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
+import com.flowmind.platform.persistence.repository.ProcessInstanceDeletionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -101,6 +104,12 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     private final CallbackService callbackService;
     /** 承载运行时主数据库事务的独立执行组件。 */
     private final RuntimeTransactionExecutor transactionExecutor;
+    /** 实例级管理动作的任务取消协调器。 */
+    private final InstanceTaskCancellationService taskCancellationService;
+    /** 实例级联删除持久化仓储。 */
+    private final ProcessInstanceDeletionRepository instanceDeletionRepository;
+    /** 复用既有审计日志写入原语。 */
+    private final ProcessDefinitionRepository definitionRepository;
 
     /**
      * 创建 M2 运行时服务。
@@ -114,10 +123,13 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         RuntimeOperationExecutor operationExecutor,
                                         RuntimeNodeAdvancer nodeAdvancer,
                                         AttachmentService attachmentService,
-                                        CallbackService callbackService,
-                                        RuntimeStateValidator runtimeStateValidator,
-                                        HistoryTaskWriter historyTaskWriter,
-                                        RuntimeTransactionExecutor transactionExecutor) {
+                                         CallbackService callbackService,
+                                         RuntimeStateValidator runtimeStateValidator,
+                                         HistoryTaskWriter historyTaskWriter,
+                                         RuntimeTransactionExecutor transactionExecutor,
+                                         InstanceTaskCancellationService taskCancellationService,
+                                         ProcessInstanceDeletionRepository instanceDeletionRepository,
+                                         ProcessDefinitionRepository definitionRepository) {
         this.instanceRepository = instanceRepository;
         this.activeTaskRepository = activeTaskRepository;
         this.historyTaskRepository = historyTaskRepository;
@@ -130,6 +142,27 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         this.runtimeStateValidator = runtimeStateValidator;
         this.historyTaskWriter = historyTaskWriter;
         this.transactionExecutor = transactionExecutor;
+        this.taskCancellationService = taskCancellationService;
+        this.instanceDeletionRepository = instanceDeletionRepository;
+        this.definitionRepository = definitionRepository;
+    }
+
+    /** 兼容 M2 测试和嵌入式调用的完整运行时构造器。 */
+    public DefaultProcessRuntimeService(ProcessInstanceRepository instanceRepository,
+                                        ActiveTaskRepository activeTaskRepository,
+                                        HistoryTaskRepository historyTaskRepository,
+                                        RuntimeDefinitionLoader definitionLoader,
+                                        RuntimeRequestValidator requestValidator,
+                                        RuntimeOperationExecutor operationExecutor,
+                                        RuntimeNodeAdvancer nodeAdvancer,
+                                        AttachmentService attachmentService,
+                                        CallbackService callbackService,
+                                        RuntimeStateValidator runtimeStateValidator,
+                                        HistoryTaskWriter historyTaskWriter,
+                                        RuntimeTransactionExecutor transactionExecutor) {
+        this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
+                operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
+                historyTaskWriter, transactionExecutor, null, null, null);
     }
 
     /** 兼容第五步前已存在的直接构造单元测试。 */
@@ -146,7 +179,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         HistoryTaskWriter historyTaskWriter) {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
                 operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
-                historyTaskWriter, null);
+                historyTaskWriter, null, null, null, null);
     }
 
     /**
@@ -162,7 +195,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         AttachmentService attachmentService,
                                         CallbackService callbackService) {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
-                operationExecutor, nodeAdvancer, attachmentService, callbackService, null, null);
+                operationExecutor, nodeAdvancer, attachmentService, callbackService, null, null, null, null, null,
+                null);
     }
 
     /** {@inheritDoc} */
@@ -365,16 +399,106 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         throw unsupported("unclaim");
     }
 
-    /** M3 起提供终止能力。 */
+    /** 终止运行中的流程实例，并取消当前全部开放工作。 */
     @Override
     public ProcessInstanceDTO terminate(TerminateProcessRequest request) {
-        throw unsupported("terminate");
+        UserContext operator = requestValidator.validateInstanceOperationIdentity(request, request.getInstanceId(),
+                request.getOperatorUserId());
+        OperationIdempotencyDecision decision = operationExecutor.begin(request, RuntimeOperationTypes.TERMINATE,
+                operator.getUserId(), request.getInstanceId(), null, LocalDateTime.now());
+        if (isSuccessfulReplay(decision)) {
+            return operationExecutor.replayResult(decision, ProcessInstanceDTO.class);
+        }
+        operationExecutor.assertExecutable(decision);
+        try {
+            requireTerminateDependencies();
+            return executeInTransaction(new RuntimeTransactionWork<ProcessInstanceDTO>() {
+                @Override
+                public ProcessInstanceDTO execute() {
+                    ProcessInstanceEntity instance = requireRunningInstance(request.getInstanceId());
+                    LocalDateTime endedAt = LocalDateTime.now();
+                    if (instanceRepository.terminate(instance.getId(), endedAt) != 1) {
+                        throw new RuntimeStateException(RuntimeErrorCodes.INSTANCE_STATUS_INVALID,
+                                "process instance cannot be terminated");
+                    }
+                    instance.setInstanceStatus(InstanceStatusEnum.TERMINATED.name());
+                    instance.setCurrentNodeCodes("[]");
+                    instance.setEndedAt(endedAt);
+                    List<HistoryTaskDTO> archivedTasks = taskCancellationService.cancelOpenWork(instance, operator,
+                            ActionTypeEnum.TERMINATE, request.getComment(), request.getOperationId(),
+                            readVariables(instance.getVariablesJson()));
+                    ProcessInstanceDTO result = RuntimeModelMapper.toDto(instance);
+                    result.setCreatedTasks(Collections.<TaskDTO>emptyList());
+                    writeInstanceAudit(instance, operator, request.getOperationId(), ActionTypeEnum.TERMINATE,
+                            request.getComment(), archivedTasks.size());
+                    publishEvent(request.getOperationId(), WorkflowEventTypeEnum.PROCESS_TERMINATED,
+                            instance.getId(), ActionTypeEnum.TERMINATE, result, operator, archivedTasks,
+                            Collections.<TaskDTO>emptyList());
+                    operationExecutor.markSuccess(request.getOperationId(), result);
+                    return result;
+                }
+            });
+        } catch (RuntimeValidationException ex) {
+            markDeterministicFailure(request.getOperationId(), ex);
+            throw ex;
+        } catch (RuntimeStateException ex) {
+            markDeterministicFailure(request.getOperationId(), ex);
+            throw ex;
+        }
     }
 
-    /** M3 起提供删除能力。 */
+    /** 物理删除流程实例及其运行数据，保留日志和幂等记录。 */
     @Override
     public OperationResult deleteInstance(DeleteProcessInstanceRequest request) {
-        throw unsupported("deleteInstance");
+        UserContext operator = requestValidator.validateInstanceOperationIdentity(request, request.getInstanceId(),
+                request.getOperatorUserId());
+        OperationIdempotencyDecision decision = operationExecutor.begin(request, RuntimeOperationTypes.DELETE_INSTANCE,
+                operator.getUserId(), request.getInstanceId(), null, LocalDateTime.now());
+        if (isSuccessfulReplay(decision)) {
+            OperationResult replayed = operationExecutor.replayResult(decision, OperationResult.class);
+            replayed.setReplayed(true);
+            return replayed;
+        }
+        operationExecutor.assertExecutable(decision);
+        try {
+            requireDeleteDependencies();
+            return executeInTransaction(new RuntimeTransactionWork<OperationResult>() {
+                @Override
+                public OperationResult execute() {
+                    ProcessInstanceEntity instance = instanceRepository.findById(request.getInstanceId());
+                    if (instance == null) {
+                        throw new RuntimeStateException(RuntimeErrorCodes.INSTANCE_NOT_FOUND,
+                                "process instance does not exist");
+                    }
+                    operationExecutor.bindTarget(request.getOperationId(), instance.getId(), null);
+                    ProcessInstanceDTO snapshot = RuntimeModelMapper.toDto(instance);
+                    snapshot.setCreatedTasks(Collections.<TaskDTO>emptyList());
+                    writeInstanceAudit(instance, operator, request.getOperationId(), ActionTypeEnum.CANCEL,
+                            "hard delete instance", 0);
+                    publishEvent(request.getOperationId(), WorkflowEventTypeEnum.PROCESS_CANCELED, instance.getId(),
+                            ActionTypeEnum.CANCEL, snapshot, operator, Collections.<HistoryTaskDTO>emptyList(),
+                            Collections.<TaskDTO>emptyList());
+                    if (instanceDeletionRepository.deleteRuntimeData(instance.getId()) != 1) {
+                        throw new RuntimeStateException(RuntimeErrorCodes.INSTANCE_NOT_FOUND,
+                                "process instance disappeared while deleting");
+                    }
+                    OperationResult result = new OperationResult();
+                    result.setOperationId(request.getOperationId());
+                    result.setTargetType(OperationTargetTypeEnum.INSTANCE);
+                    result.setTargetId(instance.getId());
+                    result.setDeleted(true);
+                    result.setReplayed(false);
+                    operationExecutor.markSuccess(request.getOperationId(), result);
+                    return result;
+                }
+            });
+        } catch (RuntimeValidationException ex) {
+            markDeterministicFailure(request.getOperationId(), ex);
+            throw ex;
+        } catch (RuntimeStateException ex) {
+            markDeterministicFailure(request.getOperationId(), ex);
+            throw ex;
+        }
     }
 
     private TaskActionResult handleTaskAction(TaskOperationRequest request,
@@ -817,8 +941,54 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         operationExecutor.markDeterministicFailure(operationId, exception.getErrorCode());
     }
 
+    /** 读取并校验实例仍处于运行态。 */
+    private ProcessInstanceEntity requireRunningInstance(String instanceId) {
+        ProcessInstanceEntity instance = instanceRepository.findById(instanceId);
+        if (instance == null) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INSTANCE_NOT_FOUND, "process instance does not exist");
+        }
+        if (!InstanceStatusEnum.RUNNING.name().equals(instance.getInstanceStatus())) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INSTANCE_STATUS_INVALID,
+                    "process instance is not running");
+        }
+        return instance;
+    }
+
+    /** 写入实例级管理动作审计记录。 */
+    private void writeInstanceAudit(ProcessInstanceEntity instance,
+                                    UserContext operator,
+                                    String operationId,
+                                    ActionTypeEnum actionType,
+                                    String comment,
+                                    int archivedTaskCount) {
+        Map<String, Object> detail = new LinkedHashMap<String, Object>();
+        detail.put("comment", comment);
+        detail.put("archivedTaskCount", Integer.valueOf(archivedTaskCount));
+        if (definitionRepository.insertAuditLog(UUID.randomUUID().toString(), instance.getId(), operationId,
+                OperationTargetTypeEnum.INSTANCE.name(), instance.getId(), actionType.name(), operator.getUserId(),
+                RuntimeJsonCodec.toJson(detail), LocalDateTime.now()) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
+                    "failed to write instance management audit log");
+        }
+    }
+
+    /** M3 管理动作依赖必须由 Spring 正式构造器注入。 */
+    private void requireTerminateDependencies() {
+        if (taskCancellationService == null || definitionRepository == null) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
+                    "M3 terminate dependencies are unavailable");
+        }
+    }
+
+    private void requireDeleteDependencies() {
+        if (instanceDeletionRepository == null || definitionRepository == null) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
+                    "M3 instance deletion dependencies are unavailable");
+        }
+    }
+
     private UnsupportedOperationException unsupported(String operationName) {
-        return new UnsupportedOperationException(operationName + " is not implemented in M2");
+        return new UnsupportedOperationException(operationName + " is not implemented in the current milestone");
     }
 
     private static boolean isBlank(String value) {

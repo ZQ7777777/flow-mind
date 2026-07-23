@@ -99,6 +99,29 @@ public class ProcessInstanceRepository {
                 DefinitionRowMappers.toDbString(endedAt), id);
     }
 
+    /** 将运行中的实例终止，并原子清空当前节点快照。 */
+    public int terminate(String id, LocalDateTime endedAt) {
+        return jdbcTemplate.update("UPDATE process_instance SET instance_status = 'TERMINATED', "
+                        + "current_node_codes = '[]', ended_at = ? "
+                        + "WHERE id = ? AND instance_status = 'RUNNING'",
+                DefinitionRowMappers.toDbString(endedAt), id);
+    }
+
+    /** 将已终止实例恢复为运行中，供管理员跳转后重新生成任务。 */
+    public int reopenForJump(String id) {
+        return jdbcTemplate.update("UPDATE process_instance SET instance_status = 'RUNNING', "
+                        + "current_node_codes = '[]', ended_at = NULL "
+                        + "WHERE id = ? AND instance_status = 'TERMINATED'", id);
+    }
+
+    /** 强制办结运行中的实例，并原子清空当前节点快照。 */
+    public int forceComplete(String id, LocalDateTime endedAt) {
+        return jdbcTemplate.update("UPDATE process_instance SET instance_status = 'COMPLETED', "
+                        + "current_node_codes = '[]', ended_at = ? "
+                        + "WHERE id = ? AND instance_status = 'RUNNING'",
+                DefinitionRowMappers.toDbString(endedAt), id);
+    }
+
     /** 分页查询指定发起人的流程实例。 */
     public List<ProcessInstanceEntity> queryStartedInstances(StartedInstanceQuery query, String starterUserId) {
         int pageNo = PageQueryNormalizer.normalizePageNo(query.getPageNo());
