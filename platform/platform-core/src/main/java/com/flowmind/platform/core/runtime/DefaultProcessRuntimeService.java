@@ -43,6 +43,7 @@ import com.flowmind.platform.api.dto.OperationResult;
 import com.flowmind.platform.api.dto.WorkflowEvent;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
+import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
@@ -50,6 +51,7 @@ import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -66,8 +68,8 @@ import java.util.UUID;
  * M2 流程运行时服务实现。
  *
  * <p>本类仅编排启动、提交、审批、变量更新和实例详情读取；定义选择、身份校验、幂等记录和
- * 节点推进均复用既有组件。事务边界和 Outbox 的原子提交由 M2 第五步的独立事务执行器补齐，
- * 因此本类不声明 {@code @Transactional}，也不在此处实现附件或回调的生产逻辑。</p>
+ * 节点推进均复用既有组件。幂等建租约在业务事务前完成；业务写入通过独立事务执行器提交，
+ * 从而保证 Outbox 与运行时状态原子一致。</p>
  *
  * @author FlowMind
  * @since 2026-07-22
@@ -89,13 +91,66 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     private final RuntimeOperationExecutor operationExecutor;
     /** 统一节点推进器。 */
     private final RuntimeNodeAdvancer nodeAdvancer;
+    /** C 线提供的运行状态前置校验器。 */
+    private final RuntimeStateValidator runtimeStateValidator;
+    /** C 线提供的幂等历史任务归档器。 */
+    private final HistoryTaskWriter historyTaskWriter;
     /** 附件校验和保存正式服务，由 C 线提供实现。 */
     private final AttachmentService attachmentService;
     /** 回调 Outbox 正式服务，由 C 线提供实现。 */
     private final CallbackService callbackService;
+    /** 承载运行时主数据库事务的独立执行组件。 */
+    private final RuntimeTransactionExecutor transactionExecutor;
 
     /**
      * 创建 M2 运行时服务。
+     */
+    @Autowired
+    public DefaultProcessRuntimeService(ProcessInstanceRepository instanceRepository,
+                                        ActiveTaskRepository activeTaskRepository,
+                                        HistoryTaskRepository historyTaskRepository,
+                                        RuntimeDefinitionLoader definitionLoader,
+                                        RuntimeRequestValidator requestValidator,
+                                        RuntimeOperationExecutor operationExecutor,
+                                        RuntimeNodeAdvancer nodeAdvancer,
+                                        AttachmentService attachmentService,
+                                        CallbackService callbackService,
+                                        RuntimeStateValidator runtimeStateValidator,
+                                        HistoryTaskWriter historyTaskWriter,
+                                        RuntimeTransactionExecutor transactionExecutor) {
+        this.instanceRepository = instanceRepository;
+        this.activeTaskRepository = activeTaskRepository;
+        this.historyTaskRepository = historyTaskRepository;
+        this.definitionLoader = definitionLoader;
+        this.requestValidator = requestValidator;
+        this.operationExecutor = operationExecutor;
+        this.nodeAdvancer = nodeAdvancer;
+        this.attachmentService = attachmentService;
+        this.callbackService = callbackService;
+        this.runtimeStateValidator = runtimeStateValidator;
+        this.historyTaskWriter = historyTaskWriter;
+        this.transactionExecutor = transactionExecutor;
+    }
+
+    /** 兼容第五步前已存在的直接构造单元测试。 */
+    public DefaultProcessRuntimeService(ProcessInstanceRepository instanceRepository,
+                                        ActiveTaskRepository activeTaskRepository,
+                                        HistoryTaskRepository historyTaskRepository,
+                                        RuntimeDefinitionLoader definitionLoader,
+                                        RuntimeRequestValidator requestValidator,
+                                        RuntimeOperationExecutor operationExecutor,
+                                        RuntimeNodeAdvancer nodeAdvancer,
+                                        AttachmentService attachmentService,
+                                        CallbackService callbackService,
+                                        RuntimeStateValidator runtimeStateValidator,
+                                        HistoryTaskWriter historyTaskWriter) {
+        this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
+                operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
+                historyTaskWriter, null);
+    }
+
+    /**
+     * 兼容已有直接构造的单元测试；Spring 运行时始终使用完整构造器接入 C 线协作组件。
      */
     public DefaultProcessRuntimeService(ProcessInstanceRepository instanceRepository,
                                         ActiveTaskRepository activeTaskRepository,
@@ -106,15 +161,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         RuntimeNodeAdvancer nodeAdvancer,
                                         AttachmentService attachmentService,
                                         CallbackService callbackService) {
-        this.instanceRepository = instanceRepository;
-        this.activeTaskRepository = activeTaskRepository;
-        this.historyTaskRepository = historyTaskRepository;
-        this.definitionLoader = definitionLoader;
-        this.requestValidator = requestValidator;
-        this.operationExecutor = operationExecutor;
-        this.nodeAdvancer = nodeAdvancer;
-        this.attachmentService = attachmentService;
-        this.callbackService = callbackService;
+        this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
+                operationExecutor, nodeAdvancer, attachmentService, callbackService, null, null);
     }
 
     /** {@inheritDoc} */
@@ -128,16 +176,21 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         }
         operationExecutor.assertExecutable(decision);
         try {
-            ProcessDefinitionDetailDTO definition = definitionLoader.loadForStart(request.getProcessCode());
-            ProcessInstanceEntity instance = newInstance(request, starter, definition, InstanceStatusEnum.NOT_STARTED,
-                    null);
-            insertInstance(instance);
-            operationExecutor.bindTarget(request.getOperationId(), instance.getId(), null);
+            return executeInTransaction(new RuntimeTransactionWork<ProcessInstanceDTO>() {
+                @Override
+                public ProcessInstanceDTO execute() {
+                    ProcessDefinitionDetailDTO definition = definitionLoader.loadForStart(request.getProcessCode());
+                    ProcessInstanceEntity instance = newInstance(request, starter, definition,
+                            InstanceStatusEnum.NOT_STARTED, null);
+                    insertInstance(instance);
+                    operationExecutor.bindTarget(request.getOperationId(), instance.getId(), null);
 
-            ProcessInstanceDTO result = RuntimeModelMapper.toDto(instance);
-            result.setCreatedTasks(Collections.<TaskDTO>emptyList());
-            operationExecutor.markSuccess(request.getOperationId(), result);
-            return result;
+                    ProcessInstanceDTO result = RuntimeModelMapper.toDto(instance);
+                    result.setCreatedTasks(Collections.<TaskDTO>emptyList());
+                    operationExecutor.markSuccess(request.getOperationId(), result);
+                    return result;
+                }
+            });
         } catch (RuntimeValidationException ex) {
             markDeterministicFailure(request.getOperationId(), ex);
             throw ex;
@@ -158,18 +211,26 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         }
         operationExecutor.assertExecutable(decision);
         try {
-            ProcessDefinitionDetailDTO definition = definitionLoader.loadForStart(request.getProcessCode());
-            ProcessInstanceEntity instance = newInstance(request, starter, definition, InstanceStatusEnum.RUNNING,
-                    LocalDateTime.now());
-            insertInstance(instance);
-            operationExecutor.bindTarget(request.getOperationId(), instance.getId(), null);
+            return executeInTransaction(new RuntimeTransactionWork<ProcessInstanceDTO>() {
+                @Override
+                public ProcessInstanceDTO execute() {
+                    ProcessDefinitionDetailDTO definition = definitionLoader.loadForStart(request.getProcessCode());
+                    ProcessInstanceEntity instance = newInstance(request, starter, definition, InstanceStatusEnum.RUNNING,
+                            LocalDateTime.now());
+                    String startNodeCode = startTargetNodeCode(definition);
+                    RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(instance, definition,
+                            startNodeCode, null, null);
+                    insertInstance(instance);
+                    operationExecutor.bindTarget(request.getOperationId(), instance.getId(), null);
 
-            RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition,
-                    startTargetNodeCode(definition), null, null);
-            ProcessInstanceDTO result = toInstanceResult(instance.getId(), advanceResult.getCreatedTasks());
-            publishStartEvents(request.getOperationId(), result, starter, advanceResult);
-            operationExecutor.markSuccess(request.getOperationId(), result);
-            return result;
+                    RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition,
+                            startNodeCode, null, null, preparation);
+                    ProcessInstanceDTO result = toInstanceResult(instance.getId(), advanceResult.getCreatedTasks());
+                    publishStartEvents(request.getOperationId(), result, starter, advanceResult);
+                    operationExecutor.markSuccess(request.getOperationId(), result);
+                    return result;
+                }
+            });
         } catch (RuntimeValidationException ex) {
             markDeterministicFailure(request.getOperationId(), ex);
             throw ex;
@@ -202,19 +263,24 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         }
         operationExecutor.assertExecutable(decision);
         try {
-            ProcessInstanceEntity instance = instanceRepository.findById(request.getInstanceId());
-            requestValidator.validateVariableUpdate(request, instance, operator);
-            Map<String, Object> variables = mergeVariables(instance.getVariablesJson(), request.getVariables());
-            String variablesJson = RuntimeJsonCodec.toJson(variables);
-            if (instanceRepository.updateVariablesJson(instance.getId(), variablesJson) != 1) {
-                throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
-                        "process instance variables cannot be updated");
-            }
-            instance.setVariablesJson(variablesJson);
-            ProcessInstanceDTO result = RuntimeModelMapper.toDto(instance);
-            result.setCreatedTasks(Collections.<TaskDTO>emptyList());
-            operationExecutor.markSuccess(request.getOperationId(), result);
-            return result;
+            return executeInTransaction(new RuntimeTransactionWork<ProcessInstanceDTO>() {
+                @Override
+                public ProcessInstanceDTO execute() {
+                    ProcessInstanceEntity instance = instanceRepository.findById(request.getInstanceId());
+                    requestValidator.validateVariableUpdate(request, instance, operator);
+                    Map<String, Object> variables = mergeVariables(instance.getVariablesJson(), request.getVariables());
+                    String variablesJson = RuntimeJsonCodec.toJson(variables);
+                    if (instanceRepository.updateVariablesJson(instance.getId(), variablesJson) != 1) {
+                        throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
+                                "process instance variables cannot be updated");
+                    }
+                    instance.setVariablesJson(variablesJson);
+                    ProcessInstanceDTO result = RuntimeModelMapper.toDto(instance);
+                    result.setCreatedTasks(Collections.<TaskDTO>emptyList());
+                    operationExecutor.markSuccess(request.getOperationId(), result);
+                    return result;
+                }
+            });
         } catch (RuntimeValidationException ex) {
             markDeterministicFailure(request.getOperationId(), ex);
             throw ex;
@@ -322,43 +388,12 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         }
         operationExecutor.assertExecutable(decision);
         try {
-            ProcessActiveTaskEntity task = activeTaskRepository.findById(request.getTaskId());
-            ProcessInstanceEntity instance = task == null ? null : instanceRepository.findById(task.getInstanceId());
-            requestValidator.validateTaskAction(request, instance, task, operator);
-            operationExecutor.bindTarget(request.getOperationId(), instance.getId(), task.getId());
-
-            ProcessDefinitionDetailDTO definition = definitionLoader.loadForInstance(instance);
-            ProcessNodeDTO node = requireUserTaskNode(definition, task.getNodeCode());
-            assertTaskActionNode(node, submitStarterTask);
-            if (submitStarterTask) {
-                prepareSubmitAttachments((SubmitTaskRequest) request, instance, task);
-            }
-
-            if (activeTaskRepository.complete(task.getId(), request.getExpectedTaskVersion().longValue()) != 1) {
-                throw new RuntimeStateException(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
-                        "active task was modified by another request");
-            }
-            Map<String, Object> variables = submitStarterTask
-                    ? mergeVariables(instance.getVariablesJson(), ((SubmitTaskRequest) request).getVariables())
-                    : readVariables(instance.getVariablesJson());
-            if (submitStarterTask && instanceRepository.updateVariablesJson(instance.getId(),
-                    RuntimeJsonCodec.toJson(variables)) != 1) {
-                throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
-                        "process instance variables cannot be updated");
-            }
-            instance.setVariablesJson(RuntimeJsonCodec.toJson(variables));
-
-            HistoryTaskDTO archivedTask = archiveTask(task, instance, request, operator, actionType, variables);
-            RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition,
-                    singleOutgoingTarget(definition, node.getNodeCode()), task.getTaskGroupId(), task.getBranchKey());
-            TaskActionResult result = new TaskActionResult();
-            result.setOperationId(request.getOperationId());
-            result.setArchivedTasks(Collections.singletonList(archivedTask));
-            result.setCreatedTasks(new ArrayList<TaskDTO>(advanceResult.getCreatedTasks()));
-            result.setInstance(toInstanceResult(instance.getId(), advanceResult.getCreatedTasks()));
-            publishTaskActionEvents(request.getOperationId(), actionType, result, operator, advanceResult);
-            operationExecutor.markSuccess(request.getOperationId(), result);
-            return result;
+            return executeInTransaction(new RuntimeTransactionWork<TaskActionResult>() {
+                @Override
+                public TaskActionResult execute() {
+                    return handleTaskActionInTransaction(request, actionType, submitStarterTask, operator);
+                }
+            });
         } catch (RuntimeValidationException ex) {
             markDeterministicFailure(request.getOperationId(), ex);
             throw ex;
@@ -366,6 +401,63 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             markDeterministicFailure(request.getOperationId(), ex);
             throw ex;
         }
+    }
+
+    private TaskActionResult handleTaskActionInTransaction(TaskOperationRequest request,
+                                                            ActionTypeEnum actionType,
+                                                            boolean submitStarterTask,
+                                                            UserContext operator) {
+        RuntimeTaskContext taskContext = null;
+        ProcessActiveTaskEntity task;
+        ProcessInstanceEntity instance;
+        if (runtimeStateValidator != null) {
+            taskContext = runtimeStateValidator.validateTaskAction(request.getTaskId(),
+                    request.getExpectedTaskVersion(), actionType, operator);
+            task = taskContext.getTask();
+            instance = taskContext.getInstance();
+        } else {
+            task = activeTaskRepository.findById(request.getTaskId());
+            instance = task == null ? null : instanceRepository.findById(task.getInstanceId());
+        }
+        requestValidator.validateTaskAction(request, instance, task, operator);
+        operationExecutor.bindTarget(request.getOperationId(), instance.getId(), task.getId());
+
+        ProcessDefinitionDetailDTO definition = definitionLoader.loadForInstance(instance);
+        ProcessNodeDTO node = requireUserTaskNode(definition, task.getNodeCode());
+        assertTaskActionNode(node, submitStarterTask);
+        if (submitStarterTask) {
+            prepareSubmitAttachments((SubmitTaskRequest) request, instance, task);
+        }
+
+        Map<String, Object> variables = submitStarterTask
+                ? mergeVariables(instance.getVariablesJson(), ((SubmitTaskRequest) request).getVariables())
+                : readVariables(instance.getVariablesJson());
+        instance.setVariablesJson(RuntimeJsonCodec.toJson(variables));
+        String targetNodeCode = singleOutgoingTarget(definition, node.getNodeCode());
+        RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(instance, definition, targetNodeCode,
+                task.getTaskGroupId(), task.getBranchKey());
+
+        if (activeTaskRepository.complete(task.getId(), request.getExpectedTaskVersion().longValue()) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
+                    "active task was modified by another request");
+        }
+        if (submitStarterTask && instanceRepository.updateVariablesJson(instance.getId(),
+                RuntimeJsonCodec.toJson(variables)) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
+                    "process instance variables cannot be updated");
+        }
+        HistoryTaskDTO archivedTask = archiveTask(taskContext, task, instance, request, operator, actionType,
+                variables);
+        RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition, targetNodeCode,
+                task.getTaskGroupId(), task.getBranchKey(), preparation);
+        TaskActionResult result = new TaskActionResult();
+        result.setOperationId(request.getOperationId());
+        result.setArchivedTasks(Collections.singletonList(archivedTask));
+        result.setCreatedTasks(new ArrayList<TaskDTO>(advanceResult.getCreatedTasks()));
+        result.setInstance(toInstanceResult(instance.getId(), advanceResult.getCreatedTasks()));
+        publishTaskActionEvents(request.getOperationId(), actionType, result, operator, advanceResult);
+        operationExecutor.markSuccess(request.getOperationId(), result);
+        return result;
     }
 
     private ProcessInstanceEntity newInstance(StartProcessRequest request,
@@ -502,12 +594,18 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         return saveRequest;
     }
 
-    private HistoryTaskDTO archiveTask(ProcessActiveTaskEntity task,
+    private HistoryTaskDTO archiveTask(RuntimeTaskContext taskContext,
+                                       ProcessActiveTaskEntity task,
                                        ProcessInstanceEntity instance,
                                        TaskOperationRequest request,
                                        UserContext operator,
                                        ActionTypeEnum actionType,
                                        Map<String, Object> variables) {
+        if (historyTaskWriter != null && taskContext != null) {
+            ProcessHistoryTaskEntity history = historyTaskWriter.archiveCompletedTask(taskContext, actionType,
+                    request.getComment(), variables, request.getOperationId());
+            return RuntimeModelMapper.toDto(history);
+        }
         ProcessHistoryTaskEntity history = new ProcessHistoryTaskEntity();
         history.setId(UUID.randomUUID().toString());
         history.setInstanceId(instance.getId());
@@ -701,6 +799,14 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             return RuntimeOperationTypes.APPROVE_TASK;
         }
         throw new IllegalArgumentException("M2 task operation type is unsupported: " + actionType);
+    }
+
+    private <T> T executeInTransaction(RuntimeTransactionWork<T> work) {
+        if (transactionExecutor == null) {
+            // 保留旧单元测试的直接构造兼容性；Spring 生产构造器始终注入独立执行器。
+            return work.execute();
+        }
+        return transactionExecutor.execute(work);
     }
 
     private void markDeterministicFailure(String operationId, RuntimeValidationException exception) {
