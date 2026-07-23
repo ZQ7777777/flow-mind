@@ -94,6 +94,11 @@ class DefaultProcessRuntimeServiceTest {
         transactionExecutor = mock(RuntimeTransactionExecutor.class);
         doAnswer(invocation -> ((RuntimeTransactionWork<?>) invocation.getArgument(0)).execute())
                 .when(transactionExecutor).execute(any(RuntimeTransactionWork.class));
+        when(nodeAdvancer.prepareAdvance(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                anyString(), any(), any())).thenReturn(mock(RuntimeAdvancePreparation.class));
+        when(nodeAdvancer.advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                anyString(), any(), any(), any(RuntimeAdvancePreparation.class)))
+                .thenReturn(new RuntimeAdvanceResult());
         service = new DefaultProcessRuntimeService(instanceRepository, activeTaskRepository, historyTaskRepository,
                 definitionLoader, requestValidator, operationExecutor, nodeAdvancer, attachmentService,
                 callbackService, runtimeStateValidator, historyTaskWriter, transactionExecutor);
@@ -119,7 +124,7 @@ class DefaultProcessRuntimeServiceTest {
         verify(instanceRepository).insert(instanceCaptor.capture());
         assertEquals("NOT_STARTED", instanceCaptor.getValue().getInstanceStatus());
         assertEquals("Starter", instanceCaptor.getValue().getStarterUserName());
-        verify(nodeAdvancer, never()).advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+        verify(nodeAdvancer, never()).prepareAdvance(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
                 anyString(), isNull(), isNull());
         verify(operationExecutor).bindTarget(eq(request.getOperationId()), eq(result.getInstanceId()), isNull());
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
@@ -137,8 +142,6 @@ class DefaultProcessRuntimeServiceTest {
                 any(LocalDateTime.class))).thenReturn(newDecision());
         when(definitionLoader.loadForStart("expense")).thenReturn(definition);
         when(instanceRepository.insert(any(ProcessInstanceEntity.class))).thenReturn(1);
-        when(nodeAdvancer.advanceToNode(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull()))
-                .thenReturn(new RuntimeAdvanceResult());
         when(instanceRepository.findById(anyString())).thenReturn(persisted);
 
         ProcessInstanceDTO result = service.startAndSubmit(request);
@@ -146,7 +149,9 @@ class DefaultProcessRuntimeServiceTest {
         assertEquals("instance-1", result.getInstanceId());
         assertEquals(InstanceStatusEnum.RUNNING, result.getInstanceStatus());
         assertTrue(result.getCreatedTasks().isEmpty());
-        verify(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull());
+        verify(nodeAdvancer).prepareAdvance(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull());
+        verify(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull(),
+                any(RuntimeAdvancePreparation.class));
         verify(callbackService).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
     }
@@ -191,8 +196,6 @@ class DefaultProcessRuntimeServiceTest {
         when(attachmentService.checkRequiredAttachments(any())).thenReturn(attachmentCheck);
         when(activeTaskRepository.complete("task-apply", 0L)).thenReturn(1);
         when(instanceRepository.updateVariablesJson(eq("instance-1"), anyString())).thenReturn(1);
-        when(nodeAdvancer.advanceToNode(eq(instance), eq(definition), eq("end"), isNull(), isNull()))
-                .thenReturn(new RuntimeAdvanceResult());
         when(instanceRepository.findById("instance-1")).thenReturn(instance, instance);
 
         TaskActionResult result = service.submitTask(request);
@@ -219,8 +222,6 @@ class DefaultProcessRuntimeServiceTest {
         ProcessDefinitionDetailDTO definition = definition(userTask("manager", ApproverRuleTypeEnum.ROLE));
         prepareTaskAction(request, ActionTypeEnum.APPROVE, manager, task, instance, definition);
         when(activeTaskRepository.complete("task-manager", 0L)).thenReturn(1);
-        when(nodeAdvancer.advanceToNode(eq(instance), eq(definition), eq("end"), isNull(), isNull()))
-                .thenReturn(new RuntimeAdvanceResult());
         when(instanceRepository.findById("instance-1")).thenReturn(instance, instance);
 
         TaskActionResult result = service.approve(request);

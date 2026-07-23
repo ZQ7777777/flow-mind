@@ -217,11 +217,14 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                     ProcessDefinitionDetailDTO definition = definitionLoader.loadForStart(request.getProcessCode());
                     ProcessInstanceEntity instance = newInstance(request, starter, definition, InstanceStatusEnum.RUNNING,
                             LocalDateTime.now());
+                    String startNodeCode = startTargetNodeCode(definition);
+                    RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(instance, definition,
+                            startNodeCode, null, null);
                     insertInstance(instance);
                     operationExecutor.bindTarget(request.getOperationId(), instance.getId(), null);
 
                     RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition,
-                            startTargetNodeCode(definition), null, null);
+                            startNodeCode, null, null, preparation);
                     ProcessInstanceDTO result = toInstanceResult(instance.getId(), advanceResult.getCreatedTasks());
                     publishStartEvents(request.getOperationId(), result, starter, advanceResult);
                     operationExecutor.markSuccess(request.getOperationId(), result);
@@ -426,24 +429,27 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             prepareSubmitAttachments((SubmitTaskRequest) request, instance, task);
         }
 
+        Map<String, Object> variables = submitStarterTask
+                ? mergeVariables(instance.getVariablesJson(), ((SubmitTaskRequest) request).getVariables())
+                : readVariables(instance.getVariablesJson());
+        instance.setVariablesJson(RuntimeJsonCodec.toJson(variables));
+        String targetNodeCode = singleOutgoingTarget(definition, node.getNodeCode());
+        RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(instance, definition, targetNodeCode,
+                task.getTaskGroupId(), task.getBranchKey());
+
         if (activeTaskRepository.complete(task.getId(), request.getExpectedTaskVersion().longValue()) != 1) {
             throw new RuntimeStateException(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
                     "active task was modified by another request");
         }
-        Map<String, Object> variables = submitStarterTask
-                ? mergeVariables(instance.getVariablesJson(), ((SubmitTaskRequest) request).getVariables())
-                : readVariables(instance.getVariablesJson());
         if (submitStarterTask && instanceRepository.updateVariablesJson(instance.getId(),
                 RuntimeJsonCodec.toJson(variables)) != 1) {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
                     "process instance variables cannot be updated");
         }
-        instance.setVariablesJson(RuntimeJsonCodec.toJson(variables));
-
         HistoryTaskDTO archivedTask = archiveTask(taskContext, task, instance, request, operator, actionType,
                 variables);
-        RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition,
-                singleOutgoingTarget(definition, node.getNodeCode()), task.getTaskGroupId(), task.getBranchKey());
+        RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition, targetNodeCode,
+                task.getTaskGroupId(), task.getBranchKey(), preparation);
         TaskActionResult result = new TaskActionResult();
         result.setOperationId(request.getOperationId());
         result.setArchivedTasks(Collections.singletonList(archivedTask));

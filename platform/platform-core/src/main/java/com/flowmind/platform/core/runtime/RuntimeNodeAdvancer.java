@@ -89,11 +89,50 @@ public class RuntimeNodeAdvancer {
                                               String targetNodeCode,
                                               String taskGroupId,
                                               String branchKey) {
+        return advanceToNode(instance, definition, targetNodeCode, taskGroupId, branchKey,
+                prepareAdvance(instance, definition, targetNodeCode, taskGroupId, branchKey));
+    }
+
+    /**
+     * Resolves all user-task candidates reachable by this advancement before
+     * any runtime row is changed.  The result is passed back to
+     * {@link #advanceToNode(ProcessInstanceEntity, ProcessDefinitionDetailDTO, String, String, String,
+     * RuntimeAdvancePreparation)} so the mutation phase does not call the
+     * external approver SPI.
+     */
+    public RuntimeAdvancePreparation prepareAdvance(ProcessInstanceEntity instance,
+                                                    ProcessDefinitionDetailDTO definition,
+                                                    String targetNodeCode,
+                                                    String taskGroupId,
+                                                    String branchKey) {
         assertInput(instance, definition, targetNodeCode, taskGroupId, branchKey);
+        DefinitionGraphIndex graph = DefinitionGraphIndex.from(definition);
+        Map<String, List<String>> candidatesByNodeCode = new LinkedHashMap<String, List<String>>();
+        Map<String, String> exclusiveTargetNodeCodes = new LinkedHashMap<String, String>();
+        prepareAdvance(instance, definition, graph, targetNodeCode,
+                new AdvancePathContext(maxAutomaticSteps(graph)), candidatesByNodeCode, exclusiveTargetNodeCodes);
+        return new RuntimeAdvancePreparation(candidatesByNodeCode, exclusiveTargetNodeCodes);
+    }
+
+    /**
+     * Persists a previously prepared advancement.  This overload is used by
+     * task actions after their task CAS has succeeded.
+     */
+    public RuntimeAdvanceResult advanceToNode(ProcessInstanceEntity instance,
+                                              ProcessDefinitionDetailDTO definition,
+                                              String targetNodeCode,
+                                              String taskGroupId,
+                                              String branchKey,
+                                              RuntimeAdvancePreparation preparation) {
+        assertInput(instance, definition, targetNodeCode, taskGroupId, branchKey);
+        if (preparation == null) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION,
+                    "runtime advancement must be prepared before persistence");
+        }
         DefinitionGraphIndex graph = DefinitionGraphIndex.from(definition);
         RuntimeAdvanceResult result = new RuntimeAdvanceResult();
         advance(instance, definition, graph, targetNodeCode, taskGroupId, branchKey,
-                new AdvancePathContext(maxAutomaticSteps(graph)), result);
+                new AdvancePathContext(maxAutomaticSteps(graph)), preparation, result);
         if (!result.isInstanceCompleted()) {
             refreshCurrentNodeCodes(instance.getId());
         }
@@ -107,6 +146,7 @@ public class RuntimeNodeAdvancer {
                          String taskGroupId,
                          String branchKey,
                          AdvancePathContext path,
+                         RuntimeAdvancePreparation preparation,
                          RuntimeAdvanceResult result) {
         ProcessNodeDTO node = graph.getNodesByCode().get(targetNodeCode);
         if (node == null) {
@@ -118,20 +158,25 @@ public class RuntimeNodeAdvancer {
         }
         switch (node.getNodeType()) {
             case USER_TASK:
-                createUserTask(instance, definition, node, taskGroupId, branchKey, result);
+                createUserTask(instance, node, taskGroupId, branchKey, preparation, result);
                 return;
             case EXCLUSIVE_GATEWAY:
                 path.enterAutomaticNode(node.getNodeCode());
-                ProcessEdgeDTO selected = selectExclusiveEdge(node, graph, instance);
-                advance(instance, definition, graph, selected.getTargetNodeCode(), taskGroupId, branchKey, path, result);
+                String selectedTargetNodeCode = preparation.exclusiveTargetNodeCode(node.getNodeCode());
+                if (!hasText(selectedTargetNodeCode)) {
+                    throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
+                            "prepared exclusive gateway target is missing: " + node.getNodeCode());
+                }
+                advance(instance, definition, graph, selectedTargetNodeCode, taskGroupId, branchKey, path,
+                        preparation, result);
                 return;
             case PARALLEL_SPLIT_GATEWAY:
                 path.enterAutomaticNode(node.getNodeCode());
-                advanceParallelSplit(instance, definition, node, graph, taskGroupId, branchKey, path, result);
+                advanceParallelSplit(instance, definition, node, graph, taskGroupId, branchKey, path, preparation, result);
                 return;
             case PARALLEL_JOIN_GATEWAY:
                 path.enterAutomaticNode(node.getNodeCode());
-                advanceParallelJoin(instance, definition, node, graph, taskGroupId, branchKey, path, result);
+                advanceParallelJoin(instance, definition, node, graph, taskGroupId, branchKey, path, preparation, result);
                 return;
             case END:
                 path.enterAutomaticNode(node.getNodeCode());
@@ -145,23 +190,15 @@ public class RuntimeNodeAdvancer {
     }
 
     private void createUserTask(ProcessInstanceEntity instance,
-                                ProcessDefinitionDetailDTO definition,
                                 ProcessNodeDTO node,
                                 String taskGroupId,
                                 String branchKey,
+                                RuntimeAdvancePreparation preparation,
                                 RuntimeAdvanceResult result) {
-        Map<String, Object> variables = readObjectMap(instance.getVariablesJson(), "instance variables");
-        if (approverResolveRequestFactory == null) {
-            throw state(RuntimeErrorCodes.DEFINITION_INVALID,
-                    "approver resolve request factory is not configured");
-        }
-        com.flowmind.platform.api.request.ApproverResolveRequest request = approverResolveRequestFactory.create(
-                definition, instance.getId(), node.getNodeCode(), instance.getStarterUserId(),
-                instance.getStarterDeptId(), variables);
-        List<UserDTO> approvers = requestValidator.resolveApprovers(node.getMultiInstanceMode(), approverResolver, request);
-        List<String> candidateUserIds = new ArrayList<String>();
-        for (UserDTO approver : approvers) {
-            candidateUserIds.add(approver.getUserId());
+        List<String> candidateUserIds = preparation.candidateUserIds(node.getNodeCode());
+        if (candidateUserIds == null || candidateUserIds.isEmpty()) {
+            throw state(RuntimeErrorCodes.APPROVER_RESOLVE_FAILED,
+                    "prepared approvers are missing for user task: " + node.getNodeCode());
         }
 
         ProcessActiveTaskEntity task = new ProcessActiveTaskEntity();
@@ -232,6 +269,7 @@ public class RuntimeNodeAdvancer {
                                       String parentGroupId,
                                       String parentBranchKey,
                                       AdvancePathContext path,
+                                      RuntimeAdvancePreparation preparation,
                                       RuntimeAdvanceResult result) {
         if (hasText(parentGroupId) || hasText(parentBranchKey)) {
             throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
@@ -269,7 +307,7 @@ public class RuntimeNodeAdvancer {
         }
         for (ProcessEdgeDTO edge : outgoing) {
             advance(instance, definition, graph, edge.getTargetNodeCode(), group.getId(), edge.getEdgeCode(),
-                    path.copyForBranch(), result);
+                    path.copyForBranch(), preparation, result);
         }
     }
 
@@ -280,6 +318,7 @@ public class RuntimeNodeAdvancer {
                                      String taskGroupId,
                                      String branchKey,
                                      AdvancePathContext path,
+                                     RuntimeAdvancePreparation preparation,
                                      RuntimeAdvanceResult result) {
         if (!hasText(taskGroupId) || !hasText(branchKey)) {
             throw state(RuntimeErrorCodes.PARALLEL_JOIN_CONFLICT,
@@ -292,7 +331,91 @@ public class RuntimeNodeAdvancer {
         }
         ProcessEdgeDTO outgoing = requireSingleOutgoing(node, graph);
         advance(instance, definition, graph, outgoing.getTargetNodeCode(), completedGroup.getParentGroupId(),
-                completedGroup.getParentBranchKey(), path, result);
+                completedGroup.getParentBranchKey(), path, preparation, result);
+    }
+
+    private void prepareAdvance(ProcessInstanceEntity instance,
+                                ProcessDefinitionDetailDTO definition,
+                                DefinitionGraphIndex graph,
+                                String targetNodeCode,
+                                AdvancePathContext path,
+                                Map<String, List<String>> candidatesByNodeCode,
+                                Map<String, String> exclusiveTargetNodeCodes) {
+        ProcessNodeDTO node = graph.getNodesByCode().get(targetNodeCode);
+        if (node == null) {
+            throw state(RuntimeErrorCodes.NODE_NOT_FOUND, "target node does not exist: " + targetNodeCode);
+        }
+        if (node.getNodeType() == null) {
+            throw state(RuntimeErrorCodes.DEFINITION_INVALID,
+                    "target node type is missing: " + targetNodeCode);
+        }
+        switch (node.getNodeType()) {
+            case USER_TASK:
+                prepareUserTaskCandidates(instance, definition, node, candidatesByNodeCode);
+                return;
+            case EXCLUSIVE_GATEWAY:
+                path.enterAutomaticNode(node.getNodeCode());
+                ProcessEdgeDTO selected = selectExclusiveEdge(node, graph, instance);
+                exclusiveTargetNodeCodes.put(node.getNodeCode(), selected.getTargetNodeCode());
+                prepareAdvance(instance, definition, graph, selected.getTargetNodeCode(), path, candidatesByNodeCode,
+                        exclusiveTargetNodeCodes);
+                return;
+            case PARALLEL_SPLIT_GATEWAY:
+                path.enterAutomaticNode(node.getNodeCode());
+                assertParallelPair(node, graph);
+                List<ProcessEdgeDTO> outgoing = graph.getOutgoingEdges(node.getNodeCode());
+                if (outgoing.size() < 2) {
+                    throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
+                            "parallel split requires at least two outgoing edges: " + node.getNodeCode());
+                }
+                Set<String> branchKeys = new LinkedHashSet<String>();
+                for (ProcessEdgeDTO edge : outgoing) {
+                    if (!hasText(edge.getEdgeCode()) || hasText(edge.getConditionExpression())
+                            || !branchKeys.add(edge.getEdgeCode())) {
+                        throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
+                                "parallel split has an invalid outgoing edge: " + node.getNodeCode());
+                    }
+                    prepareAdvance(instance, definition, graph, edge.getTargetNodeCode(), path.copyForBranch(),
+                            candidatesByNodeCode, exclusiveTargetNodeCodes);
+                }
+                return;
+            case PARALLEL_JOIN_GATEWAY:
+                path.enterAutomaticNode(node.getNodeCode());
+                assertParallelPair(node, graph);
+                prepareAdvance(instance, definition, graph, requireSingleOutgoing(node, graph).getTargetNodeCode(),
+                        path, candidatesByNodeCode, exclusiveTargetNodeCodes);
+                return;
+            case END:
+                path.enterAutomaticNode(node.getNodeCode());
+                return;
+            case START:
+            default:
+                throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
+                        "START node cannot be entered by runtime advancement: " + targetNodeCode);
+        }
+    }
+
+    private void prepareUserTaskCandidates(ProcessInstanceEntity instance,
+                                           ProcessDefinitionDetailDTO definition,
+                                           ProcessNodeDTO node,
+                                           Map<String, List<String>> candidatesByNodeCode) {
+        if (candidatesByNodeCode.containsKey(node.getNodeCode())) {
+            return;
+        }
+        Map<String, Object> variables = readObjectMap(instance.getVariablesJson(), "instance variables");
+        if (approverResolveRequestFactory == null) {
+            throw state(RuntimeErrorCodes.DEFINITION_INVALID,
+                    "approver resolve request factory is not configured");
+        }
+        com.flowmind.platform.api.request.ApproverResolveRequest request = approverResolveRequestFactory.create(
+                definition, instance.getId(), node.getNodeCode(), instance.getStarterUserId(),
+                instance.getStarterDeptId(), variables);
+        List<UserDTO> approvers = requestValidator.resolveApprovers(node.getMultiInstanceMode(), approverResolver, request);
+        List<String> candidateUserIds = new ArrayList<String>();
+        for (UserDTO approver : approvers) {
+            candidateUserIds.add(approver.getUserId());
+        }
+        candidatesByNodeCode.put(node.getNodeCode(), candidateUserIds);
     }
 
     private ProcessTaskGroupEntity markParallelBranchArrived(ProcessInstanceEntity instance,

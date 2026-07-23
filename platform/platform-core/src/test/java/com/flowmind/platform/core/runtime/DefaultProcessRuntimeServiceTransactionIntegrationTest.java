@@ -53,6 +53,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -155,7 +156,38 @@ class DefaultProcessRuntimeServiceTransactionIntegrationTest {
         assertEquals(null, operation.getResultJson());
     }
 
+    @Test
+    void rollsBackTaskCasWhenHistoryArchivingFails() {
+        HistoryTaskWriter failingHistoryWriter = mock(HistoryTaskWriter.class);
+        doThrow(new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "simulated history failure"))
+                .when(failingHistoryWriter).archiveCompletedTask(any(RuntimeTaskContext.class), eq(ActionTypeEnum.APPROVE),
+                anyString(), any(), anyString());
+        DefaultProcessRuntimeService service = service(callbackService, failingHistoryWriter, false);
+
+        assertThrows(RuntimeStateException.class,
+                () -> service.approve(approveRequest("operation-history-rollback", "task-review")));
+
+        assertFullyRolledBack("operation-history-rollback");
+    }
+
+    @Test
+    void rollsBackTaskCasAndHistoryWhenNextTaskCreationFails() {
+        DefaultProcessRuntimeService service = service(callbackService,
+                new HistoryTaskWriter(processHistoryTaskRepository), true);
+
+        assertThrows(RuntimeStateException.class,
+                () -> service.approve(approveRequest("operation-next-task-rollback", "task-review")));
+
+        assertFullyRolledBack("operation-next-task-rollback");
+    }
+
     private DefaultProcessRuntimeService service(CallbackService runtimeCallbackService) {
+        return service(runtimeCallbackService, new HistoryTaskWriter(processHistoryTaskRepository), false);
+    }
+
+    private DefaultProcessRuntimeService service(CallbackService runtimeCallbackService,
+                                                  HistoryTaskWriter runtimeHistoryWriter,
+                                                  boolean failNextTaskCreation) {
         RuntimeDefinitionLoader definitionLoader = mock(RuntimeDefinitionLoader.class);
         RuntimeRequestValidator requestValidator = mock(RuntimeRequestValidator.class);
         RuntimeStateValidator stateValidator = mock(RuntimeStateValidator.class);
@@ -170,27 +202,48 @@ class DefaultProcessRuntimeServiceTransactionIntegrationTest {
                 eq(ActionTypeEnum.APPROVE), eq(operator)))
                 .thenReturn(new RuntimeTaskContext(instance, task, ActionTypeEnum.APPROVE, operator));
         when(definitionLoader.loadForInstance(any(ProcessInstanceEntity.class))).thenReturn(definition);
-        doAnswer(invocation -> {
-            ProcessActiveTaskEntity next = new ProcessActiveTaskEntity();
-            next.setId("task-next");
-            next.setInstanceId("instance-1");
-            next.setDefinitionId("definition-1");
-            next.setNodeCode("next");
-            next.setCandidateUserIds("[\"finance\"]");
-            next.setTaskStatus("ACTIVE");
-            activeTaskRepository.insert(next);
-            RuntimeAdvanceResult result = new RuntimeAdvanceResult();
-            result.addCreatedTask(RuntimeModelMapper.toDto(next, null, null));
-            return result;
-        }).when(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
-                eq("next"), isNull(), isNull());
+        RuntimeAdvancePreparation preparation = mock(RuntimeAdvancePreparation.class);
+        when(nodeAdvancer.prepareAdvance(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                eq("next"), isNull(), isNull())).thenReturn(preparation);
+        if (failNextTaskCreation) {
+            doThrow(new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "simulated next task failure"))
+                    .when(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                    eq("next"), isNull(), isNull(), eq(preparation));
+        } else {
+            doAnswer(invocation -> {
+                ProcessActiveTaskEntity next = new ProcessActiveTaskEntity();
+                next.setId("task-next");
+                next.setInstanceId("instance-1");
+                next.setDefinitionId("definition-1");
+                next.setNodeCode("next");
+                next.setCandidateUserIds("[\"finance\"]");
+                next.setTaskStatus("ACTIVE");
+                activeTaskRepository.insert(next);
+                RuntimeAdvanceResult result = new RuntimeAdvanceResult();
+                result.addCreatedTask(RuntimeModelMapper.toDto(next, null, null));
+                return result;
+            }).when(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                    eq("next"), isNull(), isNull(), eq(preparation));
+        }
 
         RuntimeOperationExecutor operationExecutor = new RuntimeOperationExecutor(
                 new OperationIdempotencyService(operationRecordRepository));
         return new DefaultProcessRuntimeService(instanceRepository, activeTaskRepository, historyTaskRepository,
                 definitionLoader, requestValidator, operationExecutor, nodeAdvancer, null, runtimeCallbackService,
-                stateValidator, new HistoryTaskWriter(processHistoryTaskRepository),
+                stateValidator, runtimeHistoryWriter,
                 new RuntimeTransactionExecutor(transactionManager));
+    }
+
+    private void assertFullyRolledBack(String operationId) {
+        assertEquals("ACTIVE", jdbcTemplate.queryForObject(
+                "SELECT task_status FROM process_active_task WHERE id = ?", String.class, "task-review"));
+        assertEquals(0, count("process_history_task"));
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM process_active_task WHERE id = 'task-next'", Integer.class).intValue());
+        assertEquals(0, count("process_callback_log"));
+        ProcessOperationRecordEntity operation = operationRecordRepository.findByOperationId(operationId);
+        assertEquals("FAILED", operation.getOperationStatus());
+        assertEquals(null, operation.getResultJson());
     }
 
     private ApproveTaskRequest approveRequest(String operationId, String taskId) {
