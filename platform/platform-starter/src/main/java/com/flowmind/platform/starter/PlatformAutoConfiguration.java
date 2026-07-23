@@ -45,14 +45,32 @@ import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.api.dto.FileContent;
 import com.flowmind.platform.api.dto.ProcessMessage;
 import com.flowmind.platform.api.dto.StoredFile;
+import com.flowmind.platform.core.query.DefaultTaskQueryService;
+import com.flowmind.platform.core.query.ProcessTraceAssembler;
+import com.flowmind.platform.core.query.RuntimeQueryAssembler;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
+import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
+import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
+import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.starter.properties.PlatformProperties;
+import org.sqlite.SQLiteDataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
 
+import javax.sql.DataSource;
+import java.io.File;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
@@ -67,8 +85,84 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public TaskQueryService taskQueryService() {
-        return new UnsupportedTaskQueryService();
+    public DataSource dataSource(PlatformProperties properties) {
+        String path = properties.getSqlite().getPath();
+        if (path == null || path.trim().isEmpty()) {
+            path = "./data/flow-mind.db";
+        }
+        if (!path.startsWith("jdbc:sqlite:") && !":memory:".equals(path) && !path.startsWith("file:")) {
+            File file = new File(path);
+            File parent = file.getAbsoluteFile().getParentFile();
+            if (parent != null) {
+                parent.mkdirs();
+            }
+        }
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl(path.startsWith("jdbc:sqlite:") ? path : "jdbc:sqlite:" + path);
+        return dataSource;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public PlatformSchemaInitializer platformSchemaInitializer(DataSource dataSource) {
+        return new PlatformSchemaInitializer(dataSource);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessHistoryTaskRepository processHistoryTaskRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessHistoryTaskRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ActiveTaskRepository activeTaskRepository(JdbcTemplate jdbcTemplate) {
+        return new ActiveTaskRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessInstanceRepository processInstanceRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessInstanceRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessTraceAssembler processTraceAssembler() {
+        return new ProcessTraceAssembler();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RuntimeQueryAssembler runtimeQueryAssembler() {
+        return new RuntimeQueryAssembler();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TaskQueryService taskQueryService(ProcessHistoryTaskRepository historyTaskRepository,
+                                             ActiveTaskRepository activeTaskRepository,
+                                             ProcessInstanceRepository instanceRepository,
+                                             ProcessTraceAssembler traceAssembler,
+                                             RuntimeQueryAssembler queryAssembler,
+                                             ObjectProvider<CurrentUserProvider> currentUserProvider,
+                                             ObjectProvider<DelegateProvider> delegateProvider) {
+        CurrentUserProvider currentUser = currentUserProvider.getIfAvailable();
+        if (currentUser == null) {
+            currentUser = new RequiredCurrentUserProvider();
+        }
+        DelegateProvider delegates = delegateProvider.getIfAvailable();
+        if (delegates == null) {
+            delegates = (principalUserId, at) -> Collections.<DelegateRelationDTO>emptyList();
+        }
+        return new DefaultTaskQueryService(historyTaskRepository, activeTaskRepository, instanceRepository,
+                traceAssembler, queryAssembler, currentUser, delegates);
     }
 
     @Bean
@@ -142,48 +236,53 @@ public class PlatformAutoConfiguration {
         return () -> new UserContext("mock-user", "Mock User", "mock-dept", "Mock Department");
     }
 
-    private abstract static class UnsupportedPlatformService {
-        protected final UnsupportedOperationException unsupported() {
-            return new UnsupportedOperationException("Platform service implementation is not wired in this starter skeleton");
+    public static final class PlatformSchemaInitializer implements InitializingBean {
+        private static final String INIT_SCRIPT = "schema/sqlite/001_init_flow_platform.sql";
+        private static final String M2_OPERATION_MIGRATION = "schema/sqlite/002_m2_runtime_operation_actions.sql";
+
+        private final DataSource dataSource;
+
+        public PlatformSchemaInitializer(DataSource dataSource) {
+            this.dataSource = dataSource;
+        }
+
+        @Override
+        public void afterPropertiesSet() throws Exception {
+            Connection connection = DataSourceUtils.getConnection(dataSource);
+            try {
+                ScriptUtils.executeSqlScript(connection, new ClassPathResource(INIT_SCRIPT));
+                if (!operationRecordSupportsM2Actions(connection)) {
+                    ScriptUtils.executeSqlScript(connection, new ClassPathResource(M2_OPERATION_MIGRATION));
+                }
+            } finally {
+                DataSourceUtils.releaseConnection(connection, dataSource);
+            }
+        }
+
+        private boolean operationRecordSupportsM2Actions(Connection connection) throws Exception {
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                                 + "AND name = 'process_operation_record'")) {
+                if (!resultSet.next() || resultSet.getString("sql") == null) {
+                    return false;
+                }
+                String definition = resultSet.getString("sql");
+                return definition.contains("START_AND_SUBMIT") && definition.contains("UPDATE_VARIABLES");
+            }
         }
     }
 
-    private static final class UnsupportedTaskQueryService extends UnsupportedPlatformService
-            implements TaskQueryService {
-
+    private static final class RequiredCurrentUserProvider implements CurrentUserProvider {
         @Override
-        public PageResult<TaskDTO> queryTodoTasks(TodoTaskQuery query) {
-            throw unsupported();
+        public UserContext getCurrentUser() {
+            throw new IllegalStateException("CurrentUserProvider bean is required for TaskQueryService");
         }
+    }
 
-        @Override
-        public PageResult<HistoryTaskDTO> queryCompletedTasks(CompletedTaskQuery query) {
-            throw unsupported();
-        }
-
-        @Override
-        public PageResult<ProcessInstanceDTO> queryStartedInstances(StartedInstanceQuery query) {
-            throw unsupported();
-        }
-
-        @Override
-        public List<TaskDTO> queryActiveTasks(String instanceId) {
-            throw unsupported();
-        }
-
-        @Override
-        public List<HistoryTaskDTO> queryHistoryTasks(String instanceId) {
-            throw unsupported();
-        }
-
-        @Override
-        public List<ProcessCommentDTO> queryComments(String instanceId) {
-            throw unsupported();
-        }
-
-        @Override
-        public PageResult<ReadRecordDTO> queryReadRecords(ReadRecordQuery query) {
-            throw unsupported();
+    private abstract static class UnsupportedPlatformService {
+        protected final UnsupportedOperationException unsupported() {
+            return new UnsupportedOperationException("Platform service implementation is not wired in this starter skeleton");
         }
     }
 

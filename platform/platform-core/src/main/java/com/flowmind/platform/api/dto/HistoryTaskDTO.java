@@ -12,12 +12,24 @@ public class HistoryTaskDTO {
     private String historyTaskId;
     /** 历史任务所属的流程实例 ID。 */
     private String instanceId;
+    /** 流程定义的业务编码快照。 */
+    private String processCode;
+    /** 流程名称快照。 */
+    private String processName;
+    /** 流程实例标题。 */
+    private String instanceTitle;
+    /** 流程发起人的用户 ID。 */
+    private String starterUserId;
+    /** 流程发起人的名称快照。 */
+    private String starterUserName;
     /** 触发该历史记录的操作幂等号。 */
     private String operationId;
     /** 被归档或取消的原活动任务 ID。 */
     private String activeTaskId;
     /** 任务所在流程节点的编码。 */
     private String nodeCode;
+    /** 任务所在流程节点的名称。 */
+    private String nodeName;
     /** 会签、或签或并行任务组 ID；非分组任务可为空。 */
     private String taskGroupId;
     /** 并行任务所在分支的标识；非并行任务可为空。 */
@@ -62,6 +74,46 @@ public class HistoryTaskDTO {
         this.instanceId = instanceId;
     }
 
+    public String getProcessCode() {
+        return processCode;
+    }
+
+    public void setProcessCode(String processCode) {
+        this.processCode = processCode;
+    }
+
+    public String getProcessName() {
+        return processName;
+    }
+
+    public void setProcessName(String processName) {
+        this.processName = processName;
+    }
+
+    public String getInstanceTitle() {
+        return instanceTitle;
+    }
+
+    public void setInstanceTitle(String instanceTitle) {
+        this.instanceTitle = instanceTitle;
+    }
+
+    public String getStarterUserId() {
+        return starterUserId;
+    }
+
+    public void setStarterUserId(String starterUserId) {
+        this.starterUserId = starterUserId;
+    }
+
+    public String getStarterUserName() {
+        return starterUserName;
+    }
+
+    public void setStarterUserName(String starterUserName) {
+        this.starterUserName = starterUserName;
+    }
+
     public String getOperationId() {
         return operationId;
     }
@@ -84,6 +136,14 @@ public class HistoryTaskDTO {
 
     public void setNodeCode(String nodeCode) {
         this.nodeCode = nodeCode;
+    }
+
+    public String getNodeName() {
+        return nodeName;
+    }
+
+    public void setNodeName(String nodeName) {
+        this.nodeName = nodeName;
     }
 
     public String getTaskGroupId() {
