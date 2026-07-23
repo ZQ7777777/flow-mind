@@ -99,14 +99,38 @@ public class HistoryTaskWriter {
                                                         ActionTypeEnum actionType,
                                                         String reason,
                                                         String operationId) {
-        HistoryArchiveCommand command = new HistoryArchiveCommand();
         ProcessInstanceEntity instance = new ProcessInstanceEntity();
         instance.setId(task.getInstanceId());
+        return archiveCanceledTask(instance, task, null, actionType, reason, null, operationId);
+    }
+
+    /**
+     * 归档被实例级管理动作取消的任务，并保留实际操作人与变量快照。
+     *
+     * @param instance          所属流程实例
+     * @param task              被取消的活动任务
+     * @param operator          执行管理动作的可信用户
+     * @param actionType        终止、跳转或强制办结等取消类动作
+     * @param reason            处理说明
+     * @param variablesSnapshot 取消时的流程变量快照
+     * @param operationId       本次操作幂等号
+     * @return 新写入或已存在的历史任务记录
+     */
+    public ProcessHistoryTaskEntity archiveCanceledTask(ProcessInstanceEntity instance,
+                                                        ProcessActiveTaskEntity task,
+                                                        UserContext operator,
+                                                        ActionTypeEnum actionType,
+                                                        String reason,
+                                                        Map<String, Object> variablesSnapshot,
+                                                        String operationId) {
+        HistoryArchiveCommand command = new HistoryArchiveCommand();
         command.setInstance(instance);
         command.setTask(task);
+        command.setOperator(operator);
         command.setActionType(actionType);
         command.setHandleType(HandleTypeEnum.NORMAL);
         command.setComment(reason);
+        command.setVariablesSnapshot(variablesSnapshot);
         command.setOperationId(operationId);
         command.setCompletedAt(LocalDateTime.now());
         return archive(command);

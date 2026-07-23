@@ -23,6 +23,14 @@ final class RuntimeOperationTypes {
     static final String APPROVE_TASK = ActionTypeEnum.APPROVE.name();
     /** 合并流程变量快照。 */
     static final String UPDATE_VARIABLES = "UPDATE_VARIABLES";
+    /** 终止运行中的流程实例。 */
+    static final String TERMINATE = ActionTypeEnum.TERMINATE.name();
+    /** 删除流程实例复用既有取消动作语义。 */
+    static final String DELETE_INSTANCE = ActionTypeEnum.CANCEL.name();
+    /** 管理员跳转流程节点。 */
+    static final String JUMP = ActionTypeEnum.JUMP.name();
+    /** 管理员强制办结流程实例。 */
+    static final String FORCE_COMPLETE = ActionTypeEnum.FORCE_COMPLETE.name();
 
     private RuntimeOperationTypes() {
     }

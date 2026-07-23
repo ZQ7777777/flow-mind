@@ -56,6 +56,13 @@ public class TaskGroupRepository {
         return count == null ? 0L : count.longValue();
     }
 
+    /** 按创建时间和 ID 稳定读取实例下所有活动任务组。 */
+    public List<ProcessTaskGroupEntity> findActiveByInstanceId(String instanceId) {
+        return jdbcTemplate.query("SELECT * FROM process_task_group WHERE instance_id = ? "
+                        + "AND group_status = 'ACTIVE' ORDER BY created_at ASC, id ASC",
+                RuntimeRowMappers.TASK_GROUP, instanceId);
+    }
+
     /**
      * 原子增加会签完成计数；达到 total_count 时同时完成任务组。
      */
