@@ -287,6 +287,8 @@ class RuntimeNodeAdvancerTest {
                 "{\"a\":\"RUNNING\",\"b\":\"RUNNING\"}");
         ProcessTaskGroupEntity concurrentCompleted = group("COMPLETED", 2L, 2,
                 "{\"a\":\"ARRIVED\",\"b\":\"ARRIVED\"}");
+        when(approverResolver.resolveApprovers(any()))
+                .thenReturn(Collections.singletonList(new UserDTO("u-1", "User")));
         when(taskGroupRepository.findById("group-1")).thenReturn(branchASnapshot, concurrentCompleted);
         when(taskGroupRepository.markBranchArrived(eq("group-1"), eq("a"), anyLong())).thenReturn(1);
 

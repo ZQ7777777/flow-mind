@@ -93,6 +93,28 @@ public class RuntimeRequestValidator {
     }
 
     /**
+     * 校验实例级管理动作的公共请求字段和可信操作人身份。
+     *
+     * <p>M3 尚未引入独立的管理员授权 SPI，因此这里只保证请求中的操作人不能伪造；
+     * 角色授权由宿主适配层在进入平台前负责。</p>
+     *
+     * @param request        带操作幂等号的请求
+     * @param instanceId      目标流程实例 ID
+     * @param operatorUserId 请求声明的操作人 ID
+     * @return 可信当前用户
+     */
+    public UserContext validateInstanceOperationIdentity(OperationRequest request,
+                                                         String instanceId,
+                                                         String operatorUserId) {
+        requireOperationId(request);
+        requireText(instanceId, "instanceId");
+        requireText(operatorUserId, "operatorUserId");
+        UserContext currentUser = currentUser();
+        requireCurrentUserMatches(operatorUserId, currentUser, "operatorUserId");
+        return currentUser;
+    }
+
+    /**
      * 校验变量更新目标实例及其运行状态，调用方已经完成身份校验时使用。
      *
      * @param request     变量更新请求

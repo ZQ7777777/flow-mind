@@ -1,6 +1,7 @@
 package com.flowmind.platform.core.runtime;
 
 import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
+import com.flowmind.platform.api.dto.OperationResult;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
@@ -17,8 +18,10 @@ import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.AttachmentUploadItem;
+import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
 import com.flowmind.platform.api.request.StartProcessRequest;
 import com.flowmind.platform.api.request.SubmitTaskRequest;
+import com.flowmind.platform.api.request.TerminateProcessRequest;
 import com.flowmind.platform.api.request.UpdateVariablesRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.CallbackService;
@@ -30,6 +33,8 @@ import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
+import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
+import com.flowmind.platform.persistence.repository.ProcessInstanceDeletionRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,11 +45,13 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -76,6 +83,9 @@ class DefaultProcessRuntimeServiceTest {
     private RuntimeStateValidator runtimeStateValidator;
     private HistoryTaskWriter historyTaskWriter;
     private RuntimeTransactionExecutor transactionExecutor;
+    private InstanceTaskCancellationService taskCancellationService;
+    private ProcessInstanceDeletionRepository instanceDeletionRepository;
+    private ProcessDefinitionRepository definitionRepository;
     private DefaultProcessRuntimeService service;
 
     @BeforeEach
@@ -92,16 +102,21 @@ class DefaultProcessRuntimeServiceTest {
         runtimeStateValidator = mock(RuntimeStateValidator.class);
         historyTaskWriter = mock(HistoryTaskWriter.class);
         transactionExecutor = mock(RuntimeTransactionExecutor.class);
+        taskCancellationService = mock(InstanceTaskCancellationService.class);
+        instanceDeletionRepository = mock(ProcessInstanceDeletionRepository.class);
+        definitionRepository = mock(ProcessDefinitionRepository.class);
         doAnswer(invocation -> ((RuntimeTransactionWork<?>) invocation.getArgument(0)).execute())
                 .when(transactionExecutor).execute(any(RuntimeTransactionWork.class));
         when(nodeAdvancer.prepareAdvance(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
-                anyString(), any(), any())).thenReturn(mock(RuntimeAdvancePreparation.class));
+                anyString(), any(), any())).thenReturn(new RuntimeAdvancePreparation(
+                Collections.<String, List<String>>emptyMap(), Collections.<String, String>emptyMap()));
         when(nodeAdvancer.advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
                 anyString(), any(), any(), any(RuntimeAdvancePreparation.class)))
                 .thenReturn(new RuntimeAdvanceResult());
         service = new DefaultProcessRuntimeService(instanceRepository, activeTaskRepository, historyTaskRepository,
                 definitionLoader, requestValidator, operationExecutor, nodeAdvancer, attachmentService,
-                callbackService, runtimeStateValidator, historyTaskWriter, transactionExecutor);
+                callbackService, runtimeStateValidator, historyTaskWriter, transactionExecutor,
+                taskCancellationService, instanceDeletionRepository, definitionRepository);
     }
 
     @Test
@@ -154,6 +169,80 @@ class DefaultProcessRuntimeServiceTest {
                 any(RuntimeAdvancePreparation.class));
         verify(callbackService).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
+    }
+
+    @Test
+    void terminateCancelsOpenWorkAuditsAndPublishesEvent() {
+        TerminateProcessRequest request = terminateRequest("operation-terminate");
+        UserContext operator = user("operator", "Operator");
+        ProcessInstanceEntity instance = runningInstance("instance-1");
+        when(requestValidator.validateInstanceOperationIdentity(request, "instance-1", "operator"))
+                .thenReturn(operator);
+        when(operationExecutor.begin(eq(request), eq(RuntimeOperationTypes.TERMINATE), eq("operator"),
+                eq("instance-1"), isNull(), any(LocalDateTime.class))).thenReturn(newDecision());
+        when(instanceRepository.findById("instance-1")).thenReturn(instance);
+        when(instanceRepository.terminate(eq("instance-1"), any(LocalDateTime.class))).thenReturn(1);
+        when(taskCancellationService.cancelOpenWork(eq(instance), eq(operator), eq(ActionTypeEnum.TERMINATE),
+                eq("terminated by operator"), eq("operation-terminate"), any(Map.class)))
+                .thenReturn(Collections.emptyList());
+        when(definitionRepository.insertAuditLog(anyString(), eq("instance-1"), eq("operation-terminate"),
+                anyString(), eq("instance-1"), eq(ActionTypeEnum.TERMINATE.name()), eq("operator"),
+                anyString(), any(LocalDateTime.class))).thenReturn(1);
+
+        ProcessInstanceDTO result = service.terminate(request);
+
+        assertEquals(InstanceStatusEnum.TERMINATED, result.getInstanceStatus());
+        assertTrue(result.getCurrentNodeCodes().isEmpty());
+        verify(taskCancellationService).cancelOpenWork(eq(instance), eq(operator), eq(ActionTypeEnum.TERMINATE),
+                eq("terminated by operator"), eq("operation-terminate"), any(Map.class));
+        verify(callbackService).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
+        verify(operationExecutor).markSuccess("operation-terminate", result);
+    }
+
+    @Test
+    void deleteInstancePublishesBeforeRemovingRuntimeDataAndPersistsResult() {
+        DeleteProcessInstanceRequest request = deleteRequest("operation-delete");
+        UserContext operator = user("operator", "Operator");
+        ProcessInstanceEntity instance = runningInstance("instance-1");
+        when(requestValidator.validateInstanceOperationIdentity(request, "instance-1", "operator"))
+                .thenReturn(operator);
+        when(operationExecutor.begin(eq(request), eq(RuntimeOperationTypes.DELETE_INSTANCE), eq("operator"),
+                eq("instance-1"), isNull(), any(LocalDateTime.class))).thenReturn(newDecision());
+        when(instanceRepository.findById("instance-1")).thenReturn(instance);
+        when(definitionRepository.insertAuditLog(anyString(), eq("instance-1"), eq("operation-delete"),
+                anyString(), eq("instance-1"), eq(ActionTypeEnum.CANCEL.name()), eq("operator"),
+                anyString(), any(LocalDateTime.class))).thenReturn(1);
+        when(instanceDeletionRepository.deleteRuntimeData("instance-1")).thenReturn(1);
+
+        OperationResult result = service.deleteInstance(request);
+
+        assertTrue(result.isDeleted());
+        assertFalse(result.isReplayed());
+        assertEquals("instance-1", result.getTargetId());
+        InOrder inOrder = inOrder(callbackService, instanceDeletionRepository);
+        inOrder.verify(callbackService).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
+        inOrder.verify(instanceDeletionRepository).deleteRuntimeData("instance-1");
+        verify(operationExecutor).markSuccess("operation-delete", result);
+    }
+
+    @Test
+    void legacyConstructorMarksM3DependencyFailureInsteadOfLeavingOperationProcessing() {
+        TerminateProcessRequest request = terminateRequest("operation-terminate-legacy");
+        UserContext operator = user("operator", "Operator");
+        DefaultProcessRuntimeService legacyService = new DefaultProcessRuntimeService(instanceRepository,
+                activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator, operationExecutor,
+                nodeAdvancer, attachmentService, callbackService, runtimeStateValidator, historyTaskWriter,
+                transactionExecutor);
+        when(requestValidator.validateInstanceOperationIdentity(request, "instance-1", "operator"))
+                .thenReturn(operator);
+        when(operationExecutor.begin(eq(request), eq(RuntimeOperationTypes.TERMINATE), eq("operator"),
+                eq("instance-1"), isNull(), any(LocalDateTime.class))).thenReturn(newDecision());
+
+        RuntimeStateException error = assertThrows(RuntimeStateException.class, () -> legacyService.terminate(request));
+
+        assertEquals(RuntimeErrorCodes.INVALID_ACTION, error.getErrorCode());
+        verify(operationExecutor).markDeterministicFailure("operation-terminate-legacy",
+                RuntimeErrorCodes.INVALID_ACTION);
     }
 
     @Test
@@ -400,6 +489,23 @@ class DefaultProcessRuntimeServiceTest {
         request.setExpectedTaskVersion(Long.valueOf(0L));
         request.setOperatorUserId("manager");
         request.setComment("approved");
+        return request;
+    }
+
+    private TerminateProcessRequest terminateRequest(String operationId) {
+        TerminateProcessRequest request = new TerminateProcessRequest();
+        request.setOperationId(operationId);
+        request.setInstanceId("instance-1");
+        request.setOperatorUserId("operator");
+        request.setComment("terminated by operator");
+        return request;
+    }
+
+    private DeleteProcessInstanceRequest deleteRequest(String operationId) {
+        DeleteProcessInstanceRequest request = new DeleteProcessInstanceRequest();
+        request.setOperationId(operationId);
+        request.setInstanceId("instance-1");
+        request.setOperatorUserId("operator");
         return request;
     }
 

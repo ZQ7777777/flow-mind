@@ -45,6 +45,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -202,7 +203,8 @@ class DefaultProcessRuntimeServiceTransactionIntegrationTest {
                 eq(ActionTypeEnum.APPROVE), eq(operator)))
                 .thenReturn(new RuntimeTaskContext(instance, task, ActionTypeEnum.APPROVE, operator));
         when(definitionLoader.loadForInstance(any(ProcessInstanceEntity.class))).thenReturn(definition);
-        RuntimeAdvancePreparation preparation = mock(RuntimeAdvancePreparation.class);
+        RuntimeAdvancePreparation preparation = new RuntimeAdvancePreparation(
+                Collections.<String, List<String>>emptyMap(), Collections.<String, String>emptyMap());
         when(nodeAdvancer.prepareAdvance(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
                 eq("next"), isNull(), isNull())).thenReturn(preparation);
         if (failNextTaskCreation) {
