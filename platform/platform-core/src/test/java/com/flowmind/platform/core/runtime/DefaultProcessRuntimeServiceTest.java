@@ -52,6 +52,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -74,6 +75,7 @@ class DefaultProcessRuntimeServiceTest {
     private CallbackService callbackService;
     private RuntimeStateValidator runtimeStateValidator;
     private HistoryTaskWriter historyTaskWriter;
+    private RuntimeTransactionExecutor transactionExecutor;
     private DefaultProcessRuntimeService service;
 
     @BeforeEach
@@ -89,9 +91,12 @@ class DefaultProcessRuntimeServiceTest {
         callbackService = mock(CallbackService.class);
         runtimeStateValidator = mock(RuntimeStateValidator.class);
         historyTaskWriter = mock(HistoryTaskWriter.class);
+        transactionExecutor = mock(RuntimeTransactionExecutor.class);
+        doAnswer(invocation -> ((RuntimeTransactionWork<?>) invocation.getArgument(0)).execute())
+                .when(transactionExecutor).execute(any(RuntimeTransactionWork.class));
         service = new DefaultProcessRuntimeService(instanceRepository, activeTaskRepository, historyTaskRepository,
                 definitionLoader, requestValidator, operationExecutor, nodeAdvancer, attachmentService,
-                callbackService, runtimeStateValidator, historyTaskWriter);
+                callbackService, runtimeStateValidator, historyTaskWriter, transactionExecutor);
     }
 
     @Test
@@ -118,6 +123,7 @@ class DefaultProcessRuntimeServiceTest {
                 anyString(), isNull(), isNull());
         verify(operationExecutor).bindTarget(eq(request.getOperationId()), eq(result.getInstanceId()), isNull());
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
+        verify(transactionExecutor).execute(any(RuntimeTransactionWork.class));
     }
 
     @Test
