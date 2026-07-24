@@ -128,12 +128,8 @@ class M2SerialWorkflowIntegrationTest {
         start.setStarterDeptId("dept-1");
         start.setVariables(new LinkedHashMap<String, Object>());
         start.getVariables().put("amount", Integer.valueOf(100));
+        start.getVariables().put("memo", "hotel");
         ProcessInstanceDTO started = runtimeService.startAndSubmit(start);
-
-        currentUserProvider.setCurrent(user("starter", "Starter"));
-        SubmitTaskRequest submit = submitRequest("op-submit", started.getCreatedTasks().get(0).getTaskId(), "starter");
-        submit.setVariables(Collections.<String, Object>singletonMap("memo", "hotel"));
-        runtimeService.submitTask(submit);
 
         currentUserProvider.setCurrent(user("manager", "Manager"));
         String managerTaskId = openTaskId("manager-review");
@@ -149,26 +145,16 @@ class M2SerialWorkflowIntegrationTest {
                 + "AND task_status IN ('ACTIVE', 'CLAIMED')", Integer.class, started.getInstanceId()).intValue());
         assertEquals(3, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_history_task WHERE instance_id = ?",
                 Integer.class, started.getInstanceId()).intValue());
-        assertEquals(8, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_callback_log WHERE instance_id = ?",
+        assertEquals(7, jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_callback_log WHERE instance_id = ?",
                 Integer.class, started.getInstanceId()).intValue());
         assertEquals("hotel", runtimeService.getInstance(started.getInstanceId()).getVariables().get("memo"));
-        assertEquals(3, runtimeService.getInstance(started.getInstanceId()).getComments().size());
+        assertEquals(2, runtimeService.getInstance(started.getInstanceId()).getComments().size());
         assertTrue(runtimeService.getInstance(started.getInstanceId()).getActiveTasks().isEmpty());
     }
 
     @Test
-    void resolvesNextApproverBeforeTaskCasAndDoesNotCompleteWhenResolutionFails() {
+    void startAndSubmitAdvancesToManagerAndDoesNotCompleteWhenApprovalResolutionFails() {
         ProcessInstanceDTO started = runtimeService.startAndSubmit(startRequest("op-order-start"));
-        String applyTaskId = started.getCreatedTasks().get(0).getTaskId();
-        clearInvocations(approverResolver, activeTaskRepository);
-
-        currentUserProvider.setCurrent(user("starter", "Starter"));
-        runtimeService.submitTask(submitRequest("op-order-submit", applyTaskId, "starter"));
-
-        org.mockito.InOrder inOrder = inOrder(approverResolver, activeTaskRepository);
-        inOrder.verify(approverResolver).resolveApprovers(any());
-        inOrder.verify(activeTaskRepository).complete(applyTaskId, 0L);
-
         String managerTaskId = openTaskId("manager-review");
         clearInvocations(approverResolver, activeTaskRepository);
         doThrow(new IllegalStateException("resolver unavailable"))

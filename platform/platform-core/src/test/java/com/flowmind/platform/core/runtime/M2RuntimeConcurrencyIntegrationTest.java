@@ -83,7 +83,6 @@ class M2RuntimeConcurrencyIntegrationTest {
         String jdbcUrl = initializeDatabase();
         bootstrap = client(jdbcUrl, user("starter", "Starter"), definition);
         ProcessInstanceDTO instance = bootstrap.service.startAndSubmit(startRequest("same-task-start"));
-        bootstrap.service.submitTask(submitRequest("same-task-submit", taskId(bootstrap.jdbcTemplate, instance.getInstanceId(), "apply"), "starter"));
         String reviewTaskId = taskId(bootstrap.jdbcTemplate, instance.getInstanceId(), "review");
         first = client(jdbcUrl, user("manager", "Manager"), definition);
         second = client(jdbcUrl, user("manager", "Manager"), definition);
@@ -96,7 +95,7 @@ class M2RuntimeConcurrencyIntegrationTest {
         assertEquals("COMPLETED", status(bootstrap.jdbcTemplate, reviewTaskId));
         assertEquals(2, count(bootstrap.jdbcTemplate, "process_history_task", instance.getInstanceId()));
         assertEquals(1, openTasks(bootstrap.jdbcTemplate, instance.getInstanceId(), "final-review"));
-        assertEquals(6, count(bootstrap.jdbcTemplate, "process_callback_log", instance.getInstanceId()));
+        assertEquals(5, count(bootstrap.jdbcTemplate, "process_callback_log", instance.getInstanceId()));
     }
 
     @Test
@@ -105,8 +104,6 @@ class M2RuntimeConcurrencyIntegrationTest {
         String jdbcUrl = initializeDatabase();
         bootstrap = client(jdbcUrl, user("starter", "Starter"), definition);
         ProcessInstanceDTO instance = bootstrap.service.startAndSubmit(startRequest("parallel-race-start"));
-        bootstrap.service.submitTask(submitRequest("parallel-race-submit",
-                taskId(bootstrap.jdbcTemplate, instance.getInstanceId(), "apply"), "starter"));
         String branchATaskId = taskId(bootstrap.jdbcTemplate, instance.getInstanceId(), "branch-a");
         String branchBTaskId = taskId(bootstrap.jdbcTemplate, instance.getInstanceId(), "branch-b");
         first = client(jdbcUrl, user("alice", "Alice"), definition);
@@ -123,7 +120,7 @@ class M2RuntimeConcurrencyIntegrationTest {
         assertEquals("COMPLETED", bootstrap.jdbcTemplate.queryForObject("SELECT group_status FROM process_task_group "
                 + "WHERE instance_id = ?", String.class, instance.getInstanceId()));
         assertEquals(3, count(bootstrap.jdbcTemplate, "process_history_task", instance.getInstanceId()));
-        assertEquals(8, count(bootstrap.jdbcTemplate, "process_callback_log", instance.getInstanceId()));
+        assertEquals(7, count(bootstrap.jdbcTemplate, "process_callback_log", instance.getInstanceId()));
     }
 
     private List<Boolean> concurrently(Callable<Boolean> firstAction, Callable<Boolean> secondAction) throws Exception {

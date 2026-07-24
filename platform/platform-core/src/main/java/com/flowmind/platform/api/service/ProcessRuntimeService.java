@@ -37,6 +37,10 @@ public interface ProcessRuntimeService {
      * @param request 启动请求
      * @return 流程实例概要
      */
+    /**
+     * Starts an instance, persists form variables and attachments from the same request,
+     * then completes the starter task and advances to the following node.
+     */
     ProcessInstanceDTO startAndSubmit(StartProcessRequest request);
 
     /**

@@ -52,7 +52,7 @@ public class ProcessRuntimeController {
         return runtimeService.startProcess(request);
     }
 
-    @Operation(summary = "Start process instance and submit first task")
+    @Operation(summary = "Start process instance, submit starter task and advance")
     @PostMapping("/api/platform/runtime/instances/start-submit")
     public ProcessInstanceDTO startAndSubmit(@RequestBody StartProcessRequest request) {
         return runtimeService.startAndSubmit(request);

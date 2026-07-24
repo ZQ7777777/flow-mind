@@ -9,6 +9,7 @@ import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ProcessAttachmentTemplateDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
+import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
@@ -19,6 +20,7 @@ import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.AttachmentUploadItem;
 import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
+import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.StartProcessRequest;
 import com.flowmind.platform.api.request.SubmitTaskRequest;
 import com.flowmind.platform.api.request.TerminateProcessRequest;
@@ -147,25 +149,66 @@ class DefaultProcessRuntimeServiceTest {
     }
 
     @Test
-    void startAndSubmitAdvancesFromStartAndReturnsCreatedTaskSnapshot() {
+    void startAndSubmitSavesAttachmentsCompletesStarterTaskAndAdvancesToNextNode() {
         StartProcessRequest request = startRequest("operation-start-running");
+        AttachmentUploadItem attachment = new AttachmentUploadItem();
+        attachment.setAttachmentCode("receipt");
+        request.setAttachments(Collections.singletonList(attachment));
         UserContext starter = user("starter", "Starter");
         ProcessDefinitionDetailDTO definition = definition(starterTask("apply"));
         ProcessInstanceEntity persisted = runningInstance("instance-1");
+        ProcessActiveTaskEntity applyTask = activeTask("task-apply", "instance-1", "apply");
+        TaskDTO applyTaskDto = new TaskDTO();
+        applyTaskDto.setTaskId("task-apply");
+        RuntimeAdvanceResult startAdvance = new RuntimeAdvanceResult();
+        startAdvance.addCreatedTask(applyTaskDto);
+        RuntimeAdvanceResult nextAdvance = new RuntimeAdvanceResult();
+        TaskDTO managerTaskDto = new TaskDTO();
+        managerTaskDto.setTaskId("task-manager");
+        managerTaskDto.setNodeCode("manager");
+        nextAdvance.addCreatedTask(managerTaskDto);
+        AttachmentTemplateCheckResult attachmentCheck = new AttachmentTemplateCheckResult();
+        attachmentCheck.setPassed(true);
+        ProcessHistoryTaskEntity archived = new ProcessHistoryTaskEntity();
+        archived.setId("history-apply");
+        archived.setInstanceId("instance-1");
+        archived.setActiveTaskId("task-apply");
+        archived.setNodeCode("apply");
         when(requestValidator.validateStart(request)).thenReturn(starter);
         when(operationExecutor.begin(eq(request), eq(RuntimeOperationTypes.START_AND_SUBMIT), eq("starter"), isNull(), isNull(),
                 any(LocalDateTime.class))).thenReturn(newDecision());
         when(definitionLoader.loadForStart("expense")).thenReturn(definition);
         when(instanceRepository.insert(any(ProcessInstanceEntity.class))).thenReturn(1);
         when(instanceRepository.findById(anyString())).thenReturn(persisted);
+        when(activeTaskRepository.findById("task-apply")).thenReturn(applyTask);
+        when(activeTaskRepository.complete("task-apply", 0L)).thenReturn(1);
+        when(attachmentService.checkRequiredAttachments(any())).thenReturn(attachmentCheck);
+        when(historyTaskWriter.archiveCompletedTask(any(RuntimeTaskContext.class), eq(ActionTypeEnum.SEND), isNull(),
+                any(Map.class), eq(request.getOperationId()))).thenReturn(archived);
+        when(nodeAdvancer.advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                anyString(), any(), any(), any(RuntimeAdvancePreparation.class))).thenReturn(startAdvance, nextAdvance);
 
         ProcessInstanceDTO result = service.startAndSubmit(request);
 
         assertEquals("instance-1", result.getInstanceId());
         assertEquals(InstanceStatusEnum.RUNNING, result.getInstanceStatus());
-        assertTrue(result.getCreatedTasks().isEmpty());
-        verify(nodeAdvancer).prepareAdvance(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull());
-        verify(nodeAdvancer).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), eq("apply"), isNull(), isNull(),
+        assertEquals(1, result.getCreatedTasks().size());
+        assertEquals("task-manager", result.getCreatedTasks().get(0).getTaskId());
+        ArgumentCaptor<SaveInstanceAttachmentRequest> attachmentCaptor =
+                ArgumentCaptor.forClass(SaveInstanceAttachmentRequest.class);
+        verify(attachmentService).saveInstanceAttachment(attachmentCaptor.capture());
+        assertEquals(request.getOperationId(), attachmentCaptor.getValue().getOperationId());
+        assertEquals("instance-1", attachmentCaptor.getValue().getInstanceId());
+        assertEquals("starter", attachmentCaptor.getValue().getOperatorUserId());
+        assertEquals(attachment, attachmentCaptor.getValue().getAttachment());
+        verify(attachmentService).checkRequiredAttachments(any());
+        verify(requestValidator).validateTaskAction(any(SubmitTaskRequest.class), any(ProcessInstanceEntity.class),
+                eq(applyTask), eq(starter));
+        verify(activeTaskRepository).complete("task-apply", 0L);
+        verify(historyTaskWriter).archiveCompletedTask(any(RuntimeTaskContext.class), eq(ActionTypeEnum.SEND), isNull(),
+                any(Map.class), eq(request.getOperationId()));
+        verify(nodeAdvancer, times(2)).prepareAdvance(any(ProcessInstanceEntity.class), eq(definition), anyString(), any(), any());
+        verify(nodeAdvancer, times(2)).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), anyString(), any(), any(),
                 any(RuntimeAdvancePreparation.class));
         verify(callbackService).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);

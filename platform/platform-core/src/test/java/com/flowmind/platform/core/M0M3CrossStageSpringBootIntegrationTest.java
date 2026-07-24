@@ -180,7 +180,6 @@ class M0M3CrossStageSpringBootIntegrationTest {
         ProcessDefinitionDTO definition = createAndActivateDefinition("e2e001", PROCESS_CODE);
 
         ProcessInstanceDTO instance = runtimeService.startAndSubmit(startRequest("e2e001-start", PROCESS_CODE));
-        submitStarterTask(instance, "e2e001-submit");
         approveNode(instance.getInstanceId(), "manager", "manager", "e2e001-manager");
         approveNode(instance.getInstanceId(), "finance", "finance", "e2e001-finance");
 
@@ -190,10 +189,10 @@ class M0M3CrossStageSpringBootIntegrationTest {
         assertEquals(Integer.valueOf(1), detail.getVersion());
         assertEquals("1000.00", String.valueOf(detail.getVariables().get("amount")));
         assertEquals(3, detail.getHistoryTasks().size());
-        assertEquals(3, detail.getComments().size());
+        assertEquals(2, detail.getComments().size());
         assertTrue(detail.getActiveTasks().isEmpty());
-        assertEquals(8, countByInstance("process_callback_log", instance.getInstanceId()));
-        assertEquals(8, countTestOperations());
+        assertEquals(7, countByInstance("process_callback_log", instance.getInstanceId()));
+        assertEquals(7, countTestOperations());
     }
 
     @Test
@@ -218,10 +217,6 @@ class M0M3CrossStageSpringBootIntegrationTest {
         ProcessInstanceDTO startReplay = runtimeService.startAndSubmit(start);
         assertEquals(instance.getInstanceId(), startReplay.getInstanceId());
 
-        SubmitTaskRequest submit = submitRequest("e2e002-submit",
-                openTaskId(instance.getInstanceId(), "apply"), "starter");
-        runtimeService.submitTask(submit);
-        runtimeService.submitTask(submit);
         ApproveTaskRequest manager = approveRequest("e2e002-manager",
                 openTaskId(instance.getInstanceId(), "manager"), "manager");
         currentUserProvider.setCurrent(user("manager", "Manager"));
@@ -238,15 +233,14 @@ class M0M3CrossStageSpringBootIntegrationTest {
         assertEquals(4, countTestDefinitionChildren("process_edge"));
         assertEquals(1, countTestInstances());
         assertEquals(3, countByInstance("process_history_task", instance.getInstanceId()));
-        assertEquals(8, countByInstance("process_callback_log", instance.getInstanceId()));
-        assertEquals(8, countTestOperations());
+        assertEquals(7, countByInstance("process_callback_log", instance.getInstanceId()));
+        assertEquals(7, countTestOperations());
     }
 
     @Test
     void e2e003ConcurrentManagerApprovalCreatesOneFinanceTask() throws Exception {
         createAndActivateDefinition("e2e003", PROCESS_CODE);
         ProcessInstanceDTO instance = runtimeService.startAndSubmit(startRequest("e2e003-start", PROCESS_CODE));
-        submitStarterTask(instance, "e2e003-submit");
         final String managerTaskId = openTaskId(instance.getInstanceId(), "manager");
         currentUserProvider.setCurrent(user("manager", "Manager"));
 
@@ -257,14 +251,13 @@ class M0M3CrossStageSpringBootIntegrationTest {
         assertEquals(1, successes(outcomes));
         assertEquals(1, countOpenTasks(instance.getInstanceId(), "finance"));
         assertEquals(2, countByInstance("process_history_task", instance.getInstanceId()));
-        assertEquals(6, countByInstance("process_callback_log", instance.getInstanceId()));
+        assertEquals(5, countByInstance("process_callback_log", instance.getInstanceId()));
     }
 
     @Test
     void e2e004CallbackFailureRollsBackHistoryNextTaskAndOutboxThenAllowsRetry() {
         createAndActivateDefinition("e2e004", PROCESS_CODE);
         ProcessInstanceDTO instance = runtimeService.startAndSubmit(startRequest("e2e004-start", PROCESS_CODE));
-        submitStarterTask(instance, "e2e004-submit");
         String managerTaskId = openTaskId(instance.getInstanceId(), "manager");
         int callbacksBefore = countByInstance("process_callback_log", instance.getInstanceId());
         currentUserProvider.setCurrent(user("manager", "Manager"));
@@ -310,7 +303,6 @@ class M0M3CrossStageSpringBootIntegrationTest {
         assertEquals(Integer.valueOf(2), runtimeService.getInstance(instanceB.getInstanceId()).getVersion());
         assertEquals(v2.getId(), runtimeService.getInstance(instanceB.getInstanceId()).getDefinitionId());
 
-        submitStarterTask(instanceA, "e2e005-submit-a");
         assertEquals(1, countOpenTasks(instanceA.getInstanceId(), "manager"));
     }
 
@@ -465,7 +457,6 @@ class M0M3CrossStageSpringBootIntegrationTest {
         currentUserProvider.setCurrent(user("starter", "Starter"));
         ProcessInstanceDTO instance = runtimeService.startAndSubmit(
                 startRequest(prefix + "-start", PROCESS_CODE));
-        submitStarterTask(instance, prefix + "-submit");
         return instance;
     }
 

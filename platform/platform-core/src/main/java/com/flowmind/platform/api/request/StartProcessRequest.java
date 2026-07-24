@@ -1,5 +1,6 @@
 package com.flowmind.platform.api.request;
 
+import java.util.List;
 import java.util.Map;
 
 public class StartProcessRequest extends OperationRequest {
@@ -16,6 +17,7 @@ public class StartProcessRequest extends OperationRequest {
     private String starterDeptId;
     /** 启动时写入的流程变量，通常承载表单字段值。 */
     private Map<String, Object> variables;
+    private List<AttachmentUploadItem> attachments;
 
     public StartProcessRequest() {
     }
@@ -66,5 +68,13 @@ public class StartProcessRequest extends OperationRequest {
 
     public void setVariables(Map<String, Object> variables) {
         this.variables = variables;
+    }
+
+    public List<AttachmentUploadItem> getAttachments() {
+        return attachments;
+    }
+
+    public void setAttachments(List<AttachmentUploadItem> attachments) {
+        this.attachments = attachments;
     }
 }

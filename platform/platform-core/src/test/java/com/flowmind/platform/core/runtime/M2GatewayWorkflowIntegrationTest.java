@@ -111,8 +111,6 @@ class M2GatewayWorkflowIntegrationTest {
         install(conditionDefinition());
 
         ProcessInstanceDTO high = runtimeService.startAndSubmit(startRequest("condition-high-start", 200));
-        currentUserProvider.setCurrent(user("starter", "Starter"));
-        runtimeService.submitTask(submitRequest("condition-high-submit", taskId(high.getInstanceId(), "apply"), "starter"));
         assertEquals(1, openTasks(high.getInstanceId(), "high-review"));
         assertEquals(0, openTasks(high.getInstanceId(), "low-review"));
         currentUserProvider.setCurrent(user("manager", "Manager"));
@@ -121,7 +119,6 @@ class M2GatewayWorkflowIntegrationTest {
 
         currentUserProvider.setCurrent(user("starter", "Starter"));
         ProcessInstanceDTO low = runtimeService.startAndSubmit(startRequest("condition-low-start", 20));
-        runtimeService.submitTask(submitRequest("condition-low-submit", taskId(low.getInstanceId(), "apply"), "starter"));
         assertEquals(0, openTasks(low.getInstanceId(), "high-review"));
         assertEquals(1, openTasks(low.getInstanceId(), "low-review"));
         currentUserProvider.setCurrent(user("junior", "Junior"));
@@ -133,8 +130,6 @@ class M2GatewayWorkflowIntegrationTest {
     void parallelJoinCreatesExactlyOneFollowingTaskAfterLastBranch() {
         install(parallelDefinition());
         ProcessInstanceDTO started = runtimeService.startAndSubmit(startRequest("parallel-start", 1));
-        currentUserProvider.setCurrent(user("starter", "Starter"));
-        runtimeService.submitTask(submitRequest("parallel-submit", taskId(started.getInstanceId(), "apply"), "starter"));
 
         assertEquals(1, openTasks(started.getInstanceId(), "branch-a"));
         assertEquals(1, openTasks(started.getInstanceId(), "branch-b"));

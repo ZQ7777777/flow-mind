@@ -28,6 +28,7 @@ import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
+import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
 import com.flowmind.platform.api.request.StartProcessRequest;
 import com.flowmind.platform.api.request.SubmitTaskRequest;
@@ -252,15 +253,32 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                     ProcessInstanceEntity instance = newInstance(request, starter, definition, InstanceStatusEnum.RUNNING,
                             LocalDateTime.now());
                     String startNodeCode = startTargetNodeCode(definition);
-                    RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(instance, definition,
+                    RuntimeAdvancePreparation startPreparation = nodeAdvancer.prepareAdvance(instance, definition,
                             startNodeCode, null, null);
                     insertInstance(instance);
                     operationExecutor.bindTarget(request.getOperationId(), instance.getId(), null);
 
-                    RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition,
-                            startNodeCode, null, null, preparation);
-                    ProcessInstanceDTO result = toInstanceResult(instance.getId(), advanceResult.getCreatedTasks());
-                    publishStartEvents(request.getOperationId(), result, starter, advanceResult);
+                    RuntimeAdvanceResult startAdvanceResult = nodeAdvancer.advanceToNode(instance, definition,
+                            startNodeCode, null, null, startPreparation);
+                    ProcessActiveTaskEntity applyTask = requireStarterTask(startAdvanceResult, definition);
+                    validateStarterTaskPermission(request, instance, applyTask, starter);
+                    prepareStartAttachments(request, instance, applyTask, starter);
+
+                    String nextNodeCode = singleOutgoingTarget(definition, applyTask.getNodeCode());
+                    RuntimeAdvancePreparation nextPreparation = nodeAdvancer.prepareAdvance(instance, definition,
+                            nextNodeCode, applyTask.getTaskGroupId(), applyTask.getBranchKey());
+                    if (activeTaskRepository.complete(applyTask.getId(), applyTask.getLockVersion().longValue()) != 1) {
+                        throw new RuntimeStateException(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
+                                "starter task was modified while starting process");
+                    }
+                    Map<String, Object> variables = readVariables(instance.getVariablesJson());
+                    HistoryTaskDTO archivedTask = archiveStartTask(applyTask, instance, starter, variables,
+                            request.getOperationId());
+                    RuntimeAdvanceResult nextAdvanceResult = nodeAdvancer.advanceToNode(instance, definition,
+                            nextNodeCode, applyTask.getTaskGroupId(), applyTask.getBranchKey(), nextPreparation);
+                    ProcessInstanceDTO result = toInstanceResult(instance.getId(), nextAdvanceResult.getCreatedTasks());
+                    publishStartAndSubmitEvents(request.getOperationId(), result, starter, archivedTask,
+                            nextAdvanceResult);
                     operationExecutor.markSuccess(request.getOperationId(), result);
                     return result;
                 }
@@ -704,6 +722,46 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         }
     }
 
+    private void prepareStartAttachments(StartProcessRequest request,
+                                         ProcessInstanceEntity instance,
+                                         ProcessActiveTaskEntity task,
+                                         UserContext starter) {
+        if (attachmentService == null) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "attachment service is unavailable");
+        }
+        if (request.getAttachments() != null) {
+            for (AttachmentUploadItem attachment : request.getAttachments()) {
+                if (attachment == null) {
+                    throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION,
+                            "start attachments must not contain null items");
+                }
+                attachmentService.saveInstanceAttachment(toSaveInstanceAttachmentRequest(request, instance,
+                        starter, attachment));
+            }
+        }
+        CheckAttachmentRequest checkRequest = new CheckAttachmentRequest();
+        checkRequest.setInstanceId(instance.getId());
+        checkRequest.setNodeCode(task.getNodeCode());
+        checkRequest.setOperatorUserId(starter.getUserId());
+        AttachmentTemplateCheckResult checkResult = attachmentService.checkRequiredAttachments(checkRequest);
+        if (checkResult == null || !checkResult.isPassed()) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION,
+                    "required attachments are not satisfied for node: " + task.getNodeCode());
+        }
+    }
+
+    private SaveInstanceAttachmentRequest toSaveInstanceAttachmentRequest(StartProcessRequest request,
+                                                                            ProcessInstanceEntity instance,
+                                                                            UserContext starter,
+                                                                            AttachmentUploadItem attachment) {
+        SaveInstanceAttachmentRequest saveRequest = new SaveInstanceAttachmentRequest();
+        saveRequest.setOperationId(request.getOperationId());
+        saveRequest.setInstanceId(instance.getId());
+        saveRequest.setOperatorUserId(starter.getUserId());
+        saveRequest.setAttachment(attachment);
+        return saveRequest;
+    }
+
     private SaveTaskAttachmentRequest toSaveTaskAttachmentRequest(SubmitTaskRequest request,
                                                                    ProcessInstanceEntity instance,
                                                                    AttachmentUploadItem attachment) {
@@ -751,6 +809,71 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "failed to archive completed task");
         }
         return RuntimeModelMapper.toDto(history);
+    }
+
+    private HistoryTaskDTO archiveStartTask(ProcessActiveTaskEntity task,
+                                            ProcessInstanceEntity instance,
+                                            UserContext starter,
+                                            Map<String, Object> variables,
+                                            String operationId) {
+        if (historyTaskWriter != null) {
+            RuntimeTaskContext context = new RuntimeTaskContext(instance, task, ActionTypeEnum.SEND, starter);
+            ProcessHistoryTaskEntity history = historyTaskWriter.archiveCompletedTask(context, ActionTypeEnum.SEND,
+                    null, variables, operationId);
+            return RuntimeModelMapper.toDto(history);
+        }
+        ProcessHistoryTaskEntity history = new ProcessHistoryTaskEntity();
+        history.setId(UUID.randomUUID().toString());
+        history.setInstanceId(instance.getId());
+        history.setOperationId(operationId);
+        history.setActiveTaskId(task.getId());
+        history.setNodeCode(task.getNodeCode());
+        history.setTaskGroupId(task.getTaskGroupId());
+        history.setBranchKey(task.getBranchKey());
+        history.setAssigneeUserId(starter.getUserId());
+        history.setAssigneeUserName(starter.getUserName());
+        history.setDelegateFromUserId(task.getDelegateFromUserId());
+        history.setHandleType(HandleTypeEnum.NORMAL.name());
+        history.setActionType(ActionTypeEnum.SEND.name());
+        history.setVariablesSnapshot(RuntimeJsonCodec.toJson(variables));
+        history.setStartedAt(task.getCreatedAt());
+        history.setCompletedAt(LocalDateTime.now());
+        if (historyTaskRepository.insert(history) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "failed to archive starter task");
+        }
+        return RuntimeModelMapper.toDto(history);
+    }
+
+    private ProcessActiveTaskEntity requireStarterTask(RuntimeAdvanceResult startAdvanceResult,
+                                                       ProcessDefinitionDetailDTO definition) {
+        if (startAdvanceResult == null || startAdvanceResult.getCreatedTasks().size() != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.DEFINITION_INVALID,
+                    "startAndSubmit requires exactly one starter user task");
+        }
+        TaskDTO taskDto = startAdvanceResult.getCreatedTasks().get(0);
+        if (taskDto == null || isBlank(taskDto.getTaskId())) {
+            throw new RuntimeStateException(RuntimeErrorCodes.DEFINITION_INVALID,
+                    "starter task creation did not return a task id");
+        }
+        ProcessActiveTaskEntity task = activeTaskRepository.findById(taskDto.getTaskId());
+        if (task == null) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "starter task disappeared");
+        }
+        ProcessNodeDTO node = requireUserTaskNode(definition, task.getNodeCode());
+        assertTaskActionNode(node, true);
+        return task;
+    }
+
+    private void validateStarterTaskPermission(StartProcessRequest request,
+                                               ProcessInstanceEntity instance,
+                                               ProcessActiveTaskEntity task,
+                                               UserContext starter) {
+        SubmitTaskRequest submitRequest = new SubmitTaskRequest();
+        submitRequest.setOperationId(request.getOperationId());
+        submitRequest.setTaskId(task.getId());
+        submitRequest.setExpectedTaskVersion(task.getLockVersion());
+        submitRequest.setOperatorUserId(starter.getUserId());
+        requestValidator.validateTaskAction(submitRequest, instance, task, starter);
     }
 
     private ProcessInstanceDTO toInstanceResult(String instanceId, List<TaskDTO> createdTasks) {
@@ -825,6 +948,25 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             publishEvent(operationId, WorkflowEventTypeEnum.PROCESS_COMPLETED,
                     result.getInstance().getInstanceId(), actionType, result.getInstance(), operator,
                     result.getArchivedTasks(), Collections.<TaskDTO>emptyList());
+        }
+    }
+
+    private void publishStartAndSubmitEvents(String operationId,
+                                             ProcessInstanceDTO instance,
+                                             UserContext starter,
+                                             HistoryTaskDTO archivedTask,
+                                             RuntimeAdvanceResult advanceResult) {
+        publishEvent(operationId, WorkflowEventTypeEnum.PROCESS_STARTED, instance.getInstanceId(),
+                ActionTypeEnum.START, instance, starter, Collections.<HistoryTaskDTO>emptyList(),
+                advanceResult.getCreatedTasks());
+        publishEvent(operationId, WorkflowEventTypeEnum.TASK_SUBMITTED, archivedTask.getActiveTaskId(),
+                ActionTypeEnum.SEND, instance, starter, Collections.singletonList(archivedTask),
+                advanceResult.getCreatedTasks());
+        publishCreatedTaskEvents(operationId, ActionTypeEnum.SEND, instance, starter, advanceResult.getCreatedTasks());
+        if (advanceResult.isInstanceCompleted()) {
+            publishEvent(operationId, WorkflowEventTypeEnum.PROCESS_COMPLETED, instance.getInstanceId(),
+                    ActionTypeEnum.SEND, instance, starter, Collections.singletonList(archivedTask),
+                    Collections.<TaskDTO>emptyList());
         }
     }
 

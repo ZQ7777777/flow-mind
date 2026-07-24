@@ -86,7 +86,8 @@ class RuntimeRequestContractTest {
                         "instanceTitle", "approval request",
                         "starterUserId", "starter-001",
                         "starterDeptId", "dept-001",
-                        "variables", startVariables)),
+                        "variables", startVariables,
+                        "attachments", Collections.singletonList(attachment))),
                 fixture("update variables", UpdateVariablesRequest.class, properties(
                         "operationId", "update-operation",
                         "instanceId", "instance-001",
