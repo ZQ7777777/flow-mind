@@ -102,8 +102,7 @@
                         <p>测试数据、快捷入口和最近操作</p>
                     </div>
                     <div class="quick-actions">
-                        <button type="button" @click="openDefinitionDialog">创建流程</button>
-                        <button type="button" @click="openDefinitionDialog">新建定义</button>
+                        <button type="button" @click="activeSection = 'definitions'">新建定义</button>
                         <button type="button" @click="activeSection = 'instances'">启动实例</button>
                         <button type="button" @click="activeSection = 'tasks'; taskTab = 'todo'; queryTodoTasks()">查看我的待办</button>
                         <button type="button" @click="activeSection = 'tasks'; taskTab = 'started'; queryStartedInstances()">查看我发起</button>
@@ -145,8 +144,6 @@
                         <button type="button" @click="queryDefinitions">查询</button>
                         <button type="button" @click="resetDefinitionFilters">重置</button>
                         <button type="button" class="primary" @click="openDefinitionDialog">新建定义</button>
-                        <button type="button" @click="openDefinitionDialog">模型设计</button>
-                        <button type="button" @click="saveGraph">保存流程图</button>
                         <button type="button" @click="validateDefinition">发布前校验</button>
                     </div>
                 </section>
@@ -349,7 +346,6 @@
                     </div>
                     <div class="button-row">
                         <button type="button" @click="queryCallbackLogs">查回调日志</button>
-                        <button type="button" @click="queryOperationLogs">查操作日志</button>
                         <button type="button" @click="operationLogs = []">清空本页流水</button>
                     </div>
                 </section>
