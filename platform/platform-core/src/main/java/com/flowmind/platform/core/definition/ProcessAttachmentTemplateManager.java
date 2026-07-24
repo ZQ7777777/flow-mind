@@ -9,6 +9,7 @@ import com.flowmind.platform.core.validation.FrozenValidationException;
 import com.flowmind.platform.core.validation.ProcessAttachmentTemplateValidator;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +40,7 @@ public class ProcessAttachmentTemplateManager {
      * @param attachmentTemplateRepository 附件模板仓储
      * @param attachmentTemplateValidator 附件模板校验器
      */
+    @Autowired
     public ProcessAttachmentTemplateManager(ProcessAttachmentTemplateRepository attachmentTemplateRepository,
                                             ProcessAttachmentTemplateValidator attachmentTemplateValidator) {
         this(attachmentTemplateRepository, attachmentTemplateValidator, new ObjectMapper());

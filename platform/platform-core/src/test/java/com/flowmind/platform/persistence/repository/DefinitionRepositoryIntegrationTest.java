@@ -124,6 +124,36 @@ class DefinitionRepositoryIntegrationTest {
     }
 
     @Test
+    void definitionLifecycleAndTouchUseProvidedUpdatedAtInsteadOfSqliteUtcNow() {
+        LocalDateTime createdAt = LocalDateTime.of(2026, 7, 17, 10, 0);
+        definitionRepository.insert(definition("definition-001", "deposit", 1, "Deposit V1", createdAt));
+
+        LocalDateTime graphUpdatedAt = LocalDateTime.of(2026, 7, 17, 18, 30);
+        assertEquals(1, definitionRepository.touchUpdated("definition-001", "operator-touch", graphUpdatedAt));
+        ProcessDefinitionEntity touched = definitionRepository.findById("definition-001");
+        assertEquals("operator-touch", touched.getUpdatedBy());
+        assertEquals(graphUpdatedAt, touched.getUpdatedAt());
+
+        LocalDateTime publishedAt = LocalDateTime.of(2026, 7, 17, 19, 0);
+        assertEquals(1, definitionRepository.publish("definition-001", "operator-publish", publishedAt));
+        ProcessDefinitionEntity published = definitionRepository.findById("definition-001");
+        assertEquals(DefinitionStatusEnum.PUBLISHED.name(), published.getDefinitionStatus());
+        assertEquals(publishedAt, published.getUpdatedAt());
+
+        LocalDateTime activatedAt = LocalDateTime.of(2026, 7, 17, 19, 30);
+        assertEquals(1, definitionRepository.activateFull("definition-001", "operator-activate", activatedAt));
+        ProcessDefinitionEntity activated = definitionRepository.findById("definition-001");
+        assertEquals(ActivationStatusEnum.ACTIVE.name(), activated.getActivationStatus());
+        assertEquals(activatedAt, activated.getUpdatedAt());
+
+        LocalDateTime deactivatedAt = LocalDateTime.of(2026, 7, 17, 20, 0);
+        assertEquals(1, definitionRepository.deactivate("definition-001", "operator-deactivate", deactivatedAt));
+        ProcessDefinitionEntity deactivated = definitionRepository.findById("definition-001");
+        assertEquals(ActivationStatusEnum.INACTIVE.name(), deactivated.getActivationStatus());
+        assertEquals(deactivatedAt, deactivated.getUpdatedAt());
+    }
+
+    @Test
     void nodeRepositoryBatchInsertsReadsStableOrderAndDeletes() {
         definitionRepository.insert(definition("definition-001", "reimburse", 1, "Reimburse V1",
                 LocalDateTime.of(2026, 7, 17, 10, 0)));

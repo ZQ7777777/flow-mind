@@ -1,5 +1,6 @@
 package com.flowmind.platform.web;
 
+import com.flowmind.platform.api.dto.ApiErrorDTO;
 import com.flowmind.platform.api.dto.CallbackLogDTO;
 import com.flowmind.platform.api.dto.CallbackLogQuery;
 import com.flowmind.platform.api.dto.OperationResult;
@@ -35,7 +36,12 @@ import com.flowmind.platform.api.request.WithdrawTaskRequest;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.ProcessDefinitionService;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
+import com.flowmind.platform.core.definition.DefinitionErrorCodes;
+import com.flowmind.platform.core.definition.DefinitionValidationException;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
 import java.util.Collections;
 
@@ -45,6 +51,33 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PlatformServiceControllerTest {
+
+    @Test
+    void exceptionHandlerMapsBusinessValidationToBadRequestBody() {
+        PlatformExceptionHandler handler = new PlatformExceptionHandler();
+
+        ResponseEntity<ApiErrorDTO> response = handler.handleDefinitionValidation(
+                new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
+                        "Attachment template id, code, required flag and minCount must not be blank."));
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(Integer.valueOf(400), response.getBody().getStatus());
+        assertEquals(DefinitionErrorCodes.DEFINITION_INVALID, response.getBody().getCode());
+        assertEquals("Attachment template id, code, required flag and minCount must not be blank.",
+                response.getBody().getMessage());
+    }
+
+    @Test
+    void exceptionHandlerMapsSqliteBusyToRetryableServiceUnavailableBody() {
+        PlatformExceptionHandler handler = new PlatformExceptionHandler();
+
+        ResponseEntity<ApiErrorDTO> response = handler.handleDataAccess(
+                new DataAccessResourceFailureException("[SQLITE_BUSY] database is locked"));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        assertEquals(Integer.valueOf(503), response.getBody().getStatus());
+        assertEquals("FLOW_DATABASE_BUSY", response.getBody().getCode());
+    }
 
     @Test
     void definitionControllerDelegatesToDefinitionService() {

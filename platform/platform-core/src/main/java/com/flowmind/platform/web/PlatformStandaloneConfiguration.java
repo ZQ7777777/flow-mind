@@ -5,7 +5,9 @@ import com.flowmind.platform.api.dto.AttachmentDownloadDTO;
 import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.UserDTO;
+import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.request.AttachmentUploadItem;
+import com.flowmind.platform.api.request.ApproverResolveRequest;
 import com.flowmind.platform.api.request.CheckAttachmentRequest;
 import com.flowmind.platform.api.request.DeleteAttachmentRequest;
 import com.flowmind.platform.api.request.DownloadAttachmentRequest;
@@ -29,15 +31,21 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import javax.sql.DataSource;
+import javax.servlet.http.HttpServletRequest;
 import java.io.File;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -146,11 +154,7 @@ public class PlatformStandaloneConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public ApproverResolver approverResolver() {
-        return request -> {
-            String userId = request == null || isBlank(request.getStarterUserId())
-                    ? "mock-user" : request.getStarterUserId();
-            return Collections.singletonList(new UserDTO(userId, userId));
-        };
+        return request -> resolveStandaloneApprovers(request);
     }
 
     /**
@@ -166,6 +170,49 @@ public class PlatformStandaloneConfiguration {
 
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private static List<UserDTO> resolveStandaloneApprovers(ApproverResolveRequest request) {
+        if (request != null && ApproverRuleTypeEnum.USER.equals(request.getApproverRuleType())) {
+            List<UserDTO> configuredUsers = configuredUsers(request.getApproverRuleConfig());
+            if (!configuredUsers.isEmpty()) {
+                return configuredUsers;
+            }
+        }
+        String userId = request == null || isBlank(request.getStarterUserId())
+                ? "user_sales" : request.getStarterUserId();
+        return Collections.singletonList(new UserDTO(userId, displayName(userId)));
+    }
+
+    private static List<UserDTO> configuredUsers(Map<String, Object> config) {
+        List<UserDTO> users = new ArrayList<UserDTO>();
+        if (config == null) {
+            return users;
+        }
+        Object userIds = config.get("userIds");
+        if (userIds instanceof Iterable<?>) {
+            for (Object userId : (Iterable<?>) userIds) {
+                addConfiguredUser(users, userId);
+            }
+            return users;
+        }
+        if (userIds instanceof String) {
+            String[] parts = ((String) userIds).split(",");
+            for (String part : parts) {
+                addConfiguredUser(users, part);
+            }
+        }
+        return users;
+    }
+
+    private static void addConfiguredUser(List<UserDTO> users, Object value) {
+        if (value == null) {
+            return;
+        }
+        String userId = String.valueOf(value).trim();
+        if (!isBlank(userId)) {
+            users.add(new UserDTO(userId, displayName(userId)));
+        }
     }
 
     /**
@@ -214,8 +261,60 @@ public class PlatformStandaloneConfiguration {
     private static final class StandaloneCurrentUserProvider implements CurrentUserProvider {
         @Override
         public UserContext getCurrentUser() {
-            return new UserContext("mock-user", "Mock User", "mock-dept", "Mock Department");
+            RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
+            if (attributes instanceof ServletRequestAttributes) {
+                HttpServletRequest request = ((ServletRequestAttributes) attributes).getRequest();
+                String userId = firstText(request.getHeader("X-Flow-User-Id"), request.getParameter("userId"));
+                if (!isBlank(userId)) {
+                    return userContext(userId, request.getHeader("X-Flow-User-Name"),
+                            request.getHeader("X-Flow-Dept-Id"), request.getHeader("X-Flow-Dept-Name"));
+                }
+            }
+            return userContext("user_sales", null, "dept_sales", null);
         }
+    }
+
+    private static UserContext userContext(String userId, String userName, String departmentId, String departmentName) {
+        String resolvedDepartmentId = isBlank(departmentId) ? defaultDepartmentId(userId) : departmentId;
+        return new UserContext(userId, isBlank(userName) ? displayName(userId) : userName,
+                resolvedDepartmentId, isBlank(departmentName) ? displayDepartmentName(resolvedDepartmentId) : departmentName);
+    }
+
+    private static String displayName(String userId) {
+        if ("user_sales".equals(userId)) {
+            return "Sales User";
+        }
+        if ("user_manager".equals(userId)) {
+            return "Manager User";
+        }
+        if ("user_finance".equals(userId)) {
+            return "Finance User";
+        }
+        return userId;
+    }
+
+    private static String defaultDepartmentId(String userId) {
+        if ("user_manager".equals(userId)) {
+            return "dept_manager";
+        }
+        if ("user_finance".equals(userId)) {
+            return "dept_finance";
+        }
+        return "dept_sales";
+    }
+
+    private static String displayDepartmentName(String departmentId) {
+        if ("dept_manager".equals(departmentId)) {
+            return "Manager Department";
+        }
+        if ("dept_finance".equals(departmentId)) {
+            return "Finance Department";
+        }
+        return "Sales Department";
+    }
+
+    private static String firstText(String first, String second) {
+        return isBlank(first) ? second : first;
     }
 
     /**

@@ -21,6 +21,7 @@ import com.flowmind.platform.api.request.DefinitionOperationRequest;
 import com.flowmind.platform.api.request.GrayReleaseRequest;
 import com.flowmind.platform.api.request.SaveProcessGraphRequest;
 import com.flowmind.platform.api.service.ProcessDefinitionService;
+import com.flowmind.platform.core.time.PlatformDateTime;
 import com.flowmind.platform.core.validation.DefinitionModelValidator;
 import com.flowmind.platform.core.validation.DefinitionRequestValidator;
 import com.flowmind.platform.core.validation.DefinitionStatusValidator;
@@ -122,7 +123,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         String requestHash = hashCreateRequest(request);
         //获取业务操作类型
         String actionType = DefinitionActionTypeEnum.CREATE.getOperationActionType();
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = PlatformDateTime.now();
         //检查当前请求是否第一次执行，如果以前已经成功，返回之前的结果；如果有冲突则返回对应的决策
         OperationIdempotencyDecision decision = idempotencyService.beginOrReplay(
                 request.getOperationId(), actionType, request.getOperatorUserId(), requestHash, now);
@@ -181,7 +182,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         DefinitionRequestValidator.validateSaveGraph(request);
 
         //归一化节点、连线、表单字段和附件配置，避免前端传入数据缺字段导致哈希计算有误
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = PlatformDateTime.now();
         List<ProcessNodeDTO> nodes = graphDraftFactory.normalizeNodes(definitionId, request.getNodes());
         List<ProcessEdgeDTO> edges = graphDraftFactory.normalizeEdges(definitionId, request.getEdges());
         List<ProcessFormFieldDTO> formFields =
@@ -216,7 +217,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
             nodeRepository.deleteByDefinitionId(definitionId);
             nodeRepository.batchInsert(ProcessDefinitionMapper.toNodeEntities(nodes));
             edgeRepository.batchInsert(ProcessDefinitionMapper.toEdgeEntities(edges));
-            definitionRepository.touchUpdated(definitionId, request.getOperatorUserId());
+            definitionRepository.touchUpdated(definitionId, request.getOperatorUserId(), now);
             ensureValid(formFieldManager.saveFormFields(definitionId, formFields));
             if (attachmentConfigs.isEmpty()) {
                 attachmentConfigManager.deleteAttachmentConfigs(definitionId);
@@ -275,7 +276,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                 throw new DefinitionValidationException(DefinitionErrorCodes.DEFINITION_INVALID,
                         firstValidationMessage(validationResult));
             }
-            if (definitionRepository.publish(definition.getId(), request.getOperatorUserId()) != 1) {
+            LocalDateTime now = PlatformDateTime.now();
+            if (definitionRepository.publish(definition.getId(), request.getOperatorUserId(), now) != 1) {
                 throw lifecycleStateException("definition must be DRAFT + INACTIVE + OFF before publish");
             }
             return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
@@ -312,6 +314,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         try {
         ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
         ensureGrayOff(definition);
+        LocalDateTime now = PlatformDateTime.now();
         if (!DefinitionStatusEnum.PUBLISHED.name().equals(definition.getDefinitionStatus())
                 || !ActivationStatusEnum.INACTIVE.name().equals(definition.getActivationStatus())) {
             throw lifecycleStateException("definition must be PUBLISHED + INACTIVE + OFF before activate");
@@ -322,8 +325,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         ProcessDefinitionEntity oldActive = definitionRepository.findActiveFullByProcessCode(definition.getProcessCode());
         // 先停用旧全量版本，再激活目标版本；二者处于同一事务内，保证对外只有一个 ACTIVE 全量版本。
         definitionRepository.deactivateActiveFullByProcessCode(definition.getProcessCode(), definition.getId(),
-                request.getOperatorUserId());
-        if (definitionRepository.activateFull(definition.getId(), request.getOperatorUserId()) != 1) {
+                request.getOperatorUserId(), now);
+        if (definitionRepository.activateFull(definition.getId(), request.getOperatorUserId(), now) != 1) {
             throw lifecycleStateException("definition activation failed");
         }
         List<String> additionalInvalidations = new ArrayList<String>();
@@ -364,7 +367,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         try {
         ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
         ensureGrayOff(definition);
-        if (definitionRepository.deactivate(definition.getId(), request.getOperatorUserId()) != 1) {
+        LocalDateTime now = PlatformDateTime.now();
+        if (definitionRepository.deactivate(definition.getId(), request.getOperatorUserId(), now) != 1) {
             throw lifecycleStateException("definition must be PUBLISHED + ACTIVE + OFF before deactivate");
         }
         return completeDefinitionLifecycleOperation(request, actionType, definition.getId(), null);
@@ -401,7 +405,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         try {
         ProcessDefinitionEntity definition = requireDefinition(request.getDefinitionId());
         ensureGrayOff(definition);
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = PlatformDateTime.now();
         if (definitionRepository.archive(definition.getId(), request.getOperatorUserId(), now) != 1) {
             throw lifecycleStateException("definition must be PUBLISHED + INACTIVE + OFF before archive");
         }
@@ -451,7 +455,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         DefinitionRequestValidator.validateCopy(request);
         String requestHash = hashCopyRequest(definitionId, request);
         String actionType = DefinitionActionTypeEnum.COPY.getOperationActionType();
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = PlatformDateTime.now();
         OperationIdempotencyDecision decision = idempotencyService.beginOrReplay(
                 request.getOperationId(), actionType, request.getOperatorUserId(), requestHash, now);
         if (OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
@@ -493,7 +497,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         DefinitionRequestValidator.validateDefinitionOperation(request);
         String requestHash = hashDeleteRequest(request);
         String actionType = DefinitionActionTypeEnum.DELETE.getOperationActionType();
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = PlatformDateTime.now();
         OperationIdempotencyDecision decision = idempotencyService.beginOrReplay(
                 request.getOperationId(), actionType, request.getOperatorUserId(), requestHash, now);
         if (OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
@@ -718,8 +722,12 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                 && !OperationIdempotencyDecisionType.TAKE_OVER.equals(decision.getType()))) {
             return;
         }
-        idempotencyService.markFailed(operationId,
-                hasText(errorCode) ? errorCode : DefinitionErrorCodes.DEFINITION_INVALID);
+        try {
+            idempotencyService.markFailed(operationId,
+                    hasText(errorCode) ? errorCode : DefinitionErrorCodes.DEFINITION_INVALID);
+        } catch (DataAccessException ex) {
+            // Failure marking is auxiliary idempotency state and must not mask the original business failure.
+        }
     }
 
     private ProcessDefinitionDTO replayCopyDefinition(ProcessOperationRecordEntity existing) {
@@ -766,7 +774,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                                                                           String actionType,
                                                                           String requestHash) {
         return idempotencyService.beginOrReplay(request.getOperationId(), actionType,
-                request.getOperatorUserId(), requestHash, LocalDateTime.now());
+                request.getOperatorUserId(), requestHash, PlatformDateTime.now());
     }
 
     /**
@@ -791,7 +799,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         }
         definitionRepository.insertAuditLog(newId(), null, request.getOperationId(),
                 OperationTargetTypeEnum.DEFINITION.name(), definitionId, actionType,
-                request.getOperatorUserId(), lifecycleAuditDetail(latest), LocalDateTime.now());
+                request.getOperatorUserId(), lifecycleAuditDetail(latest), PlatformDateTime.now());
         ProcessDefinitionDTO result = ProcessDefinitionMapper.toDto(latest);
         idempotencyService.markSuccess(request.getOperationId(), JsonCodec.definitionResult(result));
         registerGraphCacheInvalidation(definitionId);

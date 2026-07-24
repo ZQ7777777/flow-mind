@@ -1,6 +1,7 @@
 package com.flowmind.platform.persistence.repository;
 
 import com.flowmind.platform.api.dto.ProcessDefinitionQuery;
+import com.flowmind.platform.core.time.PlatformDateTime;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -75,8 +76,7 @@ public class ProcessDefinitionRepository {
                         + "activation_status, gray_status, gray_rule_config, archived_by, archived_at, remark, "
                         + "created_by, created_at, updated_by, updated_at) "
                         + "VALUES (?, ?, ?, ?, ?, COALESCE(?, 'DRAFT'), COALESCE(?, 'INACTIVE'), "
-                        + "COALESCE(?, 'OFF'), ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?, "
-                        + "COALESCE(?, datetime('now')))",
+                        + "COALESCE(?, 'OFF'), ?, ?, ?, ?, ?, ?, ?, ?)",
                 entity.getId(),
                 entity.getProcessCode(),
                 entity.getProcessName(),
@@ -90,9 +90,9 @@ public class ProcessDefinitionRepository {
                 DefinitionRowMappers.toDbString(entity.getArchivedAt()),
                 entity.getRemark(),
                 entity.getCreatedBy(),
-                DefinitionRowMappers.toDbString(entity.getCreatedAt()),
+                DefinitionRowMappers.toDbString(defaultTime(entity.getCreatedAt())),
                 entity.getUpdatedBy(),
-                DefinitionRowMappers.toDbString(entity.getUpdatedAt()));
+                DefinitionRowMappers.toDbString(defaultTime(entity.getUpdatedAt())));
     }
 
     /**
@@ -103,12 +103,12 @@ public class ProcessDefinitionRepository {
     public int updateBasicInfo(ProcessDefinitionEntity entity) {
         return jdbcTemplate.update("UPDATE process_definition "
                         + "SET process_name = ?, system_code = ?, remark = ?, updated_by = ?, "
-                        + "updated_at = COALESCE(?, datetime('now')) WHERE id = ?",
+                        + "updated_at = ? WHERE id = ?",
                 entity.getProcessName(),
                 entity.getSystemCode(),
                 entity.getRemark(),
                 entity.getUpdatedBy(),
-                DefinitionRowMappers.toDbString(entity.getUpdatedAt()),
+                DefinitionRowMappers.toDbString(defaultTime(entity.getUpdatedAt())),
                 entity.getId());
     }
 
@@ -120,11 +120,15 @@ public class ProcessDefinitionRepository {
      * @return 受影响行数，1 表示状态转换成功
      */
     public int publish(String id, String updatedBy) {
+        return publish(id, updatedBy, PlatformDateTime.now());
+    }
+
+    public int publish(String id, String updatedBy, LocalDateTime updatedAt) {
         return jdbcTemplate.update("UPDATE process_definition "
-                        + "SET definition_status = 'PUBLISHED', updated_by = ?, updated_at = datetime('now') "
+                        + "SET definition_status = 'PUBLISHED', updated_by = ?, updated_at = ? "
                         + "WHERE id = ? AND definition_status = 'DRAFT' "
                         + "AND activation_status = 'INACTIVE' AND gray_status = 'OFF'",
-                updatedBy, id);
+                updatedBy, DefinitionRowMappers.toDbString(defaultTime(updatedAt)), id);
     }
 
     /**
@@ -135,11 +139,15 @@ public class ProcessDefinitionRepository {
      * @return 受影响行数，1 表示状态转换成功
      */
     public int activateFull(String id, String updatedBy) {
+        return activateFull(id, updatedBy, PlatformDateTime.now());
+    }
+
+    public int activateFull(String id, String updatedBy, LocalDateTime updatedAt) {
         return jdbcTemplate.update("UPDATE process_definition "
-                        + "SET activation_status = 'ACTIVE', updated_by = ?, updated_at = datetime('now') "
+                        + "SET activation_status = 'ACTIVE', updated_by = ?, updated_at = ? "
                         + "WHERE id = ? AND definition_status = 'PUBLISHED' "
                         + "AND activation_status = 'INACTIVE' AND gray_status = 'OFF'",
-                updatedBy, id);
+                updatedBy, DefinitionRowMappers.toDbString(defaultTime(updatedAt)), id);
     }
 
     /**
@@ -150,11 +158,15 @@ public class ProcessDefinitionRepository {
      * @return 受影响行数，1 表示状态转换成功
      */
     public int deactivate(String id, String updatedBy) {
+        return deactivate(id, updatedBy, PlatformDateTime.now());
+    }
+
+    public int deactivate(String id, String updatedBy, LocalDateTime updatedAt) {
         return jdbcTemplate.update("UPDATE process_definition "
-                        + "SET activation_status = 'INACTIVE', updated_by = ?, updated_at = datetime('now') "
+                        + "SET activation_status = 'INACTIVE', updated_by = ?, updated_at = ? "
                         + "WHERE id = ? AND definition_status = 'PUBLISHED' "
                         + "AND activation_status = 'ACTIVE' AND gray_status = 'OFF'",
-                updatedBy, id);
+                updatedBy, DefinitionRowMappers.toDbString(defaultTime(updatedAt)), id);
     }
 
     /**
@@ -166,11 +178,16 @@ public class ProcessDefinitionRepository {
      * @return 被停用的旧版本数量
      */
     public int deactivateActiveFullByProcessCode(String processCode, String excludeDefinitionId, String updatedBy) {
+        return deactivateActiveFullByProcessCode(processCode, excludeDefinitionId, updatedBy, PlatformDateTime.now());
+    }
+
+    public int deactivateActiveFullByProcessCode(String processCode, String excludeDefinitionId, String updatedBy,
+                                                 LocalDateTime updatedAt) {
         return jdbcTemplate.update("UPDATE process_definition "
-                        + "SET activation_status = 'INACTIVE', updated_by = ?, updated_at = datetime('now') "
+                        + "SET activation_status = 'INACTIVE', updated_by = ?, updated_at = ? "
                         + "WHERE process_code = ? AND id <> ? AND definition_status = 'PUBLISHED' "
                         + "AND activation_status = 'ACTIVE' AND gray_status = 'OFF'",
-                updatedBy, processCode, excludeDefinitionId);
+                updatedBy, DefinitionRowMappers.toDbString(defaultTime(updatedAt)), processCode, excludeDefinitionId);
     }
 
     /**
@@ -182,12 +199,14 @@ public class ProcessDefinitionRepository {
      * @return 受影响行数，1 表示状态转换成功
      */
     public int archive(String id, String archivedBy, LocalDateTime archivedAt) {
+        LocalDateTime effectiveArchivedAt = defaultTime(archivedAt);
         return jdbcTemplate.update("UPDATE process_definition "
                         + "SET definition_status = 'ARCHIVED', activation_status = 'INACTIVE', gray_status = 'OFF', "
-                        + "archived_by = ?, archived_at = ?, updated_by = ?, updated_at = datetime('now') "
+                        + "archived_by = ?, archived_at = ?, updated_by = ?, updated_at = ? "
                         + "WHERE id = ? AND definition_status = 'PUBLISHED' "
                         + "AND activation_status = 'INACTIVE' AND gray_status = 'OFF'",
-                archivedBy, DefinitionRowMappers.toDbString(archivedAt), archivedBy, id);
+                archivedBy, DefinitionRowMappers.toDbString(effectiveArchivedAt), archivedBy,
+                DefinitionRowMappers.toDbString(effectiveArchivedAt), id);
     }
 
     /**
@@ -215,9 +234,9 @@ public class ProcessDefinitionRepository {
                               LocalDateTime createdAt) {
         return jdbcTemplate.update("INSERT INTO process_audit_log "
                         + "(id, instance_id, operation_id, target_type, target_id, action_type, operator_id, "
-                        + "detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+                        + "detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 id, instanceId, operationId, targetType, targetId, actionType, operatorId, detailJson,
-                DefinitionRowMappers.toDbString(createdAt));
+                DefinitionRowMappers.toDbString(defaultTime(createdAt)));
     }
 
     /**
@@ -227,8 +246,13 @@ public class ProcessDefinitionRepository {
      * @return
      */
     public int touchUpdated(String id, String updatedBy) {
+        return touchUpdated(id, updatedBy, PlatformDateTime.now());
+    }
+
+    public int touchUpdated(String id, String updatedBy, LocalDateTime updatedAt) {
         return jdbcTemplate.update("UPDATE process_definition "
-                + "SET updated_by = ?, updated_at = datetime('now') WHERE id = ?", updatedBy, id);
+                + "SET updated_by = ?, updated_at = ? WHERE id = ?",
+                updatedBy, DefinitionRowMappers.toDbString(defaultTime(updatedAt)), id);
     }
 
     /**
@@ -445,6 +469,10 @@ public class ProcessDefinitionRepository {
      */
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private LocalDateTime defaultTime(LocalDateTime value) {
+        return value == null ? PlatformDateTime.now() : value;
     }
 
     private static final class QueryParts {

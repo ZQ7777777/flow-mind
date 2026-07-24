@@ -10,11 +10,11 @@ import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
 import com.flowmind.platform.api.enums.AttachmentTemplateStatusEnum;
 import com.flowmind.platform.core.validation.FrozenValidationErrorCodes;
 import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigValidator;
-import com.flowmind.platform.core.validation.FrozenValidationErrorCodes;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,6 +48,7 @@ public class ProcessDefinitionAttachmentConfigManager {
      * @param attachmentTemplateRepository 附件模板仓储
      * @param attachmentConfigValidator 附件配置校验器
      */
+    @Autowired
     public ProcessDefinitionAttachmentConfigManager(
             ProcessDefinitionAttachmentConfigRepository attachmentConfigRepository,
             ProcessAttachmentTemplateRepository attachmentTemplateRepository,

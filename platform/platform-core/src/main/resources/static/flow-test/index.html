@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>流程平台测试控制台 - Vue</title>
+    <link rel="stylesheet" href="./flow-test-app.css?v=20260724-definition-dialog-fix">
+</head>
+<body>
+<div id="app" v-cloak>
+    <div class="toast-host" aria-live="polite" aria-atomic="true">
+        <div v-for="item in toasts" :key="item.id" class="toast" :class="item.type">{{ item.message }}</div>
+    </div>
+
+    <header class="app-topbar">
+        <div class="brand">
+            <h1>流程平台测试控制台</h1>
+            <p>M0-M3 流程操作、查询、幂等、并发和回调观察</p>
+        </div>
+        <div class="environment-grid" aria-label="顶部公共区域">
+            <label>
+                <span>当前运行环境</span>
+                <select v-model="environmentName">
+                    <option>本地</option>
+                    <option>开发</option>
+                    <option>测试</option>
+                </select>
+            </label>
+            <label>
+                <span>后端 Base URL</span>
+                <input v-model.trim="baseUrl" autocomplete="off">
+            </label>
+            <label>
+                <span>当前用户</span>
+                <select v-model="currentUserId">
+                    <option value="user_sales">业务员 user_sales</option>
+                    <option value="user_manager">部门经理 user_manager</option>
+                    <option value="user_finance">财务 user_finance</option>
+                    <option value="user_admin">管理员 user_admin</option>
+                </select>
+            </label>
+            <label>
+                <span>系统编码</span>
+                <input v-model.trim="systemCode" autocomplete="off">
+            </label>
+            <label>
+                <span>operationId 模式</span>
+                <select v-model="operationMode">
+                    <option value="auto">自动生成</option>
+                    <option value="reuse">复用上次</option>
+                    <option value="manual">手工输入</option>
+                </select>
+            </label>
+            <label>
+                <span>手工 operationId</span>
+                <input v-model.trim="manualOperationId" placeholder="operationId">
+            </label>
+            <div class="connection-state">
+                <span>连接状态</span>
+                <strong :class="connectionStatusClass">{{ connectionStatus }}</strong>
+            </div>
+            <div class="top-actions">
+                <button type="button" @click="pingBackend">检测连接</button>
+                <button type="button" @click="refreshDefinitionCache">刷新流程定义缓存</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="app-shell">
+        <nav class="side-nav" aria-label="流程平台测试控制台菜单">
+            <button v-for="section in sections"
+                    :key="section.key"
+                    type="button"
+                    :class="{ active: activeSection === section.key }"
+                    @click="activeSection = section.key">
+                <span>{{ section.title }}</span>
+                <small>{{ section.caption }}</small>
+            </button>
+        </nav>
+
+        <main class="content-shell">
+            <section class="context-strip" aria-label="当前上下文">
+                <div><span>definitionId</span><strong>{{ context.definitionId || '-' }}</strong></div>
+                <div><span>processCode</span><strong>{{ definitionDraft.processCode || '-' }}</strong></div>
+                <div><span>instanceId</span><strong>{{ context.instanceId || '-' }}</strong></div>
+                <div><span>taskId</span><strong>{{ selectedTaskId || '-' }}</strong></div>
+                <div><span>任务版本</span><strong>{{ selectedTaskVersionText }}</strong></div>
+                <div><span>实例状态</span><strong>{{ context.instanceStatus || '-' }}</strong></div>
+            </section>
+
+            <section v-if="activeSection === 'home'" class="view-grid">
+                <section class="summary-band">
+                    <article v-for="item in dashboardStats" :key="item.label" class="stat-tile">
+                        <span>{{ item.label }}</span>
+                        <strong>{{ item.value }}</strong>
+                    </article>
+                </section>
+
+                <section class="quick-panel">
+                    <div class="section-heading">
+                        <h2>控制台首页</h2>
+                        <p>测试数据、快捷入口和最近操作</p>
+                    </div>
+                    <div class="quick-actions">
+                        <button type="button" @click="openDefinitionDialog">创建流程</button>
+                        <button type="button" @click="openDefinitionDialog">新建定义</button>
+                        <button type="button" @click="activeSection = 'instances'">启动实例</button>
+                        <button type="button" @click="activeSection = 'tasks'; taskTab = 'todo'; queryTodoTasks()">查看我的待办</button>
+                        <button type="button" @click="activeSection = 'tasks'; taskTab = 'started'; queryStartedInstances()">查看我发起</button>
+                        <button type="button" class="danger" @click="openConfirm('清理测试数据', '将调用测试环境清理入口，生产环境不可使用。', clearTestData)">清理测试数据</button>
+                    </div>
+                </section>
+
+                <section class="coverage-panel">
+                    <div class="section-heading">
+                        <h2>M0-M3 覆盖</h2>
+                        <p>除灰度发布和自动装配外的页面测试选项</p>
+                    </div>
+                    <div class="coverage-grid">
+                        <div v-for="item in coverageItems" :key="item.title" class="coverage-item">
+                            <strong>{{ item.title }}</strong>
+                            <span>{{ item.detail }}</span>
+                        </div>
+                    </div>
+                </section>
+
+                <data-table title="最近操作" :rows="operationLogs" :columns="operationColumns"></data-table>
+            </section>
+
+            <section v-if="activeSection === 'definitions'" class="view-grid">
+                <section class="toolbar-panel">
+                    <div class="section-heading">
+                        <h2>流程定义</h2>
+                        <p>定义列表、新建定义、模型设计和生命周期操作</p>
+                    </div>
+                    <div class="filter-grid">
+                        <label><span>流程编码</span><input v-model.trim="definitionFilters.processCode"></label>
+                        <label><span>流程名称</span><input v-model.trim="definitionFilters.processName"></label>
+                        <label><span>定义状态</span><select v-model="definitionFilters.definitionStatus"><option value="">全部</option><option>DRAFT</option><option>PUBLISHED</option><option>ARCHIVED</option></select></label>
+                        <label><span>激活状态</span><select v-model="definitionFilters.activationStatus"><option value="">全部</option><option>ACTIVE</option><option>INACTIVE</option></select></label>
+                        <label><span>版本号</span><input v-model.trim="definitionFilters.version"></label>
+                        <label><span>创建人</span><input v-model.trim="definitionFilters.creatorUserId"></label>
+                    </div>
+                    <div class="button-row">
+                        <button type="button" @click="queryDefinitions">查询</button>
+                        <button type="button" @click="resetDefinitionFilters">重置</button>
+                        <button type="button" class="primary" @click="openDefinitionDialog">新建定义</button>
+                        <button type="button" @click="openDefinitionDialog">模型设计</button>
+                        <button type="button" @click="saveGraph">保存流程图</button>
+                        <button type="button" @click="validateDefinition">发布前校验</button>
+                    </div>
+                </section>
+
+                <section class="action-grid">
+                    <button type="button" @click="definitionOperation('发布', 'publish')">发布</button>
+                    <button type="button" @click="definitionOperation('激活', 'activate')">激活</button>
+                    <button type="button" @click="definitionOperation('停用', 'deactivate')">停用</button>
+                    <button type="button" @click="definitionOperation('归档', 'archive')">归档</button>
+                    <button type="button" @click="copyDefinition">复制定义</button>
+                    <button type="button" class="danger" @click="deleteDefinition">删除定义</button>
+                    <button type="button" @click="getDefinition">查看详情</button>
+                    <button type="button" @click="showRawDefinition = !showRawDefinition">查看原始 JSON</button>
+                </section>
+
+                <section class="model-preview">
+                    <div class="section-heading">
+                        <h2>流程图预览</h2>
+                        <p>当前节点、历史节点和未到达节点状态</p>
+                    </div>
+                    <div class="flow-board" aria-label="模型设计流程图预览">
+                        <template v-for="(node, index) in orderedNodes" :key="node.nodeCode">
+                            <article class="flow-node" :class="flowNodeClass(node)">
+                                <span>{{ node.nodeCode }}</span>
+                                <strong>{{ node.nodeName }}</strong>
+                                <small>{{ flowNodeStatus(node) }}</small>
+                            </article>
+                            <span v-if="index < orderedNodes.length - 1" class="flow-edge">-></span>
+                        </template>
+                        <div v-if="!orderedNodes.length" class="empty-state">暂无流程图</div>
+                    </div>
+                </section>
+
+                <data-table title="定义列表" :rows="definitionRows" :columns="definitionColumns" @row-select="selectDefinitionRow"></data-table>
+                <json-panel v-if="showRawDefinition" title="定义原始 JSON" :value="definitionDraft"></json-panel>
+            </section>
+
+            <section v-if="activeSection === 'instances'" class="view-grid">
+                <section class="toolbar-panel">
+                    <div class="section-heading">
+                        <h2>流程实例</h2>
+                        <p>启动实例、实例详情、终止实例和删除实例</p>
+                    </div>
+                    <div class="filter-grid">
+                        <label><span>流程编码</span><input v-model.trim="definitionDraft.processCode"></label>
+                        <label><span>实例标题</span><input v-model.trim="instanceForm.instanceTitle"></label>
+                        <label><span>发起人 ID</span><input v-model.trim="instanceForm.starterUserId"></label>
+                        <label><span>发起部门 ID</span><input v-model.trim="instanceForm.starterDeptId"></label>
+                        <label><span>实例状态</span><select v-model="instanceFilters.instanceStatus"><option value="">全部</option><option>RUNNING</option><option>COMPLETED</option><option>TERMINATED</option></select></label>
+                    </div>
+                    <div class="button-row">
+                        <button type="button" class="primary" @click="startInstance">启动实例</button>
+                        <button type="button" @click="startAndSubmitInstance">启动并提交</button>
+                        <button type="button" @click="queryInstances">查询实例</button>
+                        <button type="button" @click="getInstance">查看实例详情</button>
+                        <button type="button" @click="updateVariables">更新测试变量</button>
+                        <button type="button" @click="terminateInstance">终止实例</button>
+                        <button type="button" class="danger" @click="deleteInstance">删除实例</button>
+                    </div>
+                </section>
+
+                <section class="variable-panel">
+                    <div class="section-heading">
+                        <h2>实例变量</h2>
+                        <p>表单字段和流程变量</p>
+                    </div>
+                    <div class="filter-grid">
+                        <label><span>申请人姓名</span><input v-model.trim="instanceForm.applicantName"></label>
+                        <label><span>入金金额</span><input v-model.number="instanceForm.amount" type="number"></label>
+                        <label><span>入金账号</span><input v-model.trim="instanceForm.accountNo"></label>
+                    </div>
+                    <json-panel title="变量 JSON" :value="buildVariables()"></json-panel>
+                </section>
+
+                <data-table title="实例列表" :rows="instanceRows" :columns="instanceColumns" @row-select="selectInstanceRow"></data-table>
+                <data-table title="当前活动任务" :rows="activeTasks" :columns="taskColumns" @row-select="selectTaskRow"></data-table>
+            </section>
+
+            <section v-if="activeSection === 'tasks'" class="view-grid">
+                <section class="toolbar-panel">
+                    <div class="section-heading">
+                        <h2>任务中心</h2>
+                        <p>待办任务、已办任务、我发起实例中的任务、全部活动任务和全部历史任务</p>
+                    </div>
+                    <div class="tab-row">
+                        <button type="button" :class="{ active: taskTab === 'todo' }" @click="taskTab = 'todo'; queryTodoTasks()">我的待办</button>
+                        <button type="button" :class="{ active: taskTab === 'done' }" @click="taskTab = 'done'; queryCompletedTasks()">我的已办</button>
+                        <button type="button" :class="{ active: taskTab === 'started' }" @click="taskTab = 'started'; queryStartedInstances()">我发起实例中的任务</button>
+                        <button type="button" :class="{ active: taskTab === 'active' }" @click="taskTab = 'active'; queryActiveTasks()">全部活动任务</button>
+                        <button type="button" :class="{ active: taskTab === 'history' }" @click="taskTab = 'history'; queryHistoryTasks()">全部历史任务</button>
+                        <button type="button" @click="queryComments">查审批意见</button>
+                    </div>
+                    <div class="filter-grid">
+                        <label><span>任务 ID</span><input v-model.trim="taskFilters.taskId"></label>
+                        <label><span>实例 ID</span><input v-model.trim="taskFilters.instanceId"></label>
+                        <label><span>流程编码</span><input v-model.trim="taskFilters.processCode"></label>
+                        <label><span>节点编码</span><input v-model.trim="taskFilters.nodeCode"></label>
+                        <label><span>实例标题</span><input v-model.trim="taskFilters.instanceTitle"></label>
+                        <label><span>待办来源</span><select v-model="taskFilters.todoSource"><option value="">全部</option><option>SELF</option><option>CANDIDATE</option><option>DELEGATED</option></select></label>
+                    </div>
+                </section>
+
+                <section class="task-drawer">
+                    <div class="section-heading">
+                        <h2>任务处理抽屉</h2>
+                        <p>任务选择、表单字段查看、审批通过和版本冲突</p>
+                    </div>
+                    <div class="filter-grid">
+                        <label><span>任务 ID</span><input v-model.trim="taskForm.taskId" placeholder="默认使用当前任务"></label>
+                        <div class="readonly-field"><span>任务版本</span><strong>{{ selectedTaskVersionText }}</strong></div>
+                        <label><span>审批意见</span><textarea v-model.trim="taskForm.comment" rows="3"></textarea></label>
+                    </div>
+                    <div class="task-form-fields">
+                        <strong>表单字段内容</strong>
+                        <div class="empty-state" v-if="!taskForm.taskId">选择我的待办或已办任务后展示</div>
+                        <dl v-else>
+                            <template v-for="field in selectedTaskFieldRows" :key="field.code">
+                                <dt>{{ field.label }}</dt>
+                                <dd>{{ field.value }}</dd>
+                            </template>
+                        </dl>
+                    </div>
+                    <div class="button-row">
+                        <button type="button" @click="approveCurrentTask">审批通过当前任务</button>
+                        <button type="button" @click="approveWithStaleVersion">使用过期任务版本审批</button>
+                        <button type="button" @click="simulateConcurrentApprove">并发审批模拟</button>
+                        <button type="button" disabled>驳回 后续预留</button>
+                        <button type="button" disabled>转办 后续预留</button>
+                    </div>
+                </section>
+
+                <data-table v-if="taskTab === 'todo'" title="待办任务" :rows="todoTasks" :columns="taskColumns" @row-select="selectTaskRow"></data-table>
+                <data-table v-if="taskTab === 'done'" title="已办任务" :rows="completedTasks" :columns="historyColumns" @row-select="selectTaskRow"></data-table>
+                <data-table v-if="taskTab === 'started'" title="我发起" :rows="startedInstances" :columns="instanceColumns" @row-select="selectInstanceRow"></data-table>
+                <data-table v-if="taskTab === 'active'" title="全部活动任务" :rows="activeTasks" :columns="taskColumns" @row-select="selectTaskRow"></data-table>
+                <data-table v-if="taskTab === 'history'" title="全部历史任务" :rows="historyTasks" :columns="historyColumns"></data-table>
+            </section>
+
+            <section v-if="activeSection === 'tracking'" class="view-grid">
+                <section class="model-preview">
+                    <div class="section-heading">
+                        <h2>流程追踪</h2>
+                        <p>流程图联动、历史轨迹、审批意见和回调事件</p>
+                    </div>
+                    <div class="flow-board">
+                        <template v-for="(node, index) in orderedNodes" :key="node.nodeCode">
+                            <article class="flow-node" :class="flowNodeClass(node)">
+                                <span>{{ node.nodeCode }}</span>
+                                <strong>{{ node.nodeName }}</strong>
+                                <small>{{ flowNodeStatus(node) }}</small>
+                            </article>
+                            <span v-if="index < orderedNodes.length - 1" class="flow-edge">-></span>
+                        </template>
+                    </div>
+                </section>
+                <section class="timeline-panel">
+                    <h2>时间轴</h2>
+                    <ol class="timeline">
+                        <li v-for="item in timelineRows" :key="item.id">
+                            <span>{{ item.time }}</span>
+                            <strong>{{ item.title }}</strong>
+                            <p>{{ item.detail }}</p>
+                        </li>
+                    </ol>
+                </section>
+                <data-table title="历史任务" :rows="historyTasks" :columns="historyColumns"></data-table>
+                <data-table title="审批意见" :rows="comments" :columns="commentColumns"></data-table>
+            </section>
+
+            <section v-if="activeSection === 'debug'" class="view-grid">
+                <section class="toolbar-panel">
+                    <div class="section-heading">
+                        <h2>接口调试</h2>
+                        <p>流程定义接口、流程实例接口、任务处理接口、查询接口和缓存接口</p>
+                    </div>
+                    <div class="debug-layout">
+                        <div class="debug-list">
+                            <button v-for="api in apiCatalog" :key="api.name" type="button" :class="{ active: selectedApi && selectedApi.name === api.name }" @click="selectApi(api)">
+                                <strong>{{ api.name }}</strong>
+                                <span>{{ api.method }} {{ api.path }}</span>
+                            </button>
+                        </div>
+                        <form class="debug-form">
+                            <label><span>请求方法</span><select v-model="debugRequest.method"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select></label>
+                            <label><span>请求地址</span><input v-model.trim="debugRequest.path"></label>
+                            <label><span>请求体</span><textarea v-model="debugRequest.bodyText" rows="12"></textarea></label>
+                            <button type="button" class="primary" @click="sendDebugRequest">发送请求</button>
+                        </form>
+                    </div>
+                </section>
+                <json-panel title="请求 JSON" :value="lastRequestPreview"></json-panel>
+                <json-panel title="响应 JSON" :value="lastResponse"></json-panel>
+            </section>
+
+            <section v-if="activeSection === 'logs'" class="view-grid">
+                <section class="toolbar-panel">
+                    <div class="section-heading">
+                        <h2>操作日志</h2>
+                        <p>请求、响应、错误码、回调日志、eventId 和执行耗时</p>
+                    </div>
+                    <div class="button-row">
+                        <button type="button" @click="queryCallbackLogs">查回调日志</button>
+                        <button type="button" @click="queryOperationLogs">查操作日志</button>
+                        <button type="button" @click="operationLogs = []">清空本页流水</button>
+                    </div>
+                </section>
+                <data-table title="本页操作流水" :rows="operationLogs" :columns="operationColumns"></data-table>
+                <data-table title="回调日志" :rows="callbackLogs" :columns="callbackColumns"></data-table>
+                <json-panel title="最后请求" :value="lastRequestPreview"></json-panel>
+                <json-panel title="最后响应" :value="lastResponse"></json-panel>
+            </section>
+        </main>
+
+        <aside class="right-rail" aria-label="诊断区">
+            <json-panel title="请求 JSON" :value="lastRequestPreview"></json-panel>
+            <json-panel title="响应 JSON" :value="lastResponse"></json-panel>
+            <section class="surface">
+                <h2>错误</h2>
+                <div class="message-box" :class="{ error: errorMessage }">{{ errorMessage || '暂无错误' }}</div>
+            </section>
+            <section class="surface">
+                <h2>操作流水</h2>
+                <div class="log-stack">
+                    <article v-if="!operationLogs.length" class="message-box">暂无操作</article>
+                    <article v-for="log in operationLogs.slice(0, 8)" :key="log.id" class="log-card" :class="{ failed: !log.success }">
+                        <strong>{{ log.label }} <span>{{ log.status }}</span></strong>
+                        <p>{{ log.time }} {{ log.method }} {{ log.path }}</p>
+                        <p>operationId: {{ log.operationId || '-' }}</p>
+                    </article>
+                </div>
+            </section>
+        </aside>
+    </div>
+
+    <div v-if="showDefinitionDialog" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="definitionDialogTitle">
+        <section class="definition-modal">
+            <header class="modal-header">
+                <div>
+                    <h2 id="definitionDialogTitle">流程定义编辑</h2>
+                    <p>基础信息、节点、连线、审批规则、表单字段和附件模板</p>
+                </div>
+                <button type="button" class="icon-button" @click="closeDefinitionDialog" aria-label="关闭流程定义编辑">x</button>
+            </header>
+
+            <div class="modal-toolbar">
+                <button type="button" @click="loadDepositTemplate">载入入金申请模板</button>
+                <button type="button" @click="clearDefinitionDraft">清空配置</button>
+                <button type="button" @click="validateDefinitionDraftAction">校验本地配置</button>
+                <button type="button" class="primary" @click="confirmCreateAndSave">确认创建并保存</button>
+            </div>
+
+            <div class="validation-list" :class="{ hasError: draftIssues.length }">
+                <strong>本地校验</strong>
+                <span v-if="!draftIssues.length">{{ draftValidationText }}</span>
+                <span v-for="issue in draftIssues" :key="issue">{{ issue }}</span>
+            </div>
+
+            <div class="definition-workbench">
+                <section class="surface definition-basic-row">
+                    <h3>基础信息</h3>
+                    <div class="definition-basic-fields">
+                        <label><span>流程编码</span><input v-model.trim="definitionDraft.processCode" placeholder="deposit_apply_demo"></label>
+                        <label><span>流程名称</span><input v-model.trim="definitionDraft.processName" placeholder="入金申请测试流程"></label>
+                        <label><span>系统编码</span><input v-model.trim="definitionDraft.systemCode" placeholder="flow-test-page"></label>
+                        <label><span>实例标题模板</span><input v-model.trim="definitionDraft.instanceTitleTemplate" placeholder="${starterName}提交的测试申请"></label>
+                        <label><span>备注</span><input v-model.trim="definitionDraft.remark"></label>
+                        <div><span>操作人 ID</span><strong>{{ currentUserId }}</strong></div>
+                        <div><span>operationId</span><strong>{{ manualOperationId || lastOperationId || '自动生成' }}</strong></div>
+                    </div>
+                </section>
+
+                <section class="surface definition-step-row create-steps">
+                    <h3>创建步骤</h3>
+                    <ol>
+                        <li v-for="item in definitionCreateSteps" :key="item.label" :class="{ done: item.done, active: item.active }">
+                            <span>{{ item.index }}</span>
+                            <strong>{{ item.label }}</strong>
+                            <small>{{ item.detail }}</small>
+                        </li>
+                    </ol>
+                </section>
+
+                <section class="surface definition-canvas-panel">
+                    <div class="section-heading inline">
+                        <div>
+                            <h3>可视化流程设计器</h3>
+                            <p>拖动节点更新坐标，连线模式按起点、终点顺序点击节点。</p>
+                        </div>
+                        <div class="button-row">
+                            <button type="button" @click="addDraftNode">新增节点</button>
+                            <button type="button" @click="duplicateDraftNode">复制节点</button>
+                            <button type="button" @click="layoutDraftGraph">自动布局</button>
+                            <button type="button" :class="{ primary: connectionMode }" @click="beginEdgeConnect">{{ connectionMode ? '退出连线' : '连线' }}</button>
+                        </div>
+                    </div>
+                    <div class="canvas-layout">
+                        <div class="definition-canvas designer-canvas"
+                             aria-label="新建流程定义可视化设计器"
+                             @mousemove="dragDraftNode"
+                             @mouseup="finishNodeDrag"
+                             @mouseleave="finishNodeDrag">
+                            <svg class="connector-svg" :width="canvasWidth" :height="canvasHeight" aria-hidden="true">
+                                <line v-for="edge in canvasEdges"
+                                      :key="edge.edgeCode"
+                                      :x1="edge.x1"
+                                      :y1="edge.y1"
+                                      :x2="edge.x2"
+                                      :y2="edge.y2"
+                                      @click.stop="selectEdgeByCode(edge.edgeCode)"></line>
+                            </svg>
+                            <article v-for="(node, index) in orderedNodes"
+                                     :key="node.nodeCode + index"
+                                     class="designer-node"
+                                     :class="{ selected: definitionDraft.nodes[selectedNodeIndex] && definitionDraft.nodes[selectedNodeIndex].nodeCode === node.nodeCode, connecting: pendingEdgeSourceNodeCode === node.nodeCode }"
+                                     :style="draftNodeStyle(node)"
+                                     @mousedown.stop.prevent="beginNodeDrag($event, node.nodeCode)"
+                                     @click.stop="handleCanvasNodeClick(node.nodeCode)">
+                                <span>{{ node.nodeType }}</span>
+                                <strong>{{ node.nodeName || node.nodeCode }}</strong>
+                                <small>{{ node.nodeCode }}</small>
+                            </article>
+                            <div v-if="!orderedNodes.length" class="empty-state">暂无流程图</div>
+                        </div>
+
+                        <aside class="definition-inspector">
+                    <section class="surface form-stack">
+                        <div class="section-heading inline">
+                            <h3>节点属性</h3>
+                            <button type="button" class="danger" @click="deleteDraftNode">删除节点</button>
+                        </div>
+                        <label><span>节点编码</span><input v-model.trim="nodeForm.nodeCode"></label>
+                        <label><span>节点名称</span><input v-model.trim="nodeForm.nodeName"></label>
+                        <label>
+                            <span>节点类型</span>
+                            <select v-model="nodeForm.nodeType">
+                                <option>START</option>
+                                <option>USER_TASK</option>
+                                <option>END</option>
+                                <option disabled>条件网关 后续预留</option>
+                                <option disabled>并行网关 后续预留</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>审批规则</span>
+                            <select v-model="nodeForm.approverRuleType">
+                                <option value="">无</option>
+                                <option>STARTER</option>
+                                <option>USER</option>
+                                <option disabled>ROLE 后续预留</option>
+                                <option disabled>DEPARTMENT 后续预留</option>
+                                <option disabled>APPROVER_EXPRESSION 后续预留</option>
+                            </select>
+                        </label>
+                        <label><span>用户 ID 多值</span><input v-model.trim="nodeForm.approverUserIds" placeholder="user_manager,user_finance"></label>
+                        <label><span>审批规则 JSON</span><textarea v-model.trim="nodeForm.approverRuleConfig" rows="4"></textarea></label>
+                        <div class="two-column">
+                            <label><span>X 坐标</span><input v-model.number="nodeForm.positionX" type="number"></label>
+                            <label><span>Y 坐标</span><input v-model.number="nodeForm.positionY" type="number"></label>
+                        </div>
+                        <label><span>排序</span><input v-model.number="nodeForm.sortOrder" type="number"></label>
+                        <button type="button" class="primary" @click="saveDraftNode">保存节点</button>
+                    </section>
+
+                    <section class="surface form-stack">
+                        <div class="section-heading inline">
+                            <h3>连线属性</h3>
+                            <div class="button-row">
+                                <button type="button" @click="addDraftEdge">新增</button>
+                                <button type="button" class="danger" @click="deleteDraftEdge">删除</button>
+                            </div>
+                        </div>
+                        <label><span>连线编码</span><input v-model.trim="edgeForm.edgeCode"></label>
+                        <label>
+                            <span>来源节点</span>
+                            <select v-model="edgeForm.sourceNodeCode">
+                                <option v-for="node in definitionDraft.nodes" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeCode }} {{ node.nodeName }}</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span>目标节点</span>
+                            <select v-model="edgeForm.targetNodeCode">
+                                <option v-for="node in definitionDraft.nodes" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeCode }} {{ node.nodeName }}</option>
+                            </select>
+                        </label>
+                        <label><span>条件表达式</span><input v-model.trim="edgeForm.conditionExpression" placeholder="M0-M3 串行流程可为空"></label>
+                        <label><span>默认出线</span><select v-model="edgeForm.defaultEdge"><option :value="false">false</option><option :value="true">true</option></select></label>
+                        <label><span>排序</span><input v-model.number="edgeForm.sortOrder" type="number"></label>
+                        <button type="button" class="primary" @click="saveDraftEdge">保存连线</button>
+                    </section>
+
+                    <section class="surface extension-panel">
+                        <div class="tab-row compact">
+                            <button type="button" :class="{ active: definitionConfigTab === 'fields' }" @click="definitionConfigTab = 'fields'">表单字段</button>
+                            <button type="button" :class="{ active: definitionConfigTab === 'attachments' }" @click="definitionConfigTab = 'attachments'">附件模板</button>
+                            <button type="button" :class="{ active: definitionConfigTab === 'json' }" @click="definitionConfigTab = 'json'">模型 JSON</button>
+                        </div>
+                        <textarea v-if="definitionConfigTab === 'fields'" v-model="formFieldsJson" rows="8"></textarea>
+                        <textarea v-else-if="definitionConfigTab === 'attachments'" v-model="attachmentConfigsJson" rows="8"></textarea>
+                        <pre v-else>{{ formatJson(definitionDraft) }}</pre>
+                    </section>
+                </aside>
+                    </div>
+                </section>
+            </div>
+        </section>
+    </div>
+
+    <div v-if="confirmDialog.show" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirmDialogTitle">
+        <section class="confirm-modal">
+            <h2 id="confirmDialogTitle">{{ confirmDialog.title }}</h2>
+            <p>{{ confirmDialog.message }}</p>
+            <div v-if="confirmDialog.checks && confirmDialog.checks.length" class="validation-list">
+                <strong>删除实例确认</strong>
+                <span v-for="item in confirmDialog.checks" :key="item">{{ item }}</span>
+            </div>
+            <label><span>测试原因</span><textarea v-model.trim="confirmDialog.reason" rows="3"></textarea></label>
+            <div class="button-row end">
+                <button type="button" @click="closeConfirm">取消</button>
+                <button type="button" class="danger" @click="runConfirmAction">确认执行</button>
+            </div>
+        </section>
+    </div>
+</div>
+
+<script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
+<script src="./flow-test-app.js?v=20260724-definition-dialog-fix"></script>
+</body>
+</html>

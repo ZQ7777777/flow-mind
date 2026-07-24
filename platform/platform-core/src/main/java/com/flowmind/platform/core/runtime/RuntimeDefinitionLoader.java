@@ -11,6 +11,7 @@ import com.flowmind.platform.core.validation.DefinitionModelValidator;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -34,6 +35,7 @@ public class RuntimeDefinitionLoader {
     /** 定义结构校验器。 */
     private final DefinitionModelValidator modelValidator;
 
+    @Autowired
     public RuntimeDefinitionLoader(ProcessDefinitionRepository definitionRepository,
                                    ProcessDefinitionService definitionService,
                                    ProcessDefinitionCache definitionCache) {

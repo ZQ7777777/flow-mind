@@ -6,6 +6,7 @@ import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
 import com.flowmind.platform.core.definition.OperationIdempotencyService;
 import com.flowmind.platform.persistence.entity.ProcessOperationRecordEntity;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -28,6 +29,7 @@ public class RuntimeOperationExecutor {
     /** 请求规范化摘要组件。 */
     private final RuntimeRequestHasher requestHasher;
 
+    @Autowired
     public RuntimeOperationExecutor(OperationIdempotencyService idempotencyService) {
         this(idempotencyService, new RuntimeRequestHasher());
     }

@@ -55,6 +55,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
@@ -543,6 +544,22 @@ class DefaultProcessDefinitionServiceTest {
         assertEquals("FAILED", operationStatus("operation-save-001"));
         assertEquals(DefinitionErrorCodes.DEFINITION_NOT_EDITABLE, operationErrorCode("operation-save-001"));
         assertEquals(0, processDefinitionCache.definitionIds.size());
+    }
+
+    @Test
+    void saveGraphKeepsBusinessFailureWhenOperationFailureMarkingIsLocked() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        jdbcTemplate.update("UPDATE process_definition SET definition_status = 'PUBLISHED' WHERE id = ?",
+                created.getId());
+        DefaultProcessDefinitionService lockedFailureMarkingService = new DefaultProcessDefinitionService(
+                definitionRepository, nodeRepository, edgeRepository, formFieldManager, attachmentConfigManager,
+                new LockedFailureMarkingIdempotencyService(), processDefinitionCache);
+
+        DefinitionStateException exception = assertThrows(DefinitionStateException.class,
+                () -> lockedFailureMarkingService.saveGraph(created.getId(),
+                        simpleLinearGraph("operation-save-locked")));
+
+        assertEquals(DefinitionErrorCodes.DEFINITION_NOT_EDITABLE, exception.getErrorCode());
     }
 
     @Test
@@ -1341,6 +1358,27 @@ class DefaultProcessDefinitionServiceTest {
                 super.insert(concurrent);
             }
             return super.insert(entity);
+        }
+    }
+
+    private static final class LockedFailureMarkingIdempotencyService extends OperationIdempotencyService {
+
+        private LockedFailureMarkingIdempotencyService() {
+            super(mock(ProcessOperationRecordRepository.class));
+        }
+
+        @Override
+        public OperationIdempotencyDecision beginOrReplay(String operationId,
+                                                          String actionType,
+                                                          String operatorId,
+                                                          String requestHash,
+                                                          LocalDateTime now) {
+            return new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW, null);
+        }
+
+        @Override
+        public void markFailed(String operationId, String errorCode) {
+            throw new DataAccessResourceFailureException("database is locked");
         }
     }
 
