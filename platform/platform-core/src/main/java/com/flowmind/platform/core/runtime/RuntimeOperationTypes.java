@@ -11,26 +11,31 @@ import com.flowmind.platform.api.enums.ActionTypeEnum;
  * @author FlowMind
  * @since 2026-07-22
  */
-final class RuntimeOperationTypes {
+public final class RuntimeOperationTypes {
 
     /** 仅创建未启动实例。 */
-    static final String START_PROCESS = ActionTypeEnum.START.name();
+    public static final String START_PROCESS = ActionTypeEnum.START.name();
     /** 创建运行中实例并推进到首批用户任务。 */
-    static final String START_AND_SUBMIT = "START_AND_SUBMIT";
+    public static final String START_AND_SUBMIT = "START_AND_SUBMIT";
     /** 办理发起任务。 */
-    static final String SUBMIT_TASK = ActionTypeEnum.SEND.name();
+    public static final String SUBMIT_TASK = ActionTypeEnum.SEND.name();
     /** 办理普通审批任务。 */
-    static final String APPROVE_TASK = ActionTypeEnum.APPROVE.name();
+    public static final String APPROVE_TASK = ActionTypeEnum.APPROVE.name();
     /** 合并流程变量快照。 */
-    static final String UPDATE_VARIABLES = "UPDATE_VARIABLES";
+    public static final String UPDATE_VARIABLES = "UPDATE_VARIABLES";
     /** 终止运行中的流程实例。 */
-    static final String TERMINATE = ActionTypeEnum.TERMINATE.name();
+    public static final String TERMINATE = ActionTypeEnum.TERMINATE.name();
     /** 删除流程实例复用既有取消动作语义。 */
-    static final String DELETE_INSTANCE = ActionTypeEnum.CANCEL.name();
+    public static final String DELETE_INSTANCE = ActionTypeEnum.CANCEL.name();
     /** 管理员跳转流程节点。 */
-    static final String JUMP = ActionTypeEnum.JUMP.name();
+    public static final String JUMP = ActionTypeEnum.JUMP.name();
     /** 管理员强制办结流程实例。 */
-    static final String FORCE_COMPLETE = ActionTypeEnum.FORCE_COMPLETE.name();
+    public static final String FORCE_COMPLETE = ActionTypeEnum.FORCE_COMPLETE.name();
+
+    /** 上传实例或任务附件。 */
+    public static final String ATTACHMENT_UPLOAD = "ATTACHMENT_UPLOAD";
+    /** 删除运行时附件。 */
+    public static final String ATTACHMENT_DELETE = "ATTACHMENT_DELETE";
 
     private RuntimeOperationTypes() {
     }

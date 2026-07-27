@@ -274,6 +274,12 @@ public class ProcessDefinitionRepository {
                 + "(SELECT id FROM process_instance WHERE definition_id = ?)", definitionId);
     }
 
+    public List<String> findAttachmentStorageKeysByDefinitionId(String definitionId) {
+        return jdbcTemplate.queryForList("SELECT a.storage_key FROM process_attachment a "
+                        + "JOIN process_instance i ON i.id = a.instance_id WHERE i.definition_id = ?",
+                String.class, definitionId);
+    }
+
     /**
      * 删除流程定义Id对应的已阅记录
      * @param definitionId

@@ -56,6 +56,14 @@ public final class RuntimeErrorCodes {
     public static final String NODE_CONFIG_INVALID = "FLOW_RUNTIME_NODE_CONFIG_INVALID";
     public static final String CALLBACK_EVENT_CONFLICT = "FLOW_CALLBACK_EVENT_CONFLICT";
     public static final String HISTORY_ARCHIVE_INVALID = "FLOW_HISTORY_ARCHIVE_INVALID";
+    public static final String ATTACHMENT_REQUIRED = "FLOW_ATTACHMENT_REQUIRED";
+    public static final String ATTACHMENT_TYPE_NOT_ALLOWED = "FLOW_ATTACHMENT_TYPE_NOT_ALLOWED";
+    public static final String ATTACHMENT_TOO_LARGE = "FLOW_ATTACHMENT_TOO_LARGE";
+    public static final String ATTACHMENT_PERMISSION_DENIED = "FLOW_ATTACHMENT_PERMISSION_DENIED";
+    public static final String ATTACHMENT_NOT_FOUND = "FLOW_ATTACHMENT_NOT_FOUND";
+    public static final String ATTACHMENT_COUNT_EXCEEDED = "FLOW_ATTACHMENT_COUNT_EXCEEDED";
+    public static final String ATTACHMENT_SOURCE_TASK_INVALID = "FLOW_ATTACHMENT_SOURCE_TASK_INVALID";
+    public static final String ATTACHMENT_STORAGE_FAILED = "FLOW_ATTACHMENT_STORAGE_FAILED";
 
     /**
      * 条件表达式非法或不在 M2 支持范围内。

@@ -30,7 +30,6 @@ import com.flowmind.platform.api.request.HandleAlertRequest;
 import com.flowmind.platform.api.request.RemindTaskRequest;
 import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
-import com.flowmind.platform.api.request.StoreFileRequest;
 import com.flowmind.platform.api.request.TimeoutScanRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.CallbackService;
@@ -42,16 +41,22 @@ import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
-import com.flowmind.platform.api.dto.FileContent;
 import com.flowmind.platform.api.dto.ProcessMessage;
-import com.flowmind.platform.api.dto.StoredFile;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
 import com.flowmind.platform.core.query.ProcessTraceAssembler;
 import com.flowmind.platform.core.query.RuntimeQueryAssembler;
+import com.flowmind.platform.core.definition.OperationIdempotencyService;
+import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
+import com.flowmind.platform.core.attachment.DefaultAttachmentService;
+import com.flowmind.platform.mock.InMemoryFileStorageProvider;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
+import com.flowmind.platform.persistence.repository.ProcessAttachmentRepository;
+import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
+import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
 import com.flowmind.platform.starter.properties.PlatformProperties;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -63,8 +68,10 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.io.File;
@@ -74,9 +81,6 @@ import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Configuration
 @EnableConfigurationProperties(PlatformProperties.class)
@@ -110,6 +114,12 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public PlatformTransactionManager transactionManager(DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public PlatformSchemaInitializer platformSchemaInitializer(DataSource dataSource) {
         return new PlatformSchemaInitializer(dataSource);
     }
@@ -130,6 +140,42 @@ public class PlatformAutoConfiguration {
     @ConditionalOnMissingBean
     public ProcessInstanceRepository processInstanceRepository(JdbcTemplate jdbcTemplate) {
         return new ProcessInstanceRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessOperationRecordRepository processOperationRecordRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessOperationRecordRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public OperationIdempotencyService operationIdempotencyService(ProcessOperationRecordRepository operations) {
+        return new OperationIdempotencyService(operations);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RuntimeOperationExecutor runtimeOperationExecutor(OperationIdempotencyService idempotencyService) {
+        return new RuntimeOperationExecutor(idempotencyService);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessAttachmentRepository processAttachmentRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessAttachmentRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessAttachmentTemplateRepository processAttachmentTemplateRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessAttachmentTemplateRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessDefinitionAttachmentConfigRepository processDefinitionAttachmentConfigRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessDefinitionAttachmentConfigRepository(jdbcTemplate);
     }
 
     @Bean
@@ -167,8 +213,17 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AttachmentService attachmentService() {
-        return new UnsupportedAttachmentService();
+    public AttachmentService attachmentService(ProcessAttachmentRepository attachments,
+                                               ProcessInstanceRepository instances,
+                                               ActiveTaskRepository tasks,
+                                               ProcessDefinitionAttachmentConfigRepository configs,
+                                               ProcessAttachmentTemplateRepository templates,
+                                                FileStorageProvider storage,
+                                                AttachmentAccessGuard guard,
+                                                CurrentUserProvider currentUser,
+                                                RuntimeOperationExecutor operationExecutor) {
+        return new DefaultAttachmentService(attachments, instances, tasks, configs, templates, storage, guard, currentUser,
+                operationExecutor);
     }
 
     @Bean
@@ -360,33 +415,6 @@ public class PlatformAutoConfiguration {
         @Override
         public AlertDTO handleAlert(HandleAlertRequest request) {
             throw unsupported();
-        }
-    }
-
-    public static final class InMemoryFileStorageProvider implements FileStorageProvider {
-        private final Map<String, FileContent> files = new ConcurrentHashMap<String, FileContent>();
-
-        @Override
-        public StoredFile store(StoreFileRequest request) {
-            String storageKey = "mock://" + UUID.randomUUID().toString();
-            FileContent content = new FileContent(storageKey, request.getFileName(), request.getContentType(),
-                    request.getSizeBytes(), request.getContent());
-            files.put(storageKey, content);
-            return new StoredFile(storageKey, request.getFileName(), request.getContentType(), request.getSizeBytes());
-        }
-
-        @Override
-        public FileContent load(String storageKey) {
-            FileContent content = files.get(storageKey);
-            if (content == null) {
-                throw new IllegalArgumentException("File not found: " + storageKey);
-            }
-            return content;
-        }
-
-        @Override
-        public void delete(String storageKey) {
-            files.remove(storageKey);
         }
     }
 
