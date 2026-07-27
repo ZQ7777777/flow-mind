@@ -1,9 +1,6 @@
 package com.flowmind.platform.starter;
 
 import com.flowmind.platform.api.dto.AlertDTO;
-import com.flowmind.platform.api.dto.AttachmentDTO;
-import com.flowmind.platform.api.dto.AttachmentDownloadDTO;
-import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
 import com.flowmind.platform.api.dto.CallbackLogDTO;
 import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
@@ -16,20 +13,14 @@ import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.WorkflowEvent;
 import com.flowmind.platform.api.dto.AlertQuery;
-import com.flowmind.platform.api.dto.AttachmentQuery;
 import com.flowmind.platform.api.dto.CallbackLogQuery;
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
 import com.flowmind.platform.api.dto.ReadRecordQuery;
 import com.flowmind.platform.api.dto.ReminderQuery;
 import com.flowmind.platform.api.dto.StartedInstanceQuery;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
-import com.flowmind.platform.api.request.CheckAttachmentRequest;
-import com.flowmind.platform.api.request.DeleteAttachmentRequest;
-import com.flowmind.platform.api.request.DownloadAttachmentRequest;
 import com.flowmind.platform.api.request.HandleAlertRequest;
 import com.flowmind.platform.api.request.RemindTaskRequest;
-import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
-import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
 import com.flowmind.platform.api.request.TimeoutScanRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.CallbackService;
@@ -387,40 +378,6 @@ public class PlatformAutoConfiguration {
     private abstract static class UnsupportedPlatformService {
         protected final UnsupportedOperationException unsupported() {
             return new UnsupportedOperationException("Platform service implementation is not wired in this starter skeleton");
-        }
-    }
-
-    private static final class UnsupportedAttachmentService extends UnsupportedPlatformService
-            implements AttachmentService {
-
-        @Override
-        public AttachmentDTO saveInstanceAttachment(SaveInstanceAttachmentRequest request) {
-            throw unsupported();
-        }
-
-        @Override
-        public AttachmentDTO saveTaskAttachment(SaveTaskAttachmentRequest request) {
-            throw unsupported();
-        }
-
-        @Override
-        public AttachmentDownloadDTO downloadAttachment(DownloadAttachmentRequest request) {
-            throw unsupported();
-        }
-
-        @Override
-        public List<AttachmentDTO> queryAttachments(AttachmentQuery query) {
-            throw unsupported();
-        }
-
-        @Override
-        public void deleteAttachment(DeleteAttachmentRequest request) {
-            throw unsupported();
-        }
-
-        @Override
-        public AttachmentTemplateCheckResult checkRequiredAttachments(CheckAttachmentRequest request) {
-            throw unsupported();
         }
     }
 
