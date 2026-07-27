@@ -395,6 +395,47 @@ tr.selected {
     margin-bottom: 10px;
 }
 
+.attachment-form {
+    display: grid;
+    gap: 10px;
+    margin: 4px 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    background: var(--surface-soft);
+}
+
+.attachment-form-heading {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.attachment-toggle {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    color: var(--muted);
+}
+
+.attachment-toggle input {
+    width: auto;
+}
+
+.attachment-toggle span {
+    display: inline;
+    margin: 0;
+}
+
+.attachment-grid {
+    margin-bottom: 0;
+}
+
+.attachment-grid.disabled {
+    opacity: .68;
+}
+
 .readonly-field strong {
     display: block;
     min-height: 35px;
@@ -504,7 +545,8 @@ tr.selected {
     color: var(--muted);
 }
 
-.task-form-fields {
+.task-form-fields,
+.task-attachment-list {
     display: grid;
     gap: 8px;
     border: 1px solid var(--line);
@@ -527,6 +569,14 @@ tr.selected {
 .task-form-fields dd {
     margin: 0;
     overflow-wrap: anywhere;
+}
+
+.task-attachment-list {
+    overflow-x: auto;
+}
+
+.task-attachment-list table {
+    margin: 0;
 }
 
 .form-stack {

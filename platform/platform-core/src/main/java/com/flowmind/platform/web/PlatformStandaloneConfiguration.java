@@ -226,6 +226,8 @@ public class PlatformStandaloneConfiguration {
     static final class PlatformStandaloneSchemaInitializer implements InitializingBean {
         private static final String INIT_SCRIPT = "schema/sqlite/001_init_flow_platform.sql";
         private static final String M2_OPERATION_MIGRATION = "schema/sqlite/002_m2_runtime_operation_actions.sql";
+        private static final String ATTACHMENT_OPERATION_MIGRATION =
+                "schema/sqlite/003_attachment_operation_actions.sql";
 
         private final DataSource dataSource;
 
@@ -240,6 +242,9 @@ public class PlatformStandaloneConfiguration {
                 ScriptUtils.executeSqlScript(connection, new ClassPathResource(INIT_SCRIPT));
                 if (!operationRecordSupportsM2Actions(connection)) {
                     ScriptUtils.executeSqlScript(connection, new ClassPathResource(M2_OPERATION_MIGRATION));
+                }
+                if (!schemaSupportsAttachmentActions(connection)) {
+                    ScriptUtils.executeSqlScript(connection, new ClassPathResource(ATTACHMENT_OPERATION_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);
@@ -256,6 +261,24 @@ public class PlatformStandaloneConfiguration {
                 }
                 String definition = resultSet.getString("sql");
                 return definition.contains("START_AND_SUBMIT") && definition.contains("UPDATE_VARIABLES");
+            }
+        }
+
+        private boolean schemaSupportsAttachmentActions(Connection connection) throws Exception {
+            return tableSupportsAttachmentActions(connection, "process_operation_record")
+                    && tableSupportsAttachmentActions(connection, "process_audit_log");
+        }
+
+        private boolean tableSupportsAttachmentActions(Connection connection, String tableName) throws Exception {
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                                 + "AND name = '" + tableName + "'")) {
+                if (!resultSet.next() || resultSet.getString("sql") == null) {
+                    return false;
+                }
+                String definition = resultSet.getString("sql");
+                return definition.contains("ATTACHMENT_UPLOAD") && definition.contains("ATTACHMENT_DELETE");
             }
         }
     }

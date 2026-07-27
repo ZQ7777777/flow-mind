@@ -25,6 +25,8 @@ class FlowPlatformSchemaTest {
 
     private static final String SCHEMA = "/schema/sqlite/001_init_flow_platform.sql";
     private static final String M2_OPERATION_MIGRATION = "/schema/sqlite/002_m2_runtime_operation_actions.sql";
+    private static final String ATTACHMENT_OPERATION_MIGRATION =
+            "/schema/sqlite/003_attachment_operation_actions.sql";
 
     @Test
     void schemaInitializesAndEnforcesDefinitionConstraints() throws Exception {
@@ -54,6 +56,30 @@ class FlowPlatformSchemaTest {
 
             assertDoesNotThrow(() -> insertAttachmentConfig(connection, "config-row-001", "group-001", false, 0));
             assertThrows(SQLException.class, () -> insertAttachmentConfig(connection, "config-row-002", "group-001", true, 0));
+        }
+    }
+
+    @Test
+    void schemaInitializesBankReceiptAttachmentTemplateForFlowTestPage() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            executeSchema(connection);
+
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT attachment_code, template_version, attachment_name, allowed_extensions, "
+                                 + "max_size_bytes, template_status, created_by "
+                                 + "FROM process_attachment_template "
+                                 + "WHERE id = 'template-bank-receipt'")) {
+                assertTrue(resultSet.next());
+                assertEquals("bankReceipt", resultSet.getString("attachment_code"));
+                assertEquals(1, resultSet.getInt("template_version"));
+                assertEquals("银行回单", resultSet.getString("attachment_name"));
+                assertEquals("[\"pdf\",\"jpg\",\"png\"]", resultSet.getString("allowed_extensions"));
+                assertEquals(10485760L, resultSet.getLong("max_size_bytes"));
+                assertEquals("ENABLED", resultSet.getString("template_status"));
+                assertEquals("system", resultSet.getString("created_by"));
+                assertFalse(resultSet.next());
+            }
         }
     }
 
@@ -120,6 +146,10 @@ class FlowPlatformSchemaTest {
                     "operation-start-and-submit", "START_AND_SUBMIT"));
             assertDoesNotThrow(() -> insertOperationRecord(connection, "record-variables",
                     "operation-variables", "UPDATE_VARIABLES"));
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-attachment-upload",
+                    "operation-attachment-upload", "ATTACHMENT_UPLOAD"));
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-attachment-delete",
+                    "operation-attachment-delete", "ATTACHMENT_DELETE"));
             for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
                 String suffix = actionType.name();
                 assertDoesNotThrow(() -> insertOperationRecord(connection, "record-" + suffix,
@@ -153,11 +183,38 @@ class FlowPlatformSchemaTest {
     }
 
     @Test
+    void attachmentOperationMigrationPreservesExistingRecordsAndAddsAttachmentActions() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            createPreM2OperationRecordTable(connection);
+            insertOperationRecord(connection, "record-approve", "operation-approve", "APPROVE");
+            executeScript(connection, M2_OPERATION_MIGRATION);
+
+            executeScript(connection, ATTACHMENT_OPERATION_MIGRATION);
+
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-attachment-upload",
+                    "operation-attachment-upload", "ATTACHMENT_UPLOAD"));
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-attachment-delete",
+                    "operation-attachment-delete", "ATTACHMENT_DELETE"));
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT action_type FROM process_operation_record WHERE id = 'record-approve'")) {
+                assertTrue(resultSet.next());
+                assertEquals("APPROVE", resultSet.getString("action_type"));
+                assertFalse(resultSet.next());
+            }
+        }
+    }
+
+    @Test
     void auditLogSupportsRuntimeAndDefinitionNamespacedActions() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             executeSchema(connection);
 
             assertDoesNotThrow(() -> insertAuditLog(connection, "audit-001", "TASK", "task-001", "APPROVE"));
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-attachment-upload", "ATTACHMENT",
+                    "attachment-upload", "ATTACHMENT_UPLOAD"));
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-attachment-delete", "ATTACHMENT",
+                    "attachment-delete", "ATTACHMENT_DELETE"));
             for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
                 String suffix = actionType.name();
                 assertDoesNotThrow(() -> insertAuditLog(connection, "audit-" + suffix, "DEFINITION",

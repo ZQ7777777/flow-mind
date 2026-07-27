@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>流程平台测试控制台 - Vue</title>
-    <link rel="stylesheet" href="./flow-test-app.css?v=20260724-definition-dialog-fix">
+    <link rel="stylesheet" href="./flow-test-app.css?v=20260727-task-attachment-drawer">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -195,8 +195,7 @@
                         <label><span>实例状态</span><select v-model="instanceFilters.instanceStatus"><option value="">全部</option><option>RUNNING</option><option>COMPLETED</option><option>TERMINATED</option></select></label>
                     </div>
                     <div class="button-row">
-                        <button type="button" class="primary" @click="startInstance">启动实例</button>
-                        <button type="button" @click="startAndSubmitInstance">启动并提交</button>
+                        <button type="button" class="primary" @click="startAndSubmitInstance">启动并提交</button>
                         <button type="button" @click="queryInstances">查询实例</button>
                         <button type="button" @click="getInstance">查看实例详情</button>
                         <button type="button" @click="updateVariables">更新测试变量</button>
@@ -214,6 +213,24 @@
                         <label><span>申请人姓名</span><input v-model.trim="instanceForm.applicantName"></label>
                         <label><span>入金金额</span><input v-model.number="instanceForm.amount" type="number"></label>
                         <label><span>入金账号</span><input v-model.trim="instanceForm.accountNo"></label>
+                    </div>
+                    <div class="attachment-form" aria-label="申请附件">
+                        <div class="attachment-form-heading">
+                            <strong>申请附件</strong>
+                            <label class="attachment-toggle">
+                                <input type="checkbox" v-model="instanceAttachmentForm.enabled">
+                                <span>启动并提交时携带附件</span>
+                            </label>
+                        </div>
+                        <div class="filter-grid attachment-grid" :class="{ disabled: !instanceAttachmentForm.enabled }">
+                            <label><span>附件编码</span><input v-model.trim="instanceAttachmentForm.attachmentCode" :disabled="!instanceAttachmentForm.enabled"></label>
+                            <label><span>文件名</span><input v-model.trim="instanceAttachmentForm.fileName" :disabled="!instanceAttachmentForm.enabled"></label>
+                            <label><span>Content-Type</span><input v-model.trim="instanceAttachmentForm.contentType" :disabled="!instanceAttachmentForm.enabled"></label>
+                            <label><span>文件字节数</span><input v-model.number="instanceAttachmentForm.fileSize" type="number" min="0" :disabled="!instanceAttachmentForm.enabled"></label>
+                            <label><span>storageKey 备注</span><input v-model.trim="instanceAttachmentForm.storageKey" :disabled="!instanceAttachmentForm.enabled"></label>
+                            <label><span>Base64 内容</span><input v-model.trim="instanceAttachmentForm.contentBase64" :disabled="!instanceAttachmentForm.enabled"></label>
+                        </div>
+                        <json-panel title="附件 JSON" :value="buildAttachmentPayloadPreview()"></json-panel>
                     </div>
                     <json-panel title="变量 JSON" :value="buildVariables()"></json-panel>
                 </section>
@@ -265,6 +282,31 @@
                                 <dd>{{ field.value }}</dd>
                             </template>
                         </dl>
+                    </div>
+                    <div class="task-attachment-list">
+                        <strong>申请人提交的附件</strong>
+                        <div class="empty-state" v-if="!taskForm.taskId">选择任务后展示该实例的申请附件</div>
+                        <div class="empty-state" v-else-if="!selectedTaskAttachmentRows.length">当前实例暂无申请附件</div>
+                        <table v-else>
+                            <thead>
+                            <tr>
+                                <th>附件编码</th>
+                                <th>文件名</th>
+                                <th>类型</th>
+                                <th>大小</th>
+                                <th>上传人</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr v-for="attachment in selectedTaskAttachmentRows" :key="attachment.attachmentId">
+                                <td>{{ attachment.attachmentCode }}</td>
+                                <td>{{ attachment.fileName }}</td>
+                                <td>{{ attachment.contentType }}</td>
+                                <td>{{ attachment.sizeText }}</td>
+                                <td>{{ attachment.uploadedBy }}</td>
+                            </tr>
+                            </tbody>
+                        </table>
                     </div>
                     <div class="button-row">
                         <button type="button" @click="approveCurrentTask">审批通过当前任务</button>
@@ -568,6 +610,6 @@
 </div>
 
 <script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
-<script src="./flow-test-app.js?v=20260724-definition-dialog-fix"></script>
+<script src="./flow-test-app.js?v=20260727-task-attachment-drawer"></script>
 </body>
 </html>
