@@ -196,9 +196,12 @@ class DefaultProcessRuntimeServiceTest {
         assertEquals("task-manager", result.getCreatedTasks().get(0).getTaskId());
         ArgumentCaptor<SaveInstanceAttachmentRequest> attachmentCaptor =
                 ArgumentCaptor.forClass(SaveInstanceAttachmentRequest.class);
+        ArgumentCaptor<ProcessInstanceEntity> createdInstanceCaptor =
+                ArgumentCaptor.forClass(ProcessInstanceEntity.class);
         verify(attachmentService).saveInstanceAttachment(attachmentCaptor.capture());
-        assertEquals(request.getOperationId(), attachmentCaptor.getValue().getOperationId());
-        assertEquals("instance-1", attachmentCaptor.getValue().getInstanceId());
+        verify(instanceRepository).insert(createdInstanceCaptor.capture());
+        assertEquals(request.getOperationId() + ":attachment:0", attachmentCaptor.getValue().getOperationId());
+        assertEquals(createdInstanceCaptor.getValue().getId(), attachmentCaptor.getValue().getInstanceId());
         assertEquals("starter", attachmentCaptor.getValue().getOperatorUserId());
         assertEquals(attachment, attachmentCaptor.getValue().getAttachment());
         verify(attachmentService).checkRequiredAttachments(any());
@@ -210,7 +213,7 @@ class DefaultProcessRuntimeServiceTest {
         verify(nodeAdvancer, times(2)).prepareAdvance(any(ProcessInstanceEntity.class), eq(definition), anyString(), any(), any());
         verify(nodeAdvancer, times(2)).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), anyString(), any(), any(),
                 any(RuntimeAdvancePreparation.class));
-        verify(callbackService).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
+        verify(callbackService, times(3)).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
     }
 

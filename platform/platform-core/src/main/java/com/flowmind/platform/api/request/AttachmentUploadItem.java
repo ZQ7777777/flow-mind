@@ -14,6 +14,8 @@ public class AttachmentUploadItem {
 
     /** 附件模板编码，在实例绑定的附件配置范围内唯一。 */
     private String attachmentCode;
+    /** 关联的表单字段编码；未绑定表单字段时为空。 */
+    private String fieldCode;
     /** 附件归属范围，用于区分实例级与任务级附件。 */
     private AttachmentOwnerTypeEnum ownerType;
     /** 调用方上传时提供的原始文件名。 */

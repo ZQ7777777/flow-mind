@@ -13,6 +13,10 @@ public class AttachmentQuery {
     private String taskId;
     /** 附件归属类型。 */
     private AttachmentOwnerTypeEnum ownerType;
+    /** 附件业务编码。 */
+    private String attachmentCode;
+    /** 表单字段编码。 */
+    private String fieldCode;
     /** 查询人用户 ID。 */
     private String operatorUserId;
 
@@ -42,6 +46,11 @@ public class AttachmentQuery {
     public void setOwnerType(AttachmentOwnerTypeEnum ownerType) {
         this.ownerType = ownerType;
     }
+
+    public String getAttachmentCode() { return attachmentCode; }
+    public void setAttachmentCode(String attachmentCode) { this.attachmentCode = attachmentCode; }
+    public String getFieldCode() { return fieldCode; }
+    public void setFieldCode(String fieldCode) { this.fieldCode = fieldCode; }
 
     public String getOperatorUserId() {
         return operatorUserId;

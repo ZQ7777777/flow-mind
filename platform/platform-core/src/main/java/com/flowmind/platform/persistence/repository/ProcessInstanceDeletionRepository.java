@@ -3,6 +3,8 @@ package com.flowmind.platform.persistence.repository;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 /**
  * 流程实例物理删除的级联持久化操作。
  *
@@ -46,5 +48,10 @@ public class ProcessInstanceDeletionRepository {
                 + "'$.deleteMode', 'HARD') "
                 + "WHERE instance_id = ?", instanceId);
         return jdbcTemplate.update("DELETE FROM process_instance WHERE id = ?", instanceId);
+    }
+
+    public List<String> findAttachmentStorageKeys(String instanceId) {
+        return jdbcTemplate.queryForList("SELECT storage_key FROM process_attachment WHERE instance_id = ?",
+                String.class, instanceId);
     }
 }

@@ -39,6 +39,7 @@ import com.flowmind.platform.api.request.UnclaimTaskRequest;
 import com.flowmind.platform.api.request.UpdateVariablesRequest;
 import com.flowmind.platform.api.request.WithdrawTaskRequest;
 import com.flowmind.platform.api.service.AttachmentService;
+import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
 import com.flowmind.platform.api.dto.OperationResult;
@@ -57,6 +58,8 @@ import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceDeletionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -111,6 +114,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     private final ProcessInstanceDeletionRepository instanceDeletionRepository;
     /** 复用既有审计日志写入原语。 */
     private final ProcessDefinitionRepository definitionRepository;
+    private final FileStorageProvider attachmentStorageProvider;
 
     /**
      * 创建 M2 运行时服务。
@@ -130,7 +134,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                          RuntimeTransactionExecutor transactionExecutor,
                                          InstanceTaskCancellationService taskCancellationService,
                                          ProcessInstanceDeletionRepository instanceDeletionRepository,
-                                         ProcessDefinitionRepository definitionRepository) {
+                                         ProcessDefinitionRepository definitionRepository,
+                                         FileStorageProvider attachmentStorageProvider) {
         this.instanceRepository = instanceRepository;
         this.activeTaskRepository = activeTaskRepository;
         this.historyTaskRepository = historyTaskRepository;
@@ -146,6 +151,28 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         this.taskCancellationService = taskCancellationService;
         this.instanceDeletionRepository = instanceDeletionRepository;
         this.definitionRepository = definitionRepository;
+        this.attachmentStorageProvider = attachmentStorageProvider;
+    }
+
+    public DefaultProcessRuntimeService(ProcessInstanceRepository instanceRepository,
+                                         ActiveTaskRepository activeTaskRepository,
+                                         HistoryTaskRepository historyTaskRepository,
+                                         RuntimeDefinitionLoader definitionLoader,
+                                         RuntimeRequestValidator requestValidator,
+                                         RuntimeOperationExecutor operationExecutor,
+                                         RuntimeNodeAdvancer nodeAdvancer,
+                                         AttachmentService attachmentService,
+                                         CallbackService callbackService,
+                                         RuntimeStateValidator runtimeStateValidator,
+                                         HistoryTaskWriter historyTaskWriter,
+                                         RuntimeTransactionExecutor transactionExecutor,
+                                         InstanceTaskCancellationService taskCancellationService,
+                                         ProcessInstanceDeletionRepository instanceDeletionRepository,
+                                         ProcessDefinitionRepository definitionRepository) {
+        this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
+                operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
+                historyTaskWriter, transactionExecutor, taskCancellationService, instanceDeletionRepository,
+                definitionRepository, null);
     }
 
     /** 兼容 M2 测试和嵌入式调用的完整运行时构造器。 */
@@ -163,7 +190,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         RuntimeTransactionExecutor transactionExecutor) {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
                 operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
-                historyTaskWriter, transactionExecutor, null, null, null);
+                historyTaskWriter, transactionExecutor, null, null, null, null);
     }
 
     /** 兼容第五步前已存在的直接构造单元测试。 */
@@ -180,7 +207,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         HistoryTaskWriter historyTaskWriter) {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
                 operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
-                historyTaskWriter, null, null, null, null);
+                historyTaskWriter, null, null, null, null, null);
     }
 
     /**
@@ -197,7 +224,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         CallbackService callbackService) {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
                 operationExecutor, nodeAdvancer, attachmentService, callbackService, null, null, null, null, null,
-                null);
+                null, null);
     }
 
     /** {@inheritDoc} */
@@ -496,10 +523,12 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                     publishEvent(request.getOperationId(), WorkflowEventTypeEnum.PROCESS_CANCELED, instance.getId(),
                             ActionTypeEnum.CANCEL, snapshot, operator, Collections.<HistoryTaskDTO>emptyList(),
                             Collections.<TaskDTO>emptyList());
+                    List<String> attachmentStorageKeys = instanceDeletionRepository.findAttachmentStorageKeys(instance.getId());
                     if (instanceDeletionRepository.deleteRuntimeData(instance.getId()) != 1) {
                         throw new RuntimeStateException(RuntimeErrorCodes.INSTANCE_NOT_FOUND,
                                 "process instance disappeared while deleting");
                     }
+                    registerAttachmentCleanupAfterCommit(attachmentStorageKeys);
                     OperationResult result = new OperationResult();
                     result.setOperationId(request.getOperationId());
                     result.setTargetType(OperationTargetTypeEnum.INSTANCE);
@@ -703,12 +732,13 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "attachment service is unavailable");
         }
         if (request.getAttachments() != null) {
-            for (AttachmentUploadItem attachment : request.getAttachments()) {
+            for (int attachmentIndex = 0; attachmentIndex < request.getAttachments().size(); attachmentIndex++) {
+                AttachmentUploadItem attachment = request.getAttachments().get(attachmentIndex);
                 if (attachment == null) {
                     throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION,
                             "submit attachments must not contain null items");
                 }
-                attachmentService.saveTaskAttachment(toSaveTaskAttachmentRequest(request, instance, attachment));
+                attachmentService.saveTaskAttachment(toSaveTaskAttachmentRequest(request, instance, attachment, attachmentIndex));
             }
         }
         CheckAttachmentRequest checkRequest = new CheckAttachmentRequest();
@@ -730,13 +760,14 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "attachment service is unavailable");
         }
         if (request.getAttachments() != null) {
-            for (AttachmentUploadItem attachment : request.getAttachments()) {
+            for (int attachmentIndex = 0; attachmentIndex < request.getAttachments().size(); attachmentIndex++) {
+                AttachmentUploadItem attachment = request.getAttachments().get(attachmentIndex);
                 if (attachment == null) {
                     throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION,
                             "start attachments must not contain null items");
                 }
-                attachmentService.saveInstanceAttachment(toSaveInstanceAttachmentRequest(request, instance,
-                        starter, attachment));
+                attachmentService.saveInstanceAttachment(toSaveInstanceAttachmentRequest(request, instance, task,
+                        starter, attachment, attachmentIndex));
             }
         }
         CheckAttachmentRequest checkRequest = new CheckAttachmentRequest();
@@ -752,21 +783,26 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
 
     private SaveInstanceAttachmentRequest toSaveInstanceAttachmentRequest(StartProcessRequest request,
                                                                             ProcessInstanceEntity instance,
-                                                                            UserContext starter,
-                                                                            AttachmentUploadItem attachment) {
+                                                                            ProcessActiveTaskEntity task,
+                                                                             UserContext starter,
+                                                                             AttachmentUploadItem attachment,
+                                                                             int attachmentIndex) {
         SaveInstanceAttachmentRequest saveRequest = new SaveInstanceAttachmentRequest();
-        saveRequest.setOperationId(request.getOperationId());
+        saveRequest.setOperationId(attachmentOperationId(request.getOperationId(), attachmentIndex));
         saveRequest.setInstanceId(instance.getId());
         saveRequest.setOperatorUserId(starter.getUserId());
+        saveRequest.setSourceTaskId(task.getId());
+        saveRequest.setExpectedTaskVersion(task.getLockVersion());
         saveRequest.setAttachment(attachment);
         return saveRequest;
     }
 
     private SaveTaskAttachmentRequest toSaveTaskAttachmentRequest(SubmitTaskRequest request,
-                                                                   ProcessInstanceEntity instance,
-                                                                   AttachmentUploadItem attachment) {
+                                                                    ProcessInstanceEntity instance,
+                                                                    AttachmentUploadItem attachment,
+                                                                    int attachmentIndex) {
         SaveTaskAttachmentRequest saveRequest = new SaveTaskAttachmentRequest();
-        saveRequest.setOperationId(request.getOperationId());
+        saveRequest.setOperationId(attachmentOperationId(request.getOperationId(), attachmentIndex));
         saveRequest.setTaskId(request.getTaskId());
         saveRequest.setExpectedTaskVersion(request.getExpectedTaskVersion());
         saveRequest.setOperatorUserId(request.getOperatorUserId());
@@ -774,6 +810,10 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         saveRequest.setInstanceId(instance.getId());
         saveRequest.setAttachment(attachment);
         return saveRequest;
+    }
+
+    private String attachmentOperationId(String parentOperationId, int attachmentIndex) {
+        return parentOperationId + ":attachment:" + attachmentIndex;
     }
 
     private HistoryTaskDTO archiveTask(RuntimeTaskContext taskContext,
@@ -1027,6 +1067,25 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             throw new RuntimeStateException(RuntimeErrorCodes.DEFINITION_INVALID,
                     "instance variables are malformed");
         }
+    }
+
+    private void registerAttachmentCleanupAfterCommit(final List<String> storageKeys) {
+        if (attachmentStorageProvider == null || storageKeys == null || storageKeys.isEmpty()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                for (String storageKey : storageKeys) {
+                    try {
+                        attachmentStorageProvider.delete(storageKey);
+                    } catch (RuntimeException ignored) {
+                        // 外部存储的失败由实现方异步补偿，不能影响已提交的业务删除。
+                    }
+                }
+            }
+        });
     }
 
     private void copyInstance(ProcessInstanceDTO source, ProcessInstanceDetailDTO target) {

@@ -63,6 +63,9 @@ public class PlatformExceptionHandler {
      */
     @ExceptionHandler(RuntimeValidationException.class)
     public ResponseEntity<ApiErrorDTO> handleRuntimeValidation(RuntimeValidationException exception) {
+        if ("FLOW_ATTACHMENT_PERMISSION_DENIED".equals(exception.getErrorCode())) {
+            return error(HttpStatus.FORBIDDEN, exception.getErrorCode(), exception.getMessage());
+        }
         return error(HttpStatus.BAD_REQUEST, exception.getErrorCode(), exception.getMessage());
     }
 
@@ -85,6 +88,12 @@ public class PlatformExceptionHandler {
      */
     @ExceptionHandler(RuntimeStateException.class)
     public ResponseEntity<ApiErrorDTO> handleRuntimeState(RuntimeStateException exception) {
+        if ("FLOW_ATTACHMENT_NOT_FOUND".equals(exception.getErrorCode())) {
+            return error(HttpStatus.NOT_FOUND, exception.getErrorCode(), exception.getMessage());
+        }
+        if ("FLOW_ATTACHMENT_STORAGE_FAILED".equals(exception.getErrorCode())) {
+            return error(HttpStatus.BAD_GATEWAY, exception.getErrorCode(), exception.getMessage());
+        }
         return error(HttpStatus.CONFLICT, exception.getErrorCode(), exception.getMessage());
     }
 

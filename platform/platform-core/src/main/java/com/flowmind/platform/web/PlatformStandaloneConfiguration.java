@@ -1,22 +1,16 @@
 package com.flowmind.platform.web;
 
-import com.flowmind.platform.api.dto.AttachmentDTO;
-import com.flowmind.platform.api.dto.AttachmentDownloadDTO;
-import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
-import com.flowmind.platform.api.request.AttachmentUploadItem;
 import com.flowmind.platform.api.request.ApproverResolveRequest;
-import com.flowmind.platform.api.request.CheckAttachmentRequest;
-import com.flowmind.platform.api.request.DeleteAttachmentRequest;
-import com.flowmind.platform.api.request.DownloadAttachmentRequest;
-import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
-import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
-import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
+import com.flowmind.platform.api.spi.AttachmentAccessProvider;
+import com.flowmind.platform.api.spi.FileStorageProvider;
+import com.flowmind.platform.core.security.AttachmentAccessGuard;
+import com.flowmind.platform.mock.InMemoryFileStorageProvider;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.beans.factory.InitializingBean;
@@ -41,12 +35,10 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * 本地独立运行入口所需的基础 Bean 和 Mock SPI 默认实现。
@@ -135,6 +127,25 @@ public class PlatformStandaloneConfiguration {
         return new StandaloneCurrentUserProvider();
     }
 
+    /** 本地独立应用明确提供允许访问的授权 Mock，生产 Starter 仍默认拒绝。 */
+    @Bean
+    @ConditionalOnMissingBean
+    public AttachmentAccessProvider attachmentAccessProvider() {
+        return request -> true;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AttachmentAccessGuard attachmentAccessGuard(AttachmentAccessProvider accessProvider) {
+        return new AttachmentAccessGuard(accessProvider);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public FileStorageProvider fileStorageProvider() {
+        return new InMemoryFileStorageProvider();
+    }
+
     /**
      * 提供空委托关系。
      *
@@ -162,12 +173,6 @@ public class PlatformStandaloneConfiguration {
      *
      * @return 附件服务
      */
-    @Bean
-    @ConditionalOnMissingBean
-    public AttachmentService attachmentService() {
-        return new StandaloneAttachmentService();
-    }
-
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }
@@ -320,60 +325,4 @@ public class PlatformStandaloneConfiguration {
     /**
      * 本地调试附件服务，保存元数据并默认通过必传附件校验。
      */
-    private static final class StandaloneAttachmentService implements AttachmentService {
-        @Override
-        public AttachmentDTO saveInstanceAttachment(SaveInstanceAttachmentRequest request) {
-            AttachmentDTO dto = toAttachmentDTO(request == null ? null : request.getAttachment());
-            dto.setInstanceId(request == null ? null : request.getInstanceId());
-            dto.setUploadedBy(request == null ? null : request.getOperatorUserId());
-            dto.setOwnerType(com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum.INSTANCE);
-            return dto;
-        }
-
-        @Override
-        public AttachmentDTO saveTaskAttachment(SaveTaskAttachmentRequest request) {
-            AttachmentDTO dto = toAttachmentDTO(request == null ? null : request.getAttachment());
-            dto.setInstanceId(request == null ? null : request.getInstanceId());
-            dto.setTaskId(request == null ? null : request.getTaskId());
-            dto.setUploadedBy(request == null ? null : request.getOperatorUserId());
-            dto.setOwnerType(com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum.TASK);
-            return dto;
-        }
-
-        @Override
-        public AttachmentDownloadDTO downloadAttachment(DownloadAttachmentRequest request) {
-            throw new UnsupportedOperationException("downloadAttachment is not supported by standalone mock");
-        }
-
-        @Override
-        public List<AttachmentDTO> queryAttachments(com.flowmind.platform.api.dto.AttachmentQuery query) {
-            return Collections.emptyList();
-        }
-
-        @Override
-        public void deleteAttachment(DeleteAttachmentRequest request) {
-        }
-
-        @Override
-        public AttachmentTemplateCheckResult checkRequiredAttachments(CheckAttachmentRequest request) {
-            AttachmentTemplateCheckResult result = new AttachmentTemplateCheckResult();
-            result.setPassed(true);
-            result.setMissingAttachmentCodes(Collections.emptyList());
-            result.setErrors(Collections.emptyList());
-            return result;
-        }
-
-        private AttachmentDTO toAttachmentDTO(AttachmentUploadItem item) {
-            AttachmentDTO dto = new AttachmentDTO();
-            dto.setAttachmentId(UUID.randomUUID().toString());
-            dto.setAttachmentCode(item == null ? null : item.getAttachmentCode());
-            dto.setFileName(item == null ? null : item.getFileName());
-            dto.setContentType(item == null ? null : item.getContentType());
-            dto.setSizeBytes(item == null ? null : item.getSizeBytes());
-            dto.setStorageKey("standalone://" + dto.getAttachmentId());
-            dto.setUploadedAt(LocalDateTime.now());
-            dto.setDeleted(Boolean.FALSE);
-            return dto;
-        }
-    }
 }

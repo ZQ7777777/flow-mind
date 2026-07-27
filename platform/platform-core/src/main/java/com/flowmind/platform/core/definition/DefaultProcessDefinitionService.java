@@ -21,6 +21,7 @@ import com.flowmind.platform.api.request.DefinitionOperationRequest;
 import com.flowmind.platform.api.request.GrayReleaseRequest;
 import com.flowmind.platform.api.request.SaveProcessGraphRequest;
 import com.flowmind.platform.api.service.ProcessDefinitionService;
+import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.core.time.PlatformDateTime;
 import com.flowmind.platform.core.validation.DefinitionModelValidator;
 import com.flowmind.platform.core.validation.DefinitionRequestValidator;
@@ -66,6 +67,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
     private final ProcessDefinitionAttachmentConfigManager attachmentConfigManager;
     private final OperationIdempotencyService idempotencyService;
     private final ProcessDefinitionCache processDefinitionCache;
+    private final FileStorageProvider attachmentStorageProvider;
     private final DefinitionStatusValidator statusValidator = new DefinitionStatusValidator();
     private final DefinitionModelValidator modelValidator = new DefinitionModelValidator();
     private final DefinitionGraphDraftFactory graphDraftFactory = new DefinitionGraphDraftFactory();
@@ -88,7 +90,8 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                                            ProcessFormFieldDefinitionManager formFieldManager,
                                            ProcessDefinitionAttachmentConfigManager attachmentConfigManager,
                                            OperationIdempotencyService idempotencyService,
-                                           ProcessDefinitionCache processDefinitionCache) {
+                                           ProcessDefinitionCache processDefinitionCache,
+                                           FileStorageProvider attachmentStorageProvider) {
         this.definitionRepository = definitionRepository;
         this.nodeRepository = nodeRepository;
         this.edgeRepository = edgeRepository;
@@ -97,6 +100,18 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
         this.idempotencyService = idempotencyService;
         this.processDefinitionCache = processDefinitionCache == null
                 ? new ProcessDefinitionCache() : processDefinitionCache;
+        this.attachmentStorageProvider = attachmentStorageProvider;
+    }
+
+    public DefaultProcessDefinitionService(ProcessDefinitionRepository definitionRepository,
+                                           ProcessNodeRepository nodeRepository,
+                                           ProcessEdgeRepository edgeRepository,
+                                           ProcessFormFieldDefinitionManager formFieldManager,
+                                           ProcessDefinitionAttachmentConfigManager attachmentConfigManager,
+                                           OperationIdempotencyService idempotencyService,
+                                           ProcessDefinitionCache processDefinitionCache) {
+        this(definitionRepository, nodeRepository, edgeRepository, formFieldManager, attachmentConfigManager,
+                idempotencyService, processDefinitionCache, null);
     }
 
     public DefaultProcessDefinitionService(ProcessDefinitionRepository definitionRepository,
@@ -107,7 +122,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                                            ProcessOperationRecordRepository operationRecordRepository,
                                            ProcessDefinitionCache processDefinitionCache) {
         this(definitionRepository, nodeRepository, edgeRepository, formFieldManager, attachmentConfigManager,
-                new OperationIdempotencyService(operationRecordRepository), processDefinitionCache);
+                new OperationIdempotencyService(operationRecordRepository), processDefinitionCache, null);
     }
 
     /**
@@ -516,6 +531,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
                     "active definition must not be deleted");
         }
 
+        List<String> attachmentStorageKeys = definitionRepository.findAttachmentStorageKeysByDefinitionId(definition.getId());
         formFieldManager.deleteFormFields(definition.getId());
         attachmentConfigManager.deleteAttachmentConfigs(definition.getId());
         definitionRepository.deleteAttachmentsByDefinitionId(definition.getId());
@@ -534,6 +550,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
 
         idempotencyService.markSuccess(request.getOperationId(), JsonCodec.deleteResult(definition.getId()));
         registerGraphCacheInvalidation(definition.getId());
+        registerAttachmentCleanupAfterCommit(attachmentStorageKeys);
         return deleteOperationResult(request.getOperationId(), definition.getId(), false);
         } catch (DefinitionValidationException ex) {
             markDeterministicFailure(decision, request.getOperationId(), ex);
@@ -542,6 +559,25 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
             markDeterministicFailure(decision, request.getOperationId(), ex);
             throw ex;
         }
+    }
+
+    private void registerAttachmentCleanupAfterCommit(final List<String> storageKeys) {
+        if (attachmentStorageProvider == null || storageKeys == null || storageKeys.isEmpty()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                for (String storageKey : storageKeys) {
+                    try {
+                        attachmentStorageProvider.delete(storageKey);
+                    } catch (RuntimeException ignored) {
+                        // 外部存储失败由实现方补偿，不回滚已提交的定义删除。
+                    }
+                }
+            }
+        });
     }
 
     /**
