@@ -9,8 +9,16 @@ import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
+import com.flowmind.platform.api.spi.MessagePublisher;
+import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
+import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
+import com.flowmind.platform.mock.InMemoryOrganizationProvider;
+import com.flowmind.platform.mock.MockAttachmentAccessProvider;
+import com.flowmind.platform.mock.RecordingMessagePublisher;
+import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.beans.factory.InitializingBean;
@@ -131,7 +139,7 @@ public class PlatformStandaloneConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public AttachmentAccessProvider attachmentAccessProvider() {
-        return request -> true;
+        return new MockAttachmentAccessProvider(true);
     }
 
     @Bean
@@ -146,6 +154,18 @@ public class PlatformStandaloneConfiguration {
         return new InMemoryFileStorageProvider();
     }
 
+    @Bean
+    @ConditionalOnMissingBean
+    public MessagePublisher messagePublisher() {
+        return new RecordingMessagePublisher();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public WorkflowCallbackHandler workflowCallbackHandler() {
+        return new RecordingWorkflowCallbackHandler();
+    }
+
     /**
      * 提供空委托关系。
      *
@@ -157,6 +177,12 @@ public class PlatformStandaloneConfiguration {
         return (principalUserId, at) -> Collections.emptyList();
     }
 
+    @Bean
+    @ConditionalOnMissingBean
+    public OrganizationProvider organizationProvider() {
+        return new InMemoryOrganizationProvider();
+    }
+
     /**
      * 提供本地调试审批人解析器。
      *
@@ -164,8 +190,8 @@ public class PlatformStandaloneConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public ApproverResolver approverResolver() {
-        return request -> resolveStandaloneApprovers(request);
+    public ApproverResolver approverResolver(OrganizationProvider organizationProvider) {
+        return new DefaultApproverResolver(organizationProvider);
     }
 
     /**

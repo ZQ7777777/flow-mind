@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /** 运行期附件元数据仓储。 */
@@ -48,6 +49,9 @@ public class ProcessAttachmentRepository {
     }
 
     public List<ProcessAttachmentEntity> queryActive(AttachmentQuery query) {
+        if (query == null || !hasText(query.getInstanceId())) {
+            throw new IllegalArgumentException("instanceId is required");
+        }
         StringBuilder sql = new StringBuilder("SELECT * FROM process_attachment WHERE instance_id = ? AND deleted = 0");
         List<Object> args = new ArrayList<Object>(); args.add(query.getInstanceId());
         if (hasText(query.getTaskId())) { sql.append(" AND task_id = ?"); args.add(query.getTaskId()); }
@@ -77,7 +81,31 @@ public class ProcessAttachmentRepository {
     }
 
     public List<String> findStorageKeysByInstanceId(String instanceId) {
-        return jdbcTemplate.queryForList("SELECT storage_key FROM process_attachment WHERE instance_id = ?", String.class, instanceId);
+        return jdbcTemplate.queryForList("SELECT storage_key FROM process_attachment WHERE instance_id = ? "
+                + "ORDER BY uploaded_at ASC, id ASC", String.class, instanceId);
+    }
+
+    public List<String> findStorageKeysByInstanceIds(List<String> instanceIds) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        StringBuilder placeholders = new StringBuilder();
+        for (int i = 0; i < instanceIds.size(); i++) {
+            if (i > 0) {
+                placeholders.append(", ");
+            }
+            placeholders.append("?");
+        }
+        return jdbcTemplate.queryForList("SELECT storage_key FROM process_attachment WHERE instance_id IN ("
+                        + placeholders + ") ORDER BY instance_id ASC, uploaded_at ASC, id ASC",
+                String.class, instanceIds.toArray());
+    }
+
+    public List<String> findStorageKeysByDefinitionId(String definitionId) {
+        return jdbcTemplate.queryForList("SELECT a.storage_key FROM process_attachment a "
+                        + "JOIN process_instance i ON i.id = a.instance_id "
+                        + "WHERE i.definition_id = ? ORDER BY a.instance_id ASC, a.uploaded_at ASC, a.id ASC",
+                String.class, definitionId);
     }
 
     private RowMapper<ProcessAttachmentEntity> mapper() {

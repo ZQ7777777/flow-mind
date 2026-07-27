@@ -571,6 +571,8 @@ class M0M3CrossStageSpringBootIntegrationTest {
                 TEST_OPERATION_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM process_audit_log WHERE operation_id LIKE ?",
                 TEST_OPERATION_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM process_history_task WHERE operation_id LIKE ?",
+                TEST_OPERATION_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM process_instance WHERE process_code = ?", PROCESS_CODE);
 
         String testDefinitions = "SELECT id FROM process_definition WHERE process_code = ?";

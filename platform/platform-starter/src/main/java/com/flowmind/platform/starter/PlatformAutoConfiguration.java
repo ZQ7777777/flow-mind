@@ -36,20 +36,27 @@ import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.ProcessMonitorService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
+import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
+import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
-import com.flowmind.platform.api.dto.ProcessMessage;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
 import com.flowmind.platform.core.query.ProcessTraceAssembler;
 import com.flowmind.platform.core.query.RuntimeQueryAssembler;
 import com.flowmind.platform.core.definition.OperationIdempotencyService;
+import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.core.attachment.DefaultAttachmentService;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
+import com.flowmind.platform.mock.InMemoryOrganizationProvider;
+import com.flowmind.platform.mock.MockAttachmentAccessProvider;
+import com.flowmind.platform.mock.MockCurrentUserProvider;
+import com.flowmind.platform.mock.RecordingMessagePublisher;
+import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
@@ -59,6 +66,7 @@ import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
 import com.flowmind.platform.starter.properties.PlatformProperties;
 import org.sqlite.SQLiteDataSource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -78,7 +86,6 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 
@@ -213,21 +220,6 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AttachmentService attachmentService(ProcessAttachmentRepository attachments,
-                                               ProcessInstanceRepository instances,
-                                               ActiveTaskRepository tasks,
-                                               ProcessDefinitionAttachmentConfigRepository configs,
-                                               ProcessAttachmentTemplateRepository templates,
-                                                FileStorageProvider storage,
-                                                AttachmentAccessGuard guard,
-                                                CurrentUserProvider currentUser,
-                                                RuntimeOperationExecutor operationExecutor) {
-        return new DefaultAttachmentService(attachments, instances, tasks, configs, templates, storage, guard, currentUser,
-                operationExecutor);
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
     public CallbackService callbackService() {
         return new UnsupportedCallbackService();
     }
@@ -249,13 +241,29 @@ public class PlatformAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public AttachmentAccessProvider attachmentAccessProvider() {
-        return request -> false;
+        return new MockAttachmentAccessProvider(false);
     }
 
     @Bean
     @ConditionalOnMissingBean
     public AttachmentAccessGuard attachmentAccessGuard(AttachmentAccessProvider accessProvider) {
         return new AttachmentAccessGuard(accessProvider);
+    }
+
+    @Bean
+    @ConditionalOnBean(FileStorageProvider.class)
+    @ConditionalOnMissingBean
+    public AttachmentService attachmentService(ProcessAttachmentRepository attachments,
+                                               ProcessInstanceRepository instances,
+                                               ActiveTaskRepository tasks,
+                                               ProcessDefinitionAttachmentConfigRepository configs,
+                                               ProcessAttachmentTemplateRepository templates,
+                                               FileStorageProvider storage,
+                                               AttachmentAccessGuard guard,
+                                               CurrentUserProvider currentUser,
+                                               RuntimeOperationExecutor operationExecutor) {
+        return new DefaultAttachmentService(attachments, instances, tasks, configs, templates, storage, guard, currentUser,
+                operationExecutor);
     }
 
     @Bean
@@ -271,8 +279,7 @@ public class PlatformAutoConfiguration {
     @ConditionalOnProperty(prefix = "flow-mind.platform.mock", name = "enabled", havingValue = "true",
             matchIfMissing = true)
     public WorkflowCallbackHandler workflowCallbackHandler() {
-        return event -> {
-        };
+        return new RecordingWorkflowCallbackHandler();
     }
 
     @Bean
@@ -287,8 +294,23 @@ public class PlatformAutoConfiguration {
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "flow-mind.platform.mock", name = "enabled", havingValue = "true",
             matchIfMissing = true)
+    public OrganizationProvider organizationProvider() {
+        return new InMemoryOrganizationProvider();
+    }
+
+    @Bean
+    @ConditionalOnBean(OrganizationProvider.class)
+    @ConditionalOnMissingBean
+    public ApproverResolver approverResolver(OrganizationProvider organizationProvider) {
+        return new DefaultApproverResolver(organizationProvider);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "flow-mind.platform.mock", name = "enabled", havingValue = "true",
+            matchIfMissing = true)
     public CurrentUserProvider currentUserProvider() {
-        return () -> new UserContext("mock-user", "Mock User", "mock-dept", "Mock Department");
+        return new MockCurrentUserProvider();
     }
 
     public static final class PlatformSchemaInitializer implements InitializingBean {
@@ -418,20 +440,4 @@ public class PlatformAutoConfiguration {
         }
     }
 
-    public static final class RecordingMessagePublisher implements MessagePublisher {
-        private final List<ProcessMessage> messages =
-                Collections.synchronizedList(new java.util.ArrayList<ProcessMessage>());
-
-        @Override
-        public void publish(ProcessMessage message) {
-            if (message.getCreatedAt() == null) {
-                message.setCreatedAt(LocalDateTime.now());
-            }
-            messages.add(message);
-        }
-
-        public List<ProcessMessage> getMessages() {
-            return messages;
-        }
-    }
 }

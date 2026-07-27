@@ -16,16 +16,25 @@ import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.ProcessMonitorService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
+import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
+import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.api.dto.FileContent;
 import com.flowmind.platform.api.dto.StoredFile;
 import com.flowmind.platform.api.request.AttachmentAccessRequest;
+import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
+import com.flowmind.platform.mock.InMemoryFileStorageProvider;
+import com.flowmind.platform.mock.InMemoryOrganizationProvider;
+import com.flowmind.platform.mock.MockAttachmentAccessProvider;
+import com.flowmind.platform.mock.MockCurrentUserProvider;
+import com.flowmind.platform.mock.RecordingMessagePublisher;
+import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
@@ -74,14 +83,24 @@ class PlatformAutoConfigurationTest {
             assertThat(context).hasSingleBean(CallbackService.class);
             assertThat(context).hasSingleBean(ProcessMonitorService.class);
             assertThat(context).hasSingleBean(FileStorageProvider.class);
+            assertThat(context.getBean(FileStorageProvider.class)).isInstanceOf(InMemoryFileStorageProvider.class);
             assertThat(context).hasSingleBean(AttachmentAccessProvider.class);
             assertThat(context).hasSingleBean(AttachmentAccessGuard.class);
+            assertThat(context.getBean(AttachmentAccessProvider.class)).isInstanceOf(MockAttachmentAccessProvider.class);
             assertThat(context.getBean(AttachmentAccessProvider.class)
                     .isAllowed(new AttachmentAccessRequest())).isFalse();
             assertThat(context).hasSingleBean(MessagePublisher.class);
+            assertThat(context.getBean(MessagePublisher.class)).isInstanceOf(RecordingMessagePublisher.class);
             assertThat(context).hasSingleBean(WorkflowCallbackHandler.class);
+            assertThat(context.getBean(WorkflowCallbackHandler.class))
+                    .isInstanceOf(RecordingWorkflowCallbackHandler.class);
             assertThat(context).hasSingleBean(DelegateProvider.class);
             assertThat(context).hasSingleBean(CurrentUserProvider.class);
+            assertThat(context.getBean(CurrentUserProvider.class)).isInstanceOf(MockCurrentUserProvider.class);
+            assertThat(context).hasSingleBean(OrganizationProvider.class);
+            assertThat(context.getBean(OrganizationProvider.class)).isInstanceOf(InMemoryOrganizationProvider.class);
+            assertThat(context).hasSingleBean(ApproverResolver.class);
+            assertThat(context.getBean(ApproverResolver.class)).isInstanceOf(DefaultApproverResolver.class);
         });
     }
 
@@ -123,6 +142,9 @@ class PlatformAutoConfigurationTest {
                     assertThat(context).hasSingleBean(FileStorageProvider.class);
                     assertThat(context.getBean(FileStorageProvider.class))
                             .isInstanceOf(CustomFileStorageProvider.class);
+                    assertThat(context).hasSingleBean(MessagePublisher.class);
+                    assertThat(context.getBean(MessagePublisher.class))
+                            .isInstanceOf(CustomMessagePublisher.class);
                 });
     }
 
@@ -180,6 +202,7 @@ class PlatformAutoConfigurationTest {
                 .withPropertyValues("flow-mind.platform.mock.enabled=false")
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(FileStorageProvider.class);
+                    assertThat(context).doesNotHaveBean(AttachmentService.class);
                     assertThat(context).hasSingleBean(AttachmentAccessProvider.class);
                     assertThat(context).hasSingleBean(AttachmentAccessGuard.class);
                     assertThat(context.getBean(AttachmentAccessGuard.class)
@@ -188,6 +211,8 @@ class PlatformAutoConfigurationTest {
                     assertThat(context).doesNotHaveBean(WorkflowCallbackHandler.class);
                     assertThat(context).doesNotHaveBean(DelegateProvider.class);
                     assertThat(context).doesNotHaveBean(CurrentUserProvider.class);
+                    assertThat(context).doesNotHaveBean(OrganizationProvider.class);
+                    assertThat(context).doesNotHaveBean(ApproverResolver.class);
                     assertThat(context).hasSingleBean(TaskQueryService.class);
                     assertThat(context.getBean(TaskQueryService.class)).isInstanceOf(DefaultTaskQueryService.class);
                     assertThatThrownBy(() -> context.getBean(TaskQueryService.class)
@@ -276,6 +301,11 @@ class PlatformAutoConfigurationTest {
         FileStorageProvider customFileStorageProvider() {
             return new CustomFileStorageProvider();
         }
+
+        @Bean
+        MessagePublisher customMessagePublisher() {
+            return new CustomMessagePublisher();
+        }
     }
 
     @Configuration
@@ -326,6 +356,12 @@ class PlatformAutoConfigurationTest {
 
         @Override
         public void delete(String storageKey) {
+        }
+    }
+
+    static class CustomMessagePublisher implements MessagePublisher {
+        @Override
+        public void publish(com.flowmind.platform.api.dto.ProcessMessage message) {
         }
     }
 
