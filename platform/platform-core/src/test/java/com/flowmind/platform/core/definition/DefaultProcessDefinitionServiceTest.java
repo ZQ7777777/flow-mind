@@ -1320,6 +1320,11 @@ class DefaultProcessDefinitionServiceTest {
         public int activateFull(String id, String updatedBy) {
             return 0;
         }
+
+        @Override
+        public int activateFull(String id, String updatedBy, LocalDateTime updatedAt) {
+            return 0;
+        }
     }
 
     private static final class NoRowsActivatedAttachmentConfigRepository

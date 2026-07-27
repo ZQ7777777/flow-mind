@@ -85,12 +85,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestComponent;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.test.context.ActiveProfiles;
 
 import javax.sql.DataSource;
 import java.io.File;
@@ -122,6 +125,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 附件存储和委托关系使用测试替身。</p>
  */
 @SpringBootTest(classes = M0M3CrossStageSpringBootIntegrationTest.TestApplication.class)
+@ActiveProfiles("m0m3-cross-stage")
 class M0M3CrossStageSpringBootIntegrationTest {
 
     private static final String PROCESS_CODE = "it-deposit";
@@ -824,10 +828,18 @@ class M0M3CrossStageSpringBootIntegrationTest {
             }
             current = current.getParentFile();
         }
-        throw new IllegalStateException("identifier.sqlite was not found from user.dir or its parents");
+        try {
+            File temporary = File.createTempFile("flowmind-m0m3-", ".sqlite");
+            temporary.deleteOnExit();
+            return temporary.getCanonicalPath().replace('\\', '/');
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException("identifier.sqlite was not found and temporary database could not be created", ex);
+        }
     }
 
     @SpringBootConfiguration
+    @TestComponent
+    @Profile("m0m3-cross-stage")
     @EnableTransactionManagement
     static class TestApplication {
 
