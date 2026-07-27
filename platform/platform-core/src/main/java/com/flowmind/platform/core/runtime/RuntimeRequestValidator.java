@@ -17,9 +17,9 @@ import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * 运行时请求、身份、实例状态和任务权限的统一校验器。
@@ -211,23 +211,25 @@ public class RuntimeRequestValidator {
     }
 
     /**
-     * 解析并按用户 ID 去重普通用户任务的候选人；M2 仅支持 SINGLE。
+     * 解析并按用户 ID 去重、排序用户任务的候选人，保留 SINGLE、OR_SIGN、COUNTERSIGN 的审批人集合语义。
      *
      * @param multiInstanceMode 节点多人处理模式
      * @param resolver          审批人解析 SPI
      * @param request           审批人解析请求
-     * @return 保持首次出现顺序的非空候选人列表
+     * @return 按用户 ID 稳定排序的非空候选人列表
      */
     public List<UserDTO> resolveApprovers(MultiInstanceModeEnum multiInstanceMode,
-                                          ApproverResolver resolver,
-                                          ApproverResolveRequest request) {
-        if (!MultiInstanceModeEnum.SINGLE.equals(multiInstanceMode)) {
-            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION,
-                    "M2 only supports SINGLE user-task mode");
-        }
+                                           ApproverResolver resolver,
+                                           ApproverResolveRequest request) {
         if (resolver == null || request == null) {
             throw new RuntimeValidationException(RuntimeErrorCodes.APPROVER_RESOLVE_FAILED,
                     "approver resolver and request are required");
+        }
+        MultiInstanceModeEnum resolvedMode = request.getMultiInstanceMode() == null
+                ? multiInstanceMode : request.getMultiInstanceMode();
+        if (resolvedMode == null) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.APPROVER_RESOLVE_FAILED,
+                    "multiInstanceMode is required");
         }
         List<UserDTO> resolved;
         try {
@@ -236,11 +238,12 @@ public class RuntimeRequestValidator {
             throw new RuntimeStateException(RuntimeErrorCodes.APPROVER_RESOLVE_FAILED,
                     "approver resolver failed: " + ex.getMessage());
         }
-        Map<String, UserDTO> usersById = new LinkedHashMap<String, UserDTO>();
+        Map<String, UserDTO> usersById = new TreeMap<String, UserDTO>();
         if (resolved != null) {
             for (UserDTO user : resolved) {
-                if (user != null && hasText(user.getUserId()) && !usersById.containsKey(user.getUserId())) {
-                    usersById.put(user.getUserId(), new UserDTO(user.getUserId(), user.getUserName()));
+                if (user != null && hasText(user.getUserId()) && !Boolean.FALSE.equals(user.getActive())
+                        && !usersById.containsKey(user.getUserId())) {
+                    usersById.put(user.getUserId(), copyUser(user));
                 }
             }
         }
@@ -249,6 +252,15 @@ public class RuntimeRequestValidator {
                     "approver resolver returned no valid user");
         }
         return new ArrayList<UserDTO>(usersById.values());
+    }
+
+    private UserDTO copyUser(UserDTO source) {
+        UserDTO target = new UserDTO(source.getUserId(), source.getUserName());
+        target.setDepartmentId(source.getDepartmentId());
+        target.setDepartmentName(source.getDepartmentName());
+        target.setRoleCodes(source.getRoleCodes() == null ? null : new ArrayList<String>(source.getRoleCodes()));
+        target.setActive(source.getActive());
+        return target;
     }
 
     /** 校验 ACTIVE 使用候选人权限、CLAIMED 使用受理人权限。 */

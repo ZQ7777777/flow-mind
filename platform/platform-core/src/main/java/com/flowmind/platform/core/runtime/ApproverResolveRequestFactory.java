@@ -63,6 +63,7 @@ public class ApproverResolveRequestFactory {
         request.setNodeName(nodeConfig.getNode().getNodeName());
         request.setApproverRuleType(nodeConfig.getApproverRuleType());
         request.setApproverRuleConfig(new LinkedHashMap<String, Object>(nodeConfig.getApproverRuleConfig()));
+        request.setMultiInstanceMode(nodeConfig.getMultiInstanceMode());
         request.setStarterUserId(starterUserId);
         request.setStarterDeptId(starterDeptId);
         request.setVariables(variables == null

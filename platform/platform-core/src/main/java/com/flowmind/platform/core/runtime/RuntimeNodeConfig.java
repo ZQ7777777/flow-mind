@@ -38,7 +38,7 @@ public class RuntimeNodeConfig {
     private Map<String, Object> approverRuleConfig;
 
     /**
-     * 多人审批模式，M2 仅支持 SINGLE，OR_SIGN 和 COUNTERSIGN 留到后续阶段。
+     * 多人审批模式，典型值：SINGLE、OR_SIGN、COUNTERSIGN。
      */
     private MultiInstanceModeEnum multiInstanceMode;
 
