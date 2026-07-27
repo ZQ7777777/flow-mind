@@ -10,6 +10,8 @@ import com.flowmind.platform.api.service.ProcessRuntimeService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
+import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -23,11 +25,13 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 独立运行入口契约测试。
@@ -76,7 +80,8 @@ class PlatformStandaloneApplicationTest {
 
     @Test
     void standaloneApproverResolverShouldUseConfiguredUserIds() {
-        ApproverResolver resolver = new PlatformStandaloneConfiguration().approverResolver();
+        PlatformStandaloneConfiguration configuration = new PlatformStandaloneConfiguration();
+        ApproverResolver resolver = configuration.approverResolver(configuration.organizationProvider());
         ApproverResolveRequest request = new ApproverResolveRequest();
         Map<String, Object> config = new LinkedHashMap<String, Object>();
         config.put("userIds", Arrays.asList("user_manager", "user_finance"));
@@ -85,7 +90,24 @@ class PlatformStandaloneApplicationTest {
 
         List<UserDTO> users = resolver.resolveApprovers(request);
 
-        assertThat(users).extracting("userId").containsExactly("user_manager", "user_finance");
+        assertThat(users).extracting("userId").containsExactly("user_finance", "user_manager");
+        assertThat(resolver).isInstanceOf(DefaultApproverResolver.class);
+    }
+
+    @Test
+    void standaloneOrganizationProviderDoesNotResolveUnknownRoleOrDepartment() {
+        PlatformStandaloneConfiguration configuration = new PlatformStandaloneConfiguration();
+        OrganizationProvider provider = configuration.organizationProvider();
+
+        assertThat(provider.listUsersByDepartment("unknown-department")).isEmpty();
+        assertThat(provider.listUsersByRole("unknown-role")).isEmpty();
+
+        ApproverResolver resolver = configuration.approverResolver(provider);
+        ApproverResolveRequest request = new ApproverResolveRequest();
+        request.setApproverRuleType(ApproverRuleTypeEnum.ROLE);
+        request.setApproverRuleConfig(Collections.<String, Object>singletonMap("roleCode", "unknown-role"));
+        assertThatThrownBy(() -> resolver.resolveApprovers(request))
+                .hasMessageContaining("approver rule resolved no valid user");
     }
 
     @Test
@@ -104,6 +126,8 @@ class PlatformStandaloneApplicationTest {
             assertThat(context.getBeansOfType(ProcessDefinitionService.class)).hasSize(1);
             assertThat(context.getBeansOfType(ProcessRuntimeService.class)).hasSize(1);
             assertThat(context.getBeansOfType(TaskQueryService.class)).hasSize(1);
+            assertThat(context.getBeansOfType(OrganizationProvider.class)).hasSize(1);
+            assertThat(context.getBean(ApproverResolver.class)).isInstanceOf(DefaultApproverResolver.class);
             Integer operationRecordTables = context.getBean(JdbcTemplate.class).queryForObject(
                     "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'process_operation_record'",
                     Integer.class);

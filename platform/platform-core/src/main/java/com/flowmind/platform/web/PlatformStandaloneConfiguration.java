@@ -2,13 +2,14 @@ package com.flowmind.platform.web;
 
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.UserDTO;
-import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
-import com.flowmind.platform.api.request.ApproverResolveRequest;
+import com.flowmind.platform.api.dto.DepartmentDTO;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
+import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
 import org.sqlite.SQLiteConfig;
@@ -35,10 +36,10 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 
 /**
  * 本地独立运行入口所需的基础 Bean 和 Mock SPI 默认实现。
@@ -164,8 +165,14 @@ public class PlatformStandaloneConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public ApproverResolver approverResolver() {
-        return request -> resolveStandaloneApprovers(request);
+    public OrganizationProvider organizationProvider() {
+        return new StandaloneOrganizationProvider();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ApproverResolver approverResolver(OrganizationProvider organizationProvider) {
+        return new DefaultApproverResolver(organizationProvider);
     }
 
     /**
@@ -177,48 +184,6 @@ public class PlatformStandaloneConfiguration {
         return value == null || value.trim().isEmpty();
     }
 
-    private static List<UserDTO> resolveStandaloneApprovers(ApproverResolveRequest request) {
-        if (request != null && ApproverRuleTypeEnum.USER.equals(request.getApproverRuleType())) {
-            List<UserDTO> configuredUsers = configuredUsers(request.getApproverRuleConfig());
-            if (!configuredUsers.isEmpty()) {
-                return configuredUsers;
-            }
-        }
-        String userId = request == null || isBlank(request.getStarterUserId())
-                ? "user_sales" : request.getStarterUserId();
-        return Collections.singletonList(new UserDTO(userId, displayName(userId)));
-    }
-
-    private static List<UserDTO> configuredUsers(Map<String, Object> config) {
-        List<UserDTO> users = new ArrayList<UserDTO>();
-        if (config == null) {
-            return users;
-        }
-        Object userIds = config.get("userIds");
-        if (userIds instanceof Iterable<?>) {
-            for (Object userId : (Iterable<?>) userIds) {
-                addConfiguredUser(users, userId);
-            }
-            return users;
-        }
-        if (userIds instanceof String) {
-            String[] parts = ((String) userIds).split(",");
-            for (String part : parts) {
-                addConfiguredUser(users, part);
-            }
-        }
-        return users;
-    }
-
-    private static void addConfiguredUser(List<UserDTO> users, Object value) {
-        if (value == null) {
-            return;
-        }
-        String userId = String.valueOf(value).trim();
-        if (!isBlank(userId)) {
-            users.add(new UserDTO(userId, displayName(userId)));
-        }
-    }
 
     /**
      * 本地 SQLite 表结构初始化器。
@@ -299,6 +264,86 @@ public class PlatformStandaloneConfiguration {
                 }
             }
             return userContext("user_sales", null, "dept_sales", null);
+        }
+    }
+
+    /**
+     * 仅供独立调试使用的最小组织架构实现；生产环境由宿主系统提供同名 SPI。
+     */
+    private static final class StandaloneOrganizationProvider implements OrganizationProvider {
+        @Override
+        public List<DepartmentDTO> listDepartments() {
+            return Arrays.asList(department("dept_sales"), department("dept_manager"), department("dept_finance"));
+        }
+
+        @Override
+        public List<UserDTO> listUsersByDepartment(String departmentId) {
+            if (!isKnownDepartment(departmentId)) {
+                return Collections.emptyList();
+            }
+            return Collections.singletonList(userForDepartment(departmentId));
+        }
+
+        @Override
+        public List<UserDTO> listUsersByRole(String roleCode) {
+            UserDTO user = userForRole(roleCode);
+            return user == null ? Collections.<UserDTO>emptyList() : Collections.singletonList(user);
+        }
+
+        @Override
+        public List<UserDTO> listUsersByRoleAndDepartment(String roleCode, String departmentId) {
+            UserDTO user = userForRole(roleCode);
+            if (user == null || !isKnownDepartment(departmentId)
+                    || !departmentId.equals(user.getDepartmentId())) {
+                return Collections.emptyList();
+            }
+            return Collections.singletonList(user);
+        }
+
+        @Override
+        public Optional<UserDTO> findUser(String userId) {
+            return isBlank(userId) ? Optional.<UserDTO>empty()
+                    : Optional.of(user(userId, defaultDepartmentId(userId)));
+        }
+
+        @Override
+        public Optional<DepartmentDTO> findDepartment(String departmentId) {
+            if (isBlank(departmentId)) {
+                return Optional.empty();
+            }
+            return isKnownDepartment(departmentId) ? Optional.of(department(departmentId)) : Optional.empty();
+        }
+
+        private UserDTO userForDepartment(String departmentId) {
+            String resolvedDepartmentId = isBlank(departmentId) ? "dept_sales" : departmentId;
+            return user("user_" + resolvedDepartmentId, resolvedDepartmentId);
+        }
+
+        private UserDTO userForRole(String roleCode) {
+            if ("finance".equals(roleCode)) {
+                return user("user_finance", "dept_finance");
+            }
+            if ("manager".equals(roleCode)) {
+                return user("user_manager", "dept_manager");
+            }
+            return null;
+        }
+
+        private UserDTO user(String userId, String departmentId) {
+            UserDTO user = new UserDTO(userId, displayName(userId));
+            user.setDepartmentId(departmentId);
+            user.setDepartmentName(displayDepartmentName(departmentId));
+            user.setActive(Boolean.TRUE);
+            return user;
+        }
+
+        private DepartmentDTO department(String departmentId) {
+            return new DepartmentDTO(departmentId, displayDepartmentName(departmentId), null);
+        }
+
+        private boolean isKnownDepartment(String departmentId) {
+            return "dept_sales".equals(departmentId) || "dept_manager".equals(departmentId)
+                    || "dept_finance".equals(departmentId);
         }
     }
 

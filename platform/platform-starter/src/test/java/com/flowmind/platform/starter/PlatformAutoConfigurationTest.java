@@ -16,15 +16,18 @@ import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.ProcessMonitorService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
+import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
+import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.api.dto.FileContent;
 import com.flowmind.platform.api.dto.StoredFile;
 import com.flowmind.platform.api.request.AttachmentAccessRequest;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
+import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
@@ -124,6 +127,32 @@ class PlatformAutoConfigurationTest {
                     assertThat(context.getBean(FileStorageProvider.class))
                             .isInstanceOf(CustomFileStorageProvider.class);
                 });
+    }
+
+    @Test
+    void organizationProviderEnablesDefaultApproverResolver() {
+        contextRunnerWithDatabase("organization-resolver.db")
+                .withUserConfiguration(OrganizationProviderConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(OrganizationProvider.class);
+                    assertThat(context).hasSingleBean(ApproverResolver.class);
+                    ApproverResolver resolver = context.getBean(ApproverResolver.class);
+                    assertThat(resolver).isInstanceOf(DefaultApproverResolver.class);
+                    com.flowmind.platform.api.request.ApproverResolveRequest request =
+                            new com.flowmind.platform.api.request.ApproverResolveRequest();
+                    request.setApproverRuleType(com.flowmind.platform.api.enums.ApproverRuleTypeEnum.STARTER);
+                    request.setStarterUserId("host-user");
+                    assertThat(resolver.resolveApprovers(request)).extracting("userId")
+                            .containsExactly("host-user");
+                });
+    }
+
+    @Test
+    void customApproverResolverOverridesDefaultResolver() {
+        contextRunnerWithDatabase("custom-approver-resolver.db")
+                .withUserConfiguration(OrganizationProviderConfiguration.class, CustomApproverResolverConfiguration.class)
+                .run(context -> assertThat(context.getBean(ApproverResolver.class))
+                        .isInstanceOf(CustomApproverResolver.class));
     }
 
     @Test
@@ -309,6 +338,61 @@ class PlatformAutoConfigurationTest {
             return request -> {
                 throw new IllegalStateException("authorization unavailable");
             };
+        }
+    }
+
+    @Configuration
+    static class OrganizationProviderConfiguration {
+        @Bean
+        OrganizationProvider organizationProvider() {
+            return new OrganizationProvider() {
+                @Override
+                public List<com.flowmind.platform.api.dto.DepartmentDTO> listDepartments() {
+                    return java.util.Collections.emptyList();
+                }
+
+                @Override
+                public List<com.flowmind.platform.api.dto.UserDTO> listUsersByDepartment(String departmentId) {
+                    return java.util.Collections.emptyList();
+                }
+
+                @Override
+                public List<com.flowmind.platform.api.dto.UserDTO> listUsersByRole(String roleCode) {
+                    return java.util.Collections.emptyList();
+                }
+
+                @Override
+                public List<com.flowmind.platform.api.dto.UserDTO> listUsersByRoleAndDepartment(String roleCode,
+                                                                                                   String departmentId) {
+                    return java.util.Collections.emptyList();
+                }
+
+                @Override
+                public java.util.Optional<com.flowmind.platform.api.dto.UserDTO> findUser(String userId) {
+                    return java.util.Optional.of(new com.flowmind.platform.api.dto.UserDTO(userId, "Host User"));
+                }
+
+                @Override
+                public java.util.Optional<com.flowmind.platform.api.dto.DepartmentDTO> findDepartment(String departmentId) {
+                    return java.util.Optional.empty();
+                }
+            };
+        }
+    }
+
+    @Configuration
+    static class CustomApproverResolverConfiguration {
+        @Bean
+        ApproverResolver customApproverResolver() {
+            return new CustomApproverResolver();
+        }
+    }
+
+    static class CustomApproverResolver implements ApproverResolver {
+        @Override
+        public List<com.flowmind.platform.api.dto.UserDTO> resolveApprovers(
+                com.flowmind.platform.api.request.ApproverResolveRequest request) {
+            return java.util.Collections.emptyList();
         }
     }
 

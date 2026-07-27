@@ -36,16 +36,19 @@ import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.ProcessMonitorService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
+import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
+import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.api.dto.ProcessMessage;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
 import com.flowmind.platform.core.query.ProcessTraceAssembler;
 import com.flowmind.platform.core.query.RuntimeQueryAssembler;
 import com.flowmind.platform.core.definition.OperationIdempotencyService;
+import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.core.attachment.DefaultAttachmentService;
@@ -60,6 +63,7 @@ import com.flowmind.platform.persistence.repository.ProcessOperationRecordReposi
 import com.flowmind.platform.starter.properties.PlatformProperties;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.beans.factory.InitializingBean;
@@ -86,6 +90,17 @@ import java.util.List;
 @EnableConfigurationProperties(PlatformProperties.class)
 @ConditionalOnProperty(prefix = "flow-mind.platform", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PlatformAutoConfiguration {
+
+    /**
+     * 当宿主只提供组织架构 SPI 时，复用平台的默认规则解析器接入运行时任务创建链路。
+     * 宿主显式提供 {@link ApproverResolver} 时优先使用其实现。
+     */
+    @Bean
+    @ConditionalOnBean(OrganizationProvider.class)
+    @ConditionalOnMissingBean(ApproverResolver.class)
+    public ApproverResolver approverResolver(OrganizationProvider organizationProvider) {
+        return new DefaultApproverResolver(organizationProvider);
+    }
 
     @Bean
     @ConditionalOnMissingBean
