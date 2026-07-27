@@ -35,8 +35,9 @@
         attachmentCode: "bankReceipt",
         fileName: "bank-receipt.pdf",
         contentType: "application/pdf",
-        fileSize: 1024,
-        storageKey: "flow-test/bank-receipt.pdf"
+        fileSize: 22,
+        storageKey: "flow-test/bank-receipt.pdf",
+        contentBase64: "Zmxvdy1taW5kLXRlc3QtcmVjZWlwdA=="
     };
 
     function clone(value) {
@@ -134,7 +135,8 @@
         var item = meta || {};
         var fileName = String(item.fileName || "");
         var contentType = String(item.contentType || "");
-        var size = Number(item.fileSize || 0);
+        var size = Number(item.sizeBytes || item.fileSize || 0);
+        var content = String(item.content || item.contentBase64 || "");
         var extension = fileName.indexOf(".") >= 0 ? fileName.split(".").pop().toLowerCase() : "";
         var contentTypeOk = contentType === "application/pdf" || contentType === "image/jpeg" || contentType === "image/png";
         var extensionOk = BANK_RECEIPT_TEMPLATE.allowedTypes.indexOf(extension) >= 0;
@@ -147,10 +149,23 @@
         if (size <= 0) {
             issues.push("银行回单大小必须大于 0");
         }
+        if (!hasText(content)) {
+            issues.push("银行回单 Base64 内容不能为空");
+        } else if (base64Size(content) !== size) {
+            issues.push("银行回单 Base64 解码字节数必须等于文件字节数");
+        }
         if (size > BANK_RECEIPT_TEMPLATE.maxSizeMb * 1024 * 1024) {
             issues.push("银行回单大小不能超过 10MB");
         }
         return issues;
+    }
+
+    function base64Size(value) {
+        try {
+            return window.atob(String(value || "")).length;
+        } catch (error) {
+            return -1;
+        }
     }
 
     function deleteInstanceChecks(context, rows) {
@@ -301,12 +316,22 @@
                     amount: 100000,
                     accountNo: "TEST-ACCOUNT-001"
                 },
+                instanceAttachmentForm: {
+                    enabled: true,
+                    attachmentCode: DEFAULT_ATTACHMENT_META.attachmentCode,
+                    fileName: DEFAULT_ATTACHMENT_META.fileName,
+                    contentType: DEFAULT_ATTACHMENT_META.contentType,
+                    fileSize: DEFAULT_ATTACHMENT_META.fileSize,
+                    storageKey: DEFAULT_ATTACHMENT_META.storageKey,
+                    contentBase64: DEFAULT_ATTACHMENT_META.contentBase64
+                },
                 taskForm: {
                     taskId: "",
                     taskVersion: null,
                     comment: "同意"
                 },
                 selectedTaskVariables: {},
+                selectedTaskAttachments: [],
                 definitionRows: [],
                 instanceRows: [],
                 activeTasks: [],
@@ -521,6 +546,19 @@
                         code: code,
                         label: field.fieldName || field.label || code,
                         value: self.formatFieldValue(variables[code])
+                    };
+                });
+            },
+            selectedTaskAttachmentRows: function () {
+                var self = this;
+                return (this.selectedTaskAttachments || []).map(function (attachment) {
+                    return {
+                        attachmentId: attachment.attachmentId || attachment.id || attachment.storageKey || attachment.fileName,
+                        attachmentCode: attachment.attachmentCode || "-",
+                        fileName: attachment.fileName || "-",
+                        contentType: attachment.contentType || "-",
+                        sizeText: self.formatAttachmentSize(attachment.sizeBytes),
+                        uploadedBy: attachment.uploadedBy || "-"
                     };
                 });
             },
@@ -1055,7 +1093,8 @@
                 return this.sendOperation("启动实例", "POST", "/runtime/instances/start", this.buildStartInstanceBody());
             },
             startAndSubmitInstance: function () {
-                var issues = validateBankReceiptAttachment(this.buildAttachmentMeta());
+                var attachment = this.buildAttachmentMeta();
+                var issues = attachment ? validateBankReceiptAttachment(attachment) : [];
                 if (issues.length) {
                     this.showToast("银行回单附件模板校验未通过", "warn");
                     this.errorMessage = issues.join("；");
@@ -1074,7 +1113,10 @@
             },
             buildStartAndSubmitBody: function () {
                 var body = this.buildStartInstanceBody();
-                body.attachments = [this.buildAttachmentMeta()];
+                var attachment = this.buildAttachmentMeta();
+                if (attachment) {
+                    body.attachments = [attachment];
+                }
                 return body;
             },
             approveCurrentTask: function () {
@@ -1431,7 +1473,10 @@
                     this.context.instanceId = row.instanceId;
                 }
                 this.showToast("已选择任务");
-                return this.loadSelectedTaskVariables(row);
+                return Promise.all([
+                    this.loadSelectedTaskVariables(row),
+                    this.loadSelectedTaskAttachments(row)
+                ]);
             },
             loadSelectedTaskVariables: function (row) {
                 var self = this;
@@ -1463,6 +1508,23 @@
             applySelectedTaskVariables: function (variables) {
                 this.selectedTaskVariables = clone(variables || {});
             },
+            loadSelectedTaskAttachments: function (row) {
+                this.selectedTaskAttachments = [];
+                if (!row.instanceId) {
+                    return Promise.resolve(false);
+                }
+                return this.sendRequest("读取申请附件", "GET",
+                        "/attachments" + this.toQuery({ instanceId: row.instanceId, ownerType: "INSTANCE",
+                            operatorUserId: this.currentUserId }), null)
+                        .then(this.bindThis(function (payload) {
+                            this.selectedTaskAttachments = normalizeList(payload);
+                            return true;
+                        }))
+                        .catch(this.bindThis(function () {
+                            this.selectedTaskAttachments = [];
+                            return false;
+                        }));
+            },
             selectedTask: function () {
                 var task = {
                     taskId: this.taskForm.taskId || (this.activeTasks[0] && this.activeTasks[0].taskId),
@@ -1493,7 +1555,27 @@
                 };
             },
             buildAttachmentMeta: function () {
-                return clone(DEFAULT_ATTACHMENT_META);
+                var form = this.instanceAttachmentForm || {};
+                if (!form.enabled) {
+                    return null;
+                }
+                return {
+                    attachmentCode: form.attachmentCode,
+                    ownerType: "INSTANCE",
+                    fileName: form.fileName,
+                    contentType: form.contentType,
+                    sizeBytes: Number(form.fileSize || 0),
+                    content: form.contentBase64
+                };
+            },
+            buildAttachmentPayloadPreview: function () {
+                var attachment = this.buildAttachmentMeta();
+                if (!attachment) {
+                    return [];
+                }
+                var preview = clone(attachment);
+                preview.storageKey = this.instanceAttachmentForm.storageKey;
+                return [preview];
             },
             openConfirm: function (title, message, action, checks) {
                 this.confirmDialog = {
@@ -1644,6 +1726,19 @@
                     return JSON.stringify(value);
                 }
                 return String(value);
+            },
+            formatAttachmentSize: function (value) {
+                var size = Number(value || 0);
+                if (!size) {
+                    return "-";
+                }
+                if (size < 1024) {
+                    return size + " B";
+                }
+                if (size < 1024 * 1024) {
+                    return Math.round(size / 1024 * 10) / 10 + " KB";
+                }
+                return Math.round(size / 1024 / 1024 * 10) / 10 + " MB";
             },
             parseJsonObject: function (text, label) {
                 try {
