@@ -12,6 +12,8 @@ public class TaskActionResult {
     private List<HistoryTaskDTO> archivedTasks;
     /** 本次动作推进后新建的活动任务；并行时可包含多个任务。 */
     private List<TaskDTO> createdTasks;
+    /** 本次动作原地更新的活动任务；例如转办后的新办理人和任务版本。 */
+    private List<TaskDTO> updatedTasks;
     /** 是否由相同幂等号的重复请求返回首次执行结果。 */
     private boolean replayed;
 
@@ -48,6 +50,14 @@ public class TaskActionResult {
 
     public void setCreatedTasks(List<TaskDTO> createdTasks) {
         this.createdTasks = createdTasks;
+    }
+
+    public List<TaskDTO> getUpdatedTasks() {
+        return updatedTasks;
+    }
+
+    public void setUpdatedTasks(List<TaskDTO> updatedTasks) {
+        this.updatedTasks = updatedTasks;
     }
 
     public boolean isReplayed() {

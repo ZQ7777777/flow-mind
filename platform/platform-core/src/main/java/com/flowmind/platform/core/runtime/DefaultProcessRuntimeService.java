@@ -115,6 +115,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     /** 复用既有审计日志写入原语。 */
     private final ProcessDefinitionRepository definitionRepository;
     private final FileStorageProvider attachmentStorageProvider;
+    /** M5 增强动作内部协调器；保留本类为唯一公开 Runtime Service。 */
+    private EnhancedTaskActionCoordinator enhancedTaskActionCoordinator;
 
     /**
      * 创建 M2 运行时服务。
@@ -227,6 +229,12 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                 null, null);
     }
 
+    /** 注入 M5 内部协调器，不改变已有直接构造测试的兼容构造器。 */
+    @Autowired(required = false)
+    public void setEnhancedTaskActionCoordinator(EnhancedTaskActionCoordinator enhancedTaskActionCoordinator) {
+        this.enhancedTaskActionCoordinator = enhancedTaskActionCoordinator;
+    }
+
     /** {@inheritDoc} */
     @Override
     public ProcessInstanceDTO startProcess(StartProcessRequest request) {
@@ -328,6 +336,9 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     /** {@inheritDoc} */
     @Override
     public TaskActionResult approve(ApproveTaskRequest request) {
+        if (enhancedTaskActionCoordinator != null && enhancedTaskActionCoordinator.isAddSignTask(request.getTaskId())) {
+            return enhancedTaskActionCoordinator.approveAddSign(request);
+        }
         return handleTaskAction(request, ActionTypeEnum.APPROVE, false);
     }
 
@@ -399,37 +410,37 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     /** M3 起提供驳回能力。 */
     @Override
     public TaskActionResult reject(RejectTaskRequest request) {
-        throw unsupported("reject");
+        return enhancedActions().reject(request);
     }
 
     /** M3 起提供退回能力。 */
     @Override
     public TaskActionResult returnToStarter(ReturnTaskRequest request) {
-        throw unsupported("returnToStarter");
+        return enhancedActions().returnToStarter(request);
     }
 
     /** M5 起提供撤回能力。 */
     @Override
     public TaskActionResult withdraw(WithdrawTaskRequest request) {
-        throw unsupported("withdraw");
+        return enhancedActions().withdraw(request);
     }
 
     /** M5 起提供直送能力。 */
     @Override
     public TaskActionResult directSend(DirectSendRequest request) {
-        throw unsupported("directSend");
+        return enhancedActions().directSend(request);
     }
 
     /** M5 起提供转办能力。 */
     @Override
     public TaskActionResult transfer(TransferTaskRequest request) {
-        throw unsupported("transfer");
+        return enhancedActions().transfer(request);
     }
 
     /** M5 起提供加签能力。 */
     @Override
     public TaskActionResult addSign(AddSignRequest request) {
-        throw unsupported("addSign");
+        return enhancedActions().addSign(request);
     }
 
     /** M5 起提供认领能力。 */
@@ -1190,6 +1201,13 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
 
     private UnsupportedOperationException unsupported(String operationName) {
         return new UnsupportedOperationException(operationName + " is not implemented in the current milestone");
+    }
+
+    private EnhancedTaskActionCoordinator enhancedActions() {
+        if (enhancedTaskActionCoordinator == null) {
+            throw new IllegalStateException("M5 enhanced action coordinator is unavailable");
+        }
+        return enhancedTaskActionCoordinator;
     }
 
     private static boolean isBlank(String value) {

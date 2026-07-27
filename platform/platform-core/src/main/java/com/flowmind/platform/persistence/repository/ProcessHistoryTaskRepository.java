@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -123,6 +124,28 @@ public class ProcessHistoryTaskRepository {
                 ROW_MAPPER, activeTaskId);
     }
 
+    /**
+     * 按完成时间倒序读取实例中的指定节点终态动作，供撤回、退回和直送定位可信来源。
+     */
+    public List<ProcessHistoryTaskEntity> findLatestByInstanceAndActions(String instanceId, String... actionTypes) {
+        if (actionTypes == null || actionTypes.length == 0) {
+            return Collections.emptyList();
+        }
+        StringBuilder placeholders = new StringBuilder();
+        Object[] params = new Object[actionTypes.length + 1];
+        params[0] = instanceId;
+        for (int i = 0; i < actionTypes.length; i++) {
+            if (i > 0) {
+                placeholders.append(", ");
+            }
+            placeholders.append('?');
+            params[i + 1] = actionTypes[i];
+        }
+        return jdbcTemplate.query("SELECT * FROM process_history_task WHERE instance_id = ? "
+                        + "AND action_type IN (" + placeholders + ") ORDER BY completed_at DESC, id DESC",
+                ROW_MAPPER, params);
+    }
+
     public ProcessHistoryTaskEntity findByTaskActionOperation(String activeTaskId,
                                                               String actionType,
                                                               String operationId) {
@@ -141,6 +164,11 @@ public class ProcessHistoryTaskRepository {
         return count != null && count.intValue() > 0;
     }
 
+    /** 更新动作历史的扩展关联 JSON。 */
+    public int updateExtraJson(String id, String extraJson) {
+        return jdbcTemplate.update("UPDATE process_history_task SET extra_json = ? WHERE id = ?", extraJson, id);
+    }
+
     public List<ProcessHistoryTaskEntity> queryCompletedTasks(CompletedTaskQuery query) {
         CompletedTaskQuery normalized = query == null ? new CompletedTaskQuery() : query;
         int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
@@ -148,6 +176,7 @@ public class ProcessHistoryTaskRepository {
         List<Object> params = new ArrayList<Object>();
         StringBuilder sql = new StringBuilder("SELECT h.* FROM process_history_task h ");
         appendCompletedTaskWhere(sql, params, normalized);
+        sql.append(" AND h.action_type NOT IN ('TRANSFER', 'ADD_SIGN', 'CLAIM', 'UNCLAIM') ");
         sql.append(" ORDER BY h.completed_at DESC, h.id DESC LIMIT ? OFFSET ?");
         params.add(Integer.valueOf(pageSize));
         params.add(Integer.valueOf((pageNo - 1) * pageSize));
@@ -159,6 +188,7 @@ public class ProcessHistoryTaskRepository {
         List<Object> params = new ArrayList<Object>();
         StringBuilder sql = new StringBuilder("SELECT COUNT(1) FROM process_history_task h ");
         appendCompletedTaskWhere(sql, params, normalized);
+        sql.append(" AND h.action_type NOT IN ('TRANSFER', 'ADD_SIGN', 'CLAIM', 'UNCLAIM') ");
         Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
         return count == null ? 0L : count.longValue();
     }
@@ -178,6 +208,7 @@ public class ProcessHistoryTaskRepository {
                 + "JOIN process_instance i ON i.id = h.instance_id "
                 + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
         appendCompletedTaskRowWhere(sql, params, normalized);
+        sql.append(" AND h.action_type NOT IN ('TRANSFER', 'ADD_SIGN', 'CLAIM', 'UNCLAIM') ");
         sql.append(" ORDER BY h.completed_at DESC, h.id DESC LIMIT ? OFFSET ?");
         params.add(Integer.valueOf(pageSize));
         params.add(Integer.valueOf((pageNo - 1) * pageSize));
@@ -192,6 +223,7 @@ public class ProcessHistoryTaskRepository {
                 + "JOIN process_instance i ON i.id = h.instance_id "
                 + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
         appendCompletedTaskRowWhere(sql, params, normalized);
+        sql.append(" AND h.action_type NOT IN ('TRANSFER', 'ADD_SIGN', 'CLAIM', 'UNCLAIM') ");
         Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
         return count == null ? 0L : count.longValue();
     }

@@ -213,6 +213,8 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "flow-mind.platform.mock", name = "enabled", havingValue = "true",
+            matchIfMissing = true)
     public AttachmentService attachmentService(ProcessAttachmentRepository attachments,
                                                ProcessInstanceRepository instances,
                                                ActiveTaskRepository tasks,

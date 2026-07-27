@@ -31,6 +31,12 @@ public final class RuntimeOperationTypes {
     public static final String JUMP = ActionTypeEnum.JUMP.name();
     /** 管理员强制办结流程实例。 */
     public static final String FORCE_COMPLETE = ActionTypeEnum.FORCE_COMPLETE.name();
+    public static final String REJECT = ActionTypeEnum.REJECT.name();
+    public static final String RETURN = ActionTypeEnum.RETURN.name();
+    public static final String WITHDRAW = ActionTypeEnum.WITHDRAW.name();
+    public static final String DIRECT_SEND = ActionTypeEnum.DIRECT_SEND.name();
+    public static final String TRANSFER = ActionTypeEnum.TRANSFER.name();
+    public static final String ADD_SIGN = ActionTypeEnum.ADD_SIGN.name();
 
     /** 上传实例或任务附件。 */
     public static final String ATTACHMENT_UPLOAD = "ATTACHMENT_UPLOAD";

@@ -64,6 +64,20 @@ public final class RuntimeErrorCodes {
     public static final String ATTACHMENT_COUNT_EXCEEDED = "FLOW_ATTACHMENT_COUNT_EXCEEDED";
     public static final String ATTACHMENT_SOURCE_TASK_INVALID = "FLOW_ATTACHMENT_SOURCE_TASK_INVALID";
     public static final String ATTACHMENT_STORAGE_FAILED = "FLOW_ATTACHMENT_STORAGE_FAILED";
+    /** 驳回目标不在节点冻结规则允许范围内。 */
+    public static final String REJECT_TARGET_NOT_ALLOWED = "FLOW_REJECT_TARGET_NOT_ALLOWED";
+    /** 撤回无法定位可恢复的上一节点历史。 */
+    public static final String WITHDRAW_HISTORY_NOT_FOUND = "FLOW_WITHDRAW_HISTORY_NOT_FOUND";
+    /** 当前用户不是发送当前下游待办的上一办理人。 */
+    public static final String WITHDRAW_PERMISSION_DENIED = "FLOW_WITHDRAW_PERMISSION_DENIED";
+    /** 直送缺少尚未消费的可信驳回来源。 */
+    public static final String DIRECT_SEND_SOURCE_NOT_FOUND = "FLOW_DIRECT_SEND_SOURCE_NOT_FOUND";
+    /** 转办或加签目标用户不存在或不可用。 */
+    public static final String TARGET_USER_NOT_FOUND = "FLOW_TARGET_USER_NOT_FOUND";
+    /** 加签任务组上下文缺失、损坏或不匹配。 */
+    public static final String ADD_SIGN_CONTEXT_INVALID = "FLOW_ADD_SIGN_CONTEXT_INVALID";
+    /** 当前增强动作不支持任务组或并行分支组合。 */
+    public static final String GROUPED_TASK_ACTION_NOT_SUPPORTED = "FLOW_GROUPED_TASK_ACTION_NOT_SUPPORTED";
 
     /**
      * 条件表达式非法或不在 M2 支持范围内。
