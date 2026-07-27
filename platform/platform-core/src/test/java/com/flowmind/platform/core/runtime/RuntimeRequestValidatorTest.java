@@ -82,19 +82,21 @@ class RuntimeRequestValidatorTest {
     }
 
     @Test
-    void approverResolutionDeduplicatesUsersAndRejectsUnsupportedOrEmptyResults() {
+    void approverResolutionDeduplicatesSortsAndKeepsMultiInstanceApprovers() {
         List<UserDTO> users = validator.resolveApprovers(MultiInstanceModeEnum.SINGLE,
-                request -> Arrays.asList(new UserDTO("user-2", "Bob"), new UserDTO("user-2", "Duplicate"),
-                        new UserDTO("user-3", "Carol")),
+                request -> Arrays.asList(new UserDTO("user-3", "Carol"), new UserDTO("user-2", "Bob"),
+                        new UserDTO("user-2", "Duplicate")),
                 new ApproverResolveRequest());
         assertEquals(2, users.size());
         assertEquals("user-2", users.get(0).getUserId());
         assertEquals("user-3", users.get(1).getUserId());
 
-        RuntimeValidationException unsupported = assertThrows(RuntimeValidationException.class,
-                () -> validator.resolveApprovers(MultiInstanceModeEnum.OR_SIGN, request -> users,
-                        new ApproverResolveRequest()));
-        assertEquals(RuntimeErrorCodes.INVALID_ACTION, unsupported.getErrorCode());
+        List<UserDTO> orSignUsers = validator.resolveApprovers(MultiInstanceModeEnum.OR_SIGN,
+                request -> Arrays.asList(new UserDTO("user-2", "Bob"), new UserDTO("user-1", "Alice")),
+                new ApproverResolveRequest());
+        assertEquals(2, orSignUsers.size());
+        assertEquals("user-1", orSignUsers.get(0).getUserId());
+        assertEquals("user-2", orSignUsers.get(1).getUserId());
 
         RuntimeStateException empty = assertThrows(RuntimeStateException.class,
                 () -> validator.resolveApprovers(MultiInstanceModeEnum.SINGLE,

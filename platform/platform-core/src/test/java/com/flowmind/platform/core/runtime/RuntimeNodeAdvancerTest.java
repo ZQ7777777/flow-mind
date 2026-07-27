@@ -3,11 +3,13 @@ package com.flowmind.platform.core.runtime;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.dto.DepartmentDTO;
 import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.request.ApproverResolveRequest;
+import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
@@ -20,7 +22,10 @@ import org.mockito.ArgumentCaptor;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -87,6 +92,52 @@ class RuntimeNodeAdvancerTest {
         assertEquals(Collections.singletonList("user-1"), requestCaptor.getValue()
                 .getApproverRuleConfig().get("userIds"));
         verify(instanceRepository).updateCurrentNodeCodes("instance-1", "[\"review\"]");
+    }
+
+    @Test
+    void createsTaskOnlyWithDistinctValidResolvedApprovers() {
+        when(approverResolver.resolveApprovers(any())).thenReturn(Arrays.asList(
+                new UserDTO("manager-1", "Mia"), new UserDTO(null, "Missing"),
+                new UserDTO("manager-1", "Duplicate"), new UserDTO("manager-2", "Noah")));
+
+        advancer.advanceToNode(instance(), definition(nodes(userTask("review")), edges()), "review", null, null);
+
+        ArgumentCaptor<ProcessActiveTaskEntity> taskCaptor = ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        verify(activeTaskRepository).insert(taskCaptor.capture());
+        assertEquals("[\"manager-1\",\"manager-2\"]", taskCaptor.getValue().getCandidateUserIds());
+    }
+
+    @Test
+    void createsTaskForOrSignNodeWithAllResolvedApprovers() {
+        when(approverResolver.resolveApprovers(any())).thenReturn(Arrays.asList(
+                new UserDTO("manager-2", "Noah"), new UserDTO("manager-1", "Mia")));
+        ProcessNodeDTO review = userTask("review");
+        review.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
+
+        advancer.advanceToNode(instance(), definition(nodes(review), edges()), "review", null, null);
+
+        ArgumentCaptor<ProcessActiveTaskEntity> taskCaptor = ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        verify(activeTaskRepository).insert(taskCaptor.capture());
+        assertEquals("[\"manager-1\",\"manager-2\"]", taskCaptor.getValue().getCandidateUserIds());
+        ArgumentCaptor<ApproverResolveRequest> requestCaptor = ArgumentCaptor.forClass(ApproverResolveRequest.class);
+        verify(approverResolver).resolveApprovers(requestCaptor.capture());
+        assertEquals(MultiInstanceModeEnum.OR_SIGN, requestCaptor.getValue().getMultiInstanceMode());
+    }
+
+    @Test
+    void createsTaskWithDefaultApproverResolverAndOrganizationProvider() {
+        MapBackedOrganizationProvider organizationProvider = new MapBackedOrganizationProvider();
+        organizationProvider.addUser("user-1", "User One");
+        RuntimeNodeAdvancer defaultResolverAdvancer = new RuntimeNodeAdvancer(activeTaskRepository,
+                taskGroupRepository, instanceRepository, requestValidator,
+                new DefaultApproverResolver(organizationProvider), conditionEvaluator, approverResolveRequestFactory);
+
+        defaultResolverAdvancer.advanceToNode(instance(), definition(nodes(userTask("review")), edges()),
+                "review", null, null);
+
+        ArgumentCaptor<ProcessActiveTaskEntity> taskCaptor = ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        verify(activeTaskRepository).insert(taskCaptor.capture());
+        assertEquals("[\"user-1\"]", taskCaptor.getValue().getCandidateUserIds());
     }
 
     @Test
@@ -387,5 +438,43 @@ class RuntimeNodeAdvancerTest {
         ProcessEdgeDTO edge = edge(code, source, target);
         edge.setConditionExpression(expression);
         return edge;
+    }
+
+    private static final class MapBackedOrganizationProvider implements OrganizationProvider {
+        private final Map<String, UserDTO> users = new LinkedHashMap<String, UserDTO>();
+
+        void addUser(String userId, String userName) {
+            users.put(userId, new UserDTO(userId, userName));
+        }
+
+        @Override
+        public List<DepartmentDTO> listDepartments() {
+            return Collections.emptyList();
+        }
+
+        @Override
+        public List<UserDTO> listUsersByDepartment(String departmentId) {
+            return Collections.emptyList();
+        }
+
+        @Override
+        public List<UserDTO> listUsersByRole(String roleCode) {
+            return Collections.emptyList();
+        }
+
+        @Override
+        public List<UserDTO> listUsersByRoleAndDepartment(String roleCode, String departmentId) {
+            return Collections.emptyList();
+        }
+
+        @Override
+        public Optional<UserDTO> findUser(String userId) {
+            return Optional.ofNullable(users.get(userId));
+        }
+
+        @Override
+        public Optional<DepartmentDTO> findDepartment(String departmentId) {
+            return Optional.empty();
+        }
     }
 }

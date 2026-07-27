@@ -90,7 +90,7 @@ class RuntimeDefinitionConfigurationTest {
     }
 
     /**
-     * 验证 APPROVER_EXPRESSION 只透传表达式内容，不在 A 线求值。
+     * 验证请求工厂只透传 APPROVER_EXPRESSION 内容，不在配置读取阶段求值。
      */
     @Test
     void approverExpressionIsPassedThroughWithoutEvaluation() {
@@ -104,8 +104,25 @@ class RuntimeDefinitionConfigurationTest {
                 "instance-001", "review", "starter-001", "dept-001", variables);
 
         assertEquals(ApproverRuleTypeEnum.APPROVER_EXPRESSION, request.getApproverRuleType());
+        assertEquals(MultiInstanceModeEnum.SINGLE, request.getMultiInstanceMode());
         assertEquals("departmentManager(starterDeptId)", request.getApproverRuleConfig().get("expression"));
         assertEquals(variables, request.getVariables());
+    }
+
+    /**
+     * 验证审批人解析请求会透传节点多人审批模式。
+     */
+    @Test
+    void approverResolveRequestCarriesMultiInstanceModeFromNodeConfig() {
+        ProcessNodeDTO review = userTask("review", 20, ApproverRuleTypeEnum.ROLE,
+                "{\"roleCode\":\"finance\"}");
+        review.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
+
+        ApproverResolveRequest request = requestFactory.create(definition(
+                Collections.singletonList(review), Collections.<ProcessEdgeDTO>emptyList()),
+                "instance-001", "review", "starter-001", "dept-001", Collections.<String, Object>emptyMap());
+
+        assertEquals(MultiInstanceModeEnum.OR_SIGN, request.getMultiInstanceMode());
     }
 
     /**
