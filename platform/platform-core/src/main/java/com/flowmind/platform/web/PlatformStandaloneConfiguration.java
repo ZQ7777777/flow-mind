@@ -1,17 +1,21 @@
 package com.flowmind.platform.web;
 
 import com.flowmind.platform.api.dto.UserContext;
-import com.flowmind.platform.api.dto.UserDTO;
-import com.flowmind.platform.api.dto.DepartmentDTO;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
+import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
+import com.flowmind.platform.mock.InMemoryOrganizationProvider;
+import com.flowmind.platform.mock.MockAttachmentAccessProvider;
+import com.flowmind.platform.mock.RecordingMessagePublisher;
+import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.beans.factory.InitializingBean;
@@ -36,10 +40,7 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
 
 /**
  * 本地独立运行入口所需的基础 Bean 和 Mock SPI 默认实现。
@@ -132,7 +133,7 @@ public class PlatformStandaloneConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public AttachmentAccessProvider attachmentAccessProvider() {
-        return request -> true;
+        return new MockAttachmentAccessProvider(true);
     }
 
     @Bean
@@ -147,6 +148,18 @@ public class PlatformStandaloneConfiguration {
         return new InMemoryFileStorageProvider();
     }
 
+    @Bean
+    @ConditionalOnMissingBean
+    public MessagePublisher messagePublisher() {
+        return new RecordingMessagePublisher();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public WorkflowCallbackHandler workflowCallbackHandler() {
+        return new RecordingWorkflowCallbackHandler();
+    }
+
     /**
      * 提供空委托关系。
      *
@@ -158,17 +171,17 @@ public class PlatformStandaloneConfiguration {
         return (principalUserId, at) -> Collections.emptyList();
     }
 
+    @Bean
+    @ConditionalOnMissingBean
+    public OrganizationProvider organizationProvider() {
+        return new InMemoryOrganizationProvider();
+    }
+
     /**
      * 提供本地调试审批人解析器。
      *
      * @return 审批人解析 SPI
      */
-    @Bean
-    @ConditionalOnMissingBean
-    public OrganizationProvider organizationProvider() {
-        return new StandaloneOrganizationProvider();
-    }
-
     @Bean
     @ConditionalOnMissingBean
     public ApproverResolver approverResolver(OrganizationProvider organizationProvider) {
@@ -270,83 +283,6 @@ public class PlatformStandaloneConfiguration {
     /**
      * 仅供独立调试使用的最小组织架构实现；生产环境由宿主系统提供同名 SPI。
      */
-    private static final class StandaloneOrganizationProvider implements OrganizationProvider {
-        @Override
-        public List<DepartmentDTO> listDepartments() {
-            return Arrays.asList(department("dept_sales"), department("dept_manager"), department("dept_finance"));
-        }
-
-        @Override
-        public List<UserDTO> listUsersByDepartment(String departmentId) {
-            if (!isKnownDepartment(departmentId)) {
-                return Collections.emptyList();
-            }
-            return Collections.singletonList(userForDepartment(departmentId));
-        }
-
-        @Override
-        public List<UserDTO> listUsersByRole(String roleCode) {
-            UserDTO user = userForRole(roleCode);
-            return user == null ? Collections.<UserDTO>emptyList() : Collections.singletonList(user);
-        }
-
-        @Override
-        public List<UserDTO> listUsersByRoleAndDepartment(String roleCode, String departmentId) {
-            UserDTO user = userForRole(roleCode);
-            if (user == null || !isKnownDepartment(departmentId)
-                    || !departmentId.equals(user.getDepartmentId())) {
-                return Collections.emptyList();
-            }
-            return Collections.singletonList(user);
-        }
-
-        @Override
-        public Optional<UserDTO> findUser(String userId) {
-            return isBlank(userId) ? Optional.<UserDTO>empty()
-                    : Optional.of(user(userId, defaultDepartmentId(userId)));
-        }
-
-        @Override
-        public Optional<DepartmentDTO> findDepartment(String departmentId) {
-            if (isBlank(departmentId)) {
-                return Optional.empty();
-            }
-            return isKnownDepartment(departmentId) ? Optional.of(department(departmentId)) : Optional.empty();
-        }
-
-        private UserDTO userForDepartment(String departmentId) {
-            String resolvedDepartmentId = isBlank(departmentId) ? "dept_sales" : departmentId;
-            return user("user_" + resolvedDepartmentId, resolvedDepartmentId);
-        }
-
-        private UserDTO userForRole(String roleCode) {
-            if ("finance".equals(roleCode)) {
-                return user("user_finance", "dept_finance");
-            }
-            if ("manager".equals(roleCode)) {
-                return user("user_manager", "dept_manager");
-            }
-            return null;
-        }
-
-        private UserDTO user(String userId, String departmentId) {
-            UserDTO user = new UserDTO(userId, displayName(userId));
-            user.setDepartmentId(departmentId);
-            user.setDepartmentName(displayDepartmentName(departmentId));
-            user.setActive(Boolean.TRUE);
-            return user;
-        }
-
-        private DepartmentDTO department(String departmentId) {
-            return new DepartmentDTO(departmentId, displayDepartmentName(departmentId), null);
-        }
-
-        private boolean isKnownDepartment(String departmentId) {
-            return "dept_sales".equals(departmentId) || "dept_manager".equals(departmentId)
-                    || "dept_finance".equals(departmentId);
-        }
-    }
-
     private static UserContext userContext(String userId, String userName, String departmentId, String departmentName) {
         String resolvedDepartmentId = isBlank(departmentId) ? defaultDepartmentId(userId) : departmentId;
         return new UserContext(userId, isBlank(userName) ? displayName(userId) : userName,

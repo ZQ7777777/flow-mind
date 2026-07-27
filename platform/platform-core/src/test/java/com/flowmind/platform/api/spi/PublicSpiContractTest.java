@@ -21,11 +21,14 @@ class PublicSpiContractTest {
     void fileStorageProviderUsesOnlyPublicApiContracts() throws NoSuchMethodException {
         Method store = FileStorageProvider.class.getMethod("store", StoreFileRequest.class);
         Method load = FileStorageProvider.class.getMethod("load", String.class);
+        Method delete = FileStorageProvider.class.getMethod("delete", String.class);
 
         assertEquals(StoredFile.class, store.getReturnType());
         assertEquals(FileContent.class, load.getReturnType());
+        assertEquals(Void.TYPE, delete.getReturnType());
         assertPublicApiTypes(store);
         assertPublicApiTypes(load);
+        assertPublicApiTypes(delete);
     }
 
     @Test

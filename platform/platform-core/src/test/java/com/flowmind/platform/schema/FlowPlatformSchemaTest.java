@@ -188,6 +188,8 @@ class FlowPlatformSchemaTest {
             createPreM2OperationRecordTable(connection);
             insertOperationRecord(connection, "record-approve", "operation-approve", "APPROVE");
             executeScript(connection, M2_OPERATION_MIGRATION);
+            createPreAttachmentAuditLogTable(connection);
+            insertAuditLog(connection, "audit-approve", "TASK", "task-approve", "APPROVE");
 
             executeScript(connection, ATTACHMENT_OPERATION_MIGRATION);
 
@@ -195,9 +197,20 @@ class FlowPlatformSchemaTest {
                     "operation-attachment-upload", "ATTACHMENT_UPLOAD"));
             assertDoesNotThrow(() -> insertOperationRecord(connection, "record-attachment-delete",
                     "operation-attachment-delete", "ATTACHMENT_DELETE"));
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-attachment-upload", "ATTACHMENT",
+                    "attachment-upload", "ATTACHMENT_UPLOAD"));
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-attachment-delete", "ATTACHMENT",
+                    "attachment-delete", "ATTACHMENT_DELETE"));
             try (Statement statement = connection.createStatement();
                  ResultSet resultSet = statement.executeQuery(
                          "SELECT action_type FROM process_operation_record WHERE id = 'record-approve'")) {
+                assertTrue(resultSet.next());
+                assertEquals("APPROVE", resultSet.getString("action_type"));
+                assertFalse(resultSet.next());
+            }
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT action_type FROM process_audit_log WHERE id = 'audit-approve'")) {
                 assertTrue(resultSet.next());
                 assertEquals("APPROVE", resultSet.getString("action_type"));
                 assertFalse(resultSet.next());
@@ -268,6 +281,23 @@ class FlowPlatformSchemaTest {
                     + "error_code TEXT, processing_expires_at TEXT NOT NULL, expires_at TEXT NOT NULL, "
                     + "created_at TEXT NOT NULL DEFAULT (datetime('now')), "
                     + "updated_at TEXT NOT NULL DEFAULT (datetime('now')))");
+        }
+    }
+
+    private static void createPreAttachmentAuditLogTable(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE process_audit_log ("
+                    + "id TEXT PRIMARY KEY, instance_id TEXT, operation_id TEXT, "
+                    + "target_type TEXT NOT NULL CHECK (target_type IN ('DEFINITION', 'INSTANCE', 'TASK')), "
+                    + "target_id TEXT NOT NULL, "
+                    + "action_type TEXT NOT NULL CHECK (action_type IN ('START', 'SEND', 'APPROVE', 'REJECT', "
+                    + "'RETURN', 'WITHDRAW', 'DIRECT_SEND', 'TRANSFER', 'ADD_SIGN', 'JUMP', 'TERMINATE', 'CLAIM', "
+                    + "'UNCLAIM', 'CANCEL', 'FORCE_COMPLETE', 'ARCHIVE', 'ENABLE_GRAY', 'DISABLE_GRAY', 'REMIND', "
+                    + "'ALERT_HANDLE', 'DEFINITION_CREATE', 'DEFINITION_SAVE_GRAPH', 'DEFINITION_COPY', "
+                    + "'DEFINITION_DELETE', 'DEFINITION_VALIDATE_FOR_PUBLISH', 'DEFINITION_PUBLISH', "
+                    + "'DEFINITION_ACTIVATE', 'DEFINITION_DEACTIVATE', 'DEFINITION_ARCHIVE', "
+                    + "'DEFINITION_ENABLE_GRAY', 'DEFINITION_DISABLE_GRAY')), operator_id TEXT NOT NULL, "
+                    + "detail_json TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))");
         }
     }
 

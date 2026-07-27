@@ -319,10 +319,10 @@
                 instanceAttachmentForm: {
                     enabled: true,
                     attachmentCode: DEFAULT_ATTACHMENT_META.attachmentCode,
-                    fileName: DEFAULT_ATTACHMENT_META.fileName,
-                    contentType: DEFAULT_ATTACHMENT_META.contentType,
-                    fileSize: DEFAULT_ATTACHMENT_META.fileSize,
-                    storageKey: DEFAULT_ATTACHMENT_META.storageKey,
+                    fileName: "bank-receipt.pdf",
+                    contentType: "application/pdf",
+                    fileSize: 22,
+                    storageKey: "flow-test/bank-receipt.pdf",
                     contentBase64: DEFAULT_ATTACHMENT_META.contentBase64
                 },
                 taskForm: {

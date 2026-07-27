@@ -5,6 +5,7 @@ import com.flowmind.platform.api.dto.StoredFile;
 import com.flowmind.platform.api.request.StoreFileRequest;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 
+import java.util.Arrays;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,9 +15,11 @@ public class InMemoryFileStorageProvider implements FileStorageProvider {
     private final Map<String, FileContent> files = new ConcurrentHashMap<String, FileContent>();
     @Override public StoredFile store(StoreFileRequest request) {
         String key = "mock://" + UUID.randomUUID().toString();
-        FileContent content = new FileContent(key, request.getFileName(), request.getContentType(), request.getSizeBytes(), request.getContent());
+        FileContent content = new FileContent(key, request.getFileName(), request.getContentType(),
+                request.getSizeBytes(), copy(request.getContent()));
         files.put(key, content); return new StoredFile(key, request.getFileName(), request.getContentType(), request.getSizeBytes());
     }
-    @Override public FileContent load(String storageKey) { FileContent content = files.get(storageKey); if (content == null) throw new IllegalArgumentException("File not found: " + storageKey); return content; }
+    @Override public FileContent load(String storageKey) { FileContent content = files.get(storageKey); if (content == null) throw new IllegalArgumentException("File not found: " + storageKey); return new FileContent(content.getStorageKey(), content.getFileName(), content.getContentType(), content.getSizeBytes(), copy(content.getContent())); }
     @Override public void delete(String storageKey) { files.remove(storageKey); }
+    private byte[] copy(byte[] content) { return content == null ? null : Arrays.copyOf(content, content.length); }
 }

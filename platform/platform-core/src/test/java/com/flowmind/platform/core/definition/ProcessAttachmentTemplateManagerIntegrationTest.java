@@ -99,7 +99,7 @@ class ProcessAttachmentTemplateManagerIntegrationTest {
                 manager.findTemplates("receipt", AttachmentTemplateStatusEnum.DISABLED, null);
         assertEquals(1, disabledTemplates.size());
         assertEquals(first.getAttachmentTemplateId(), disabledTemplates.get(0).getAttachmentTemplateId());
-        assertEquals(1, manager.findTemplates(null, AttachmentTemplateStatusEnum.ENABLED, null).size());
+        assertEquals(1, manager.findTemplates("license", AttachmentTemplateStatusEnum.ENABLED, null).size());
     }
 
     @Test
