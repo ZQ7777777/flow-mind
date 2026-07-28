@@ -115,6 +115,19 @@ public class ActiveTaskRepository {
                 RuntimeRowMappers.ACTIVE_TASK, instanceId);
     }
 
+    /** 按到期时间读取超时的开放任务。 */
+    public List<ProcessActiveTaskEntity> findTimeoutOpenTasks(java.time.LocalDateTime scanAt, int limit) {
+        if (scanAt == null || limit <= 0) {
+            return java.util.Collections.emptyList();
+        }
+        return jdbcTemplate.query("SELECT * FROM process_active_task "
+                        + "WHERE due_at IS NOT NULL AND due_at <= ? AND task_status IN ('ACTIVE', 'CLAIMED') "
+                        + "ORDER BY due_at ASC, created_at ASC, id ASC LIMIT ?",
+                RuntimeRowMappers.ACTIVE_TASK,
+                DefinitionRowMappers.toDbString(scanAt),
+                Integer.valueOf(limit));
+    }
+
     /** 统计实例下状态为 ACTIVE 或 CLAIMED 的任务数量。 */
     public long countOpenByInstanceId(String instanceId) {
         Long count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_active_task "

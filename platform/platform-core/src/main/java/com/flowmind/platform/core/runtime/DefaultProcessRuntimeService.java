@@ -117,6 +117,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     private final FileStorageProvider attachmentStorageProvider;
     /** M5 增强动作内部协调器；保留本类为唯一公开 Runtime Service。 */
     private EnhancedTaskActionCoordinator enhancedTaskActionCoordinator;
+    /** M5 认领动作内部协调器；保留本类为唯一公开 Runtime Service。 */
+    private TaskClaimCoordinator taskClaimCoordinator;
 
     /**
      * 创建 M2 运行时服务。
@@ -233,6 +235,12 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     @Autowired(required = false)
     public void setEnhancedTaskActionCoordinator(EnhancedTaskActionCoordinator enhancedTaskActionCoordinator) {
         this.enhancedTaskActionCoordinator = enhancedTaskActionCoordinator;
+    }
+
+    /** 注入 M5 认领协调器，不改变已有直接构造测试的兼容构造器。 */
+    @Autowired(required = false)
+    public void setTaskClaimCoordinator(TaskClaimCoordinator taskClaimCoordinator) {
+        this.taskClaimCoordinator = taskClaimCoordinator;
     }
 
     /** {@inheritDoc} */
@@ -446,13 +454,13 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     /** M5 起提供认领能力。 */
     @Override
     public TaskActionResult claim(ClaimTaskRequest request) {
-        throw unsupported("claim");
+        return claimActions().claim(request);
     }
 
     /** M5 起提供取消认领能力。 */
     @Override
     public TaskActionResult unclaim(UnclaimTaskRequest request) {
-        throw unsupported("unclaim");
+        return claimActions().unclaim(request);
     }
 
     /** 终止运行中的流程实例，并取消当前全部开放工作。 */
@@ -1208,6 +1216,13 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             throw new IllegalStateException("M5 enhanced action coordinator is unavailable");
         }
         return enhancedTaskActionCoordinator;
+    }
+
+    private TaskClaimCoordinator claimActions() {
+        if (taskClaimCoordinator == null) {
+            throw new IllegalStateException("M5 claim coordinator is unavailable");
+        }
+        return taskClaimCoordinator;
     }
 
     private static boolean isBlank(String value) {

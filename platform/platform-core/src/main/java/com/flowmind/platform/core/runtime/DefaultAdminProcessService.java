@@ -28,8 +28,11 @@ import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import com.flowmind.platform.persistence.entity.ProcessAuditLogEntity;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.ProcessAuditLogRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -61,8 +64,10 @@ public class DefaultAdminProcessService implements AdminProcessService {
     private final ProcessDefinitionRepository definitionRepository;
     private final CallbackService callbackService;
     private final RuntimeTransactionExecutor transactionExecutor;
+    private final ProcessAuditLogRepository auditLogRepository;
 
     /** 创建 M3 管理端实例命令服务。 */
+    @Autowired
     public DefaultAdminProcessService(ProcessInstanceRepository instanceRepository,
                                       RuntimeDefinitionLoader definitionLoader,
                                       RuntimeRequestValidator requestValidator,
@@ -71,7 +76,8 @@ public class DefaultAdminProcessService implements AdminProcessService {
                                       InstanceTaskCancellationService taskCancellationService,
                                       ProcessDefinitionRepository definitionRepository,
                                       CallbackService callbackService,
-                                      RuntimeTransactionExecutor transactionExecutor) {
+                                      RuntimeTransactionExecutor transactionExecutor,
+                                      ProcessAuditLogRepository auditLogRepository) {
         this.instanceRepository = instanceRepository;
         this.definitionLoader = definitionLoader;
         this.requestValidator = requestValidator;
@@ -81,6 +87,21 @@ public class DefaultAdminProcessService implements AdminProcessService {
         this.definitionRepository = definitionRepository;
         this.callbackService = callbackService;
         this.transactionExecutor = transactionExecutor;
+        this.auditLogRepository = auditLogRepository;
+    }
+
+    /** Backward compatible constructor for direct unit tests. */
+    public DefaultAdminProcessService(ProcessInstanceRepository instanceRepository,
+                                      RuntimeDefinitionLoader definitionLoader,
+                                      RuntimeRequestValidator requestValidator,
+                                      RuntimeOperationExecutor operationExecutor,
+                                      RuntimeNodeAdvancer nodeAdvancer,
+                                      InstanceTaskCancellationService taskCancellationService,
+                                      ProcessDefinitionRepository definitionRepository,
+                                      CallbackService callbackService,
+                                      RuntimeTransactionExecutor transactionExecutor) {
+        this(instanceRepository, definitionLoader, requestValidator, operationExecutor, nodeAdvancer,
+                taskCancellationService, definitionRepository, callbackService, transactionExecutor, null);
     }
 
     /** {@inheritDoc} */
@@ -215,13 +236,23 @@ public class DefaultAdminProcessService implements AdminProcessService {
     /** C 线负责审计日志分页查询。 */
     @Override
     public PageResult<AuditLogDTO> queryAuditLogs(AuditLogQuery query) {
-        throw queryUnsupported("queryAuditLogs");
+        if (auditLogRepository == null) {
+            throw queryUnsupported("queryAuditLogs");
+        }
+        AuditLogQuery normalized = query == null ? new AuditLogQuery() : query;
+        int pageNo = com.flowmind.platform.core.query.PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
+        int pageSize = com.flowmind.platform.core.query.PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        List<AuditLogDTO> records = new ArrayList<AuditLogDTO>();
+        for (ProcessAuditLogEntity entity : auditLogRepository.query(normalized)) {
+            records.add(toAuditLogDTO(entity));
+        }
+        return page(records, pageNo, pageSize, auditLogRepository.count(normalized));
     }
 
     /** C 线负责回调日志分页查询。 */
     @Override
     public PageResult<CallbackLogDTO> queryCallbackLogs(CallbackLogQuery query) {
-        throw queryUnsupported("queryCallbackLogs");
+        return callbackService.queryCallbackLogs(query);
     }
 
     private ProcessInstanceEntity requireRunningInstance(String instanceId) {
@@ -333,5 +364,32 @@ public class DefaultAdminProcessService implements AdminProcessService {
 
     private UnsupportedOperationException queryUnsupported(String methodName) {
         return new UnsupportedOperationException(methodName + " is owned by C M3 query work");
+    }
+
+    private AuditLogDTO toAuditLogDTO(ProcessAuditLogEntity entity) {
+        AuditLogDTO dto = new AuditLogDTO();
+        dto.setAuditLogId(entity.getId());
+        dto.setInstanceId(entity.getInstanceId());
+        dto.setOperationId(entity.getOperationId());
+        dto.setTargetType(com.flowmind.platform.api.enums.OperationTargetTypeEnum.valueOf(entity.getTargetType()));
+        dto.setTargetId(entity.getTargetId());
+        if (OperationTargetTypeEnum.TASK.name().equals(entity.getTargetType())) {
+            dto.setTaskId(entity.getTargetId());
+        }
+        dto.setActionType(entity.getActionType());
+        dto.setOperatorUserId(entity.getOperatorId());
+        dto.setDetail(RuntimeJsonCodec.readObjectMap(entity.getDetailJson()));
+        dto.setCreatedAt(entity.getCreatedAt());
+        return dto;
+    }
+
+    private <T> PageResult<T> page(List<T> records, int pageNo, int pageSize, long total) {
+        PageResult<T> result = new PageResult<T>();
+        result.setRecords(records);
+        result.setPageNo(Integer.valueOf(pageNo));
+        result.setPageSize(Integer.valueOf(pageSize));
+        result.setTotal(Long.valueOf(total));
+        result.setTotalPages(Integer.valueOf((int) ((total + pageSize - 1) / pageSize)));
+        return result;
     }
 }

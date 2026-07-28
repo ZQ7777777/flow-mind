@@ -5,16 +5,21 @@ import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.ReadRecordDTO;
+import com.flowmind.platform.api.dto.ReadRecordQuery;
 import com.flowmind.platform.api.dto.StartedInstanceQuery;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
 import com.flowmind.platform.api.service.TaskQueryService;
+import com.flowmind.platform.core.query.ReadRecordManager;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -31,11 +36,20 @@ public class PlatformQueryController {
 
     private final TaskQueryService taskQueryService;
     private final ProcessRuntimeService processRuntimeService;
+    private final ReadRecordManager readRecordManager;
+
+    @Autowired
+    public PlatformQueryController(TaskQueryService taskQueryService,
+                                   ProcessRuntimeService processRuntimeService,
+                                   ReadRecordManager readRecordManager) {
+        this.taskQueryService = taskQueryService;
+        this.processRuntimeService = processRuntimeService;
+        this.readRecordManager = readRecordManager;
+    }
 
     public PlatformQueryController(TaskQueryService taskQueryService,
                                    ProcessRuntimeService processRuntimeService) {
-        this.taskQueryService = taskQueryService;
-        this.processRuntimeService = processRuntimeService;
+        this(taskQueryService, processRuntimeService, null);
     }
 
     @Operation(summary = "Query todo tasks")
@@ -74,6 +88,25 @@ public class PlatformQueryController {
     public List<ProcessCommentDTO> queryComments(
             @Parameter(description = "Instance id") @PathVariable String instanceId) {
         return taskQueryService.queryComments(instanceId);
+    }
+
+    @Operation(summary = "Mark instance as read")
+    @PostMapping("/api/platform/instances/{instanceId}/read")
+    public ReadRecordDTO markRead(@Parameter(description = "Instance id") @PathVariable String instanceId) {
+        if (readRecordManager == null) {
+            throw new UnsupportedOperationException("read record manager is unavailable");
+        }
+        return readRecordManager.markRead(instanceId);
+    }
+
+    @Operation(summary = "Query read records")
+    @GetMapping("/api/platform/instances/{instanceId}/read-records")
+    public PageResult<ReadRecordDTO> queryReadRecords(
+            @Parameter(description = "Instance id") @PathVariable String instanceId,
+            ReadRecordQuery query) {
+        ReadRecordQuery normalized = query == null ? new ReadRecordQuery() : query;
+        normalized.setInstanceId(instanceId);
+        return taskQueryService.queryReadRecords(normalized);
     }
 
     @Operation(summary = "Get process instance")

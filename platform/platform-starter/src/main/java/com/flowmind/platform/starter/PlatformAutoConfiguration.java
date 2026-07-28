@@ -36,10 +36,17 @@ import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
 import com.flowmind.platform.core.query.ProcessTraceAssembler;
+import com.flowmind.platform.core.query.ReadRecordManager;
 import com.flowmind.platform.core.query.RuntimeQueryAssembler;
+import com.flowmind.platform.core.audit.AuditLogWriter;
+import com.flowmind.platform.core.audit.DefaultAuditLogWriter;
 import com.flowmind.platform.core.definition.OperationIdempotencyService;
+import com.flowmind.platform.core.monitor.DefaultProcessMonitorService;
+import com.flowmind.platform.core.monitor.MonitorModelMapper;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
+import com.flowmind.platform.core.runtime.RuntimeRequestValidator;
+import com.flowmind.platform.core.runtime.RuntimeTransactionExecutor;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.core.attachment.DefaultAttachmentService;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
@@ -51,10 +58,14 @@ import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
+import com.flowmind.platform.persistence.repository.ProcessAuditLogRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
+import com.flowmind.platform.persistence.repository.ProcessReadRecordRepository;
+import com.flowmind.platform.persistence.repository.ReminderRecordRepository;
+import com.flowmind.platform.persistence.repository.AlertRecordRepository;
 import com.flowmind.platform.starter.properties.PlatformProperties;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -164,6 +175,22 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public RuntimeRequestValidator runtimeRequestValidator(ObjectProvider<CurrentUserProvider> currentUserProvider) {
+        CurrentUserProvider currentUser = currentUserProvider.getIfAvailable();
+        if (currentUser == null) {
+            currentUser = new RequiredCurrentUserProvider();
+        }
+        return new RuntimeRequestValidator(currentUser);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RuntimeTransactionExecutor runtimeTransactionExecutor(PlatformTransactionManager transactionManager) {
+        return new RuntimeTransactionExecutor(transactionManager);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public ProcessAttachmentRepository processAttachmentRepository(JdbcTemplate jdbcTemplate) {
         return new ProcessAttachmentRepository(jdbcTemplate);
     }
@@ -182,6 +209,36 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public ProcessAuditLogRepository processAuditLogRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessAuditLogRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessReadRecordRepository processReadRecordRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessReadRecordRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ReminderRecordRepository reminderRecordRepository(JdbcTemplate jdbcTemplate) {
+        return new ReminderRecordRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AlertRecordRepository alertRecordRepository(JdbcTemplate jdbcTemplate) {
+        return new AlertRecordRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditLogWriter auditLogWriter(ProcessAuditLogRepository auditLogRepository) {
+        return new DefaultAuditLogWriter(auditLogRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public ProcessTraceAssembler processTraceAssembler() {
         return new ProcessTraceAssembler();
     }
@@ -194,11 +251,29 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public ReadRecordManager readRecordManager(ProcessReadRecordRepository readRecordRepository,
+                                               ObjectProvider<CurrentUserProvider> currentUserProvider) {
+        CurrentUserProvider currentUser = currentUserProvider.getIfAvailable();
+        if (currentUser == null) {
+            currentUser = new RequiredCurrentUserProvider();
+        }
+        return new ReadRecordManager(readRecordRepository, currentUser);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public MonitorModelMapper monitorModelMapper() {
+        return new MonitorModelMapper();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public TaskQueryService taskQueryService(ProcessHistoryTaskRepository historyTaskRepository,
                                              ActiveTaskRepository activeTaskRepository,
                                              ProcessInstanceRepository instanceRepository,
                                              ProcessTraceAssembler traceAssembler,
                                              RuntimeQueryAssembler queryAssembler,
+                                             ReadRecordManager readRecordManager,
                                              ObjectProvider<CurrentUserProvider> currentUserProvider,
                                              ObjectProvider<DelegateProvider> delegateProvider) {
         CurrentUserProvider currentUser = currentUserProvider.getIfAvailable();
@@ -210,7 +285,7 @@ public class PlatformAutoConfiguration {
             delegates = (principalUserId, at) -> Collections.<DelegateRelationDTO>emptyList();
         }
         return new DefaultTaskQueryService(historyTaskRepository, activeTaskRepository, instanceRepository,
-                traceAssembler, queryAssembler, currentUser, delegates);
+                traceAssembler, queryAssembler, currentUser, delegates, readRecordManager);
     }
 
     @Bean
@@ -221,8 +296,21 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ProcessMonitorService processMonitorService() {
-        return new UnsupportedProcessMonitorService();
+    public ProcessMonitorService processMonitorService(ActiveTaskRepository activeTaskRepository,
+                                                       ProcessInstanceRepository instanceRepository,
+                                                       ReminderRecordRepository reminderRepository,
+                                                       AlertRecordRepository alertRepository,
+                                                       RuntimeRequestValidator requestValidator,
+                                                       RuntimeOperationExecutor operationExecutor,
+                                                       RuntimeTransactionExecutor transactionExecutor,
+                                                       AuditLogWriter auditLogWriter,
+                                                       ObjectProvider<MessagePublisher> messagePublisher) {
+        MessagePublisher publisher = messagePublisher.getIfAvailable();
+        if (publisher == null) {
+            publisher = new RequiredMessagePublisher();
+        }
+        return new DefaultProcessMonitorService(activeTaskRepository, instanceRepository, reminderRepository,
+                alertRepository, requestValidator, operationExecutor, transactionExecutor, auditLogWriter, publisher);
     }
 
     @Bean
@@ -372,6 +460,13 @@ public class PlatformAutoConfiguration {
         @Override
         public UserContext getCurrentUser() {
             throw new IllegalStateException("CurrentUserProvider bean is required for TaskQueryService");
+        }
+    }
+
+    private static final class RequiredMessagePublisher implements MessagePublisher {
+        @Override
+        public void publish(com.flowmind.platform.api.dto.ProcessMessage message) {
+            throw new IllegalStateException("MessagePublisher bean is required for ProcessMonitorService");
         }
     }
 

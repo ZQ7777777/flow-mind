@@ -22,6 +22,7 @@ import com.flowmind.platform.persistence.entity.TaskQueryEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -42,6 +43,26 @@ public class DefaultTaskQueryService implements TaskQueryService {
     private final RuntimeQueryAssembler queryAssembler;
     private final CurrentUserProvider currentUserProvider;
     private final DelegateProvider delegateProvider;
+    private final ReadRecordManager readRecordManager;
+
+    @Autowired
+    public DefaultTaskQueryService(ProcessHistoryTaskRepository historyTaskRepository,
+                                   ActiveTaskRepository activeTaskRepository,
+                                   ProcessInstanceRepository instanceRepository,
+                                   ProcessTraceAssembler traceAssembler,
+                                   RuntimeQueryAssembler queryAssembler,
+                                   CurrentUserProvider currentUserProvider,
+                                   DelegateProvider delegateProvider,
+                                   ReadRecordManager readRecordManager) {
+        this.historyTaskRepository = historyTaskRepository;
+        this.activeTaskRepository = activeTaskRepository;
+        this.instanceRepository = instanceRepository;
+        this.traceAssembler = traceAssembler;
+        this.queryAssembler = queryAssembler;
+        this.currentUserProvider = currentUserProvider;
+        this.delegateProvider = delegateProvider;
+        this.readRecordManager = readRecordManager;
+    }
 
     public DefaultTaskQueryService(ProcessHistoryTaskRepository historyTaskRepository,
                                    ActiveTaskRepository activeTaskRepository,
@@ -50,13 +71,8 @@ public class DefaultTaskQueryService implements TaskQueryService {
                                    RuntimeQueryAssembler queryAssembler,
                                    CurrentUserProvider currentUserProvider,
                                    DelegateProvider delegateProvider) {
-        this.historyTaskRepository = historyTaskRepository;
-        this.activeTaskRepository = activeTaskRepository;
-        this.instanceRepository = instanceRepository;
-        this.traceAssembler = traceAssembler;
-        this.queryAssembler = queryAssembler;
-        this.currentUserProvider = currentUserProvider;
-        this.delegateProvider = delegateProvider;
+        this(historyTaskRepository, activeTaskRepository, instanceRepository, traceAssembler, queryAssembler,
+                currentUserProvider, delegateProvider, null);
     }
 
     @Override
@@ -141,7 +157,10 @@ public class DefaultTaskQueryService implements TaskQueryService {
 
     @Override
     public PageResult<ReadRecordDTO> queryReadRecords(ReadRecordQuery query) {
-        throw unsupported("queryReadRecords");
+        if (readRecordManager == null) {
+            throw unsupported("queryReadRecords");
+        }
+        return readRecordManager.query(query);
     }
 
     private void validateInstanceId(String instanceId) {
