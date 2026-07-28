@@ -24,6 +24,10 @@ public enum WorkflowEventTypeEnum {
     TASK_TRANSFERRED,
     /** 任务加签。 */
     TASK_ADDED_SIGN,
+    /** 任务被认领。 */
+    TASK_CLAIMED,
+    /** 任务取消认领。 */
+    TASK_UNCLAIMED,
     /** 流程跳转。 */
     PROCESS_JUMPED,
     /** 流程终止。 */

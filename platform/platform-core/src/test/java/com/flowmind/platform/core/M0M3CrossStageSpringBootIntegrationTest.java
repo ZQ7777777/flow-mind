@@ -578,6 +578,9 @@ class M0M3CrossStageSpringBootIntegrationTest {
         String testDefinitions = "SELECT id FROM process_definition WHERE process_code = ?";
         jdbcTemplate.update("DELETE FROM process_definition_attachment_config WHERE definition_id IN ("
                 + testDefinitions + ")", PROCESS_CODE);
+        jdbcTemplate.update("DELETE FROM process_definition_attachment_config "
+                        + "WHERE attachment_config_id LIKE ? OR attachment_template_id = ?",
+                "e2e-attachment-group-" + TEST_OPERATION_PREFIX + "%", "e2e-template-001");
         jdbcTemplate.update("DELETE FROM process_form_field WHERE definition_id IN (" + testDefinitions + ")",
                 PROCESS_CODE);
         jdbcTemplate.update("DELETE FROM process_edge WHERE definition_id IN (" + testDefinitions + ")",

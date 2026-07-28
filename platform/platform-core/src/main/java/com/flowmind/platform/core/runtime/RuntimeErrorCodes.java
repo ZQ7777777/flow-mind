@@ -78,6 +78,13 @@ public final class RuntimeErrorCodes {
     public static final String ADD_SIGN_CONTEXT_INVALID = "FLOW_ADD_SIGN_CONTEXT_INVALID";
     /** 当前增强动作不支持任务组或并行分支组合。 */
     public static final String GROUPED_TASK_ACTION_NOT_SUPPORTED = "FLOW_GROUPED_TASK_ACTION_NOT_SUPPORTED";
+    public static final String TASK_ALREADY_CLAIMED = "FLOW_TASK_ALREADY_CLAIMED";
+    public static final String TASK_NOT_CLAIMED = "FLOW_TASK_NOT_CLAIMED";
+    public static final String TASK_CLAIM_PERMISSION_DENIED = "FLOW_TASK_CLAIM_PERMISSION_DENIED";
+    public static final String REMINDER_TARGET_EMPTY = "FLOW_REMINDER_TARGET_EMPTY";
+    public static final String ALERT_NOT_FOUND = "FLOW_ALERT_NOT_FOUND";
+    public static final String ALERT_ALREADY_CLOSED = "FLOW_ALERT_ALREADY_CLOSED";
+    public static final String REMINDER_FAILED = "FLOW_REMINDER_FAILED";
 
     /**
      * 条件表达式非法或不在 M2 支持范围内。

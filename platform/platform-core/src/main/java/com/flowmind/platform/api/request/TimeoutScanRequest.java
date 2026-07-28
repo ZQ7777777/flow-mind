@@ -11,6 +11,8 @@ public class TimeoutScanRequest extends OperationRequest {
     private LocalDateTime scanAt;
     /** 最大扫描数量。 */
     private Integer limit;
+    private Boolean dryRun;
+    private String operatorUserId;
 
     public TimeoutScanRequest() {
     }
@@ -29,5 +31,21 @@ public class TimeoutScanRequest extends OperationRequest {
 
     public void setLimit(Integer limit) {
         this.limit = limit;
+    }
+
+    public Boolean getDryRun() {
+        return dryRun;
+    }
+
+    public void setDryRun(Boolean dryRun) {
+        this.dryRun = dryRun;
+    }
+
+    public String getOperatorUserId() {
+        return operatorUserId;
+    }
+
+    public void setOperatorUserId(String operatorUserId) {
+        this.operatorUserId = operatorUserId;
     }
 }

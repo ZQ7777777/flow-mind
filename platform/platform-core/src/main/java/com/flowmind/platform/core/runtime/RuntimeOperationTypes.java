@@ -37,6 +37,10 @@ public final class RuntimeOperationTypes {
     public static final String DIRECT_SEND = ActionTypeEnum.DIRECT_SEND.name();
     public static final String TRANSFER = ActionTypeEnum.TRANSFER.name();
     public static final String ADD_SIGN = ActionTypeEnum.ADD_SIGN.name();
+    public static final String CLAIM = ActionTypeEnum.CLAIM.name();
+    public static final String UNCLAIM = ActionTypeEnum.UNCLAIM.name();
+    public static final String REMIND = ActionTypeEnum.REMIND.name();
+    public static final String ALERT_HANDLE = ActionTypeEnum.ALERT_HANDLE.name();
 
     /** 上传实例或任务附件。 */
     public static final String ATTACHMENT_UPLOAD = "ATTACHMENT_UPLOAD";
