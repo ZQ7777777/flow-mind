@@ -191,6 +191,7 @@ public class DefaultAttachmentService implements AttachmentService {
             OperationIdempotencyDecision decision = operationExecutor.begin(request, RuntimeOperationTypes.ATTACHMENT_DELETE,
                     user.getUserId(), null, null, LocalDateTime.now());
             if (OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
+                retryDeletedStorageCleanup(request == null ? null : request.getAttachmentId());
                 return;
             }
             operationExecutor.assertExecutable(decision);
@@ -210,12 +211,27 @@ public class DefaultAttachmentService implements AttachmentService {
     }
 
     private void deleteInternal(DeleteAttachmentRequest request, UserContext user) {
-        ProcessAttachmentEntity attachment = requireActiveAttachment(request == null ? null : request.getAttachmentId());
-        requireOpenTask(attachment.getTaskId(), attachment.getInstanceId(), null);
+        ProcessAttachmentEntity attachment = requireAttachment(request == null ? null : request.getAttachmentId());
         allow(user, AttachmentAccessActionEnum.DELETE, attachment.getInstanceId(), attachment.getTaskId(), attachment.getId(), owner(attachment));
+        // A prior soft delete is authoritative; retry only repeats best-effort storage cleanup.
+        if (Boolean.TRUE.equals(attachment.getDeleted())) {
+            registerCommitCleanup(attachment.getStorageKey());
+            return;
+        }
+        requireOpenTask(attachment.getTaskId(), attachment.getInstanceId(), null);
         if (attachmentRepository.softDeleteWhenTaskOpen(attachment.getId(), attachment.getTaskId(), attachment.getInstanceId(),
                 user.getUserId(), LocalDateTime.now()) != 1) throw new RuntimeStateException(RuntimeErrorCodes.ATTACHMENT_SOURCE_TASK_INVALID, "attachment is no longer deletable");
         registerCommitCleanup(attachment.getStorageKey());
+    }
+
+    private void retryDeletedStorageCleanup(String attachmentId) {
+        if (attachmentId == null || attachmentId.trim().isEmpty()) {
+            return;
+        }
+        ProcessAttachmentEntity attachment = attachmentRepository.findById(attachmentId);
+        if (attachment != null && Boolean.TRUE.equals(attachment.getDeleted())) {
+            registerCommitCleanup(attachment.getStorageKey());
+        }
     }
 
     @Override
@@ -256,6 +272,7 @@ public class DefaultAttachmentService implements AttachmentService {
     private ProcessInstanceEntity requireInstance(String id) { requireText(id, "instanceId is required"); ProcessInstanceEntity value = instanceRepository.findById(id); if (value == null) throw new RuntimeStateException(RuntimeErrorCodes.INSTANCE_NOT_FOUND, "process instance does not exist"); return value; }
     private ProcessActiveTaskEntity requireOpenTask(String id, String instanceId, Long expectedVersion) { requireText(id, "source task is required"); ProcessActiveTaskEntity value = activeTaskRepository.findById(id); if (value == null || !instanceId.equals(value.getInstanceId()) || !("ACTIVE".equals(value.getTaskStatus()) || "CLAIMED".equals(value.getTaskStatus())) || (expectedVersion != null && !expectedVersion.equals(value.getLockVersion()))) throw new RuntimeStateException(RuntimeErrorCodes.ATTACHMENT_SOURCE_TASK_INVALID, "source task is not active"); return value; }
     private ProcessAttachmentEntity requireActiveAttachment(String id) { requireText(id, "attachmentId is required"); ProcessAttachmentEntity value = attachmentRepository.findById(id); if (value == null || Boolean.TRUE.equals(value.getDeleted())) throw new RuntimeStateException(RuntimeErrorCodes.ATTACHMENT_NOT_FOUND, "attachment does not exist"); return value; }
+    private ProcessAttachmentEntity requireAttachment(String id) { requireText(id, "attachmentId is required"); ProcessAttachmentEntity value = attachmentRepository.findById(id); if (value == null) throw new RuntimeStateException(RuntimeErrorCodes.ATTACHMENT_NOT_FOUND, "attachment does not exist"); return value; }
     private UserContext requireUser(String operatorId) { UserContext user = currentUserProvider == null ? null : currentUserProvider.getCurrentUser(); if (user == null || user.getUserId() == null || !user.getUserId().equals(operatorId)) throw new RuntimeValidationException(RuntimeErrorCodes.ATTACHMENT_PERMISSION_DENIED, "operator does not match current user"); return user; }
     private void allow(UserContext user, AttachmentAccessActionEnum action, String instanceId, String taskId, String attachmentId, AttachmentOwnerTypeEnum owner) { if (accessGuard == null || !accessGuard.isAllowed(new AttachmentAccessRequest(user.getUserId(), user.getUserName(), action, instanceId, taskId, attachmentId, owner))) throw new RuntimeValidationException(RuntimeErrorCodes.ATTACHMENT_PERMISSION_DENIED, "attachment access is denied"); }
     private AttachmentOwnerTypeEnum owner(ProcessAttachmentEntity entity) { return AttachmentOwnerTypeEnum.valueOf(entity.getOwnerType()); }
