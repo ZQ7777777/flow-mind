@@ -6,6 +6,7 @@ import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.BranchStatusEnum;
+import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.enums.TaskGroupTypeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
@@ -201,6 +202,47 @@ public class RuntimeNodeAdvancer {
                     "prepared approvers are missing for user task: " + node.getNodeCode());
         }
 
+        if (MultiInstanceModeEnum.COUNTERSIGN.equals(node.getMultiInstanceMode())) {
+            createCountersignTasks(instance, node, taskGroupId, branchKey, candidateUserIds, result);
+            return;
+        }
+        createActiveTask(instance, node, taskGroupId, branchKey, candidateUserIds, result);
+    }
+
+    private void createCountersignTasks(ProcessInstanceEntity instance,
+                                        ProcessNodeDTO node,
+                                        String parentGroupId,
+                                        String parentBranchKey,
+                                        List<String> candidateUserIds,
+                                        RuntimeAdvanceResult result) {
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId(newId());
+        group.setInstanceId(instance.getId());
+        group.setNodeCode(node.getNodeCode());
+        group.setParentGroupId(parentGroupId);
+        group.setParentBranchKey(parentBranchKey);
+        group.setGroupType(TaskGroupTypeEnum.COUNTERSIGN.name());
+        group.setTotalCount(Integer.valueOf(candidateUserIds.size()));
+        group.setCompletedCount(Integer.valueOf(0));
+        group.setBranchStateJson(RuntimeJsonCodec.toJson(new LinkedHashMap<String, Object>()));
+        group.setGroupStatus(TASK_GROUP_ACTIVE);
+        group.setLockVersion(Long.valueOf(0L));
+        group.setCreatedAt(LocalDateTime.now());
+        if (taskGroupRepository.insert(group) != 1) {
+            throw state(RuntimeErrorCodes.INVALID_ACTION, "failed to create countersign task group");
+        }
+        for (String candidateUserId : candidateUserIds) {
+            createActiveTask(instance, node, group.getId(), parentBranchKey,
+                    java.util.Collections.singletonList(candidateUserId), result);
+        }
+    }
+
+    private void createActiveTask(ProcessInstanceEntity instance,
+                                  ProcessNodeDTO node,
+                                  String taskGroupId,
+                                  String branchKey,
+                                  List<String> candidateUserIds,
+                                  RuntimeAdvanceResult result) {
         ProcessActiveTaskEntity task = new ProcessActiveTaskEntity();
         task.setId(newId());
         task.setInstanceId(instance.getId());

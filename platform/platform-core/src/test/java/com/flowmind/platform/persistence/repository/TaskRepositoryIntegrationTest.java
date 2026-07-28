@@ -87,6 +87,22 @@ class TaskRepositoryIntegrationTest {
         assertGroup("group-counter", 2, "COMPLETED", 2L);
     }
 
+
+    @Test
+    void openTasksByGroupAreStableAndExcludeTerminalSiblings() {
+        insertTaskGroup("group-open", "COUNTERSIGN", 3, 1, "{}", 0L);
+        insertGroupedTask("task-b", "ACTIVE", "group-open");
+        insertGroupedTask("task-a", "CLAIMED", "group-open");
+        insertGroupedTask("task-c", "COMPLETED", "group-open");
+
+        java.util.List<com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity> tasks =
+                activeTaskRepository.findOpenByTaskGroupId("group-open");
+
+        assertEquals(2, tasks.size());
+        assertEquals("task-a", tasks.get(0).getId());
+        assertEquals("task-b", tasks.get(1).getId());
+    }
+
     @Test
     void parallelBranchArrivalIsDeduplicatedInsideConditionalUpdate() {
         insertTaskGroup("group-parallel", "PARALLEL_GATEWAY", 2, 0,
@@ -138,6 +154,14 @@ class TaskRepositoryIntegrationTest {
                         + "(id, instance_id, definition_id, node_code, task_status, lock_version) "
                         + "VALUES (?, ?, ?, ?, ?, ?)",
                 id, "instance-1", "definition-1", "review", status, lockVersion);
+    }
+
+
+    private void insertGroupedTask(String id, String status, String taskGroupId) {
+        jdbcTemplate.update("INSERT INTO process_active_task "
+                        + "(id, instance_id, definition_id, node_code, task_status, task_group_id, lock_version) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, 0)",
+                id, "instance-1", "definition-1", "review", status, taskGroupId);
     }
 
     private void insertTaskGroup(String id, String type, int totalCount, int completedCount,

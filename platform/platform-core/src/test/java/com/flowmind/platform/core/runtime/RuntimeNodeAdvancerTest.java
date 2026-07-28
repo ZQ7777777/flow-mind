@@ -125,6 +125,68 @@ class RuntimeNodeAdvancerTest {
     }
 
     @Test
+    void createsCountersignGroupAndOneTaskPerResolvedApproverWithParentContext() {
+        when(approverResolver.resolveApprovers(any())).thenReturn(Arrays.asList(
+                new UserDTO("manager-2", "Noah"), new UserDTO("manager-1", "Mia")));
+        when(taskGroupRepository.insert(any(ProcessTaskGroupEntity.class))).thenReturn(1);
+        ProcessNodeDTO review = userTask("review");
+        review.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+
+        RuntimeAdvanceResult result = advancer.advanceToNode(instance(), definition(nodes(review), edges()),
+                "review", "parallel-1", "branch-a");
+
+        ArgumentCaptor<ProcessTaskGroupEntity> groupCaptor = ArgumentCaptor.forClass(ProcessTaskGroupEntity.class);
+        verify(taskGroupRepository).insert(groupCaptor.capture());
+        ProcessTaskGroupEntity group = groupCaptor.getValue();
+        assertEquals("COUNTERSIGN", group.getGroupType());
+        assertEquals(Integer.valueOf(2), group.getTotalCount());
+        assertEquals("parallel-1", group.getParentGroupId());
+        assertEquals("branch-a", group.getParentBranchKey());
+
+        ArgumentCaptor<ProcessActiveTaskEntity> taskCaptor = ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        verify(activeTaskRepository, org.mockito.Mockito.times(2)).insert(taskCaptor.capture());
+        assertEquals("[\"manager-1\"]", taskCaptor.getAllValues().get(0).getCandidateUserIds());
+        assertEquals("[\"manager-2\"]", taskCaptor.getAllValues().get(1).getCandidateUserIds());
+        assertEquals(group.getId(), taskCaptor.getAllValues().get(0).getTaskGroupId());
+        assertEquals("branch-a", taskCaptor.getAllValues().get(0).getBranchKey());
+        assertEquals(2, result.getCreatedTasks().size());
+    }
+
+    @Test
+    void onePersonCountersignStillCreatesTaskGroup() {
+        when(approverResolver.resolveApprovers(any()))
+                .thenReturn(Collections.singletonList(new UserDTO("manager-1", "Mia")));
+        when(taskGroupRepository.insert(any(ProcessTaskGroupEntity.class))).thenReturn(1);
+        ProcessNodeDTO review = userTask("review");
+        review.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+
+        RuntimeAdvanceResult result = advancer.advanceToNode(instance(), definition(nodes(review), edges()),
+                "review", null, null);
+
+        ArgumentCaptor<ProcessTaskGroupEntity> groupCaptor = ArgumentCaptor.forClass(ProcessTaskGroupEntity.class);
+        verify(taskGroupRepository).insert(groupCaptor.capture());
+        assertEquals(Integer.valueOf(1), groupCaptor.getValue().getTotalCount());
+        assertEquals(1, result.getCreatedTasks().size());
+    }
+
+    @Test
+    void countersignTaskInsertFailureStopsCreationWithStableStateError() {
+        when(approverResolver.resolveApprovers(any())).thenReturn(Arrays.asList(
+                new UserDTO("manager-1", "Mia"), new UserDTO("manager-2", "Noah")));
+        when(taskGroupRepository.insert(any(ProcessTaskGroupEntity.class))).thenReturn(1);
+        when(activeTaskRepository.insert(any(ProcessActiveTaskEntity.class))).thenReturn(1, 0);
+        ProcessNodeDTO review = userTask("review");
+        review.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+
+        RuntimeStateException error = assertThrows(RuntimeStateException.class,
+                () -> advancer.advanceToNode(instance(), definition(nodes(review), edges()),
+                        "review", null, null));
+
+        assertEquals(RuntimeErrorCodes.INVALID_ACTION, error.getErrorCode());
+        verify(activeTaskRepository, org.mockito.Mockito.times(2)).insert(any(ProcessActiveTaskEntity.class));
+    }
+
+    @Test
     void createsTaskWithDefaultApproverResolverAndOrganizationProvider() {
         MapBackedOrganizationProvider organizationProvider = new MapBackedOrganizationProvider();
         organizationProvider.addUser("user-1", "User One");
