@@ -23,6 +23,8 @@ import com.flowmind.platform.api.request.TransferTaskRequest;
 import com.flowmind.platform.api.request.WithdrawTaskRequest;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.core.audit.AuditLogCommand;
+import com.flowmind.platform.core.audit.AuditLogWriter;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
 import com.flowmind.platform.core.definition.TaskActionRuleConfigReader;
@@ -36,7 +38,6 @@ import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
-import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.TaskGroupRepository;
 import org.springframework.beans.factory.ObjectProvider;
@@ -81,8 +82,8 @@ public class EnhancedTaskActionCoordinator {
     private final CallbackService callbackService;
     private final OrganizationProvider organizationProvider;
     private final TaskActionRuleConfigReader taskActionRuleConfigReader = new TaskActionRuleConfigReader();
-    /** 复用既有审计写入原语；C 线统一 Writer 合入前不复制 SQL。 */
-    private final ProcessDefinitionRepository auditRepository;
+    /** M5 统一审计入口，确保增强动作可由管理端审计查询直接检索。 */
+    private final AuditLogWriter auditLogWriter;
 
     public EnhancedTaskActionCoordinator(ProcessInstanceRepository instanceRepository,
                                          ActiveTaskRepository activeTaskRepository,
@@ -97,7 +98,7 @@ public class EnhancedTaskActionCoordinator {
                                          RuntimeTransactionExecutor transactionExecutor,
                                          CallbackService callbackService,
                                          ObjectProvider<OrganizationProvider> organizationProviderProvider,
-                                         ObjectProvider<ProcessDefinitionRepository> auditRepositoryProvider) {
+                                         AuditLogWriter auditLogWriter) {
         this.instanceRepository = instanceRepository;
         this.activeTaskRepository = activeTaskRepository;
         this.historyRepository = historyRepository;
@@ -111,7 +112,7 @@ public class EnhancedTaskActionCoordinator {
         this.transactionExecutor = transactionExecutor;
         this.callbackService = callbackService;
         this.organizationProvider = organizationProviderProvider.getIfAvailable();
-        this.auditRepository = auditRepositoryProvider.getIfAvailable();
+        this.auditLogWriter = auditLogWriter;
     }
 
     public TaskActionResult reject(final RejectTaskRequest request) {
@@ -407,18 +408,19 @@ public class EnhancedTaskActionCoordinator {
 
     private void writeTaskAudit(EnhancedActionContext context, TaskOperationRequest request, ActionTypeEnum action,
                                 List<ProcessHistoryTaskEntity> histories) {
-        if (auditRepository == null) {
-            return;
-        }
         Map<String, Object> detail = new LinkedHashMap<String, Object>();
         detail.put("schemaVersion", Integer.valueOf(1));
         detail.put("comment", request.getComment());
         detail.put("historyTaskIds", historyIds(histories));
-        if (auditRepository.insertAuditLog(UUID.randomUUID().toString(), context.instance.getId(), request.getOperationId(),
-                OperationTargetTypeEnum.TASK.name(), context.task.getId(), action.name(), context.operator.getUserId(),
-                RuntimeJsonCodec.toJson(detail), LocalDateTime.now()) != 1) {
-            throw state(RuntimeErrorCodes.INVALID_ACTION, "failed to write enhanced task audit log");
-        }
+        AuditLogCommand command = new AuditLogCommand();
+        command.setInstanceId(context.instance.getId());
+        command.setOperationId(request.getOperationId());
+        command.setTargetType(OperationTargetTypeEnum.TASK);
+        command.setTargetId(context.task.getId());
+        command.setActionType(action.name());
+        command.setOperatorId(context.operator.getUserId());
+        command.setDetail(detail);
+        auditLogWriter.append(command);
     }
 
     private void publish(String operationId, WorkflowEventTypeEnum eventType, String targetId, ActionTypeEnum action,

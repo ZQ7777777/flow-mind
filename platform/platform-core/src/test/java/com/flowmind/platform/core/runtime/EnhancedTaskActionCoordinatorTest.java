@@ -16,6 +16,8 @@ import com.flowmind.platform.api.request.TransferTaskRequest;
 import com.flowmind.platform.api.request.WithdrawTaskRequest;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.core.audit.AuditLogCommand;
+import com.flowmind.platform.core.audit.AuditLogWriter;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
 import com.flowmind.platform.core.task.HistoryArchiveCommand;
@@ -236,6 +238,7 @@ class EnhancedTaskActionCoordinatorTest {
         RuntimeStateValidator state = mock(RuntimeStateValidator.class);
         HistoryTaskWriter writer = mock(HistoryTaskWriter.class);
         CallbackService callbacks = mock(CallbackService.class);
+        AuditLogWriter auditLogWriter = mock(AuditLogWriter.class);
         OrganizationProvider organization = mock(OrganizationProvider.class);
         DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
         factory.registerSingleton("organizationProvider", organization);
@@ -243,7 +246,7 @@ class EnhancedTaskActionCoordinatorTest {
         EnhancedTaskActionCoordinator coordinator = new EnhancedTaskActionCoordinator(instances, tasks, histories,
                 groups, definitions, validator, operations, advancer, state, writer, null, callbacks,
                 factory.getBeanProvider(OrganizationProvider.class),
-                factory.getBeanProvider(com.flowmind.platform.persistence.repository.ProcessDefinitionRepository.class));
+                auditLogWriter);
         TransferTaskRequest request = new TransferTaskRequest();
         request.setOperationId("op-transfer");
         request.setTaskId("task-1");
@@ -274,6 +277,18 @@ class EnhancedTaskActionCoordinatorTest {
         assertEquals("user-b", result.getUpdatedTasks().get(0).getAssigneeUserId());
         assertEquals(Long.valueOf(4), result.getUpdatedTasks().get(0).getTaskVersion());
         verify(tasks).transfer("task-1", 3L, "user-b", "User B");
+        org.mockito.ArgumentCaptor<AuditLogCommand> audit =
+                org.mockito.ArgumentCaptor.forClass(AuditLogCommand.class);
+        verify(auditLogWriter).append(audit.capture());
+        assertEquals("instance-1", audit.getValue().getInstanceId());
+        assertEquals("op-transfer", audit.getValue().getOperationId());
+        assertEquals(com.flowmind.platform.api.enums.OperationTargetTypeEnum.TASK,
+                audit.getValue().getTargetType());
+        assertEquals("task-1", audit.getValue().getTargetId());
+        assertEquals(ActionTypeEnum.TRANSFER.name(), audit.getValue().getActionType());
+        assertEquals("user-a", audit.getValue().getOperatorId());
+        assertEquals(java.util.Collections.singletonList("history-1"),
+                audit.getValue().getDetail().get("historyTaskIds"));
         verify(operations, never()).markDeterministicFailure(eq("op-transfer"), any(String.class));
     }
 
@@ -300,13 +315,14 @@ class EnhancedTaskActionCoordinatorTest {
         RuntimeStateValidator state = mock(RuntimeStateValidator.class);
         HistoryTaskWriter writer = mock(HistoryTaskWriter.class);
         CallbackService callbacks = mock(CallbackService.class);
+        AuditLogWriter auditLogWriter = mock(AuditLogWriter.class);
         OrganizationProvider organization = mock(OrganizationProvider.class);
         DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
         factory.registerSingleton("organizationProvider", organization);
         EnhancedTaskActionCoordinator coordinator = new EnhancedTaskActionCoordinator(instances, tasks, histories,
                 groups, definitions, validator, operations, advancer, state, writer, null, callbacks,
                 factory.getBeanProvider(OrganizationProvider.class),
-                factory.getBeanProvider(com.flowmind.platform.persistence.repository.ProcessDefinitionRepository.class));
+                auditLogWriter);
         UserContext operator = new UserContext("user-a", "User A", null, null);
         ProcessInstanceEntity instance = instance();
         ProcessActiveTaskEntity task = task();
