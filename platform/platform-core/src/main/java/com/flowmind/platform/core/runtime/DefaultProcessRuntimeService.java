@@ -17,7 +17,9 @@ import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
 import com.flowmind.platform.api.enums.HandleTypeEnum;
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
+import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
+import com.flowmind.platform.api.enums.TaskGroupTypeEnum;
 import com.flowmind.platform.api.enums.WorkflowEventTypeEnum;
 import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
@@ -51,11 +53,13 @@ import com.flowmind.platform.core.validation.DefinitionGraphIndex;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceDeletionRepository;
+import com.flowmind.platform.persistence.repository.TaskGroupRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -112,6 +116,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     private final InstanceTaskCancellationService taskCancellationService;
     /** 实例级联删除持久化仓储。 */
     private final ProcessInstanceDeletionRepository instanceDeletionRepository;
+    /** 或签、会签和并行网关任务组仓储。 */
+    private final TaskGroupRepository taskGroupRepository;
     /** 复用既有审计日志写入原语。 */
     private final ProcessDefinitionRepository definitionRepository;
     private final FileStorageProvider attachmentStorageProvider;
@@ -136,6 +142,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                          RuntimeTransactionExecutor transactionExecutor,
                                          InstanceTaskCancellationService taskCancellationService,
                                          ProcessInstanceDeletionRepository instanceDeletionRepository,
+                                         TaskGroupRepository taskGroupRepository,
                                          ProcessDefinitionRepository definitionRepository,
                                          FileStorageProvider attachmentStorageProvider) {
         this.instanceRepository = instanceRepository;
@@ -152,6 +159,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         this.transactionExecutor = transactionExecutor;
         this.taskCancellationService = taskCancellationService;
         this.instanceDeletionRepository = instanceDeletionRepository;
+        this.taskGroupRepository = taskGroupRepository;
         this.definitionRepository = definitionRepository;
         this.attachmentStorageProvider = attachmentStorageProvider;
     }
@@ -174,7 +182,29 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
                 operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
                 historyTaskWriter, transactionExecutor, taskCancellationService, instanceDeletionRepository,
-                definitionRepository, null);
+                null, definitionRepository, null);
+    }
+
+    public DefaultProcessRuntimeService(ProcessInstanceRepository instanceRepository,
+                                         ActiveTaskRepository activeTaskRepository,
+                                         HistoryTaskRepository historyTaskRepository,
+                                         RuntimeDefinitionLoader definitionLoader,
+                                         RuntimeRequestValidator requestValidator,
+                                         RuntimeOperationExecutor operationExecutor,
+                                         RuntimeNodeAdvancer nodeAdvancer,
+                                         AttachmentService attachmentService,
+                                         CallbackService callbackService,
+                                         RuntimeStateValidator runtimeStateValidator,
+                                         HistoryTaskWriter historyTaskWriter,
+                                         RuntimeTransactionExecutor transactionExecutor,
+                                         InstanceTaskCancellationService taskCancellationService,
+                                         ProcessInstanceDeletionRepository instanceDeletionRepository,
+                                         TaskGroupRepository taskGroupRepository,
+                                         ProcessDefinitionRepository definitionRepository) {
+        this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
+                operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
+                historyTaskWriter, transactionExecutor, taskCancellationService, instanceDeletionRepository,
+                taskGroupRepository, definitionRepository, null);
     }
 
     /** 兼容 M2 测试和嵌入式调用的完整运行时构造器。 */
@@ -192,7 +222,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         RuntimeTransactionExecutor transactionExecutor) {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
                 operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
-                historyTaskWriter, transactionExecutor, null, null, null, null);
+                historyTaskWriter, transactionExecutor, null, null, null, null, null);
     }
 
     /** 兼容第五步前已存在的直接构造单元测试。 */
@@ -209,7 +239,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         HistoryTaskWriter historyTaskWriter) {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
                 operationExecutor, nodeAdvancer, attachmentService, callbackService, runtimeStateValidator,
-                historyTaskWriter, null, null, null, null, null);
+                historyTaskWriter, null, null, null, null, null, null);
     }
 
     /**
@@ -226,7 +256,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                                         CallbackService callbackService) {
         this(instanceRepository, activeTaskRepository, historyTaskRepository, definitionLoader, requestValidator,
                 operationExecutor, nodeAdvancer, attachmentService, callbackService, null, null, null, null, null,
-                null, null);
+                null, null, null);
     }
 
     /** 注入 M5 内部协调器，不改变已有直接构造测试的兼容构造器。 */
@@ -607,6 +637,11 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         ProcessDefinitionDetailDTO definition = definitionLoader.loadForInstance(instance);
         ProcessNodeDTO node = requireUserTaskNode(definition, task.getNodeCode());
         assertTaskActionNode(node, submitStarterTask);
+        ProcessTaskGroupEntity orSignGroup = findOrSignGroup(instance, task, node);
+        if (orSignGroup != null) {
+            return handleOrSignApproveInTransaction(taskContext, request, actionType, operator, task, instance, definition,
+                    node, orSignGroup);
+        }
         if (submitStarterTask) {
             prepareSubmitAttachments((SubmitTaskRequest) request, instance, task);
         }
@@ -638,6 +673,102 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         result.setCreatedTasks(new ArrayList<TaskDTO>(advanceResult.getCreatedTasks()));
         result.setInstance(toInstanceResult(instance.getId(), advanceResult.getCreatedTasks()));
         publishTaskActionEvents(request.getOperationId(), actionType, result, operator, advanceResult);
+        operationExecutor.markSuccess(request.getOperationId(), result);
+        return result;
+    }
+
+    private ProcessTaskGroupEntity findOrSignGroup(ProcessInstanceEntity instance,
+                                                   ProcessActiveTaskEntity task,
+                                                   ProcessNodeDTO node) {
+        if (node == null || !MultiInstanceModeEnum.OR_SIGN.equals(node.getMultiInstanceMode())) {
+            return null;
+        }
+        ProcessTaskGroupEntity group = requireOrSignGroup(task == null ? null : task.getTaskGroupId());
+        if (!task.getTaskGroupId().equals(group.getId())
+                || !instance.getId().equals(group.getInstanceId())
+                || !task.getNodeCode().equals(group.getNodeCode())) {
+            throw new RuntimeStateException(RuntimeErrorCodes.TASK_GROUP_STATUS_INVALID,
+                    "or-sign task group does not match current task");
+        }
+        if (!"ACTIVE".equals(group.getGroupStatus()) || group.getLockVersion() == null
+                || group.getTotalCount() == null || group.getCompletedCount() == null
+                || group.getTotalCount().intValue() <= 0 || group.getCompletedCount().intValue() != 0) {
+            throw new RuntimeStateException(RuntimeErrorCodes.TASK_GROUP_STATUS_INVALID,
+                    "or-sign task group is not active");
+        }
+        return group;
+    }
+
+    private ProcessTaskGroupEntity requireOrSignGroup(String taskGroupId) {
+        if (isBlank(taskGroupId)) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.TASK_GROUP_NOT_FOUND,
+                    "or-sign task group is required");
+        }
+        if (taskGroupRepository == null) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.TASK_GROUP_NOT_FOUND,
+                    "task group repository is required for grouped task");
+        }
+        ProcessTaskGroupEntity group = taskGroupRepository.findById(taskGroupId);
+        if (group == null) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.TASK_GROUP_NOT_FOUND,
+                    "task group does not exist: " + taskGroupId);
+        }
+        if (!TaskGroupTypeEnum.OR_SIGN.name().equals(group.getGroupType())) {
+            throw new RuntimeStateException(RuntimeErrorCodes.TASK_GROUP_STATUS_INVALID,
+                    "grouped task is not an or-sign task: " + taskGroupId);
+        }
+        return group;
+    }
+
+    private TaskActionResult handleOrSignApproveInTransaction(RuntimeTaskContext taskContext,
+                                                              TaskOperationRequest request,
+                                                              ActionTypeEnum actionType,
+                                                              UserContext operator,
+                                                              ProcessActiveTaskEntity task,
+                                                              ProcessInstanceEntity instance,
+                                                              ProcessDefinitionDetailDTO definition,
+                                                              ProcessNodeDTO node,
+                                                              ProcessTaskGroupEntity group) {
+        if (!ActionTypeEnum.APPROVE.equals(actionType)) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                    "or-sign task only supports approve action");
+        }
+        Map<String, Object> variables = readVariables(instance.getVariablesJson());
+        instance.setVariablesJson(RuntimeJsonCodec.toJson(variables));
+        String targetNodeCode = singleOutgoingTarget(definition, node.getNodeCode());
+        RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(instance, definition, targetNodeCode,
+                group.getParentGroupId(), group.getParentBranchKey());
+
+        if (activeTaskRepository.complete(task.getId(), request.getExpectedTaskVersion().longValue()) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
+                    "or-sign task was modified by another request");
+        }
+        if (taskGroupRepository.completeOrSignGroup(group.getId(), group.getLockVersion().longValue()) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED,
+                    "or-sign task group was modified by another request");
+        }
+
+        List<HistoryTaskDTO> archivedTasks = new ArrayList<HistoryTaskDTO>();
+        archivedTasks.add(archiveTask(taskContext, task, instance, request, operator, ActionTypeEnum.APPROVE,
+                variables));
+        String cancelReason = "or-sign canceled by winner: " + task.getId();
+        for (ProcessActiveTaskEntity sibling : activeTaskRepository.findOpenByTaskGroupId(group.getId(), task.getId())) {
+            if (activeTaskRepository.cancel(sibling.getId(), sibling.getLockVersion().longValue()) != 1) {
+                throw new RuntimeStateException(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
+                        "or-sign sibling task was modified by another request");
+            }
+            archivedTasks.add(archiveCanceledTask(sibling, instance, operator, ActionTypeEnum.CANCEL,
+                    cancelReason, variables, request.getOperationId()));
+        }
+
+        RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition, targetNodeCode,
+                group.getParentGroupId(), group.getParentBranchKey(), preparation);
+        TaskActionResult result = new TaskActionResult();
+        result.setOperationId(request.getOperationId());
+        result.setArchivedTasks(archivedTasks);
+        result.setCreatedTasks(new ArrayList<TaskDTO>(advanceResult.getCreatedTasks()));
+        result.setInstance(toInstanceResult(instance.getId(), advanceResult.getCreatedTasks()));
+        publishTaskActionEvents(request.getOperationId(), ActionTypeEnum.APPROVE, result, operator, advanceResult);
         operationExecutor.markSuccess(request.getOperationId(), result);
         return result;
     }
@@ -858,6 +989,41 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         history.setCompletedAt(LocalDateTime.now());
         if (historyTaskRepository.insert(history) != 1) {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "failed to archive completed task");
+        }
+        return RuntimeModelMapper.toDto(history);
+    }
+
+    private HistoryTaskDTO archiveCanceledTask(ProcessActiveTaskEntity task,
+                                               ProcessInstanceEntity instance,
+                                               UserContext operator,
+                                               ActionTypeEnum actionType,
+                                               String reason,
+                                               Map<String, Object> variables,
+                                               String operationId) {
+        if (historyTaskWriter != null) {
+            ProcessHistoryTaskEntity history = historyTaskWriter.archiveCanceledTask(instance, task, operator,
+                    actionType, reason, variables, operationId);
+            return RuntimeModelMapper.toDto(history);
+        }
+        ProcessHistoryTaskEntity history = new ProcessHistoryTaskEntity();
+        history.setId(UUID.randomUUID().toString());
+        history.setInstanceId(instance.getId());
+        history.setOperationId(operationId);
+        history.setActiveTaskId(task.getId());
+        history.setNodeCode(task.getNodeCode());
+        history.setTaskGroupId(task.getTaskGroupId());
+        history.setBranchKey(task.getBranchKey());
+        history.setAssigneeUserId(operator.getUserId());
+        history.setAssigneeUserName(operator.getUserName());
+        history.setDelegateFromUserId(task.getDelegateFromUserId());
+        history.setHandleType(HandleTypeEnum.NORMAL.name());
+        history.setActionType(actionType.name());
+        history.setCommentText(reason);
+        history.setVariablesSnapshot(RuntimeJsonCodec.toJson(variables));
+        history.setStartedAt(task.getCreatedAt());
+        history.setCompletedAt(LocalDateTime.now());
+        if (historyTaskRepository.insert(history) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "failed to archive canceled task");
         }
         return RuntimeModelMapper.toDto(history);
     }

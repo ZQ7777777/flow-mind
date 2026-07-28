@@ -115,6 +115,14 @@ public class ActiveTaskRepository {
                 RuntimeRowMappers.ACTIVE_TASK, instanceId);
     }
 
+    /** 按任务组读取仍开放的待办，可排除已获胜或已处理的当前任务。 */
+    public List<ProcessActiveTaskEntity> findOpenByTaskGroupId(String taskGroupId, String excludedTaskId) {
+        return jdbcTemplate.query("SELECT * FROM process_active_task WHERE task_group_id = ? "
+                        + "AND (? IS NULL OR id <> ?) "
+                        + "AND task_status IN ('ACTIVE', 'CLAIMED') ORDER BY created_at ASC, id ASC",
+                RuntimeRowMappers.ACTIVE_TASK, taskGroupId, emptyToNull(excludedTaskId), emptyToNull(excludedTaskId));
+    }
+
     /** 统计实例下状态为 ACTIVE 或 CLAIMED 的任务数量。 */
     public long countOpenByInstanceId(String instanceId) {
         Long count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_active_task "
@@ -321,6 +329,10 @@ public class ActiveTaskRepository {
 
     private String like(String value) {
         return "%" + value.trim().toLowerCase() + "%";
+    }
+
+    private String emptyToNull(String value) {
+        return isBlank(value) ? null : value;
     }
 
     private boolean isBlank(String value) {

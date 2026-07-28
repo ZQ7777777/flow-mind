@@ -8,6 +8,7 @@ import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
+import com.flowmind.platform.api.enums.TaskGroupTypeEnum;
 import com.flowmind.platform.api.request.ApproverResolveRequest;
 import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
@@ -108,17 +109,40 @@ class RuntimeNodeAdvancerTest {
     }
 
     @Test
-    void createsTaskForOrSignNodeWithAllResolvedApprovers() {
+    void createsTaskGroupAndOneTaskPerApproverForOrSignNode() {
+        when(taskGroupRepository.insert(any(ProcessTaskGroupEntity.class))).thenReturn(1);
         when(approverResolver.resolveApprovers(any())).thenReturn(Arrays.asList(
                 new UserDTO("manager-2", "Noah"), new UserDTO("manager-1", "Mia")));
         ProcessNodeDTO review = userTask("review");
         review.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
 
-        advancer.advanceToNode(instance(), definition(nodes(review), edges()), "review", null, null);
+        RuntimeAdvanceResult result = advancer.advanceToNode(instance(), definition(nodes(review), edges()),
+                "review", "parallel-group", "branch-a");
 
+        ArgumentCaptor<ProcessTaskGroupEntity> groupCaptor = ArgumentCaptor.forClass(ProcessTaskGroupEntity.class);
+        verify(taskGroupRepository).insert(groupCaptor.capture());
+        ProcessTaskGroupEntity group = groupCaptor.getValue();
+        assertEquals("instance-1", group.getInstanceId());
+        assertEquals("review", group.getNodeCode());
+        assertEquals(TaskGroupTypeEnum.OR_SIGN.name(), group.getGroupType());
+        assertEquals(Integer.valueOf(2), group.getTotalCount());
+        assertEquals(Integer.valueOf(0), group.getCompletedCount());
+        assertEquals("ACTIVE", group.getGroupStatus());
+        assertEquals(Long.valueOf(0L), group.getLockVersion());
+        assertEquals("parallel-group", group.getParentGroupId());
+        assertEquals("branch-a", group.getParentBranchKey());
         ArgumentCaptor<ProcessActiveTaskEntity> taskCaptor = ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
-        verify(activeTaskRepository).insert(taskCaptor.capture());
-        assertEquals("[\"manager-1\",\"manager-2\"]", taskCaptor.getValue().getCandidateUserIds());
+        verify(activeTaskRepository, org.mockito.Mockito.times(2)).insert(taskCaptor.capture());
+        List<ProcessActiveTaskEntity> tasks = taskCaptor.getAllValues();
+        assertEquals(group.getId(), tasks.get(0).getTaskGroupId());
+        assertEquals("branch-a", tasks.get(0).getBranchKey());
+        assertEquals("[\"manager-1\"]", tasks.get(0).getCandidateUserIds());
+        assertEquals(group.getId(), tasks.get(1).getTaskGroupId());
+        assertEquals("branch-a", tasks.get(1).getBranchKey());
+        assertEquals("[\"manager-2\"]", tasks.get(1).getCandidateUserIds());
+        assertEquals(2, result.getCreatedTasks().size());
+        assertEquals(Collections.singletonList("manager-1"), result.getCreatedTasks().get(0).getCandidateUserIds());
+        assertEquals(Collections.singletonList("manager-2"), result.getCreatedTasks().get(1).getCandidateUserIds());
         ArgumentCaptor<ApproverResolveRequest> requestCaptor = ArgumentCaptor.forClass(ApproverResolveRequest.class);
         verify(approverResolver).resolveApprovers(requestCaptor.capture());
         assertEquals(MultiInstanceModeEnum.OR_SIGN, requestCaptor.getValue().getMultiInstanceMode());

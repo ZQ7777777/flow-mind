@@ -6,6 +6,7 @@ import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.BranchStatusEnum;
+import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.enums.TaskGroupTypeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -200,7 +202,59 @@ public class RuntimeNodeAdvancer {
             throw state(RuntimeErrorCodes.APPROVER_RESOLVE_FAILED,
                     "prepared approvers are missing for user task: " + node.getNodeCode());
         }
+        if (MultiInstanceModeEnum.OR_SIGN.equals(node.getMultiInstanceMode())) {
+            createOrSignUserTasks(instance, node, taskGroupId, branchKey, candidateUserIds, result);
+            return;
+        }
+        createSingleUserTask(instance, node, taskGroupId, branchKey, candidateUserIds, result);
+    }
 
+    private void createOrSignUserTasks(ProcessInstanceEntity instance,
+                                       ProcessNodeDTO node,
+                                       String parentGroupId,
+                                       String parentBranchKey,
+                                       List<String> candidateUserIds,
+                                       RuntimeAdvanceResult result) {
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId(newId());
+        group.setInstanceId(instance.getId());
+        group.setNodeCode(node.getNodeCode());
+        group.setParentGroupId(parentGroupId);
+        group.setParentBranchKey(parentBranchKey);
+        group.setGroupType(TaskGroupTypeEnum.OR_SIGN.name());
+        group.setTotalCount(Integer.valueOf(candidateUserIds.size()));
+        group.setCompletedCount(Integer.valueOf(0));
+        group.setGroupStatus(TASK_GROUP_ACTIVE);
+        group.setLockVersion(Long.valueOf(0L));
+        group.setCreatedAt(LocalDateTime.now());
+        if (taskGroupRepository.insert(group) != 1) {
+            throw state(RuntimeErrorCodes.INVALID_ACTION, "failed to create or-sign task group");
+        }
+        for (String candidateUserId : candidateUserIds) {
+            createSingleUserTask(instance, node, group.getId(), parentBranchKey,
+                    Collections.singletonList(candidateUserId), result);
+        }
+    }
+
+    private void createSingleUserTask(ProcessInstanceEntity instance,
+                                      ProcessNodeDTO node,
+                                      String taskGroupId,
+                                      String branchKey,
+                                      List<String> candidateUserIds,
+                                      RuntimeAdvanceResult result) {
+        ProcessActiveTaskEntity task = newActiveTask(instance, node, taskGroupId, branchKey, candidateUserIds);
+        if (activeTaskRepository.insert(task) != 1) {
+            throw state(RuntimeErrorCodes.INVALID_ACTION, "failed to create active task");
+        }
+        TaskDTO dto = RuntimeModelMapper.toDto(task, node.getNodeName(), null);
+        result.addCreatedTask(dto);
+    }
+
+    private ProcessActiveTaskEntity newActiveTask(ProcessInstanceEntity instance,
+                                                  ProcessNodeDTO node,
+                                                  String taskGroupId,
+                                                  String branchKey,
+                                                  List<String> candidateUserIds) {
         ProcessActiveTaskEntity task = new ProcessActiveTaskEntity();
         task.setId(newId());
         task.setInstanceId(instance.getId());
@@ -212,11 +266,7 @@ public class RuntimeNodeAdvancer {
         task.setBranchKey(branchKey);
         task.setLockVersion(Long.valueOf(0L));
         task.setCreatedAt(LocalDateTime.now());
-        if (activeTaskRepository.insert(task) != 1) {
-            throw state(RuntimeErrorCodes.INVALID_ACTION, "failed to create active task");
-        }
-        TaskDTO dto = RuntimeModelMapper.toDto(task, node.getNodeName(), null);
-        result.addCreatedTask(dto);
+        return task;
     }
 
     private ProcessEdgeDTO selectExclusiveEdge(ProcessNodeDTO node,
