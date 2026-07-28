@@ -8,6 +8,7 @@ import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
+import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
@@ -83,6 +84,120 @@ class EnhancedTaskActionCoordinatorTest {
         verify(fixture.tasks).complete("task-1", 3L);
         verify(fixture.histories).updateExtraJson(eq("reject-history"), any(String.class));
         verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"), eq(null), eq(null), eq(null));
+    }
+
+    @Test
+    void countersignRejectCancelsGroupAndOpenSiblingsBeforeRecreatingTarget() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("group-1");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-countersign-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        ProcessNodeDTO manager = userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
+        manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+        fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("COUNTERSIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{}");
+        ProcessActiveTaskEntity sibling = task();
+        sibling.setId("task-2");
+        sibling.setTaskGroupId("group-1");
+        sibling.setLockVersion(Long.valueOf(1));
+        when(fixture.groups.findById("group-1")).thenReturn(group);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("group-1", 2L)).thenReturn(1);
+        when(fixture.tasks.findOpenByTaskGroupId("group-1"))
+                .thenReturn(java.util.Collections.singletonList(sibling));
+        when(fixture.tasks.cancel("task-2", 1L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("rejected", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"),
+                history("canceled", "user-a", "manager", ActionTypeEnum.CANCEL.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("rejected"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertEquals(2, result.getArchivedTasks().size());
+        verify(fixture.groups).cancel("group-1", 2L);
+        verify(fixture.tasks).cancel("task-2", 1L);
+    }
+
+    @Test
+    void countersignRejectInsideParallelBranchIsRejectedBeforeTaskMutation() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("group-1");
+        fixture.task.setBranchKey("branch-a");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-parallel-countersign-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        ProcessNodeDTO manager = userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
+        manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+        fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("COUNTERSIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{}");
+        group.setParentGroupId("parallel-1");
+        group.setParentBranchKey("branch-a");
+        when(fixture.groups.findById("group-1")).thenReturn(group);
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.reject(request));
+
+        assertEquals(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED, error.getErrorCode());
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+    }
+
+    @Test
+    void countersignRejectStopsWhenSiblingCancelLosesTaskCas() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("group-1");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-countersign-reject-conflict",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        ProcessNodeDTO manager = userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
+        manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+        fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("COUNTERSIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{}");
+        ProcessActiveTaskEntity sibling = task();
+        sibling.setId("task-2");
+        sibling.setTaskGroupId("group-1");
+        sibling.setLockVersion(Long.valueOf(1));
+        when(fixture.groups.findById("group-1")).thenReturn(group);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("group-1", 2L)).thenReturn(1);
+        when(fixture.tasks.findOpenByTaskGroupId("group-1"))
+                .thenReturn(java.util.Collections.singletonList(sibling));
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("rejected", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"));
+
+        RuntimeStateException error = assertThrows(RuntimeStateException.class,
+                () -> fixture.coordinator.reject(request));
+
+        assertEquals(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED, error.getErrorCode());
+        verify(fixture.advancer, never()).advanceToNode(any(ProcessInstanceEntity.class),
+                any(ProcessDefinitionDetailDTO.class), any(String.class), any(String.class), any(String.class),
+                any(RuntimeAdvancePreparation.class));
     }
 
     @Test

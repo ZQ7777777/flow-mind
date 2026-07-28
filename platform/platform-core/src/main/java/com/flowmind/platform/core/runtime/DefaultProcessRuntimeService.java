@@ -119,6 +119,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     private EnhancedTaskActionCoordinator enhancedTaskActionCoordinator;
     /** M5 认领动作内部协调器；保留本类为唯一公开 Runtime Service。 */
     private TaskClaimCoordinator taskClaimCoordinator;
+    /** M6 定义级会签审批协调器。 */
+    private CountersignTaskCoordinator countersignTaskCoordinator;
 
     /**
      * 创建 M2 运行时服务。
@@ -241,6 +243,12 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     @Autowired(required = false)
     public void setTaskClaimCoordinator(TaskClaimCoordinator taskClaimCoordinator) {
         this.taskClaimCoordinator = taskClaimCoordinator;
+    }
+
+    /** 注入 M6 会签协调器，不改变已有直接构造测试的兼容构造器。 */
+    @Autowired(required = false)
+    public void setCountersignTaskCoordinator(CountersignTaskCoordinator countersignTaskCoordinator) {
+        this.countersignTaskCoordinator = countersignTaskCoordinator;
     }
 
     /** {@inheritDoc} */
@@ -623,9 +631,23 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                 ? mergeVariables(instance.getVariablesJson(), ((SubmitTaskRequest) request).getVariables())
                 : readVariables(instance.getVariablesJson());
         instance.setVariablesJson(RuntimeJsonCodec.toJson(variables));
-        String targetNodeCode = singleOutgoingTarget(definition, node.getNodeCode());
-        RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(instance, definition, targetNodeCode,
-                task.getTaskGroupId(), task.getBranchKey());
+        CountersignTaskCoordinator.CountersignAdvanceContext countersignContext = null;
+        String targetNodeCode = null;
+        RuntimeAdvancePreparation preparation = null;
+        if (ActionTypeEnum.APPROVE.equals(actionType)
+                && com.flowmind.platform.api.enums.MultiInstanceModeEnum.COUNTERSIGN
+                        .equals(node.getMultiInstanceMode())
+                && !isBlank(task.getTaskGroupId())) {
+            if (countersignTaskCoordinator == null) {
+                throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION,
+                        "M6 countersign coordinator is unavailable");
+            }
+            countersignContext = countersignTaskCoordinator.prepare(instance, definition, task, node);
+        } else {
+            targetNodeCode = singleOutgoingTarget(definition, node.getNodeCode());
+            preparation = nodeAdvancer.prepareAdvance(instance, definition, targetNodeCode,
+                    task.getTaskGroupId(), task.getBranchKey());
+        }
 
         if (activeTaskRepository.complete(task.getId(), request.getExpectedTaskVersion().longValue()) != 1) {
             throw new RuntimeStateException(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
@@ -638,8 +660,10 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         }
         HistoryTaskDTO archivedTask = archiveTask(taskContext, task, instance, request, operator, actionType,
                 variables);
-        RuntimeAdvanceResult advanceResult = nodeAdvancer.advanceToNode(instance, definition, targetNodeCode,
-                task.getTaskGroupId(), task.getBranchKey(), preparation);
+        RuntimeAdvanceResult advanceResult = countersignContext == null
+                ? nodeAdvancer.advanceToNode(instance, definition, targetNodeCode,
+                        task.getTaskGroupId(), task.getBranchKey(), preparation)
+                : countersignTaskCoordinator.completeAndAdvance(countersignContext);
         TaskActionResult result = new TaskActionResult();
         result.setOperationId(request.getOperationId());
         result.setArchivedTasks(Collections.singletonList(archivedTask));

@@ -371,6 +371,45 @@ class DefaultProcessRuntimeServiceTest {
     }
 
     @Test
+    void countersignApprovalUsesGroupCoordinatorAndPartialApprovalDoesNotAdvance() {
+        ApproveTaskRequest request = approveRequest("operation-countersign-approve", "task-manager");
+        UserContext manager = user("manager", "Manager");
+        ProcessActiveTaskEntity task = activeTask("task-manager", "instance-1", "manager");
+        task.setTaskGroupId("group-1");
+        ProcessInstanceEntity instance = runningInstance("instance-1");
+        ProcessNodeDTO managerNode = userTask("manager", ApproverRuleTypeEnum.ROLE);
+        managerNode.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+        ProcessDefinitionDetailDTO definition = definition(managerNode);
+        prepareTaskAction(request, ActionTypeEnum.APPROVE, manager, task, instance, definition);
+        com.flowmind.platform.persistence.repository.TaskGroupRepository groups =
+                mock(com.flowmind.platform.persistence.repository.TaskGroupRepository.class);
+        com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity group =
+                new com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity();
+        group.setId("group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("COUNTERSIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setCompletedCount(Integer.valueOf(0));
+        group.setTotalCount(Integer.valueOf(2));
+        group.setLockVersion(Long.valueOf(0));
+        group.setBranchStateJson("{}");
+        when(groups.findById("group-1")).thenReturn(group);
+        when(groups.incrementCompletedCount("group-1", 0L)).thenReturn(1);
+        service.setCountersignTaskCoordinator(new CountersignTaskCoordinator(groups, nodeAdvancer));
+        when(activeTaskRepository.complete("task-manager", 0L)).thenReturn(1);
+        when(instanceRepository.findById("instance-1")).thenReturn(instance, instance);
+
+        TaskActionResult result = service.approve(request);
+
+        assertTrue(result.getCreatedTasks().isEmpty());
+        verify(groups).incrementCompletedCount("group-1", 0L);
+        verify(nodeAdvancer, never()).advanceToNode(any(ProcessInstanceEntity.class),
+                any(ProcessDefinitionDetailDTO.class), anyString(), any(), any(),
+                any(RuntimeAdvancePreparation.class));
+    }
+
+    @Test
     void updateVariablesMergesCurrentSnapshotAndUsesDedicatedIdempotencyAction() {
         UpdateVariablesRequest request = new UpdateVariablesRequest();
         request.setOperationId("operation-variables");
