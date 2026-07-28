@@ -212,6 +212,24 @@ class DefaultProcessDefinitionServiceTest {
     }
 
     @Test
+    void saveGraphRoundTripsM5NodeAndEdgeConfigurationFields() {
+        ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
+        SaveProcessGraphRequest request = simpleLinearGraph("operation-save-001");
+        request.getNodes().get(1).setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+        request.getNodes().get(1).setListenerConfig("{\"taskActionRules\":{\"reject\":{\"enabled\":true,"
+                + "\"targetNodeCodes\":[\"review\"]},\"directSend\":{\"enabled\":true,"
+                + "\"targetMode\":\"REJECT_SOURCE\"}}}");
+        request.getEdges().get(0).setConditionExpression("amount > 0");
+
+        saveGraph(created.getId(), request);
+        ProcessDefinitionDetailDTO detail = service.getDefinition(created.getId());
+
+        assertEquals(MultiInstanceModeEnum.COUNTERSIGN, detail.getNodes().get(1).getMultiInstanceMode());
+        assertEquals(request.getNodes().get(1).getListenerConfig(), detail.getNodes().get(1).getListenerConfig());
+        assertEquals("amount > 0", detail.getEdges().get(0).getConditionExpression());
+    }
+
+    @Test
     void saveGraphPersistsInvalidDraftAndDefersEdgeReferenceToPublishValidation() {
         ProcessDefinitionDTO created = service.createDefinition(createRequest("operation-001", "deposit"));
         insertAttachmentTemplate();

@@ -1,5 +1,9 @@
 package com.flowmind.platform.core.validation;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessAttachmentTemplateDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
@@ -7,10 +11,16 @@ import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
+import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
+import com.flowmind.platform.core.definition.ConditionExpressionSyntaxValidator;
+import com.flowmind.platform.core.definition.NodeListenerConfigReader;
+import com.flowmind.platform.core.definition.TaskActionRuleConfigReader;
+import com.flowmind.platform.core.definition.TaskActionRuleConfigReader.TaskActionRules;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -36,6 +46,9 @@ public class DefinitionModelValidator {
     private static final NodeTypeEnum PARALLEL_SPLIT_GATEWAY = NodeTypeEnum.PARALLEL_SPLIT_GATEWAY;
     private static final NodeTypeEnum PARALLEL_JOIN_GATEWAY = NodeTypeEnum.PARALLEL_JOIN_GATEWAY;
     private static final ApproverRuleTypeEnum STARTER = ApproverRuleTypeEnum.STARTER;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private final NodeListenerConfigReader nodeListenerConfigReader = new NodeListenerConfigReader();
+    private final TaskActionRuleConfigReader taskActionRuleConfigReader = new TaskActionRuleConfigReader();
     /** 表单字段稳定排序规则。 */
     private static final Comparator<ProcessFormFieldDTO> FORM_FIELD_ORDER =
             new Comparator<ProcessFormFieldDTO>() {
@@ -94,8 +107,12 @@ public class DefinitionModelValidator {
         validateSingleOutgoingNodes(result, graph);
         validateUserTasks(result, graph.getNodes());
         validateGatewayNodeConfiguration(result, graph);
+        validateMultiInstanceConfiguration(result, graph);
         validateExclusiveGatewayTopology(result, graph);
         validateParallelGatewayTopology(result, graph);
+        validateConditionExpressions(result, graph);
+        validateNodeListenerConfig(result, graph);
+        validateTaskActionRules(result, graph);
         validateFiniteEnding(result, graph);
         validateReachability(result, graph);
         validateExtensionConfiguration(result, definition, graph);
@@ -191,12 +208,48 @@ public class DefinitionModelValidator {
 
     private void validateGatewayNodeConfiguration(ValidationResult result, DefinitionGraphIndex graph) {
         for (ProcessNodeDTO node : graph.getGatewayNodes()) {
-            if (node.getApproverRuleType() != null || !isBlank(node.getApproverRuleConfig())
-                    || node.getMultiInstanceMode() != null) {
+            if (node.getApproverRuleType() != null || !isBlank(node.getApproverRuleConfig())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_GATEWAY_NODE_CONFIGURATION_INVALID,
-                        "Gateway node must not define approver or multi-instance configuration.",
+                        "Gateway node must not define approver configuration.",
                         node.getNodeCode(), null);
             }
+        }
+    }
+
+    private void validateMultiInstanceConfiguration(ValidationResult result, DefinitionGraphIndex graph) {
+        for (ProcessNodeDTO node : graph.getNodes()) {
+            if (isBlank(node.getNodeCode())) {
+                continue;
+            }
+            if (USER_TASK.equals(node.getNodeType())) {
+                validateGroupedMultiInstanceApproverConfig(result, node);
+                continue;
+            }
+            if (isGroupedMultiInstanceMode(node.getMultiInstanceMode())) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_MULTI_INSTANCE_CONFIGURATION_INVALID,
+                        "Only user task can define OR_SIGN or COUNTERSIGN multi-instance mode.",
+                        node.getNodeCode(), null);
+            }
+        }
+    }
+
+    private void validateGroupedMultiInstanceApproverConfig(ValidationResult result, ProcessNodeDTO node) {
+        if (!isGroupedMultiInstanceMode(node.getMultiInstanceMode()) || node.getApproverRuleType() == null) {
+            return;
+        }
+        if (STARTER.equals(node.getApproverRuleType())) {
+            return;
+        }
+        try {
+            Map<String, Object> config = readApproverRuleConfig(node.getApproverRuleConfig());
+            if (!hasResolvableApproverSelector(node.getApproverRuleType(), config)) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_MULTI_INSTANCE_CONFIGURATION_INVALID,
+                        "Grouped multi-instance approver rule must declare at least one approver selector.",
+                        node.getNodeCode(), null);
+            }
+        } catch (IllegalArgumentException ex) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_MULTI_INSTANCE_CONFIGURATION_INVALID,
+                    ex.getMessage(), node.getNodeCode(), null);
         }
     }
 
@@ -288,6 +341,87 @@ public class DefinitionModelValidator {
             addIssue(result, FrozenValidationErrorCodes.MODEL_PARALLEL_GATEWAY_TOPOLOGY_INVALID,
                     "Parallel join gateway must have exactly one outgoing edge.",
                     join.getNodeCode(), null);
+        }
+    }
+
+    private void validateConditionExpressions(ValidationResult result, DefinitionGraphIndex graph) {
+        for (ProcessEdgeDTO edge : graph.getEdges()) {
+            if (isBlank(edge.getConditionExpression())) {
+                continue;
+            }
+            ProcessNodeDTO source = graph.getNodesByCode().get(edge.getSourceNodeCode());
+            if (source == null) {
+                continue;
+            }
+            if (!EXCLUSIVE_GATEWAY.equals(source.getNodeType()) || Boolean.TRUE.equals(edge.getDefaultEdge())) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_CONDITION_EXPRESSION_INVALID,
+                        "Condition expression is only allowed on non-default exclusive gateway edge.",
+                        source.getNodeCode(), edge.getEdgeCode());
+                continue;
+            }
+            try {
+                ConditionExpressionSyntaxValidator.parse(edge.getConditionExpression());
+            } catch (IllegalArgumentException ex) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_CONDITION_EXPRESSION_INVALID,
+                        ex.getMessage(), source.getNodeCode(), edge.getEdgeCode());
+            }
+        }
+    }
+
+    private void validateNodeListenerConfig(ValidationResult result, DefinitionGraphIndex graph) {
+        for (ProcessNodeDTO node : graph.getNodes()) {
+            if (isBlank(node.getListenerConfig())) {
+                continue;
+            }
+            try {
+                nodeListenerConfigReader.validate(node.getListenerConfig());
+            } catch (IllegalArgumentException ex) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TASK_ACTION_RULE_INVALID,
+                        ex.getMessage(), node.getNodeCode(), null);
+            }
+        }
+    }
+
+    private void validateTaskActionRules(ValidationResult result, DefinitionGraphIndex graph) {
+        for (ProcessNodeDTO node : graph.getNodes()) {
+            if (isBlank(node.getListenerConfig())) {
+                continue;
+            }
+            TaskActionRules rules;
+            try {
+                rules = taskActionRuleConfigReader.read(node.getListenerConfig());
+            } catch (IllegalArgumentException ex) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TASK_ACTION_RULE_INVALID,
+                        ex.getMessage(), node.getNodeCode(), null);
+                continue;
+            }
+            if (!hasConfiguredTaskActionRules(rules)) {
+                continue;
+            }
+            if (!USER_TASK.equals(node.getNodeType())) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TASK_ACTION_RULE_INVALID,
+                        "Task action rules can only be configured on user task node.",
+                        node.getNodeCode(), null);
+                continue;
+            }
+            validateRejectTargets(result, graph, node, rules);
+        }
+    }
+
+    private void validateRejectTargets(ValidationResult result,
+                                       DefinitionGraphIndex graph,
+                                       ProcessNodeDTO node,
+                                       TaskActionRules rules) {
+        if (!rules.isRejectEnabled()) {
+            return;
+        }
+        for (String targetNodeCode : rules.getRejectTargetNodeCodes()) {
+            ProcessNodeDTO target = graph.getNodesByCode().get(targetNodeCode);
+            if (target == null || !USER_TASK.equals(target.getNodeType())) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TASK_ACTION_RULE_INVALID,
+                        "Reject target node must exist and be a user task: " + targetNodeCode + ".",
+                        node.getNodeCode(), null);
+            }
         }
     }
 
@@ -605,6 +739,89 @@ public class DefinitionModelValidator {
                 && PARALLEL_JOIN_GATEWAY.equals(paired.getNodeType()))
                 || (PARALLEL_JOIN_GATEWAY.equals(node.getNodeType())
                 && PARALLEL_SPLIT_GATEWAY.equals(paired.getNodeType()));
+    }
+
+    private Map<String, Object> readApproverRuleConfig(String approverRuleConfig) {
+        if (isBlank(approverRuleConfig)) {
+            return new LinkedHashMap<String, Object>();
+        }
+        JsonNode node;
+        try {
+            node = OBJECT_MAPPER.readTree(approverRuleConfig);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalArgumentException("approverRuleConfig must be valid JSON", ex);
+        }
+        if (node == null || node.isNull()) {
+            return new LinkedHashMap<String, Object>();
+        }
+        if (!node.isObject()) {
+            throw new IllegalArgumentException("approverRuleConfig must be a JSON object");
+        }
+        try {
+            return OBJECT_MAPPER.readValue(approverRuleConfig,
+                    new TypeReference<LinkedHashMap<String, Object>>() { });
+        } catch (JsonProcessingException ex) {
+            throw new IllegalArgumentException("approverRuleConfig cannot be read as object", ex);
+        }
+    }
+
+    private boolean hasResolvableApproverSelector(ApproverRuleTypeEnum ruleType, Map<String, Object> config) {
+        if (ruleType == null) {
+            return false;
+        }
+        switch (ruleType) {
+            case USER:
+                return hasConfiguredUserIds(config.get("userIds"));
+            case DEPARTMENT:
+                return hasTextValue(config.get("departmentId"));
+            case ROLE:
+                return hasTextValue(config.get("roleCode"));
+            case ROLE_IN_DEPARTMENT:
+                return hasTextValue(config.get("roleCode"));
+            case APPROVER_EXPRESSION:
+                return hasTextValue(config.get("expression"));
+            case STARTER:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private boolean hasConfiguredUserIds(Object value) {
+        if (value instanceof Collection<?>) {
+            for (Object item : (Collection<?>) value) {
+                if (hasTextValue(item)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (value instanceof String && ((String) value).indexOf(',') >= 0) {
+            String[] parts = ((String) value).split(",");
+            for (String part : parts) {
+                if (!isBlank(part)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return hasTextValue(value);
+    }
+
+    private boolean hasTextValue(Object value) {
+        return value instanceof String && !isBlank((String) value);
+    }
+
+    private boolean isGroupedMultiInstanceMode(MultiInstanceModeEnum multiInstanceMode) {
+        return MultiInstanceModeEnum.OR_SIGN.equals(multiInstanceMode)
+                || MultiInstanceModeEnum.COUNTERSIGN.equals(multiInstanceMode);
+    }
+
+    private boolean hasConfiguredTaskActionRules(TaskActionRules rules) {
+        return rules.isRejectEnabled()
+                || !rules.getRejectTargetNodeCodes().isEmpty()
+                || rules.isDirectSendEnabled()
+                || !isBlank(rules.getDirectSendTargetMode());
     }
 
     private static int compareNullableInteger(Integer left, Integer right) {

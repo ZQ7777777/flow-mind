@@ -25,6 +25,8 @@ import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
+import com.flowmind.platform.core.definition.TaskActionRuleConfigReader;
+import com.flowmind.platform.core.definition.TaskActionRuleConfigReader.TaskActionRules;
 import com.flowmind.platform.core.task.HistoryArchiveCommand;
 import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
@@ -78,6 +80,7 @@ public class EnhancedTaskActionCoordinator {
     private final RuntimeTransactionExecutor transactionExecutor;
     private final CallbackService callbackService;
     private final OrganizationProvider organizationProvider;
+    private final TaskActionRuleConfigReader taskActionRuleConfigReader = new TaskActionRuleConfigReader();
     /** 复用既有审计写入原语；C 线统一 Writer 合入前不复制 SQL。 */
     private final ProcessDefinitionRepository auditRepository;
 
@@ -486,29 +489,27 @@ public class EnhancedTaskActionCoordinator {
     }
 
     private void assertRejectRule(ProcessDefinitionDetailDTO definition, String sourceNodeCode, String targetNodeCode) {
-        Map<String, Object> reject = actionRules(definition, sourceNodeCode, "reject");
-        if (!Boolean.TRUE.equals(reject.get("enabled")) || !readStringList(reject.get("targetNodeCodes")).contains(targetNodeCode)) {
+        TaskActionRules rules = actionRules(definition, sourceNodeCode);
+        if (!rules.isRejectEnabled() || !rules.getRejectTargetNodeCodes().contains(targetNodeCode)) {
             throw validation(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, "reject target is not allowed");
         }
     }
 
     private void assertDirectSendRule(ProcessDefinitionDetailDTO definition, String sourceNodeCode) {
-        Map<String, Object> rule = actionRules(definition, sourceNodeCode, "directSend");
-        if (!Boolean.TRUE.equals(rule.get("enabled")) || !"REJECT_SOURCE".equals(rule.get("targetMode"))) {
+        TaskActionRules rules = actionRules(definition, sourceNodeCode);
+        if (!rules.isDirectSendEnabled()
+                || !TaskActionRuleConfigReader.TARGET_MODE_REJECT_SOURCE.equals(rules.getDirectSendTargetMode())) {
             throw validation(RuntimeErrorCodes.DIRECT_SEND_SOURCE_NOT_FOUND, "direct send is not enabled");
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> actionRules(ProcessDefinitionDetailDTO definition, String nodeCode, String action) {
+    private TaskActionRules actionRules(ProcessDefinitionDetailDTO definition, String nodeCode) {
         ProcessNodeDTO node = requireUserTask(definition, nodeCode);
-        Map<String, Object> listener = readObject(node.getListenerConfig());
-        Object namespace = listener.get("taskActionRules");
-        if (!(namespace instanceof Map)) {
-            return Collections.emptyMap();
+        try {
+            return taskActionRuleConfigReader.read(node.getListenerConfig());
+        } catch (IllegalArgumentException ex) {
+            throw state(RuntimeErrorCodes.NODE_CONFIG_INVALID, "task action rules are malformed");
         }
-        Object rule = ((Map<String, Object>) namespace).get(action);
-        return rule instanceof Map ? (Map<String, Object>) rule : Collections.<String, Object>emptyMap();
     }
 
     private ProcessTaskGroupEntity createAddSignGroup(EnhancedActionContext context, AddSignRequest request, int count) {

@@ -49,6 +49,15 @@ public final class FrozenValidationErrorCodes {
     /** 网关配置了审批人规则或多人办理模式。 */
     public static final String MODEL_GATEWAY_NODE_CONFIGURATION_INVALID =
             "FLOW_FROZEN_MODEL_GATEWAY_NODE_CONFIGURATION_INVALID";
+    /** 非用户任务配置了会签、或签等多人办理模式。 */
+    public static final String MODEL_MULTI_INSTANCE_CONFIGURATION_INVALID =
+            "FLOW_FROZEN_MODEL_MULTI_INSTANCE_CONFIGURATION_INVALID";
+    /** 连线条件表达式位置或语法不符合发布冻结要求。 */
+    public static final String MODEL_CONDITION_EXPRESSION_INVALID =
+            "FLOW_FROZEN_MODEL_CONDITION_EXPRESSION_INVALID";
+    /** listenerConfig 根配置、监听器或 taskActionRules 不符合发布冻结要求。 */
+    public static final String MODEL_TASK_ACTION_RULE_INVALID =
+            "FLOW_FROZEN_MODEL_TASK_ACTION_RULE_INVALID";
     /** 排他网关的出线数量或条件配置不符合要求。 */
     public static final String MODEL_EXCLUSIVE_GATEWAY_TOPOLOGY_INVALID =
             "FLOW_FROZEN_MODEL_EXCLUSIVE_GATEWAY_TOPOLOGY_INVALID";

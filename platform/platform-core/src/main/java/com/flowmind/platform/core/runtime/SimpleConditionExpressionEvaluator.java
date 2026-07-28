@@ -1,18 +1,17 @@
 package com.flowmind.platform.core.runtime;
 
 import com.flowmind.platform.api.spi.ConditionExpressionEvaluator;
-
+import com.flowmind.platform.core.definition.ConditionExpressionSyntaxValidator;
+import com.flowmind.platform.core.definition.ConditionExpressionSyntaxValidator.ParsedCondition;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * M2 简单条件表达式求值器。
+ * 简单条件表达式求值器。
  *
- * <p>仅支持单变量简单比较，不支持脚本、函数、括号或逻辑组合。</p>
+ * <p>仅支持单变量简单比较，不支持脚本、函数、括号或逻辑组合。语法解析与发布期冻结校验共用同一入口。</p>
  *
  * @author Yuxin Xu
  * @since 2026-07-22
@@ -20,22 +19,19 @@ import java.util.regex.Pattern;
 @Component
 public class SimpleConditionExpressionEvaluator implements ConditionExpressionEvaluator {
 
-    private static final Pattern SIMPLE_COMPARISON = Pattern.compile(
-            "^\\s*([A-Za-z][A-Za-z0-9_]*)\\s*(==|!=|>=|<=|>|<)\\s*(.+?)\\s*$");
-
     /**
      * 判断简单条件表达式是否命中当前变量集。
      *
-     * @param expression 条件表达式，M2 限定为单变量简单比较
+     * @param expression 条件表达式，限定为单变量简单比较
      * @param variables 当前流程变量
      * @return 条件成立时返回 true
      */
     @Override
     public boolean evaluate(String expression, Map<String, Object> variables) {
-        Matcher matcher = parseExpression(expression);
-        String variableName = matcher.group(1);
-        String operator = matcher.group(2);
-        String expectedLiteral = matcher.group(3).trim();
+        ParsedCondition parsed = parseExpression(expression);
+        String variableName = parsed.getVariableName();
+        String operator = parsed.getOperator();
+        String expectedLiteral = parsed.getExpectedLiteral();
         if (variables == null || !variables.containsKey(variableName)) {
             throw invalid("condition variable does not exist: " + variableName);
         }
@@ -53,24 +49,17 @@ public class SimpleConditionExpressionEvaluator implements ConditionExpressionEv
     }
 
     /**
-     * 解析 M2 支持的单变量比较表达式。
+     * 解析平台支持的单变量比较表达式。
      *
      * @param expression 条件表达式
-     * @return 已匹配的正则结果
+     * @return 已解析的表达式结构
      */
-    private Matcher parseExpression(String expression) {
-        if (isBlank(expression)) {
-            throw invalid("condition expression must not be blank");
+    private ParsedCondition parseExpression(String expression) {
+        try {
+            return ConditionExpressionSyntaxValidator.parse(expression);
+        } catch (IllegalArgumentException ex) {
+            throw invalid(ex.getMessage(), ex);
         }
-        if (expression.contains("&&") || expression.contains("||")
-                || expression.indexOf('(') >= 0 || expression.indexOf(')') >= 0) {
-            throw invalid("condition expression only supports simple comparison in M2");
-        }
-        Matcher matcher = SIMPLE_COMPARISON.matcher(expression);
-        if (!matcher.matches()) {
-            throw invalid("condition expression syntax is invalid");
-        }
-        return matcher;
     }
 
     /**
@@ -78,7 +67,7 @@ public class SimpleConditionExpressionEvaluator implements ConditionExpressionEv
      *
      * @param actual 实际变量值
      * @param operator 比较运算符
-     * @param expected 期望字面量
+     * @param expected 期望字面量值
      * @return 比较结果
      */
     private boolean compareNumber(BigDecimal actual, String operator, BigDecimal expected) {
@@ -109,7 +98,7 @@ public class SimpleConditionExpressionEvaluator implements ConditionExpressionEv
      *
      * @param actual 实际变量值
      * @param operator 比较运算符
-     * @param expected 期望字面量
+     * @param expected 期望字面量值
      * @return 比较结果
      */
     private boolean compareBoolean(Boolean actual, String operator, Boolean expected) {
@@ -127,7 +116,7 @@ public class SimpleConditionExpressionEvaluator implements ConditionExpressionEv
      *
      * @param actual 实际变量值
      * @param operator 比较运算符
-     * @param expected 期望字面量
+     * @param expected 期望字面量值
      * @return 比较结果
      */
     private boolean compareString(String actual, String operator, String expected) {
@@ -202,15 +191,5 @@ public class SimpleConditionExpressionEvaluator implements ConditionExpressionEv
      */
     private RuntimeConfigurationException invalid(String message, Throwable cause) {
         return new RuntimeConfigurationException(RuntimeErrorCodes.CONDITION_EXPRESSION_INVALID, message, cause);
-    }
-
-    /**
-     * 判断字符串是否为空白。
-     *
-     * @param value 待判断字符串
-     * @return 字符串为 null 或去空格后为空时返回 true
-     */
-    private boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
     }
 }
