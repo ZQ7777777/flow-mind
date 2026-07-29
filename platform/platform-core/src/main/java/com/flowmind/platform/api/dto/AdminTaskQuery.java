@@ -1,16 +1,23 @@
 package com.flowmind.platform.api.dto;
 
-/**
- * 管理端活动任务查询条件。
- */
+import com.flowmind.platform.api.enums.TaskStatusEnum;
+
+import java.time.LocalDateTime;
+
+/** Admin-side active task query conditions. */
 public class AdminTaskQuery extends PageQuery {
 
-    /** 流程实例 ID。 */
     private String instanceId;
-    /** 办理人用户 ID。 */
     private String assigneeUserId;
-    /** 当前页码，从 1 开始。 */
-    /** 每页条数。 */
+    private String processCode;
+    private String nodeCode;
+    private TaskStatusEnum taskStatus;
+    private String taskGroupId;
+    private String branchKey;
+    private LocalDateTime dueFrom;
+    private LocalDateTime dueTo;
+    private LocalDateTime createdFrom;
+    private LocalDateTime createdTo;
 
     public AdminTaskQuery() {
     }
@@ -31,4 +38,75 @@ public class AdminTaskQuery extends PageQuery {
         this.assigneeUserId = assigneeUserId;
     }
 
+    public String getProcessCode() {
+        return processCode;
+    }
+
+    public void setProcessCode(String processCode) {
+        this.processCode = processCode;
+    }
+
+    public String getNodeCode() {
+        return nodeCode;
+    }
+
+    public void setNodeCode(String nodeCode) {
+        this.nodeCode = nodeCode;
+    }
+
+    public TaskStatusEnum getTaskStatus() {
+        return taskStatus;
+    }
+
+    public void setTaskStatus(TaskStatusEnum taskStatus) {
+        this.taskStatus = taskStatus;
+    }
+
+    public String getTaskGroupId() {
+        return taskGroupId;
+    }
+
+    public void setTaskGroupId(String taskGroupId) {
+        this.taskGroupId = taskGroupId;
+    }
+
+    public String getBranchKey() {
+        return branchKey;
+    }
+
+    public void setBranchKey(String branchKey) {
+        this.branchKey = branchKey;
+    }
+
+    public LocalDateTime getDueFrom() {
+        return dueFrom;
+    }
+
+    public void setDueFrom(LocalDateTime dueFrom) {
+        this.dueFrom = dueFrom;
+    }
+
+    public LocalDateTime getDueTo() {
+        return dueTo;
+    }
+
+    public void setDueTo(LocalDateTime dueTo) {
+        this.dueTo = dueTo;
+    }
+
+    public LocalDateTime getCreatedFrom() {
+        return createdFrom;
+    }
+
+    public void setCreatedFrom(LocalDateTime createdFrom) {
+        this.createdFrom = createdFrom;
+    }
+
+    public LocalDateTime getCreatedTo() {
+        return createdTo;
+    }
+
+    public void setCreatedTo(LocalDateTime createdTo) {
+        this.createdTo = createdTo;
+    }
 }

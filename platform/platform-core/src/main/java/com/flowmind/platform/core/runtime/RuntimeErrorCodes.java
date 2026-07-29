@@ -35,6 +35,7 @@ public final class RuntimeErrorCodes {
     public static final String TASK_NOT_ACTIVE = "FLOW_TASK_NOT_ACTIVE";
     /** 当前用户没有任务办理权限。 */
     public static final String TASK_PERMISSION_DENIED = "FLOW_TASK_PERMISSION_DENIED";
+    public static final String ADMIN_PERMISSION_DENIED = "FLOW_ADMIN_PERMISSION_DENIED";
     /** 任务乐观锁版本不匹配。 */
     public static final String TASK_STATUS_INVALID = "FLOW_TASK_STATUS_INVALID";
     public static final String TASK_CONCURRENT_MODIFIED = "FLOW_TASK_CONCURRENT_MODIFIED";

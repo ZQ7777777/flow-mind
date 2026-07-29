@@ -188,6 +188,24 @@ class DefaultAdminProcessServiceTest {
     }
 
     @Test
+    void nonAdminCannotJumpBeforeOperationBegins() {
+        JumpNodeRequest request = jumpRequest("operation-non-admin", "review");
+        request.setOperatorUserId("plain-user");
+        when(requestValidator.validateInstanceOperationIdentity(request, "instance-1", "plain-user"))
+                .thenReturn(new UserContext("plain-user", "Plain User", "ops", "Operations"));
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> service.jumpToNode(request));
+
+        assertEquals(RuntimeErrorCodes.ADMIN_PERMISSION_DENIED, error.getErrorCode());
+        verify(operationExecutor, never()).begin(any(), anyString(), anyString(), anyString(), anyString(),
+                any(LocalDateTime.class));
+        verify(taskCancellationService, never()).cancelOpenWork(any(ProcessInstanceEntity.class), any(UserContext.class),
+                any(ActionTypeEnum.class), anyString(), anyString(), any(Map.class));
+        verify(callbackService, never()).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
+    }
+
+    @Test
     void jumpToEndPublishesJumpAndCompletionEvents() {
         JumpNodeRequest request = jumpRequest("operation-jump-end", "review");
         UserContext operator = operator();

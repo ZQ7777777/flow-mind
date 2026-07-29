@@ -12,6 +12,7 @@ import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
+import com.flowmind.platform.api.dto.TaskGroupViewDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.WorkflowEvent;
@@ -24,14 +25,23 @@ import com.flowmind.platform.api.request.ForceCompleteRequest;
 import com.flowmind.platform.api.request.JumpNodeRequest;
 import com.flowmind.platform.api.service.AdminProcessService;
 import com.flowmind.platform.api.service.CallbackService;
+import com.flowmind.platform.core.audit.AuditLogCommand;
+import com.flowmind.platform.core.audit.AuditLogWriter;
+import com.flowmind.platform.core.monitor.ActionExceptionAlertWriter;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
+import com.flowmind.platform.core.query.PageQueryNormalizer;
+import com.flowmind.platform.core.query.RuntimeQueryAssembler;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.entity.ProcessAuditLogEntity;
+import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
+import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
+import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.ProcessAuditLogRepository;
+import com.flowmind.platform.persistence.repository.TaskGroupRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -65,6 +75,13 @@ public class DefaultAdminProcessService implements AdminProcessService {
     private final CallbackService callbackService;
     private final RuntimeTransactionExecutor transactionExecutor;
     private final ProcessAuditLogRepository auditLogRepository;
+    private final ActiveTaskRepository activeTaskRepository;
+    private final ProcessHistoryTaskRepository historyTaskRepository;
+    private final TaskGroupRepository taskGroupRepository;
+    private final RuntimeQueryAssembler queryAssembler;
+    private final AuditLogWriter auditLogWriter;
+    private final AdminPermissionGuard adminPermissionGuard;
+    private final ActionExceptionAlertWriter actionExceptionAlertWriter;
 
     /** 创建 M3 管理端实例命令服务。 */
     @Autowired
@@ -77,7 +94,14 @@ public class DefaultAdminProcessService implements AdminProcessService {
                                       ProcessDefinitionRepository definitionRepository,
                                       CallbackService callbackService,
                                       RuntimeTransactionExecutor transactionExecutor,
-                                      ProcessAuditLogRepository auditLogRepository) {
+                                      ProcessAuditLogRepository auditLogRepository,
+                                      ActiveTaskRepository activeTaskRepository,
+                                      ProcessHistoryTaskRepository historyTaskRepository,
+                                      TaskGroupRepository taskGroupRepository,
+                                      RuntimeQueryAssembler queryAssembler,
+                                      AuditLogWriter auditLogWriter,
+                                      AdminPermissionGuard adminPermissionGuard,
+                                      ActionExceptionAlertWriter actionExceptionAlertWriter) {
         this.instanceRepository = instanceRepository;
         this.definitionLoader = definitionLoader;
         this.requestValidator = requestValidator;
@@ -88,6 +112,29 @@ public class DefaultAdminProcessService implements AdminProcessService {
         this.callbackService = callbackService;
         this.transactionExecutor = transactionExecutor;
         this.auditLogRepository = auditLogRepository;
+        this.activeTaskRepository = activeTaskRepository;
+        this.historyTaskRepository = historyTaskRepository;
+        this.taskGroupRepository = taskGroupRepository;
+        this.queryAssembler = queryAssembler == null ? new RuntimeQueryAssembler() : queryAssembler;
+        this.auditLogWriter = auditLogWriter;
+        this.adminPermissionGuard = adminPermissionGuard == null ? new AdminPermissionGuard() : adminPermissionGuard;
+        this.actionExceptionAlertWriter = actionExceptionAlertWriter;
+    }
+
+    /** Backward compatible constructor for earlier direct unit tests. */
+    public DefaultAdminProcessService(ProcessInstanceRepository instanceRepository,
+                                      RuntimeDefinitionLoader definitionLoader,
+                                      RuntimeRequestValidator requestValidator,
+                                      RuntimeOperationExecutor operationExecutor,
+                                      RuntimeNodeAdvancer nodeAdvancer,
+                                      InstanceTaskCancellationService taskCancellationService,
+                                      ProcessDefinitionRepository definitionRepository,
+                                      CallbackService callbackService,
+                                      RuntimeTransactionExecutor transactionExecutor,
+                                      ProcessAuditLogRepository auditLogRepository) {
+        this(instanceRepository, definitionLoader, requestValidator, operationExecutor, nodeAdvancer,
+                taskCancellationService, definitionRepository, callbackService, transactionExecutor,
+                auditLogRepository, null, null, null, null, null, null, null);
     }
 
     /** Backward compatible constructor for direct unit tests. */
@@ -109,6 +156,7 @@ public class DefaultAdminProcessService implements AdminProcessService {
     public TaskActionResult jumpToNode(final JumpNodeRequest request) {
         final UserContext operator = requestValidator.validateInstanceOperationIdentity(request, request.getInstanceId(),
                 request.getOperatorUserId());
+        adminPermissionGuard.assertAdmin(operator);
         OperationIdempotencyDecision decision = operationExecutor.begin(request, RuntimeOperationTypes.JUMP,
                 operator.getUserId(), request.getInstanceId(), null, LocalDateTime.now());
         if (isSuccessfulReplay(decision)) {
@@ -148,7 +196,7 @@ public class DefaultAdminProcessService implements AdminProcessService {
                     result.setCreatedTasks(new ArrayList<TaskDTO>(advanceResult.getCreatedTasks()));
                     result.setReplayed(false);
                     writeAudit(instance.getId(), operator, request.getOperationId(), ActionTypeEnum.JUMP,
-                            request.getComment(), archivedTasks.size());
+                            request.getComment(), archivedTasks.size(), request.getTargetNodeCode());
                     publishEvent(request.getOperationId(), WorkflowEventTypeEnum.PROCESS_JUMPED, resultInstance,
                             operator, ActionTypeEnum.JUMP, archivedTasks, result.getCreatedTasks());
                     if (advanceResult.isInstanceCompleted()) {
@@ -164,6 +212,8 @@ public class DefaultAdminProcessService implements AdminProcessService {
             throw ex;
         } catch (RuntimeStateException ex) {
             operationExecutor.markDeterministicFailure(request.getOperationId(), ex.getErrorCode());
+            writeActionException(request.getOperationId(), ActionTypeEnum.JUMP.name(), request.getInstanceId(), null,
+                    ex.getErrorCode(), ex.getMessage(), request.getOperatorUserId());
             throw ex;
         }
     }
@@ -173,6 +223,7 @@ public class DefaultAdminProcessService implements AdminProcessService {
     public ProcessInstanceDTO forceComplete(final ForceCompleteRequest request) {
         final UserContext operator = requestValidator.validateInstanceOperationIdentity(request, request.getInstanceId(),
                 request.getOperatorUserId());
+        adminPermissionGuard.assertAdmin(operator);
         OperationIdempotencyDecision decision = operationExecutor.begin(request, RuntimeOperationTypes.FORCE_COMPLETE,
                 operator.getUserId(), request.getInstanceId(), null, LocalDateTime.now());
         if (isSuccessfulReplay(decision)) {
@@ -199,7 +250,7 @@ public class DefaultAdminProcessService implements AdminProcessService {
                     ProcessInstanceDTO result = RuntimeModelMapper.toDto(instance);
                     result.setCreatedTasks(Collections.<TaskDTO>emptyList());
                     writeAudit(instance.getId(), operator, request.getOperationId(), ActionTypeEnum.FORCE_COMPLETE,
-                            request.getComment(), archivedTasks.size());
+                            request.getComment(), archivedTasks.size(), null);
                     publishEvent(request.getOperationId(), WorkflowEventTypeEnum.PROCESS_COMPLETED, result, operator,
                             ActionTypeEnum.FORCE_COMPLETE, archivedTasks, Collections.<TaskDTO>emptyList());
                     operationExecutor.markSuccess(request.getOperationId(), result);
@@ -211,6 +262,8 @@ public class DefaultAdminProcessService implements AdminProcessService {
             throw ex;
         } catch (RuntimeStateException ex) {
             operationExecutor.markDeterministicFailure(request.getOperationId(), ex.getErrorCode());
+            writeActionException(request.getOperationId(), ActionTypeEnum.FORCE_COMPLETE.name(),
+                    request.getInstanceId(), null, ex.getErrorCode(), ex.getMessage(), request.getOperatorUserId());
             throw ex;
         }
     }
@@ -218,19 +271,64 @@ public class DefaultAdminProcessService implements AdminProcessService {
     /** C 线负责管理员实例分页查询。 */
     @Override
     public PageResult<ProcessInstanceDTO> queryInstances(AdminInstanceQuery query) {
-        throw queryUnsupported("queryInstances");
+        AdminInstanceQuery normalized = query == null ? new AdminInstanceQuery() : query;
+        int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
+        int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        List<ProcessInstanceDTO> records = new ArrayList<ProcessInstanceDTO>();
+        for (ProcessInstanceEntity entity : instanceRepository.queryAdminInstances(normalized)) {
+            records.add(queryAssembler.toProcessInstanceDTO(entity));
+        }
+        return page(records, pageNo, pageSize, instanceRepository.countAdminInstances(normalized));
     }
 
     /** C 线负责管理员活动任务分页查询。 */
     @Override
     public PageResult<TaskDTO> queryActiveTasks(AdminTaskQuery query) {
-        throw queryUnsupported("queryActiveTasks");
+        if (activeTaskRepository == null) {
+            throw queryUnsupported("queryActiveTasks");
+        }
+        AdminTaskQuery normalized = query == null ? new AdminTaskQuery() : query;
+        int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
+        int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        List<TaskDTO> records = new ArrayList<TaskDTO>();
+        for (com.flowmind.platform.persistence.entity.TaskQueryEntity entity
+                : activeTaskRepository.queryAdminActiveTasks(normalized)) {
+            records.add(queryAssembler.toTaskDTO(entity));
+        }
+        return page(records, pageNo, pageSize, activeTaskRepository.countAdminActiveTasks(normalized));
     }
 
     /** C 线负责管理员历史任务分页查询。 */
     @Override
     public PageResult<HistoryTaskDTO> queryHistoryTasks(AdminHistoryTaskQuery query) {
-        throw queryUnsupported("queryHistoryTasks");
+        if (historyTaskRepository == null) {
+            throw queryUnsupported("queryHistoryTasks");
+        }
+        AdminHistoryTaskQuery normalized = query == null ? new AdminHistoryTaskQuery() : query;
+        int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
+        int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        List<HistoryTaskDTO> records = new ArrayList<HistoryTaskDTO>();
+        for (com.flowmind.platform.persistence.entity.HistoryTaskQueryEntity entity
+                : historyTaskRepository.queryAdminHistoryTasks(normalized)) {
+            records.add(queryAssembler.toHistoryTaskDTO(entity));
+        }
+        return page(records, pageNo, pageSize, historyTaskRepository.countAdminHistoryTasks(normalized));
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<TaskGroupViewDTO> queryTaskGroups(String instanceId) {
+        if (taskGroupRepository == null) {
+            throw queryUnsupported("queryTaskGroups");
+        }
+        if (instanceId == null || instanceId.trim().isEmpty()) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "instanceId is required");
+        }
+        List<TaskGroupViewDTO> records = new ArrayList<TaskGroupViewDTO>();
+        for (ProcessTaskGroupEntity entity : taskGroupRepository.findByInstanceId(instanceId)) {
+            records.add(toTaskGroupViewDTO(entity));
+        }
+        return records;
     }
 
     /** C 线负责审计日志分页查询。 */
@@ -321,10 +419,25 @@ public class DefaultAdminProcessService implements AdminProcessService {
                             String operationId,
                             ActionTypeEnum actionType,
                             String comment,
-                            int archivedTaskCount) {
+                            int archivedTaskCount,
+                            String targetNodeCode) {
         Map<String, Object> detail = new LinkedHashMap<String, Object>();
+        detail.put("schemaVersion", Integer.valueOf(1));
         detail.put("comment", comment);
+        detail.put("targetNodeCode", targetNodeCode);
         detail.put("archivedTaskCount", Integer.valueOf(archivedTaskCount));
+        if (auditLogWriter != null) {
+            AuditLogCommand command = new AuditLogCommand();
+            command.setInstanceId(instanceId);
+            command.setOperationId(operationId);
+            command.setTargetType(OperationTargetTypeEnum.INSTANCE);
+            command.setTargetId(instanceId);
+            command.setActionType(actionType.name());
+            command.setOperatorId(operator.getUserId());
+            command.setDetail(detail);
+            auditLogWriter.append(command);
+            return;
+        }
         if (definitionRepository.insertAuditLog(UUID.randomUUID().toString(), instanceId, operationId,
                 OperationTargetTypeEnum.INSTANCE.name(), instanceId, actionType.name(), operator.getUserId(),
                 RuntimeJsonCodec.toJson(detail), LocalDateTime.now()) != 1) {
@@ -362,8 +475,21 @@ public class DefaultAdminProcessService implements AdminProcessService {
         return decision != null && OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType());
     }
 
+    private void writeActionException(String operationId,
+                                      String actionType,
+                                      String instanceId,
+                                      String taskId,
+                                      String errorCode,
+                                      String errorSummary,
+                                      String operatorId) {
+        if (actionExceptionAlertWriter != null) {
+            actionExceptionAlertWriter.write(operationId, actionType, instanceId, taskId, errorCode, errorSummary,
+                    operatorId);
+        }
+    }
+
     private UnsupportedOperationException queryUnsupported(String methodName) {
-        return new UnsupportedOperationException(methodName + " is owned by C M3 query work");
+        return new UnsupportedOperationException(methodName + " requires M6 repository wiring");
     }
 
     private AuditLogDTO toAuditLogDTO(ProcessAuditLogEntity entity) {
@@ -380,6 +506,30 @@ public class DefaultAdminProcessService implements AdminProcessService {
         dto.setOperatorUserId(entity.getOperatorId());
         dto.setDetail(RuntimeJsonCodec.readObjectMap(entity.getDetailJson()));
         dto.setCreatedAt(entity.getCreatedAt());
+        return dto;
+    }
+
+    private TaskGroupViewDTO toTaskGroupViewDTO(ProcessTaskGroupEntity entity) {
+        TaskGroupViewDTO dto = new TaskGroupViewDTO();
+        dto.setGroupId(entity.getId());
+        dto.setInstanceId(entity.getInstanceId());
+        dto.setNodeCode(entity.getNodeCode());
+        dto.setJoinNodeCode(entity.getJoinNodeCode());
+        dto.setParentGroupId(entity.getParentGroupId());
+        dto.setParentBranchKey(entity.getParentBranchKey());
+        dto.setGroupType(entity.getGroupType());
+        dto.setTotalCount(entity.getTotalCount());
+        dto.setCompletedCount(entity.getCompletedCount());
+        try {
+            dto.setBranchStates(RuntimeJsonCodec.readObjectMap(entity.getBranchStateJson()));
+        } catch (IllegalArgumentException ex) {
+            throw new RuntimeStateException(RuntimeErrorCodes.DEFINITION_INVALID,
+                    "task group branch state is malformed");
+        }
+        dto.setGroupStatus(entity.getGroupStatus());
+        dto.setLockVersion(entity.getLockVersion());
+        dto.setCreatedAt(entity.getCreatedAt());
+        dto.setCompletedAt(entity.getCompletedAt());
         return dto;
     }
 

@@ -6,6 +6,7 @@ import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
+import com.flowmind.platform.api.dto.TaskGroupViewDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.AdminHistoryTaskQuery;
 import com.flowmind.platform.api.dto.AdminInstanceQuery;
@@ -58,6 +59,14 @@ public interface AdminProcessService {
      * @return 历史任务分页结果
      */
     PageResult<HistoryTaskDTO> queryHistoryTasks(AdminHistoryTaskQuery query);
+
+    /**
+     * Query task groups under a process instance for admin diagnostics.
+     *
+     * @param instanceId process instance id
+     * @return task group diagnostic views
+     */
+    java.util.List<TaskGroupViewDTO> queryTaskGroups(String instanceId);
 
     /**
      * 分页查询审计日志。

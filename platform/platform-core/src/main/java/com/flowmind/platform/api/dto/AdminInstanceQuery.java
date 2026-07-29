@@ -2,17 +2,19 @@ package com.flowmind.platform.api.dto;
 
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
 
-/**
- * 管理端流程实例查询条件。
- */
+import java.time.LocalDateTime;
+
+/** Admin-side process instance query conditions. */
 public class AdminInstanceQuery extends PageQuery {
 
-    /** 流程编码。 */
     private String processCode;
-    /** 实例状态。 */
     private InstanceStatusEnum instanceStatus;
-    /** 当前页码，从 1 开始。 */
-    /** 每页条数。 */
+    private String instanceTitle;
+    private String businessKey;
+    private String starterUserId;
+    private String currentNodeCode;
+    private LocalDateTime startedFrom;
+    private LocalDateTime startedTo;
 
     public AdminInstanceQuery() {
     }
@@ -33,4 +35,51 @@ public class AdminInstanceQuery extends PageQuery {
         this.instanceStatus = instanceStatus;
     }
 
+    public String getInstanceTitle() {
+        return instanceTitle;
+    }
+
+    public void setInstanceTitle(String instanceTitle) {
+        this.instanceTitle = instanceTitle;
+    }
+
+    public String getBusinessKey() {
+        return businessKey;
+    }
+
+    public void setBusinessKey(String businessKey) {
+        this.businessKey = businessKey;
+    }
+
+    public String getStarterUserId() {
+        return starterUserId;
+    }
+
+    public void setStarterUserId(String starterUserId) {
+        this.starterUserId = starterUserId;
+    }
+
+    public String getCurrentNodeCode() {
+        return currentNodeCode;
+    }
+
+    public void setCurrentNodeCode(String currentNodeCode) {
+        this.currentNodeCode = currentNodeCode;
+    }
+
+    public LocalDateTime getStartedFrom() {
+        return startedFrom;
+    }
+
+    public void setStartedFrom(LocalDateTime startedFrom) {
+        this.startedFrom = startedFrom;
+    }
+
+    public LocalDateTime getStartedTo() {
+        return startedTo;
+    }
+
+    public void setStartedTo(LocalDateTime startedTo) {
+        this.startedTo = startedTo;
+    }
 }

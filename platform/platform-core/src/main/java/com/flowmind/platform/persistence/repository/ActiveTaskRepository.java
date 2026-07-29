@@ -1,5 +1,6 @@
 package com.flowmind.platform.persistence.repository;
 
+import com.flowmind.platform.api.dto.AdminTaskQuery;
 import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
@@ -200,6 +201,34 @@ public class ActiveTaskRepository {
                 QUERY_ROW_MAPPER, instanceId);
     }
 
+    /** Admin-side active task page query. */
+    public List<TaskQueryEntity> queryAdminActiveTasks(AdminTaskQuery query) {
+        AdminTaskQuery normalized = query == null ? new AdminTaskQuery() : query;
+        int pageNo = com.flowmind.platform.core.query.PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
+        int pageSize = com.flowmind.platform.core.query.PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder();
+        appendAdminTaskSelect(sql);
+        appendAdminTaskWhere(sql, params, normalized);
+        sql.append(" ORDER BY CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END ASC, "
+                + "t.due_at ASC, t.created_at DESC, t.id DESC LIMIT ? OFFSET ?");
+        params.add(Integer.valueOf(pageSize));
+        params.add(Integer.valueOf((pageNo - 1) * pageSize));
+        return jdbcTemplate.query(sql.toString(), QUERY_ROW_MAPPER, params.toArray());
+    }
+
+    /** Count records for admin-side active task query. */
+    public long countAdminActiveTasks(AdminTaskQuery query) {
+        AdminTaskQuery normalized = query == null ? new AdminTaskQuery() : query;
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT COUNT(1) FROM process_active_task t "
+                + "JOIN process_instance i ON i.id = t.instance_id "
+                + "LEFT JOIN process_node n ON n.definition_id = t.definition_id AND n.node_code = t.node_code ");
+        appendAdminTaskWhere(sql, params, normalized);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        return count == null ? 0L : count.longValue();
+    }
+
     /** 将 ACTIVE 或 CLAIMED 任务原子标记为 CANCELED。 */
     public int cancel(String id, long expectedLockVersion) {
         return updateTerminalStatus(id, expectedLockVersion, "CANCELED");
@@ -292,6 +321,66 @@ public class ActiveTaskRepository {
                 .append("FROM process_active_task t ")
                 .append("JOIN process_instance i ON i.id = t.instance_id ")
                 .append("LEFT JOIN process_node n ON n.definition_id = t.definition_id AND n.node_code = t.node_code ");
+    }
+
+    private void appendAdminTaskSelect(StringBuilder sql) {
+        sql.append("SELECT t.id AS task_id, t.instance_id, t.definition_id, "
+                + "i.process_code, i.process_name, i.instance_title, i.starter_user_id, "
+                + "i.starter_user_name, t.node_code, n.node_name, t.candidate_user_ids, "
+                + "t.assignee_user_id, t.assignee_user_name, t.delegate_from_user_id, "
+                + "NULL AS delegate_from_user_name, t.task_group_id, t.branch_key, t.task_status, "
+                + "t.lock_version, t.created_at, t.due_at "
+                + "FROM process_active_task t "
+                + "JOIN process_instance i ON i.id = t.instance_id "
+                + "LEFT JOIN process_node n ON n.definition_id = t.definition_id AND n.node_code = t.node_code ");
+    }
+
+    private void appendAdminTaskWhere(StringBuilder sql, List<Object> params, AdminTaskQuery query) {
+        sql.append("WHERE 1 = 1 ");
+        if (!isBlank(query.getInstanceId())) {
+            sql.append("AND t.instance_id = ? ");
+            params.add(query.getInstanceId());
+        }
+        if (!isBlank(query.getProcessCode())) {
+            sql.append("AND i.process_code = ? ");
+            params.add(query.getProcessCode());
+        }
+        if (!isBlank(query.getNodeCode())) {
+            sql.append("AND t.node_code = ? ");
+            params.add(query.getNodeCode());
+        }
+        if (query.getTaskStatus() != null) {
+            sql.append("AND t.task_status = ? ");
+            params.add(query.getTaskStatus().name());
+        }
+        if (!isBlank(query.getAssigneeUserId())) {
+            sql.append("AND t.assignee_user_id = ? ");
+            params.add(query.getAssigneeUserId());
+        }
+        if (!isBlank(query.getTaskGroupId())) {
+            sql.append("AND t.task_group_id = ? ");
+            params.add(query.getTaskGroupId());
+        }
+        if (!isBlank(query.getBranchKey())) {
+            sql.append("AND t.branch_key = ? ");
+            params.add(query.getBranchKey());
+        }
+        if (query.getDueFrom() != null) {
+            sql.append("AND t.due_at >= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getDueFrom()));
+        }
+        if (query.getDueTo() != null) {
+            sql.append("AND t.due_at <= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getDueTo()));
+        }
+        if (query.getCreatedFrom() != null) {
+            sql.append("AND t.created_at >= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getCreatedFrom()));
+        }
+        if (query.getCreatedTo() != null) {
+            sql.append("AND t.created_at <= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getCreatedTo()));
+        }
     }
 
     private void appendTodoFilters(StringBuilder sql, List<Object> params, TodoTaskQuery query) {

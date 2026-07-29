@@ -1,5 +1,6 @@
 package com.flowmind.platform.persistence.repository;
 
+import com.flowmind.platform.api.dto.AdminHistoryTaskQuery;
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
 import com.flowmind.platform.core.query.PageQueryNormalizer;
 import com.flowmind.platform.persistence.entity.HistoryTaskQueryEntity;
@@ -232,6 +233,39 @@ public class ProcessHistoryTaskRepository {
         return jdbcTemplate.update("DELETE FROM process_history_task WHERE instance_id = ?", instanceId);
     }
 
+    /** Admin-side history task page query. */
+    public List<HistoryTaskQueryEntity> queryAdminHistoryTasks(AdminHistoryTaskQuery query) {
+        AdminHistoryTaskQuery normalized = query == null ? new AdminHistoryTaskQuery() : query;
+        int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
+        int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT h.id AS history_task_id, h.instance_id, "
+                + "i.process_code, i.process_name, i.instance_title, i.starter_user_id, i.starter_user_name, "
+                + "h.operation_id, h.active_task_id, h.node_code, n.node_name, h.task_group_id, h.branch_key, "
+                + "h.assignee_user_id, h.assignee_user_name, h.delegate_from_user_id, h.delegate_from_user_name, "
+                + "h.handle_type, h.action_type, h.comment_text, h.variables_snapshot, h.started_at, h.completed_at "
+                + "FROM process_history_task h "
+                + "JOIN process_instance i ON i.id = h.instance_id "
+                + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
+        appendAdminHistoryWhere(sql, params, normalized);
+        sql.append(" ORDER BY h.completed_at DESC, h.id DESC LIMIT ? OFFSET ?");
+        params.add(Integer.valueOf(pageSize));
+        params.add(Integer.valueOf((pageNo - 1) * pageSize));
+        return jdbcTemplate.query(sql.toString(), QUERY_ROW_MAPPER, params.toArray());
+    }
+
+    /** Count records for admin-side history task query. */
+    public long countAdminHistoryTasks(AdminHistoryTaskQuery query) {
+        AdminHistoryTaskQuery normalized = query == null ? new AdminHistoryTaskQuery() : query;
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT COUNT(1) FROM process_history_task h "
+                + "JOIN process_instance i ON i.id = h.instance_id "
+                + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
+        appendAdminHistoryWhere(sql, params, normalized);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        return count == null ? 0L : count.longValue();
+    }
+
     private void appendCompletedTaskWhere(StringBuilder sql, List<Object> params, CompletedTaskQuery query) {
         boolean joinedInstance = query.getProcessCode() != null && !query.getProcessCode().trim().isEmpty();
         if (joinedInstance) {
@@ -245,6 +279,46 @@ public class ProcessHistoryTaskRepository {
         if (joinedInstance) {
             sql.append("AND i.process_code = ? ");
             params.add(query.getProcessCode());
+        }
+    }
+
+    private void appendAdminHistoryWhere(StringBuilder sql, List<Object> params, AdminHistoryTaskQuery query) {
+        sql.append("WHERE 1 = 1 ");
+        if (!isBlank(query.getInstanceId())) {
+            sql.append("AND h.instance_id = ? ");
+            params.add(query.getInstanceId());
+        }
+        if (!isBlank(query.getAssigneeUserId())) {
+            sql.append("AND h.assignee_user_id = ? ");
+            params.add(query.getAssigneeUserId());
+        }
+        if (!isBlank(query.getProcessCode())) {
+            sql.append("AND i.process_code = ? ");
+            params.add(query.getProcessCode());
+        }
+        if (!isBlank(query.getNodeCode())) {
+            sql.append("AND h.node_code = ? ");
+            params.add(query.getNodeCode());
+        }
+        if (query.getActionType() != null) {
+            sql.append("AND h.action_type = ? ");
+            params.add(query.getActionType().name());
+        }
+        if (!isBlank(query.getTaskGroupId())) {
+            sql.append("AND h.task_group_id = ? ");
+            params.add(query.getTaskGroupId());
+        }
+        if (!isBlank(query.getBranchKey())) {
+            sql.append("AND h.branch_key = ? ");
+            params.add(query.getBranchKey());
+        }
+        if (query.getCompletedFrom() != null) {
+            sql.append("AND h.completed_at >= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getCompletedFrom()));
+        }
+        if (query.getCompletedTo() != null) {
+            sql.append("AND h.completed_at <= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getCompletedTo()));
         }
     }
 

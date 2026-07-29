@@ -1,16 +1,21 @@
 package com.flowmind.platform.api.dto;
 
-/**
- * 管理端历史任务查询条件。
- */
+import com.flowmind.platform.api.enums.ActionTypeEnum;
+
+import java.time.LocalDateTime;
+
+/** Admin-side history task query conditions. */
 public class AdminHistoryTaskQuery extends PageQuery {
 
-    /** 流程实例 ID。 */
     private String instanceId;
-    /** 办理人用户 ID。 */
     private String assigneeUserId;
-    /** 当前页码，从 1 开始。 */
-    /** 每页条数。 */
+    private String processCode;
+    private String nodeCode;
+    private ActionTypeEnum actionType;
+    private String taskGroupId;
+    private String branchKey;
+    private LocalDateTime completedFrom;
+    private LocalDateTime completedTo;
 
     public AdminHistoryTaskQuery() {
     }
@@ -31,4 +36,59 @@ public class AdminHistoryTaskQuery extends PageQuery {
         this.assigneeUserId = assigneeUserId;
     }
 
+    public String getProcessCode() {
+        return processCode;
+    }
+
+    public void setProcessCode(String processCode) {
+        this.processCode = processCode;
+    }
+
+    public String getNodeCode() {
+        return nodeCode;
+    }
+
+    public void setNodeCode(String nodeCode) {
+        this.nodeCode = nodeCode;
+    }
+
+    public ActionTypeEnum getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(ActionTypeEnum actionType) {
+        this.actionType = actionType;
+    }
+
+    public String getTaskGroupId() {
+        return taskGroupId;
+    }
+
+    public void setTaskGroupId(String taskGroupId) {
+        this.taskGroupId = taskGroupId;
+    }
+
+    public String getBranchKey() {
+        return branchKey;
+    }
+
+    public void setBranchKey(String branchKey) {
+        this.branchKey = branchKey;
+    }
+
+    public LocalDateTime getCompletedFrom() {
+        return completedFrom;
+    }
+
+    public void setCompletedFrom(LocalDateTime completedFrom) {
+        this.completedFrom = completedFrom;
+    }
+
+    public LocalDateTime getCompletedTo() {
+        return completedTo;
+    }
+
+    public void setCompletedTo(LocalDateTime completedTo) {
+        this.completedTo = completedTo;
+    }
 }

@@ -63,6 +63,13 @@ public class TaskGroupRepository {
                 RuntimeRowMappers.TASK_GROUP, instanceId);
     }
 
+    /** Read all task groups for an instance, including terminal groups, for admin diagnostics. */
+    public List<ProcessTaskGroupEntity> findByInstanceId(String instanceId) {
+        return jdbcTemplate.query("SELECT * FROM process_task_group WHERE instance_id = ? "
+                        + "ORDER BY created_at ASC, id ASC",
+                RuntimeRowMappers.TASK_GROUP, instanceId);
+    }
+
     /**
      * 原子增加会签完成计数；达到 total_count 时同时完成任务组。
      */

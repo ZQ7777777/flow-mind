@@ -32,15 +32,19 @@ import com.flowmind.platform.core.runtime.RuntimeStateException;
 import com.flowmind.platform.core.runtime.RuntimeTransactionExecutor;
 import com.flowmind.platform.core.runtime.RuntimeTransactionWork;
 import com.flowmind.platform.core.runtime.RuntimeValidationException;
+import com.flowmind.platform.core.runtime.AdminPermissionGuard;
 import com.flowmind.platform.core.runtime.RuntimeRequestValidator;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessAlertRecordEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
 import com.flowmind.platform.persistence.entity.ProcessReminderRecordEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.AlertRecordRepository;
+import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.ReminderRecordRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -64,7 +68,15 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
     private final RuntimeTransactionExecutor transactionExecutor;
     private final AuditLogWriter auditLogWriter;
     private final MessagePublisher messagePublisher;
+    private final ProcessNodeRepository processNodeRepository;
+    private final TimeoutPolicyReader timeoutPolicyReader;
+    private final ReminderPolicyReader reminderPolicyReader;
+    private final ReminderDeduplicationGuard reminderDeduplicationGuard;
+    private final TimeoutActionExecutor timeoutActionExecutor;
+    private final ActionExceptionAlertWriter actionExceptionAlertWriter;
+    private final AdminPermissionGuard adminPermissionGuard;
 
+    @Autowired
     public DefaultProcessMonitorService(ActiveTaskRepository activeTaskRepository,
                                         ProcessInstanceRepository instanceRepository,
                                         ReminderRecordRepository reminderRepository,
@@ -73,7 +85,14 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
                                         RuntimeOperationExecutor operationExecutor,
                                         RuntimeTransactionExecutor transactionExecutor,
                                         AuditLogWriter auditLogWriter,
-                                        MessagePublisher messagePublisher) {
+                                        MessagePublisher messagePublisher,
+                                        ProcessNodeRepository processNodeRepository,
+                                        TimeoutPolicyReader timeoutPolicyReader,
+                                        ReminderPolicyReader reminderPolicyReader,
+                                        ReminderDeduplicationGuard reminderDeduplicationGuard,
+                                        TimeoutActionExecutor timeoutActionExecutor,
+                                        ActionExceptionAlertWriter actionExceptionAlertWriter,
+                                        AdminPermissionGuard adminPermissionGuard) {
         this.activeTaskRepository = activeTaskRepository;
         this.instanceRepository = instanceRepository;
         this.reminderRepository = reminderRepository;
@@ -83,6 +102,28 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
         this.transactionExecutor = transactionExecutor;
         this.auditLogWriter = auditLogWriter;
         this.messagePublisher = messagePublisher;
+        this.processNodeRepository = processNodeRepository;
+        this.timeoutPolicyReader = timeoutPolicyReader;
+        this.reminderPolicyReader = reminderPolicyReader;
+        this.reminderDeduplicationGuard = reminderDeduplicationGuard;
+        this.timeoutActionExecutor = timeoutActionExecutor;
+        this.actionExceptionAlertWriter = actionExceptionAlertWriter;
+        this.adminPermissionGuard = adminPermissionGuard == null ? new AdminPermissionGuard() : adminPermissionGuard;
+    }
+
+    /** Backward compatible constructor for direct unit tests. */
+    public DefaultProcessMonitorService(ActiveTaskRepository activeTaskRepository,
+                                        ProcessInstanceRepository instanceRepository,
+                                        ReminderRecordRepository reminderRepository,
+                                        AlertRecordRepository alertRepository,
+                                        RuntimeRequestValidator requestValidator,
+                                        RuntimeOperationExecutor operationExecutor,
+                                        RuntimeTransactionExecutor transactionExecutor,
+                                        AuditLogWriter auditLogWriter,
+                                        MessagePublisher messagePublisher) {
+        this(activeTaskRepository, instanceRepository, reminderRepository, alertRepository, requestValidator,
+                operationExecutor, transactionExecutor, auditLogWriter, messagePublisher, null, null, null, null, null,
+                null, null);
     }
 
     @Override
@@ -156,21 +197,21 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
         List<TaskDTO> results = new ArrayList<TaskDTO>();
         for (ProcessActiveTaskEntity task : activeTaskRepository.findTimeoutOpenTasks(scanAt, limit)) {
             results.add(RuntimeModelMapper.toDto(task, null, null));
-            if (!dryRun
-                    && alertRepository.findOpenByTaskAndType(task.getId(), AlertTypeEnum.TASK_TIMEOUT.name()) == null) {
-                ProcessAlertRecordEntity alert = new ProcessAlertRecordEntity();
-                alert.setId(UUID.randomUUID().toString());
-                alert.setInstanceId(task.getInstanceId());
-                alert.setTaskId(task.getId());
-                alert.setAlertType(AlertTypeEnum.TASK_TIMEOUT.name());
-                alert.setSeverity(AlertSeverityEnum.MEDIUM.name());
-                alert.setAlertStatus(AlertStatusEnum.OPEN.name());
-                Map<String, Object> detail = new LinkedHashMap<String, Object>();
-                detail.put("scanAt", scanAt.toString());
-                detail.put("dueAt", task.getDueAt() == null ? null : task.getDueAt().toString());
-                alert.setDetailJson(RuntimeJsonCodec.toJson(detail));
-                alert.setCreatedAt(LocalDateTime.now());
-                alertRepository.insert(alert);
+            if (dryRun) {
+                continue;
+            }
+            TimeoutPolicy timeoutPolicy = timeoutPolicy(task);
+            ReminderPolicy reminderPolicy = reminderPolicy(task);
+            if (reminderPolicy.isEnabled()) {
+                createTimeoutReminder(task, reminderPolicy);
+            }
+            try {
+                applyTimeoutAction(task, timeoutPolicy, request, scanAt);
+            } catch (RuntimeStateException ex) {
+                writeActionException(task, timeoutPolicy.getAction(), request, ex.getErrorCode(), ex.getMessage());
+            } catch (RuntimeException ex) {
+                writeActionException(task, timeoutPolicy.getAction(), request,
+                        RuntimeErrorCodes.INVALID_ACTION, ex.getMessage());
             }
         }
         return results;
@@ -193,6 +234,7 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
         validateAlertRequest(request);
         final UserContext operator = requestValidator.validateInstanceOperationIdentity(request,
                 "alert:" + request.getAlertId(), request.getOperatorUserId());
+        adminPermissionGuard.assertAdmin(operator);
         com.flowmind.platform.core.definition.OperationIdempotencyDecision decision = operationExecutor.begin(request,
                 RuntimeOperationTypes.ALERT_HANDLE, operator.getUserId(), null, request.getAlertId(),
                 LocalDateTime.now());
@@ -274,6 +316,101 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
                     "reminder target users are empty");
         }
         return targets;
+    }
+
+    private TimeoutPolicy timeoutPolicy(ProcessActiveTaskEntity task) {
+        if (processNodeRepository == null || timeoutPolicyReader == null) {
+            return new TimeoutPolicy();
+        }
+        ProcessNodeEntity node = processNodeRepository.findByDefinitionIdAndNodeCode(task.getDefinitionId(),
+                task.getNodeCode());
+        return timeoutPolicyReader.read(node);
+    }
+
+    private ReminderPolicy reminderPolicy(ProcessActiveTaskEntity task) {
+        if (processNodeRepository == null || reminderPolicyReader == null) {
+            return new ReminderPolicy();
+        }
+        ProcessNodeEntity node = processNodeRepository.findByDefinitionIdAndNodeCode(task.getDefinitionId(),
+                task.getNodeCode());
+        return reminderPolicyReader.read(node);
+    }
+
+    private void createTimeoutReminder(ProcessActiveTaskEntity task, ReminderPolicy policy) {
+        if (reminderRepository == null || reminderDeduplicationGuard == null || messagePublisher == null
+                || !reminderDeduplicationGuard.canCreate(task.getId(), ReminderTypeEnum.TIMEOUT,
+                policy.getMaxCount() == null ? 1 : policy.getMaxCount().intValue())) {
+            return;
+        }
+        List<String> targets = resolveTargets(task);
+        ProcessReminderRecordEntity entity = new ProcessReminderRecordEntity();
+        entity.setId(UUID.randomUUID().toString());
+        entity.setInstanceId(task.getInstanceId());
+        entity.setTaskId(task.getId());
+        entity.setReminderType(ReminderTypeEnum.TIMEOUT.name());
+        entity.setTargetUserIds(RuntimeJsonCodec.toJson(targets));
+        entity.setMessage(isBlank(policy.getMessageTemplate())
+                ? "Task timeout reminder: " + task.getNodeCode()
+                : policy.getMessageTemplate());
+        entity.setReminderStatus(ReminderStatusEnum.PENDING.name());
+        entity.setCreatedBy("system_timeout");
+        entity.setCreatedAt(LocalDateTime.now());
+        reminderRepository.insert(entity);
+        publishAndUpdate(entity);
+    }
+
+    private void applyTimeoutAction(ProcessActiveTaskEntity task,
+                                    TimeoutPolicy timeoutPolicy,
+                                    TimeoutScanRequest request,
+                                    LocalDateTime scanAt) {
+        if (TimeoutPolicy.ACTION_JUMP.equals(timeoutPolicy.getAction())
+                || TimeoutPolicy.ACTION_TERMINATE.equals(timeoutPolicy.getAction())
+                || TimeoutPolicy.ACTION_FORCE_COMPLETE.equals(timeoutPolicy.getAction())) {
+            if (timeoutActionExecutor != null) {
+                timeoutActionExecutor.execute(task, timeoutPolicy,
+                        request == null ? null : request.getOperatorUserId(), scanAt);
+            }
+            return;
+        }
+        if (TimeoutPolicy.ACTION_REMIND.equals(timeoutPolicy.getAction())) {
+            return;
+        }
+        createTimeoutAlert(task, timeoutPolicy, scanAt);
+    }
+
+    private void createTimeoutAlert(ProcessActiveTaskEntity task, TimeoutPolicy timeoutPolicy, LocalDateTime scanAt) {
+        if (alertRepository.findOpenByTaskAndType(task.getId(), AlertTypeEnum.TASK_TIMEOUT.name()) != null) {
+            return;
+        }
+        ProcessAlertRecordEntity alert = new ProcessAlertRecordEntity();
+        alert.setId(UUID.randomUUID().toString());
+        alert.setInstanceId(task.getInstanceId());
+        alert.setTaskId(task.getId());
+        alert.setAlertType(AlertTypeEnum.TASK_TIMEOUT.name());
+        alert.setSeverity(timeoutPolicy.getSeverity().name());
+        alert.setAlertStatus(AlertStatusEnum.OPEN.name());
+        Map<String, Object> detail = new LinkedHashMap<String, Object>();
+        detail.put("schemaVersion", Integer.valueOf(1));
+        detail.put("scanAt", scanAt.toString());
+        detail.put("dueAt", task.getDueAt() == null ? null : task.getDueAt().toString());
+        detail.put("action", timeoutPolicy.getAction());
+        alert.setDetailJson(RuntimeJsonCodec.toJson(detail));
+        alert.setCreatedAt(LocalDateTime.now());
+        alertRepository.insert(alert);
+    }
+
+    private void writeActionException(ProcessActiveTaskEntity task,
+                                      String actionType,
+                                      TimeoutScanRequest request,
+                                      String errorCode,
+                                      String errorSummary) {
+        if (actionExceptionAlertWriter == null) {
+            return;
+        }
+        String operationId = "timeout:" + task.getId() + ":" + actionType + ":"
+                + (task.getDueAt() == null ? "unknown" : task.getDueAt());
+        actionExceptionAlertWriter.write(operationId, actionType, task.getInstanceId(), task.getId(), errorCode,
+                errorSummary, request == null ? null : request.getOperatorUserId());
     }
 
     private String message(RemindTaskRequest request, ProcessInstanceEntity instance, ProcessActiveTaskEntity task) {

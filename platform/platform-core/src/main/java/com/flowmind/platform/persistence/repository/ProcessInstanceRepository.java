@@ -1,5 +1,6 @@
 package com.flowmind.platform.persistence.repository;
 
+import com.flowmind.platform.api.dto.AdminInstanceQuery;
 import com.flowmind.platform.api.dto.StartedInstanceQuery;
 import com.flowmind.platform.core.query.PageQueryNormalizer;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
@@ -146,6 +147,30 @@ public class ProcessInstanceRepository {
         return count == null ? 0L : count.longValue();
     }
 
+    /** Admin-side process instance page query. */
+    public List<ProcessInstanceEntity> queryAdminInstances(AdminInstanceQuery query) {
+        AdminInstanceQuery normalized = query == null ? new AdminInstanceQuery() : query;
+        int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
+        int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT * FROM process_instance WHERE 1 = 1 ");
+        appendAdminFilters(sql, params, normalized);
+        sql.append("ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?");
+        params.add(Integer.valueOf(pageSize));
+        params.add(Integer.valueOf((pageNo - 1) * pageSize));
+        return jdbcTemplate.query(sql.toString(), ROW_MAPPER, params.toArray());
+    }
+
+    /** Count records for admin-side process instance query. */
+    public long countAdminInstances(AdminInstanceQuery query) {
+        AdminInstanceQuery normalized = query == null ? new AdminInstanceQuery() : query;
+        List<Object> params = new ArrayList<Object>();
+        StringBuilder sql = new StringBuilder("SELECT COUNT(1) FROM process_instance WHERE 1 = 1 ");
+        appendAdminFilters(sql, params, normalized);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
+        return count == null ? 0L : count.longValue();
+    }
+
     private void appendStartedFilters(StringBuilder sql, List<Object> params, StartedInstanceQuery query) {
         if (!isBlank(query.getProcessCode())) {
             sql.append("AND process_code = ? ");
@@ -162,6 +187,42 @@ public class ProcessInstanceRepository {
         if (!isBlank(query.getInstanceStatus())) {
             sql.append("AND instance_status = ? ");
             params.add(query.getInstanceStatus());
+        }
+        if (!isBlank(query.getCurrentNodeCode())) {
+            sql.append("AND current_node_codes IS NOT NULL "
+                    + "AND EXISTS (SELECT 1 FROM json_each(current_node_codes) c WHERE c.value = ?) ");
+            params.add(query.getCurrentNodeCode());
+        }
+        if (query.getStartedFrom() != null) {
+            sql.append("AND started_at >= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getStartedFrom()));
+        }
+        if (query.getStartedTo() != null) {
+            sql.append("AND started_at <= ? ");
+            params.add(DefinitionRowMappers.toDbString(query.getStartedTo()));
+        }
+    }
+
+    private void appendAdminFilters(StringBuilder sql, List<Object> params, AdminInstanceQuery query) {
+        if (!isBlank(query.getProcessCode())) {
+            sql.append("AND process_code = ? ");
+            params.add(query.getProcessCode());
+        }
+        if (query.getInstanceStatus() != null) {
+            sql.append("AND instance_status = ? ");
+            params.add(query.getInstanceStatus().name());
+        }
+        if (!isBlank(query.getInstanceTitle())) {
+            sql.append("AND LOWER(instance_title) LIKE ? ");
+            params.add(like(query.getInstanceTitle()));
+        }
+        if (!isBlank(query.getBusinessKey())) {
+            sql.append("AND business_key = ? ");
+            params.add(query.getBusinessKey());
+        }
+        if (!isBlank(query.getStarterUserId())) {
+            sql.append("AND starter_user_id = ? ");
+            params.add(query.getStarterUserId());
         }
         if (!isBlank(query.getCurrentNodeCode())) {
             sql.append("AND current_node_codes IS NOT NULL "

@@ -1,17 +1,23 @@
 package com.flowmind.platform.web;
 
 import com.flowmind.platform.api.dto.AlertDTO;
+import com.flowmind.platform.api.dto.AdminHistoryTaskQuery;
+import com.flowmind.platform.api.dto.AdminInstanceQuery;
+import com.flowmind.platform.api.dto.AdminTaskQuery;
 import com.flowmind.platform.api.dto.AlertQuery;
 import com.flowmind.platform.api.dto.AuditLogDTO;
 import com.flowmind.platform.api.dto.AuditLogQuery;
 import com.flowmind.platform.api.dto.CallbackLogDTO;
 import com.flowmind.platform.api.dto.CallbackLogQuery;
+import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
+import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ReadRecordDTO;
 import com.flowmind.platform.api.dto.ReadRecordQuery;
 import com.flowmind.platform.api.dto.ReminderDTO;
 import com.flowmind.platform.api.dto.ReminderQuery;
 import com.flowmind.platform.api.dto.TaskDTO;
+import com.flowmind.platform.api.dto.TaskGroupViewDTO;
 import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
 import com.flowmind.platform.api.request.HandleAlertRequest;
 import com.flowmind.platform.api.request.AddSignRequest;
@@ -167,6 +173,45 @@ class M5RestAcceptanceTest {
         ArgumentCaptor<CallbackLogQuery> callback = ArgumentCaptor.forClass(CallbackLogQuery.class);
         verify(adminService).queryCallbackLogs(callback.capture());
         assertEquals("instance-1", callback.getValue().getInstanceId());
+    }
+
+    @Test
+    void adminRuntimeQueryEndpointsBindFiltersAndPaths() throws Exception {
+        when(adminService.queryInstances(any(AdminInstanceQuery.class)))
+                .thenReturn(page(Collections.<ProcessInstanceDTO>emptyList()));
+        when(adminService.queryActiveTasks(any(AdminTaskQuery.class)))
+                .thenReturn(page(Collections.<TaskDTO>emptyList()));
+        when(adminService.queryHistoryTasks(any(AdminHistoryTaskQuery.class)))
+                .thenReturn(page(Collections.<HistoryTaskDTO>emptyList()));
+        when(adminService.queryTaskGroups("instance-1"))
+                .thenReturn(Collections.<TaskGroupViewDTO>emptyList());
+
+        mockMvc.perform(get("/api/platform/admin/instances")
+                        .param("processCode", "expense")
+                        .param("currentNodeCode", "review"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/platform/admin/tasks")
+                        .param("instanceId", "instance-1")
+                        .param("taskGroupId", "group-1"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/platform/admin/history-tasks")
+                        .param("instanceId", "instance-1")
+                        .param("actionType", "APPROVE"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/platform/admin/instances/instance-1/task-groups"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AdminInstanceQuery> instances = ArgumentCaptor.forClass(AdminInstanceQuery.class);
+        verify(adminService).queryInstances(instances.capture());
+        assertEquals("expense", instances.getValue().getProcessCode());
+        assertEquals("review", instances.getValue().getCurrentNodeCode());
+        ArgumentCaptor<AdminTaskQuery> activeTasks = ArgumentCaptor.forClass(AdminTaskQuery.class);
+        verify(adminService).queryActiveTasks(activeTasks.capture());
+        assertEquals("group-1", activeTasks.getValue().getTaskGroupId());
+        ArgumentCaptor<AdminHistoryTaskQuery> histories = ArgumentCaptor.forClass(AdminHistoryTaskQuery.class);
+        verify(adminService).queryHistoryTasks(histories.capture());
+        assertEquals("instance-1", histories.getValue().getInstanceId());
+        verify(adminService).queryTaskGroups("instance-1");
     }
 
     @Test

@@ -69,6 +69,14 @@ public class ReminderRecordRepository {
                 + "error_message = ? WHERE id = ?", errorMessage, id);
     }
 
+    /** Count reminders for a task and trigger type. */
+    public long countByTaskAndType(String taskId, String reminderType) {
+        Long count = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM process_reminder_record "
+                        + "WHERE task_id = ? AND reminder_type = ?",
+                Long.class, taskId, reminderType);
+        return count == null ? 0L : count.longValue();
+    }
+
     public List<ProcessReminderRecordEntity> query(ReminderQuery query) {
         int pageNo = com.flowmind.platform.core.query.PageQueryNormalizer.normalizePageNo(query.getPageNo());
         int pageSize = com.flowmind.platform.core.query.PageQueryNormalizer.normalizePageSize(query.getPageSize());

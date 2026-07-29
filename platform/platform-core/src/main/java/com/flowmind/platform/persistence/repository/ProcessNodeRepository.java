@@ -32,6 +32,14 @@ public class ProcessNodeRepository {
                 DefinitionRowMappers.NODE, definitionId);
     }
 
+    /** Read one node by definition id and node code. */
+    public ProcessNodeEntity findByDefinitionIdAndNodeCode(String definitionId, String nodeCode) {
+        List<ProcessNodeEntity> results = jdbcTemplate.query("SELECT * FROM process_node "
+                        + "WHERE definition_id = ? AND node_code = ?",
+                DefinitionRowMappers.NODE, definitionId, nodeCode);
+        return results.isEmpty() ? null : results.get(0);
+    }
+
     /**
      * 一次性插入多个节点
      * @param nodes

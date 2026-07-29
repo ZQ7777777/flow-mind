@@ -12,6 +12,7 @@ import com.flowmind.platform.api.enums.TaskGroupTypeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.ConditionExpressionEvaluator;
+import com.flowmind.platform.core.monitor.TimeoutDueDateCalculator;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
@@ -19,6 +20,7 @@ import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.TaskGroupRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -57,15 +59,18 @@ public class RuntimeNodeAdvancer {
     private final ApproverResolver approverResolver;
     private final ConditionExpressionEvaluator conditionExpressionEvaluator;
     private final ApproverResolveRequestFactory approverResolveRequestFactory;
+    private final TimeoutDueDateCalculator timeoutDueDateCalculator;
 
     /** 创建统一节点推进器。 */
+    @Autowired
     public RuntimeNodeAdvancer(ActiveTaskRepository activeTaskRepository,
                                TaskGroupRepository taskGroupRepository,
                                ProcessInstanceRepository instanceRepository,
                                RuntimeRequestValidator requestValidator,
                                ApproverResolver approverResolver,
                                ConditionExpressionEvaluator conditionExpressionEvaluator,
-                               ApproverResolveRequestFactory approverResolveRequestFactory) {
+                               ApproverResolveRequestFactory approverResolveRequestFactory,
+                               TimeoutDueDateCalculator timeoutDueDateCalculator) {
         this.activeTaskRepository = activeTaskRepository;
         this.taskGroupRepository = taskGroupRepository;
         this.instanceRepository = instanceRepository;
@@ -73,6 +78,18 @@ public class RuntimeNodeAdvancer {
         this.approverResolver = approverResolver;
         this.conditionExpressionEvaluator = conditionExpressionEvaluator;
         this.approverResolveRequestFactory = approverResolveRequestFactory;
+        this.timeoutDueDateCalculator = timeoutDueDateCalculator;
+    }
+
+    public RuntimeNodeAdvancer(ActiveTaskRepository activeTaskRepository,
+                               TaskGroupRepository taskGroupRepository,
+                               ProcessInstanceRepository instanceRepository,
+                               RuntimeRequestValidator requestValidator,
+                               ApproverResolver approverResolver,
+                               ConditionExpressionEvaluator conditionExpressionEvaluator,
+                               ApproverResolveRequestFactory approverResolveRequestFactory) {
+        this(activeTaskRepository, taskGroupRepository, instanceRepository, requestValidator, approverResolver,
+                conditionExpressionEvaluator, approverResolveRequestFactory, null);
     }
 
     /**
@@ -253,7 +270,11 @@ public class RuntimeNodeAdvancer {
         task.setTaskGroupId(taskGroupId);
         task.setBranchKey(branchKey);
         task.setLockVersion(Long.valueOf(0L));
-        task.setCreatedAt(LocalDateTime.now());
+        LocalDateTime createdAt = LocalDateTime.now();
+        task.setCreatedAt(createdAt);
+        if (timeoutDueDateCalculator != null) {
+            task.setDueAt(timeoutDueDateCalculator.calculate(node, createdAt));
+        }
         if (activeTaskRepository.insert(task) != 1) {
             throw state(RuntimeErrorCodes.INVALID_ACTION, "failed to create active task");
         }

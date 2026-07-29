@@ -66,6 +66,18 @@ public class AlertRecordRepository {
         return results.isEmpty() ? null : results.get(0);
     }
 
+    /** Find an open alert by JSON detail field value for idempotent alert creation. */
+    public ProcessAlertRecordEntity findOpenByTypeAndDetailValue(String alertType, String detailField, String value) {
+        if (isBlank(detailField)) {
+            throw new IllegalArgumentException("detailField must not be blank");
+        }
+        List<ProcessAlertRecordEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_alert_record WHERE alert_type = ? AND alert_status = 'OPEN' "
+                        + "AND json_extract(detail_json, ?) = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+                ROW_MAPPER, alertType, "$." + detailField, value);
+        return results.isEmpty() ? null : results.get(0);
+    }
+
     public int handle(String id, String targetStatus, String handledBy, LocalDateTime handledAt) {
         return jdbcTemplate.update("UPDATE process_alert_record SET alert_status = ?, handled_by = ?, handled_at = ? "
                         + "WHERE id = ? AND alert_status = 'OPEN'",
