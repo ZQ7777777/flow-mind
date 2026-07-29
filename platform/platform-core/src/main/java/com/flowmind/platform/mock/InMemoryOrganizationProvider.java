@@ -110,21 +110,22 @@ public class InMemoryOrganizationProvider implements OrganizationProvider {
 
     private void seedDefaults() {
         addDepartment(new DepartmentDTO("mock-dept", "Mock Department", null));
-        addDepartment(new DepartmentDTO("dept_sales", "Sales Department", null));
-        addDepartment(new DepartmentDTO("dept_manager", "Manager Department", null));
-        addDepartment(new DepartmentDTO("dept_finance", "Finance Department", null));
 
-        addUser(user("mock-user", "Mock User", "mock-dept", "Mock Department",
-                Collections.singletonList("mock")));
-        addUser(user("user_sales", "Sales User", "dept_sales", "Sales Department",
+        addUser(user("u_sales_01", "业务员", "mock-dept", "Mock Department",
                 Collections.singletonList("sales")));
-        addUser(user("user_sales_manager", "Sales Manager", "dept_sales", "Sales Department",
+        addUser(user("u_group_leader_01", "组长", "mock-dept", "Mock Department",
                 Collections.singletonList("manager")));
-        addUser(user("user_manager", "Manager User", "dept_manager", "Manager Department",
+        addUser(user("u_dept_manager_01", "部门经理1", "mock-dept", "Mock Department",
                 Collections.singletonList("manager")));
-        addUser(user("user_finance", "Finance User", "dept_finance", "Finance Department",
+        addUser(user("u_dept_manager_02", "部门经理2", "mock-dept", "Mock Department",
+                Collections.singletonList("manager")));
+        addUser(user("u_finance_01", "财务1", "mock-dept", "Mock Department",
                 Collections.singletonList("finance")));
-        addUser(user("user_admin", "Admin User", "dept_manager", "Manager Department",
+        addUser(user("u_finance_02", "财务2", "mock-dept", "Mock Department",
+                Collections.singletonList("finance")));
+        addUser(user("u_ceo_01", "CEO", "mock-dept", "Mock Department",
+                Arrays.asList("admin", "manager")));
+        addUser(user("u_admin_01", "测试管理员", "mock-dept", "Mock Department",
                 Arrays.asList("admin", "manager")));
     }
 

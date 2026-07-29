@@ -40,6 +40,7 @@ import com.flowmind.platform.persistence.repository.ProcessAttachmentRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -120,14 +121,22 @@ public class DefaultAttachmentService implements AttachmentService {
                 operationExecutor.markSuccess(operationId, result);
                 return result;
             } catch (RuntimeValidationException ex) {
-                operationExecutor.markDeterministicFailure(operationId, ex.getErrorCode());
+                markDeterministicFailureBestEffort(operationId, ex.getErrorCode());
                 throw ex;
             } catch (RuntimeStateException ex) {
-                operationExecutor.markDeterministicFailure(operationId, ex.getErrorCode());
+                markDeterministicFailureBestEffort(operationId, ex.getErrorCode());
                 throw ex;
             }
         }
         return saveInternal(instanceId, taskId, version, user, operationId, item, ownerType);
+    }
+
+    private void markDeterministicFailureBestEffort(String operationId, String errorCode) {
+        try {
+            operationExecutor.markDeterministicFailure(operationId, errorCode);
+        } catch (DataAccessException ex) {
+            // 失败标记只是幂等辅助状态，不能覆盖原始附件业务错误。
+        }
     }
 
     private AttachmentDTO saveInternal(String instanceId, String taskId, Long version, UserContext user, String operationId,
@@ -200,10 +209,10 @@ public class DefaultAttachmentService implements AttachmentService {
                 operationExecutor.markSuccess(request.getOperationId(), Boolean.TRUE);
                 return;
             } catch (RuntimeValidationException ex) {
-                operationExecutor.markDeterministicFailure(request.getOperationId(), ex.getErrorCode());
+                markDeterministicFailureBestEffort(request.getOperationId(), ex.getErrorCode());
                 throw ex;
             } catch (RuntimeStateException ex) {
-                operationExecutor.markDeterministicFailure(request.getOperationId(), ex.getErrorCode());
+                markDeterministicFailureBestEffort(request.getOperationId(), ex.getErrorCode());
                 throw ex;
             }
         }

@@ -5,8 +5,13 @@ import com.flowmind.platform.testsupport.SchemaTestSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -72,7 +77,53 @@ class RuntimeTransactionExecutorIntegrationTest {
         assertEquals(0, count("process_callback_log"));
     }
 
+    @Test
+    void retriesSqliteBusyRuntimeTransactionAndReturnsSecondAttemptResult() {
+        CountingTransactionManager retryTransactionManager = new CountingTransactionManager();
+        RuntimeTransactionExecutor retryExecutor = new RuntimeTransactionExecutor(retryTransactionManager);
+        final int[] workAttempts = {0};
+
+        String result = retryExecutor.execute(new RuntimeTransactionWork<String>() {
+            @Override
+            public String execute() {
+                workAttempts[0] += 1;
+                if (workAttempts[0] == 1) {
+                    throw new DataAccessResourceFailureException("[SQLITE_BUSY] database is locked");
+                }
+                return "started";
+            }
+        });
+
+        assertEquals("started", result);
+        assertEquals(2, workAttempts[0]);
+        assertEquals(2, retryTransactionManager.beginCount);
+        assertEquals(1, retryTransactionManager.rollbackCount);
+        assertEquals(1, retryTransactionManager.commitCount);
+    }
+
     private int count(String tableName) {
         return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + tableName, Integer.class).intValue();
+    }
+
+    private static final class CountingTransactionManager implements PlatformTransactionManager {
+        private int beginCount;
+        private int commitCount;
+        private int rollbackCount;
+
+        @Override
+        public TransactionStatus getTransaction(TransactionDefinition definition) {
+            beginCount += 1;
+            return new SimpleTransactionStatus();
+        }
+
+        @Override
+        public void commit(TransactionStatus status) {
+            commitCount += 1;
+        }
+
+        @Override
+        public void rollback(TransactionStatus status) {
+            rollbackCount += 1;
+        }
     }
 }

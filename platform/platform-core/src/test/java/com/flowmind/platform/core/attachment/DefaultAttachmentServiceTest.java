@@ -15,6 +15,7 @@ import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.core.runtime.RuntimeValidationException;
 import com.flowmind.platform.core.runtime.RuntimeStateException;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
+import com.flowmind.platform.core.definition.OperationIdempotencyService;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
@@ -29,6 +30,7 @@ import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRep
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -38,6 +40,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doThrow;
@@ -74,6 +77,26 @@ class DefaultAttachmentServiceTest {
         when(operations.replayResult(any(), org.mockito.ArgumentMatchers.eq(AttachmentDTO.class))).thenReturn(replayed);
 
         assertEquals("attachment-1", fixture.service.saveInstanceAttachment(fixture.request()).getAttachmentId());
+        verify(fixture.storage, never()).store(any());
+    }
+
+    @Test
+    void failedIdempotencyMarkDoesNotMaskAttachmentValidationError() {
+        OperationIdempotencyService idempotencyService = mock(OperationIdempotencyService.class);
+        RuntimeOperationExecutor operations = new RuntimeOperationExecutor(idempotencyService);
+        Fixture fixture = new Fixture(true, operations);
+        SaveInstanceAttachmentRequest request = fixture.request();
+        request.getAttachment().setSizeBytes(4L);
+        when(idempotencyService.beginOrReplay(any(), any(), any(), any(), any(), any(), any())).thenReturn(
+                new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW, null));
+        doThrow(new DataAccessResourceFailureException("[SQLITE_BUSY] database is locked"))
+                .when(idempotencyService).markFailed(eq("op-1"), any(String.class));
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.service.saveInstanceAttachment(request));
+
+        assertEquals("attachment content and sizeBytes do not match", error.getMessage());
+        verify(idempotencyService).markFailed(eq("op-1"), any(String.class));
         verify(fixture.storage, never()).store(any());
     }
 
