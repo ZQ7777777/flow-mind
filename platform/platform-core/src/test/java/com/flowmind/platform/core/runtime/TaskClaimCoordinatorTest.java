@@ -3,16 +3,13 @@ package com.flowmind.platform.core.runtime;
 import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.UserContext;
-import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.request.ClaimTaskRequest;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.core.audit.AuditLogWriter;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
-import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
-import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
@@ -22,6 +19,7 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -46,7 +44,7 @@ class TaskClaimCoordinatorTest {
 
         TaskActionResult result = fixture.coordinator.claim(request());
 
-        assertEquals(ActionTypeEnum.CLAIM, result.getArchivedTasks().get(0).getActionType());
+        assertTrue(result.getArchivedTasks().isEmpty());
         assertEquals("agent-1", result.getUpdatedTasks().get(0).getAssigneeUserId());
         assertEquals(Long.valueOf(4), result.getUpdatedTasks().get(0).getTaskVersion());
         verify(fixture.activeTasks).claim("task-1", 3L, "agent-1", "Agent One");
@@ -75,7 +73,6 @@ class TaskClaimCoordinatorTest {
         RuntimeRequestValidator validator = mock(RuntimeRequestValidator.class);
         RuntimeOperationExecutor operations = mock(RuntimeOperationExecutor.class);
         RuntimeTransactionExecutor transactions = mock(RuntimeTransactionExecutor.class);
-        HistoryTaskWriter historyWriter = mock(HistoryTaskWriter.class);
         AuditLogWriter auditWriter = mock(AuditLogWriter.class);
         CallbackService callbacks = mock(CallbackService.class);
         DelegateProvider delegateProvider = mock(DelegateProvider.class);
@@ -85,16 +82,14 @@ class TaskClaimCoordinatorTest {
         ProcessInstanceEntity instance = instance();
         ProcessActiveTaskEntity task = activeTask("ACTIVE", Long.valueOf(3), null);
         ProcessActiveTaskEntity updated = activeTask("CLAIMED", Long.valueOf(4), "agent-1");
-        ProcessHistoryTaskEntity history = history();
         when(validator.validateTaskIdentity(any())).thenReturn(operator);
         when(operations.begin(any(), eq(RuntimeOperationTypes.CLAIM), eq("agent-1"), eq(null), eq("task-1"),
                 any(LocalDateTime.class)))
                 .thenReturn(new OperationIdempotencyDecision(OperationIdempotencyDecisionType.NEW, null));
         when(instances.findById("instance-1")).thenReturn(instance);
         when(activeTasks.findById("task-1")).thenReturn(task, updated);
-        when(historyWriter.archive(any())).thenReturn(history);
         TaskClaimCoordinator coordinator = new TaskClaimCoordinator(instances, activeTasks, validator, operations,
-                transactions, historyWriter, auditWriter, callbacks, delegateProvider);
+                transactions, auditWriter, callbacks, delegateProvider);
         return new Fixture(coordinator, activeTasks, operations, delegateProvider);
     }
 
@@ -131,19 +126,6 @@ class TaskClaimCoordinatorTest {
         task.setLockVersion(version);
         task.setCreatedAt(LocalDateTime.now());
         return task;
-    }
-
-    private ProcessHistoryTaskEntity history() {
-        ProcessHistoryTaskEntity history = new ProcessHistoryTaskEntity();
-        history.setId("history-claim");
-        history.setInstanceId("instance-1");
-        history.setActiveTaskId("task-1");
-        history.setNodeCode("approve");
-        history.setActionType(ActionTypeEnum.CLAIM.name());
-        history.setAssigneeUserId("agent-1");
-        history.setAssigneeUserName("Agent One");
-        history.setCompletedAt(LocalDateTime.now());
-        return history;
     }
 
     private static final class Fixture {
