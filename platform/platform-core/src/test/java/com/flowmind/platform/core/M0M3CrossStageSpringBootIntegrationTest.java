@@ -50,6 +50,7 @@ import com.flowmind.platform.core.definition.ProcessDefinitionAttachmentConfigMa
 import com.flowmind.platform.core.definition.ProcessDefinitionCache;
 import com.flowmind.platform.core.definition.ProcessFormFieldDefinitionManager;
 import com.flowmind.platform.core.runtime.ApproverResolveRequestFactory;
+import com.flowmind.platform.core.runtime.CountersignTaskCoordinator;
 import com.flowmind.platform.core.runtime.DefaultProcessRuntimeService;
 import com.flowmind.platform.core.runtime.InstanceTaskCancellationService;
 import com.flowmind.platform.core.runtime.RuntimeDefinitionLoader;
@@ -950,6 +951,13 @@ class M0M3CrossStageSpringBootIntegrationTest {
         @Bean
         ApproverResolver approverResolver() {
             return request -> {
+                if ("or-review".equals(request.getNodeCode())) {
+                    return Arrays.asList(new UserDTO("or-a", "OR A"), new UserDTO("or-b", "OR B"));
+                }
+                if ("counter-review".equals(request.getNodeCode())) {
+                    return Arrays.asList(new UserDTO("counter-a", "Counter A"),
+                            new UserDTO("counter-b", "Counter B"));
+                }
                 String userId = "apply".equals(request.getNodeCode())
                         ? request.getStarterUserId() : request.getNodeCode();
                 return Collections.singletonList(new UserDTO(userId, userId));
@@ -976,7 +984,9 @@ class M0M3CrossStageSpringBootIntegrationTest {
                                                ApproverResolver resolver) {
             return new RuntimeNodeAdvancer(tasks, groups, instances, validator, resolver,
                     new SimpleConditionExpressionEvaluator(),
-                    new ApproverResolveRequestFactory(new RuntimeNodeConfigReader()));
+                    new ApproverResolveRequestFactory(new RuntimeNodeConfigReader()),
+                    new com.flowmind.platform.core.monitor.TimeoutDueDateCalculator(
+                            new com.flowmind.platform.core.monitor.TimeoutPolicyReader()));
         }
 
         @Bean
@@ -1015,6 +1025,12 @@ class M0M3CrossStageSpringBootIntegrationTest {
         }
 
         @Bean
+        CountersignTaskCoordinator countersignTaskCoordinator(TaskGroupRepository groups,
+                                                              RuntimeNodeAdvancer advancer) {
+            return new CountersignTaskCoordinator(groups, advancer);
+        }
+
+        @Bean
         ProcessRuntimeService runtimeService(ProcessInstanceRepository instances,
                                              ActiveTaskRepository tasks,
                                              HistoryTaskRepository legacyHistories,
@@ -1026,14 +1042,15 @@ class M0M3CrossStageSpringBootIntegrationTest {
                                              CallbackService callbacks,
                                              RuntimeStateValidator stateValidator,
                                              HistoryTaskWriter histories,
-                                             RuntimeTransactionExecutor transactions,
-                                             InstanceTaskCancellationService cancellation,
-                                             ProcessInstanceDeletionRepository deletion,
-                                             ProcessDefinitionRepository definitionRepository) {
+                                              RuntimeTransactionExecutor transactions,
+                                              InstanceTaskCancellationService cancellation,
+                                              ProcessInstanceDeletionRepository deletion,
+                                              TaskGroupRepository groups,
+                                              ProcessDefinitionRepository definitionRepository) {
             return new DefaultProcessRuntimeService(instances, tasks, legacyHistories, definitions, validator,
                     new RuntimeOperationExecutor(new OperationIdempotencyService(operations)), advancer,
                     attachments, callbacks, stateValidator, histories, transactions, cancellation, deletion,
-                    definitionRepository);
+                    groups, definitionRepository);
         }
 
     }

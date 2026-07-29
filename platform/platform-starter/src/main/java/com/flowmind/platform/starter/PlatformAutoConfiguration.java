@@ -1,7 +1,6 @@
 package com.flowmind.platform.starter;
 
 import com.flowmind.platform.api.dto.AlertDTO;
-import com.flowmind.platform.api.dto.CallbackLogDTO;
 import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
@@ -11,9 +10,7 @@ import com.flowmind.platform.api.dto.ReadRecordDTO;
 import com.flowmind.platform.api.dto.ReminderDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserContext;
-import com.flowmind.platform.api.dto.WorkflowEvent;
 import com.flowmind.platform.api.dto.AlertQuery;
-import com.flowmind.platform.api.dto.CallbackLogQuery;
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
 import com.flowmind.platform.api.dto.ReadRecordQuery;
 import com.flowmind.platform.api.dto.ReminderQuery;
@@ -24,7 +21,9 @@ import com.flowmind.platform.api.request.RemindTaskRequest;
 import com.flowmind.platform.api.request.TimeoutScanRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.CallbackService;
+import com.flowmind.platform.api.service.AdminProcessService;
 import com.flowmind.platform.api.service.ProcessMonitorService;
+import com.flowmind.platform.api.service.ProcessRuntimeService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.ApproverResolver;
@@ -40,10 +39,21 @@ import com.flowmind.platform.core.query.ReadRecordManager;
 import com.flowmind.platform.core.query.RuntimeQueryAssembler;
 import com.flowmind.platform.core.audit.AuditLogWriter;
 import com.flowmind.platform.core.audit.DefaultAuditLogWriter;
+import com.flowmind.platform.core.callback.CallbackDispatchService;
+import com.flowmind.platform.core.callback.CallbackFailureAlertService;
+import com.flowmind.platform.core.callback.CallbackLogMapper;
+import com.flowmind.platform.core.callback.CallbackOutboxService;
+import com.flowmind.platform.core.callback.DefaultCallbackService;
 import com.flowmind.platform.core.definition.OperationIdempotencyService;
+import com.flowmind.platform.core.monitor.ActionExceptionAlertWriter;
 import com.flowmind.platform.core.monitor.DefaultProcessMonitorService;
 import com.flowmind.platform.core.monitor.MonitorModelMapper;
+import com.flowmind.platform.core.monitor.ReminderDeduplicationGuard;
+import com.flowmind.platform.core.monitor.ReminderPolicyReader;
+import com.flowmind.platform.core.monitor.TimeoutActionExecutor;
+import com.flowmind.platform.core.monitor.TimeoutPolicyReader;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
+import com.flowmind.platform.core.runtime.AdminPermissionGuard;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
 import com.flowmind.platform.core.runtime.RuntimeRequestValidator;
 import com.flowmind.platform.core.runtime.RuntimeTransactionExecutor;
@@ -63,6 +73,8 @@ import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentC
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
+import com.flowmind.platform.persistence.repository.ProcessCallbackLogRepository;
+import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
 import com.flowmind.platform.persistence.repository.ProcessReadRecordRepository;
 import com.flowmind.platform.persistence.repository.ReminderRecordRepository;
 import com.flowmind.platform.persistence.repository.AlertRecordRepository;
@@ -233,6 +245,18 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public ProcessNodeRepository processNodeRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessNodeRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessCallbackLogRepository processCallbackLogRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessCallbackLogRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public AuditLogWriter auditLogWriter(ProcessAuditLogRepository auditLogRepository) {
         return new DefaultAuditLogWriter(auditLogRepository);
     }
@@ -290,8 +314,79 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public CallbackService callbackService() {
-        return new UnsupportedCallbackService();
+    public CallbackLogMapper callbackLogMapper() {
+        return new CallbackLogMapper();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CallbackOutboxService callbackOutboxService(ProcessCallbackLogRepository callbackLogRepository,
+                                                        CallbackLogMapper callbackLogMapper) {
+        return new CallbackOutboxService(callbackLogRepository, callbackLogMapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CallbackService callbackService(ProcessCallbackLogRepository callbackLogRepository,
+                                           CallbackLogMapper callbackLogMapper,
+                                           CallbackOutboxService callbackOutboxService) {
+        return new DefaultCallbackService(callbackLogRepository, callbackLogMapper, callbackOutboxService);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TimeoutPolicyReader timeoutPolicyReader() {
+        return new TimeoutPolicyReader();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ReminderPolicyReader reminderPolicyReader() {
+        return new ReminderPolicyReader();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ReminderDeduplicationGuard reminderDeduplicationGuard(ReminderRecordRepository reminderRepository) {
+        return new ReminderDeduplicationGuard(reminderRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ActionExceptionAlertWriter actionExceptionAlertWriter(AlertRecordRepository alertRepository) {
+        return new ActionExceptionAlertWriter(alertRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AdminPermissionGuard adminPermissionGuard() {
+        return new AdminPermissionGuard();
+    }
+
+    @Bean
+    @ConditionalOnBean({AdminProcessService.class, ProcessRuntimeService.class})
+    @ConditionalOnMissingBean
+    public TimeoutActionExecutor timeoutActionExecutor(AdminProcessService adminProcessService,
+                                                       ProcessRuntimeService processRuntimeService) {
+        return new TimeoutActionExecutor(adminProcessService, processRuntimeService);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CallbackFailureAlertService callbackFailureAlertService(AlertRecordRepository alertRepository) {
+        return new CallbackFailureAlertService(alertRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CallbackDispatchService callbackDispatchService(ProcessCallbackLogRepository callbackLogRepository,
+                                                           ObjectProvider<WorkflowCallbackHandler> callbackHandler,
+                                                           CallbackFailureAlertService failureAlertService) {
+        WorkflowCallbackHandler handler = callbackHandler.getIfAvailable();
+        if (handler == null) {
+            handler = new RequiredWorkflowCallbackHandler();
+        }
+        return new CallbackDispatchService(callbackLogRepository, handler, failureAlertService);
     }
 
     @Bean
@@ -304,13 +399,22 @@ public class PlatformAutoConfiguration {
                                                        RuntimeOperationExecutor operationExecutor,
                                                        RuntimeTransactionExecutor transactionExecutor,
                                                        AuditLogWriter auditLogWriter,
-                                                       ObjectProvider<MessagePublisher> messagePublisher) {
+                                                       ObjectProvider<MessagePublisher> messagePublisher,
+                                                       ProcessNodeRepository processNodeRepository,
+                                                       TimeoutPolicyReader timeoutPolicyReader,
+                                                       ReminderPolicyReader reminderPolicyReader,
+                                                       ReminderDeduplicationGuard reminderDeduplicationGuard,
+                                                       ObjectProvider<TimeoutActionExecutor> timeoutActionExecutor,
+                                                       ActionExceptionAlertWriter actionExceptionAlertWriter,
+                                                       AdminPermissionGuard adminPermissionGuard) {
         MessagePublisher publisher = messagePublisher.getIfAvailable();
         if (publisher == null) {
             publisher = new RequiredMessagePublisher();
         }
         return new DefaultProcessMonitorService(activeTaskRepository, instanceRepository, reminderRepository,
-                alertRepository, requestValidator, operationExecutor, transactionExecutor, auditLogWriter, publisher);
+                alertRepository, requestValidator, operationExecutor, transactionExecutor, auditLogWriter, publisher,
+                processNodeRepository, timeoutPolicyReader, reminderPolicyReader, reminderDeduplicationGuard,
+                timeoutActionExecutor.getIfAvailable(), actionExceptionAlertWriter, adminPermissionGuard);
     }
 
     @Bean
@@ -470,52 +574,10 @@ public class PlatformAutoConfiguration {
         }
     }
 
-    private abstract static class UnsupportedPlatformService {
-        protected final UnsupportedOperationException unsupported() {
-            return new UnsupportedOperationException("Platform service implementation is not wired in this starter skeleton");
-        }
-    }
-
-    private static final class UnsupportedCallbackService extends UnsupportedPlatformService
-            implements CallbackService {
-
+    private static final class RequiredWorkflowCallbackHandler implements WorkflowCallbackHandler {
         @Override
-        public void publishCallback(WorkflowEvent event) {
-            throw unsupported();
-        }
-
-        @Override
-        public PageResult<CallbackLogDTO> queryCallbackLogs(CallbackLogQuery query) {
-            throw unsupported();
-        }
-    }
-
-    private static final class UnsupportedProcessMonitorService extends UnsupportedPlatformService
-            implements ProcessMonitorService {
-
-        @Override
-        public ReminderDTO remindTask(RemindTaskRequest request) {
-            throw unsupported();
-        }
-
-        @Override
-        public PageResult<ReminderDTO> queryReminders(ReminderQuery query) {
-            throw unsupported();
-        }
-
-        @Override
-        public List<TaskDTO> scanTimeoutTasks(TimeoutScanRequest request) {
-            throw unsupported();
-        }
-
-        @Override
-        public PageResult<AlertDTO> queryAlerts(AlertQuery query) {
-            throw unsupported();
-        }
-
-        @Override
-        public AlertDTO handleAlert(HandleAlertRequest request) {
-            throw unsupported();
+        public void handle(com.flowmind.platform.api.dto.WorkflowEvent event) {
+            throw new IllegalStateException("WorkflowCallbackHandler bean is required for callback dispatch");
         }
     }
 

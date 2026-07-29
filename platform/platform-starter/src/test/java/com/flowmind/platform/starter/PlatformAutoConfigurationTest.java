@@ -11,9 +11,13 @@ import com.flowmind.platform.api.dto.ReadRecordQuery;
 import com.flowmind.platform.api.dto.StartedInstanceQuery;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.request.StoreFileRequest;
+import com.flowmind.platform.api.request.TimeoutScanRequest;
+import com.flowmind.platform.api.request.JumpNodeRequest;
+import com.flowmind.platform.api.service.AdminProcessService;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.ProcessMonitorService;
+import com.flowmind.platform.api.service.ProcessRuntimeService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.ApproverResolver;
@@ -26,9 +30,16 @@ import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.api.dto.FileContent;
 import com.flowmind.platform.api.dto.StoredFile;
 import com.flowmind.platform.api.request.AttachmentAccessRequest;
-import com.flowmind.platform.core.runtime.DefaultApproverResolver;
+import com.flowmind.platform.core.callback.CallbackDispatchService;
+import com.flowmind.platform.core.callback.CallbackFailureAlertService;
+import com.flowmind.platform.core.monitor.ActionExceptionAlertWriter;
+import com.flowmind.platform.core.monitor.ReminderDeduplicationGuard;
+import com.flowmind.platform.core.monitor.ReminderPolicyReader;
+import com.flowmind.platform.core.monitor.TimeoutActionExecutor;
+import com.flowmind.platform.core.monitor.TimeoutPolicyReader;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
+import com.flowmind.platform.core.runtime.AdminPermissionGuard;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
 import com.flowmind.platform.mock.InMemoryOrganizationProvider;
@@ -39,6 +50,8 @@ import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.ProcessCallbackLogRepository;
+import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
 import io.swagger.v3.oas.models.OpenAPI;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -54,10 +67,14 @@ import javax.sql.DataSource;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.mockito.ArgumentCaptor;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class PlatformAutoConfigurationTest {
 
@@ -83,6 +100,15 @@ class PlatformAutoConfigurationTest {
             assertThat(context).hasSingleBean(AttachmentService.class);
             assertThat(context).hasSingleBean(CallbackService.class);
             assertThat(context).hasSingleBean(ProcessMonitorService.class);
+            assertThat(context).hasSingleBean(ProcessNodeRepository.class);
+            assertThat(context).hasSingleBean(ProcessCallbackLogRepository.class);
+            assertThat(context).hasSingleBean(TimeoutPolicyReader.class);
+            assertThat(context).hasSingleBean(ReminderPolicyReader.class);
+            assertThat(context).hasSingleBean(ReminderDeduplicationGuard.class);
+            assertThat(context).hasSingleBean(ActionExceptionAlertWriter.class);
+            assertThat(context).hasSingleBean(AdminPermissionGuard.class);
+            assertThat(context).hasSingleBean(CallbackFailureAlertService.class);
+            assertThat(context).hasSingleBean(CallbackDispatchService.class);
             assertThat(context).hasSingleBean(FileStorageProvider.class);
             assertThat(context.getBean(FileStorageProvider.class)).isInstanceOf(InMemoryFileStorageProvider.class);
             assertThat(context).hasSingleBean(AttachmentAccessProvider.class);
@@ -103,6 +129,30 @@ class PlatformAutoConfigurationTest {
             assertThat(context).hasSingleBean(ApproverResolver.class);
             assertThat(context.getBean(ApproverResolver.class)).isInstanceOf(DefaultApproverResolver.class);
         });
+    }
+
+    @Test
+    void autoConfiguredMonitorExecutesNodeTimeoutActionThroughHostRuntimeServices() {
+        contextRunnerWithDatabase("m6-timeout-action.db")
+                .withUserConfiguration(RuntimeServiceConfiguration.class)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(TimeoutActionExecutor.class);
+                    JdbcTemplate jdbcTemplate = context.getBean(JdbcTemplate.class);
+                    insertTimeoutFixtures(jdbcTemplate);
+
+                    TimeoutScanRequest request = new TimeoutScanRequest();
+                    request.setDryRun(Boolean.FALSE);
+                    request.setScanAt(LocalDateTime.of(2026, 7, 29, 12, 0));
+                    request.setOperatorUserId("admin");
+                    request.setLimit(Integer.valueOf(10));
+                    context.getBean(ProcessMonitorService.class).scanTimeoutTasks(request);
+
+                    ArgumentCaptor<JumpNodeRequest> requestCaptor = ArgumentCaptor.forClass(JumpNodeRequest.class);
+                    verify(context.getBean(AdminProcessService.class)).jumpToNode(requestCaptor.capture());
+                    assertThat(requestCaptor.getValue().getInstanceId()).isEqualTo("instance-timeout");
+                    assertThat(requestCaptor.getValue().getTargetNodeCode()).isEqualTo("fallback");
+                    assertThat(requestCaptor.getValue().getOperatorUserId()).isEqualTo("admin");
+                });
     }
 
     @Test
@@ -322,6 +372,34 @@ class PlatformAutoConfigurationTest {
                 "2026-07-23 08:50:00", "2026-07-23 09:20:00");
     }
 
+    private void insertTimeoutFixtures(JdbcTemplate jdbcTemplate) {
+        jdbcTemplate.update("INSERT INTO process_definition "
+                        + "(id, process_code, process_name, system_code, version, definition_status, "
+                        + "activation_status, gray_status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "definition-timeout", "timeout", "Timeout", "oa", Integer.valueOf(1), "PUBLISHED",
+                "ACTIVE", "OFF", "admin");
+        jdbcTemplate.update("INSERT INTO process_node "
+                        + "(id, definition_id, node_code, node_name, node_type, timeout_config, sort_order) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "node-timeout", "definition-timeout", "review", "Review", "USER_TASK",
+                "{\"enabled\":true,\"durationMinutes\":30,\"action\":\"JUMP\","
+                        + "\"targetNodeCode\":\"fallback\"}",
+                Integer.valueOf(1));
+        jdbcTemplate.update("INSERT INTO process_instance "
+                        + "(id, definition_id, process_code, process_name, version, instance_title, "
+                        + "business_key, starter_user_id, starter_user_name, starter_dept_id, "
+                        + "current_node_codes, variables_json, instance_status, started_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "instance-timeout", "definition-timeout", "timeout", "Timeout", Integer.valueOf(1),
+                "Timeout instance", "biz-timeout", "mock-user", "Mock User", "mock-dept",
+                "[\"review\"]", "{}", "RUNNING", "2026-07-29 09:00:00");
+        jdbcTemplate.update("INSERT INTO process_active_task "
+                        + "(id, instance_id, definition_id, node_code, candidate_user_ids, task_status, "
+                        + "lock_version, created_at, due_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "task-timeout", "instance-timeout", "definition-timeout", "review", "[\"mock-user\"]",
+                "ACTIVE", Long.valueOf(0L), "2026-07-29 09:10:00", "2026-07-29 10:00:00");
+    }
+
     @Configuration
     static class CustomSpiConfiguration {
         @Bean
@@ -340,6 +418,19 @@ class PlatformAutoConfigurationTest {
         @Bean
         TaskQueryService customTaskQueryService() {
             return new CustomTaskQueryService();
+        }
+    }
+
+    @Configuration
+    static class RuntimeServiceConfiguration {
+        @Bean
+        AdminProcessService adminProcessService() {
+            return mock(AdminProcessService.class);
+        }
+
+        @Bean
+        ProcessRuntimeService processRuntimeService() {
+            return mock(ProcessRuntimeService.class);
         }
     }
 
