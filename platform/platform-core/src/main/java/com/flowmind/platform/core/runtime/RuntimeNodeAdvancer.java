@@ -25,6 +25,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -218,12 +219,42 @@ public class RuntimeNodeAdvancer {
             throw state(RuntimeErrorCodes.APPROVER_RESOLVE_FAILED,
                     "prepared approvers are missing for user task: " + node.getNodeCode());
         }
-
+        if (MultiInstanceModeEnum.OR_SIGN.equals(node.getMultiInstanceMode())) {
+            createOrSignUserTasks(instance, node, taskGroupId, branchKey, candidateUserIds, result);
+            return;
+        }
         if (MultiInstanceModeEnum.COUNTERSIGN.equals(node.getMultiInstanceMode())) {
             createCountersignTasks(instance, node, taskGroupId, branchKey, candidateUserIds, result);
             return;
         }
         createActiveTask(instance, node, taskGroupId, branchKey, candidateUserIds, result);
+    }
+
+    private void createOrSignUserTasks(ProcessInstanceEntity instance,
+                                       ProcessNodeDTO node,
+                                       String parentGroupId,
+                                       String parentBranchKey,
+                                       List<String> candidateUserIds,
+                                       RuntimeAdvanceResult result) {
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId(newId());
+        group.setInstanceId(instance.getId());
+        group.setNodeCode(node.getNodeCode());
+        group.setParentGroupId(parentGroupId);
+        group.setParentBranchKey(parentBranchKey);
+        group.setGroupType(TaskGroupTypeEnum.OR_SIGN.name());
+        group.setTotalCount(Integer.valueOf(candidateUserIds.size()));
+        group.setCompletedCount(Integer.valueOf(0));
+        group.setGroupStatus(TASK_GROUP_ACTIVE);
+        group.setLockVersion(Long.valueOf(0L));
+        group.setCreatedAt(LocalDateTime.now());
+        if (taskGroupRepository.insert(group) != 1) {
+            throw state(RuntimeErrorCodes.INVALID_ACTION, "failed to create or-sign task group");
+        }
+        for (String candidateUserId : candidateUserIds) {
+            createActiveTask(instance, node, group.getId(), parentBranchKey,
+                    Collections.singletonList(candidateUserId), result);
+        }
     }
 
     private void createCountersignTasks(ProcessInstanceEntity instance,
@@ -250,7 +281,7 @@ public class RuntimeNodeAdvancer {
         }
         for (String candidateUserId : candidateUserIds) {
             createActiveTask(instance, node, group.getId(), parentBranchKey,
-                    java.util.Collections.singletonList(candidateUserId), result);
+                    Collections.singletonList(candidateUserId), result);
         }
     }
 

@@ -94,6 +94,23 @@ public class TaskGroupRepository {
      * <p>仅当 branch_state_json 中指定 branchKey 的值为 RUNNING 时更新，因此同一分支
      * 重复到达不会重复计数。branchKey 对应 JSON 对象的一级属性名。</p>
      */
+    /** 或签任务组首个通过者获胜后，原子完成任务组并记录一次完成计数。 */
+    public int completeOrSignGroup(String id, long expectedLockVersion) {
+        return jdbcTemplate.update(
+                "UPDATE process_task_group "
+                        + "SET completed_count = 1, group_status = 'COMPLETED', "
+                        + "completed_at = datetime('now'), lock_version = lock_version + 1 "
+                        + "WHERE id = ? AND group_type = 'OR_SIGN' AND group_status = 'ACTIVE' "
+                        + "AND completed_count = 0 AND total_count > 0 AND lock_version = ?",
+                id, expectedLockVersion);
+    }
+
+    /**
+     * 原子标记并行分支到达并增加汇聚计数。
+     *
+     * <p>仅当 branch_state_json 中指定 branchKey 的值为 RUNNING 时更新，因此同一分支重复到达不会重复计数。
+     * branchKey 对应 JSON 对象的一级属性名。</p>
+     */
     public int markBranchArrived(String id, String branchKey, long expectedLockVersion) {
         String branchPath = toJsonPath(branchKey);
         return jdbcTemplate.update(

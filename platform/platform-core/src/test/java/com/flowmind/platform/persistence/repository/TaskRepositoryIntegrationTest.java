@@ -14,6 +14,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -130,6 +131,28 @@ class TaskRepositoryIntegrationTest {
     }
 
     @Test
+    void orSignGroupCompletesOnceAndFindsRemainingOpenTasksByGroup() {
+        insertTaskGroup("group-or", "OR_SIGN", 3, 0, "{}", 0L);
+        insertTaskGroup("group-counter", "COUNTERSIGN", 3, 0, "{}", 0L);
+        insertTask("task-winner", "ACTIVE", 0L, "group-or");
+        insertTask("task-other", "ACTIVE", 0L, "group-or");
+        insertTask("task-claimed", "CLAIMED", 1L, "group-or");
+        insertTask("task-completed", "COMPLETED", 2L, "group-or");
+
+        List<com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity> openSiblings =
+                activeTaskRepository.findOpenByTaskGroupId("group-or", "task-winner");
+
+        assertEquals(2, openSiblings.size());
+        assertTrue(taskIds(openSiblings).contains("task-other"));
+        assertTrue(taskIds(openSiblings).contains("task-claimed"));
+        assertEquals(1, taskGroupRepository.completeOrSignGroup("group-or", 0L));
+        assertEquals(0, taskGroupRepository.completeOrSignGroup("group-or", 0L));
+        assertEquals(0, taskGroupRepository.completeOrSignGroup("group-counter", 0L));
+        assertGroup("group-or", 1, "COMPLETED", 1L);
+        assertGroup("group-counter", 0, "ACTIVE", 0L);
+    }
+
+    @Test
     void conflictCodeContractIsStable() {
         assertEquals("FLOW_TASK_CONCURRENT_MODIFIED",
                 RepositoryConflictCodes.TASK_CONCURRENT_MODIFIED);
@@ -150,10 +173,14 @@ class TaskRepositoryIntegrationTest {
     }
 
     private void insertTask(String id, String status, long lockVersion) {
+        insertTask(id, status, lockVersion, null);
+    }
+
+    private void insertTask(String id, String status, long lockVersion, String taskGroupId) {
         jdbcTemplate.update("INSERT INTO process_active_task "
-                        + "(id, instance_id, definition_id, node_code, task_status, lock_version) "
-                        + "VALUES (?, ?, ?, ?, ?, ?)",
-                id, "instance-1", "definition-1", "review", status, lockVersion);
+                        + "(id, instance_id, definition_id, node_code, task_status, task_group_id, lock_version) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                id, "instance-1", "definition-1", "review", status, taskGroupId, lockVersion);
     }
 
 
@@ -194,6 +221,14 @@ class TaskRepositoryIntegrationTest {
                     assertEquals(lockVersion, resultSet.getLong("lock_version"));
                     return null;
                 }, id);
+    }
+
+    private List<String> taskIds(List<com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity> tasks) {
+        java.util.ArrayList<String> ids = new java.util.ArrayList<String>();
+        for (com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity task : tasks) {
+            ids.add(task.getId());
+        }
+        return ids;
     }
 
     private static void executeSchema(Connection connection) throws IOException, SQLException {

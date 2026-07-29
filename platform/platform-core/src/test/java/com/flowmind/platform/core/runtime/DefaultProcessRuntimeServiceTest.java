@@ -17,6 +17,7 @@ import com.flowmind.platform.api.enums.AttachmentConfigStatusEnum;
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
+import com.flowmind.platform.api.enums.TaskGroupTypeEnum;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.AttachmentUploadItem;
 import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
@@ -33,11 +34,13 @@ import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceDeletionRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.TaskGroupRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -88,6 +91,7 @@ class DefaultProcessRuntimeServiceTest {
     private InstanceTaskCancellationService taskCancellationService;
     private ProcessInstanceDeletionRepository instanceDeletionRepository;
     private ProcessDefinitionRepository definitionRepository;
+    private TaskGroupRepository taskGroupRepository;
     private DefaultProcessRuntimeService service;
 
     @BeforeEach
@@ -107,6 +111,7 @@ class DefaultProcessRuntimeServiceTest {
         taskCancellationService = mock(InstanceTaskCancellationService.class);
         instanceDeletionRepository = mock(ProcessInstanceDeletionRepository.class);
         definitionRepository = mock(ProcessDefinitionRepository.class);
+        taskGroupRepository = mock(TaskGroupRepository.class);
         doAnswer(invocation -> ((RuntimeTransactionWork<?>) invocation.getArgument(0)).execute())
                 .when(transactionExecutor).execute(any(RuntimeTransactionWork.class));
         when(nodeAdvancer.prepareAdvance(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
@@ -118,7 +123,7 @@ class DefaultProcessRuntimeServiceTest {
         service = new DefaultProcessRuntimeService(instanceRepository, activeTaskRepository, historyTaskRepository,
                 definitionLoader, requestValidator, operationExecutor, nodeAdvancer, attachmentService,
                 callbackService, runtimeStateValidator, historyTaskWriter, transactionExecutor,
-                taskCancellationService, instanceDeletionRepository, definitionRepository);
+                taskCancellationService, instanceDeletionRepository, taskGroupRepository, definitionRepository);
     }
 
     @Test
@@ -381,10 +386,8 @@ class DefaultProcessRuntimeServiceTest {
         managerNode.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         ProcessDefinitionDetailDTO definition = definition(managerNode);
         prepareTaskAction(request, ActionTypeEnum.APPROVE, manager, task, instance, definition);
-        com.flowmind.platform.persistence.repository.TaskGroupRepository groups =
-                mock(com.flowmind.platform.persistence.repository.TaskGroupRepository.class);
-        com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity group =
-                new com.flowmind.platform.persistence.entity.ProcessTaskGroupEntity();
+        TaskGroupRepository groups = mock(TaskGroupRepository.class);
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
         group.setId("group-1");
         group.setInstanceId("instance-1");
         group.setNodeCode("manager");
@@ -407,6 +410,135 @@ class DefaultProcessRuntimeServiceTest {
         verify(nodeAdvancer, never()).advanceToNode(any(ProcessInstanceEntity.class),
                 any(ProcessDefinitionDetailDTO.class), anyString(), any(), any(),
                 any(RuntimeAdvancePreparation.class));
+    }
+
+    @Test
+    void approveOrSignTaskCompletesGroupCancelsSiblingsAndAdvancesWithParentContext() {
+        ApproveTaskRequest request = approveRequest("operation-approve-or", "task-or-1");
+        UserContext manager = user("manager", "Manager");
+        ProcessActiveTaskEntity winner = activeTask("task-or-1", "instance-1", "manager");
+        winner.setTaskGroupId("group-or");
+        winner.setBranchKey("branch-a");
+        ProcessActiveTaskEntity siblingOne = activeTask("task-or-2", "instance-1", "manager");
+        siblingOne.setTaskGroupId("group-or");
+        siblingOne.setBranchKey("branch-a");
+        ProcessActiveTaskEntity siblingTwo = activeTask("task-or-3", "instance-1", "manager");
+        siblingTwo.setTaskGroupId("group-or");
+        siblingTwo.setBranchKey("branch-a");
+        ProcessTaskGroupEntity group = orSignGroup("group-or", "parallel-group", "branch-a");
+        ProcessInstanceEntity instance = runningInstance("instance-1");
+        ProcessDefinitionDetailDTO definition = definition(orSignUserTask("manager", ApproverRuleTypeEnum.ROLE));
+        RuntimeAdvancePreparation preparation = new RuntimeAdvancePreparation(
+                Collections.<String, List<String>>emptyMap(), Collections.<String, String>emptyMap());
+        ProcessHistoryTaskEntity canceledOne = historyTask("history-task-or-2", siblingOne,
+                ActionTypeEnum.CANCEL, request.getOperationId(), "or-sign canceled by winner: task-or-1");
+        ProcessHistoryTaskEntity canceledTwo = historyTask("history-task-or-3", siblingTwo,
+                ActionTypeEnum.CANCEL, request.getOperationId(), "or-sign canceled by winner: task-or-1");
+        prepareTaskAction(request, ActionTypeEnum.APPROVE, manager, winner, instance, definition);
+        when(taskGroupRepository.findById("group-or")).thenReturn(group);
+        when(nodeAdvancer.prepareAdvance(eq(instance), eq(definition), eq("end"), eq("parallel-group"),
+                eq("branch-a"))).thenReturn(preparation);
+        when(activeTaskRepository.complete("task-or-1", 0L)).thenReturn(1);
+        when(taskGroupRepository.completeOrSignGroup("group-or", 0L)).thenReturn(1);
+        when(activeTaskRepository.findOpenByTaskGroupId("group-or", "task-or-1"))
+                .thenReturn(Arrays.asList(siblingOne, siblingTwo));
+        when(activeTaskRepository.cancel("task-or-2", 0L)).thenReturn(1);
+        when(activeTaskRepository.cancel("task-or-3", 0L)).thenReturn(1);
+        when(historyTaskWriter.archiveCanceledTask(eq(instance), eq(siblingOne), eq(manager),
+                eq(ActionTypeEnum.CANCEL), eq("or-sign canceled by winner: task-or-1"), any(Map.class),
+                eq(request.getOperationId()))).thenReturn(canceledOne);
+        when(historyTaskWriter.archiveCanceledTask(eq(instance), eq(siblingTwo), eq(manager),
+                eq(ActionTypeEnum.CANCEL), eq("or-sign canceled by winner: task-or-1"), any(Map.class),
+                eq(request.getOperationId()))).thenReturn(canceledTwo);
+        when(instanceRepository.findById("instance-1")).thenReturn(instance, instance);
+
+        TaskActionResult result = service.approve(request);
+
+        assertEquals("operation-approve-or", result.getOperationId());
+        assertEquals(3, result.getArchivedTasks().size());
+        assertEquals("task-or-1", result.getArchivedTasks().get(0).getActiveTaskId());
+        assertEquals(ActionTypeEnum.APPROVE, result.getArchivedTasks().get(0).getActionType());
+        assertEquals("task-or-2", result.getArchivedTasks().get(1).getActiveTaskId());
+        assertEquals(ActionTypeEnum.CANCEL, result.getArchivedTasks().get(1).getActionType());
+        assertEquals("task-or-3", result.getArchivedTasks().get(2).getActiveTaskId());
+        assertEquals(ActionTypeEnum.CANCEL, result.getArchivedTasks().get(2).getActionType());
+        verify(taskGroupRepository).completeOrSignGroup("group-or", 0L);
+        verify(activeTaskRepository).findOpenByTaskGroupId("group-or", "task-or-1");
+        verify(activeTaskRepository).cancel("task-or-2", 0L);
+        verify(activeTaskRepository).cancel("task-or-3", 0L);
+        verify(nodeAdvancer).prepareAdvance(instance, definition, "end", "parallel-group", "branch-a");
+        verify(nodeAdvancer).advanceToNode(instance, definition, "end", "parallel-group", "branch-a", preparation);
+        verify(operationExecutor).markSuccess(request.getOperationId(), result);
+    }
+
+    @Test
+    void approveParallelGroupedUserTaskKeepsGenericBranchContext() {
+        ApproveTaskRequest request = approveRequest("operation-approve-parallel-branch", "task-branch");
+        UserContext manager = user("manager", "Manager");
+        ProcessActiveTaskEntity task = activeTask("task-branch", "instance-1", "manager");
+        task.setTaskGroupId("parallel-group");
+        task.setBranchKey("branch-a");
+        ProcessInstanceEntity instance = runningInstance("instance-1");
+        ProcessDefinitionDetailDTO definition = definition(userTask("manager", ApproverRuleTypeEnum.ROLE));
+        RuntimeAdvancePreparation preparation = new RuntimeAdvancePreparation(
+                Collections.<String, List<String>>emptyMap(), Collections.<String, String>emptyMap());
+        prepareTaskAction(request, ActionTypeEnum.APPROVE, manager, task, instance, definition);
+        when(nodeAdvancer.prepareAdvance(eq(instance), eq(definition), eq("end"), eq("parallel-group"),
+                eq("branch-a"))).thenReturn(preparation);
+        when(activeTaskRepository.complete("task-branch", 0L)).thenReturn(1);
+        when(instanceRepository.findById("instance-1")).thenReturn(instance, instance);
+
+        TaskActionResult result = service.approve(request);
+
+        assertEquals("operation-approve-parallel-branch", result.getOperationId());
+        verify(taskGroupRepository, never()).findById("parallel-group");
+        verify(activeTaskRepository).complete("task-branch", 0L);
+        verify(nodeAdvancer).advanceToNode(instance, definition, "end", "parallel-group", "branch-a", preparation);
+    }
+
+    @Test
+    void approveGroupedTaskFailsWhenTaskGroupIsMissing() {
+        ApproveTaskRequest request = approveRequest("operation-approve-or-missing-group", "task-or-1");
+        UserContext manager = user("manager", "Manager");
+        ProcessActiveTaskEntity task = activeTask("task-or-1", "instance-1", "manager");
+        task.setTaskGroupId("group-missing");
+        ProcessInstanceEntity instance = runningInstance("instance-1");
+        ProcessDefinitionDetailDTO definition = definition(orSignUserTask("manager", ApproverRuleTypeEnum.ROLE));
+        prepareTaskAction(request, ActionTypeEnum.APPROVE, manager, task, instance, definition);
+        when(taskGroupRepository.findById("group-missing")).thenReturn(null);
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> service.approve(request));
+
+        assertEquals(RuntimeErrorCodes.TASK_GROUP_NOT_FOUND, error.getErrorCode());
+        verify(activeTaskRepository, never()).complete(anyString(), anyLong());
+        verify(historyTaskWriter, never()).archiveCompletedTask(any(RuntimeTaskContext.class), any(ActionTypeEnum.class),
+                anyString(), any(Map.class), anyString());
+        verify(nodeAdvancer, never()).advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                anyString(), any(), any(), any(RuntimeAdvancePreparation.class));
+    }
+
+    @Test
+    void approveGroupedTaskFailsWhenTaskGroupTypeIsNotOrSign() {
+        ApproveTaskRequest request = approveRequest("operation-approve-or-wrong-group-type", "task-or-1");
+        UserContext manager = user("manager", "Manager");
+        ProcessActiveTaskEntity task = activeTask("task-or-1", "instance-1", "manager");
+        task.setTaskGroupId("group-counter");
+        ProcessInstanceEntity instance = runningInstance("instance-1");
+        ProcessDefinitionDetailDTO definition = definition(orSignUserTask("manager", ApproverRuleTypeEnum.ROLE));
+        ProcessTaskGroupEntity group = orSignGroup("group-counter", null, null);
+        group.setGroupType(TaskGroupTypeEnum.COUNTERSIGN.name());
+        prepareTaskAction(request, ActionTypeEnum.APPROVE, manager, task, instance, definition);
+        when(taskGroupRepository.findById("group-counter")).thenReturn(group);
+
+        RuntimeStateException error = assertThrows(RuntimeStateException.class, () -> service.approve(request));
+
+        assertEquals(RuntimeErrorCodes.TASK_GROUP_STATUS_INVALID, error.getErrorCode());
+        verify(activeTaskRepository, never()).complete(anyString(), anyLong());
+        verify(historyTaskWriter, never()).archiveCompletedTask(any(RuntimeTaskContext.class), any(ActionTypeEnum.class),
+                anyString(), any(Map.class), anyString());
+        verify(nodeAdvancer, never()).advanceToNode(any(ProcessInstanceEntity.class), any(ProcessDefinitionDetailDTO.class),
+                anyString(), any(), any(), any(RuntimeAdvancePreparation.class));
     }
 
     @Test
@@ -533,6 +665,8 @@ class DefaultProcessRuntimeServiceTest {
         history.setOperationId(request.getOperationId());
         history.setActiveTaskId(task.getId());
         history.setNodeCode(task.getNodeCode());
+        history.setTaskGroupId(task.getTaskGroupId());
+        history.setBranchKey(task.getBranchKey());
         history.setActionType(actionType.name());
         history.setCommentText(request.getComment());
         history.setVariablesSnapshot("{}");
@@ -625,6 +759,41 @@ class DefaultProcessRuntimeServiceTest {
         return task;
     }
 
+    private ProcessTaskGroupEntity orSignGroup(String id, String parentGroupId, String parentBranchKey) {
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId(id);
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType(TaskGroupTypeEnum.OR_SIGN.name());
+        group.setTotalCount(Integer.valueOf(3));
+        group.setCompletedCount(Integer.valueOf(0));
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(0L));
+        group.setParentGroupId(parentGroupId);
+        group.setParentBranchKey(parentBranchKey);
+        return group;
+    }
+
+    private ProcessHistoryTaskEntity historyTask(String id,
+                                                 ProcessActiveTaskEntity task,
+                                                 ActionTypeEnum actionType,
+                                                 String operationId,
+                                                 String comment) {
+        ProcessHistoryTaskEntity history = new ProcessHistoryTaskEntity();
+        history.setId(id);
+        history.setInstanceId(task.getInstanceId());
+        history.setOperationId(operationId);
+        history.setActiveTaskId(task.getId());
+        history.setNodeCode(task.getNodeCode());
+        history.setTaskGroupId(task.getTaskGroupId());
+        history.setBranchKey(task.getBranchKey());
+        history.setActionType(actionType.name());
+        history.setCommentText(comment);
+        history.setVariablesSnapshot("{}");
+        history.setCompletedAt(LocalDateTime.now());
+        return history;
+    }
+
     private ProcessDefinitionDetailDTO definition(ProcessNodeDTO taskNode) {
         ProcessDefinitionDetailDTO definition = new ProcessDefinitionDetailDTO();
         definition.setId("definition-1");
@@ -657,6 +826,12 @@ class DefaultProcessRuntimeServiceTest {
         node.setNodeType(NodeTypeEnum.USER_TASK);
         node.setApproverRuleType(ruleType);
         node.setMultiInstanceMode(MultiInstanceModeEnum.SINGLE);
+        return node;
+    }
+
+    private ProcessNodeDTO orSignUserTask(String nodeCode, ApproverRuleTypeEnum ruleType) {
+        ProcessNodeDTO node = userTask(nodeCode, ruleType);
+        node.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
         return node;
     }
 

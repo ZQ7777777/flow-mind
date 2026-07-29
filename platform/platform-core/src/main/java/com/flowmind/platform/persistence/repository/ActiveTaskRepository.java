@@ -123,6 +123,14 @@ public class ActiveTaskRepository {
                 RuntimeRowMappers.ACTIVE_TASK, taskGroupId);
     }
 
+    /** 按任务组读取仍开放的待办，可排除已获胜或已处理的当前任务。 */
+    public List<ProcessActiveTaskEntity> findOpenByTaskGroupId(String taskGroupId, String excludedTaskId) {
+        return jdbcTemplate.query("SELECT * FROM process_active_task WHERE task_group_id = ? "
+                        + "AND (? IS NULL OR id <> ?) "
+                        + "AND task_status IN ('ACTIVE', 'CLAIMED') ORDER BY created_at ASC, id ASC",
+                RuntimeRowMappers.ACTIVE_TASK, taskGroupId, emptyToNull(excludedTaskId), emptyToNull(excludedTaskId));
+    }
+
     /** 按到期时间读取超时的开放任务。 */
     public List<ProcessActiveTaskEntity> findTimeoutOpenTasks(java.time.LocalDateTime scanAt, int limit) {
         if (scanAt == null || limit <= 0) {
@@ -430,6 +438,10 @@ public class ActiveTaskRepository {
 
     private String like(String value) {
         return "%" + value.trim().toLowerCase() + "%";
+    }
+
+    private String emptyToNull(String value) {
+        return isBlank(value) ? null : value;
     }
 
     private boolean isBlank(String value) {
