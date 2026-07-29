@@ -7,6 +7,7 @@ import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
 import com.flowmind.platform.core.definition.OperationIdempotencyService;
 import com.flowmind.platform.persistence.entity.ProcessOperationRecordEntity;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -141,7 +142,11 @@ public class RuntimeOperationExecutor {
         if (isBlank(errorCode)) {
             throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "errorCode is required");
         }
-        idempotencyService.markFailed(operationId, errorCode);
+        try {
+            idempotencyService.markFailed(operationId, errorCode);
+        } catch (DataAccessException ex) {
+            // 失败标记是辅助幂等状态，不能遮蔽原始业务校验异常。
+        }
     }
 
     /**

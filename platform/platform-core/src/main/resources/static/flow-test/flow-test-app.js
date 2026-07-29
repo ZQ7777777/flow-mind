@@ -1,195 +1,118 @@
 (function () {
     "use strict";
 
-    if (!window.Vue) {
-        document.body.innerHTML = '<div style="padding:24px;font-family:Arial,sans-serif">Vue 加载失败，请检查网络或将 Vue 运行时改为本地静态资源。</div>';
-        return;
-    }
+    var API_PATHS = {
+        definitions: "/api/platform/definitions",
+        definitionDetail: function (definitionId) {
+            return "/api/platform/definitions/" + encodeURIComponent(definitionId);
+        },
+        saveGraph: function (definitionId) {
+            return "/api/platform/definitions/" + encodeURIComponent(definitionId) + "/graph";
+        },
+        validateDefinition: function (definitionId) {
+            return "/api/platform/definitions/" + encodeURIComponent(definitionId) + "/publish-validation";
+        },
+        publishDefinition: "/api/platform/definitions/publish",
+        activateDefinition: "/api/platform/definitions/activate",
+        deactivateDefinition: "/api/platform/definitions/deactivate",
+        archiveDefinition: "/api/platform/definitions/archive",
+        deleteDefinition: "/api/platform/definitions",
+        startAndSubmit: "/api/platform/runtime/instances/start-submit",
+        instanceDetail: function (instanceId) {
+            return "/api/platform/instances/" + encodeURIComponent(instanceId);
+        },
+        startedInstances: "/api/platform/instances/started",
+        taskSubmit: "/api/platform/runtime/tasks/submit",
+        taskApprove: "/api/platform/runtime/tasks/approve",
+        taskReject: "/api/platform/runtime/tasks/reject",
+        taskTransfer: "/api/platform/runtime/tasks/transfer",
+        taskAddSign: "/api/platform/runtime/tasks/add-sign",
+        todoTasks: "/api/platform/tasks/todo",
+        completedTasks: "/api/platform/tasks/completed",
+        activeTasks: function (instanceId) {
+            return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/active-tasks";
+        },
+        historyTasks: function (instanceId) {
+            return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/history-tasks";
+        },
+        comments: function (instanceId) {
+            return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/comments";
+        },
+        attachments: "/api/platform/attachments",
+        attachmentTemplates: "/api/platform/attachment-templates"
+    };
 
-    var createApp = window.Vue.createApp;
-
-    var FLOW_CONSOLE_SECTIONS = [
-        { key: "home", title: "控制台首页", caption: "数据统计与快捷入口" },
-        { key: "definitions", title: "流程定义", caption: "定义列表、新建定义、模型设计" },
-        { key: "instances", title: "流程实例", caption: "启动、详情、终止、删除" },
-        { key: "tasks", title: "任务中心", caption: "待办、已办、活动与历史任务" },
-        { key: "tracking", title: "流程追踪", caption: "轨迹、意见、回调事件" },
-        { key: "debug", title: "接口调试", caption: "请求参数与响应 JSON" },
-        { key: "logs", title: "操作日志", caption: "错误码和执行日志" }
+    var FLOW_TEST_USERS = [
+        {userId: "u_sales_01", userName: "业务员", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
+        {userId: "u_group_leader_01", userName: "组长", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
+        {userId: "u_dept_manager_01", userName: "部门经理1", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
+        {userId: "u_dept_manager_02", userName: "部门经理2", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
+        {userId: "u_finance_01", userName: "财务1", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
+        {userId: "u_finance_02", userName: "财务2", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
+        {userId: "u_ceo_01", userName: "CEO", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
+        {userId: "u_admin_01", userName: "测试管理员", role: "TEST_ADMIN", deptId: "mock-dept", deptName: "Mock Department"}
     ];
 
-    var BANK_RECEIPT_TEMPLATE = {
-        attachmentTemplateId: "template-bank-receipt",
-        attachmentCode: "bankReceipt",
-        attachmentName: "银行回单",
-        nodeCode: "APPLY",
-        required: true,
-        minCount: 1,
-        maxCount: 1,
-        applicableNodeCodes: ["APPLY"],
-        allowedTypes: ["pdf", "jpg", "png"],
-        maxSizeMb: 10
-    };
+    var DEFAULT_TEMPLATE_LIBRARY = [
+        {
+            attachmentTemplateId: "tpl_bank_receipt_v1",
+            attachmentCode: "bankReceipt",
+            templateVersion: 1,
+            attachmentName: "银行回单",
+            allowedExtensions: ["pdf", "jpg", "png"],
+            maxSizeBytes: 10485760
+        },
+        {
+            attachmentTemplateId: "tpl_invoice_v1",
+            attachmentCode: "invoice",
+            templateVersion: 1,
+            attachmentName: "发票",
+            allowedExtensions: ["pdf", "jpg", "png"],
+            maxSizeBytes: 10485760
+        }
+    ];
 
-    var DEFAULT_ATTACHMENT_META = {
-        attachmentCode: "bankReceipt",
-        fileName: "bank-receipt.pdf",
-        contentType: "application/pdf",
-        fileSize: 22,
-        storageKey: "flow-test/bank-receipt.pdf",
-        contentBase64: "Zmxvdy1taW5kLXRlc3QtcmVjZWlwdA=="
-    };
+    var idSeed = 1;
 
-    function clone(value) {
-        return JSON.parse(JSON.stringify(value || {}));
+    function nextLocalId(prefix) {
+        idSeed += 1;
+        return prefix + "_" + Date.now() + "_" + idSeed;
     }
 
     function hasText(value) {
-        return value !== undefined && value !== null && String(value).trim() !== "";
+        return value !== null && value !== undefined && String(value).trim() !== "";
     }
 
-    function splitCsv(value) {
-        return String(value || "").split(",").map(function (item) {
-            return item.trim();
-        }).filter(Boolean);
+    function clone(value) {
+        return JSON.parse(JSON.stringify(value));
     }
 
-    function jsonText(value) {
-        return JSON.stringify(value || {}, null, 2);
-    }
-
-    function nowTime() {
-        return new Date().toLocaleTimeString();
-    }
-
-    function node(code, name, type, x, y, approverRuleType, approverRuleConfig, sortOrder) {
-        return {
-            nodeCode: code,
-            nodeName: name,
-            nodeType: type,
-            approverRuleType: approverRuleType || null,
-            approverRuleConfig: approverRuleConfig || null,
-            multiInstanceMode: type === "USER_TASK" ? "SINGLE" : null,
-            positionX: x,
-            positionY: y,
-            sortOrder: sortOrder
-        };
-    }
-
-    function edge(code, source, target, sortOrder) {
-        return {
-            edgeCode: code,
-            sourceNodeCode: source,
-            targetNodeCode: target,
-            conditionExpression: null,
-            defaultEdge: false,
-            sortOrder: sortOrder
-        };
-    }
-
-    function formField(code, name, type, required, sortOrder) {
-        return {
-            fieldCode: code,
-            fieldName: name,
-            fieldType: type,
-            controlType: type === "NUMBER" ? "number" : "input",
-            required: required,
-            validationRule: null,
-            defaultValue: null,
-            sortOrder: sortOrder
-        };
-    }
-
-    function buildDepositTemplateDraft(base) {
-        var source = base || {};
-        return {
-            processCode: source.processCode || "deposit_apply_demo",
-            processName: source.processName || "入金申请测试流程",
-            systemCode: source.systemCode || "flow-test-page",
-            instanceTitleTemplate: source.instanceTitleTemplate || "${starterName}提交的测试申请",
-            remark: source.remark || "M0-M3 流程操作测试模板",
-            nodes: [
-                node("START", "开始节点", "START", 80, 120, null, null, 1),
-                node("APPLY", "申请节点", "USER_TASK", 260, 120, "STARTER", "{}", 2),
-                node("MANAGER_APPROVE", "部门经理审批", "USER_TASK", 460, 120, "USER", JSON.stringify({ userIds: ["user_manager"] }), 3),
-                node("FINANCE_CONFIRM", "财务确认", "USER_TASK", 680, 120, "USER", JSON.stringify({ userIds: ["user_finance"] }), 4),
-                node("END", "结束节点", "END", 880, 120, null, null, 5)
-            ],
-            edges: [
-                edge("E_START_APPLY", "START", "APPLY", 1),
-                edge("E_APPLY_MANAGER", "APPLY", "MANAGER_APPROVE", 2),
-                edge("E_MANAGER_FINANCE", "MANAGER_APPROVE", "FINANCE_CONFIRM", 3),
-                edge("E_FINANCE_END", "FINANCE_CONFIRM", "END", 4)
-            ],
-            formFields: [
-                formField("applicantName", "申请人姓名", "STRING", true, 1),
-                formField("amount", "入金金额", "NUMBER", true, 2),
-                formField("accountNo", "入金账号", "STRING", true, 3)
-            ],
-            attachmentConfigs: [clone(BANK_RECEIPT_TEMPLATE)]
-        };
-    }
-
-    function validateBankReceiptAttachment(meta) {
-        var issues = [];
-        var item = meta || {};
-        var fileName = String(item.fileName || "");
-        var contentType = String(item.contentType || "");
-        var size = Number(item.sizeBytes || item.fileSize || 0);
-        var content = String(item.content || item.contentBase64 || "");
-        var extension = fileName.indexOf(".") >= 0 ? fileName.split(".").pop().toLowerCase() : "";
-        var contentTypeOk = contentType === "application/pdf" || contentType === "image/jpeg" || contentType === "image/png";
-        var extensionOk = BANK_RECEIPT_TEMPLATE.allowedTypes.indexOf(extension) >= 0;
-        if (!hasText(fileName)) {
-            issues.push("银行回单为必填附件");
+    function asArray(value) {
+        if (Array.isArray(value)) {
+            return value;
         }
-        if (!contentTypeOk && !extensionOk) {
-            issues.push("银行回单格式必须为 pdf/jpg/png");
+        if (!hasText(value)) {
+            return [];
         }
-        if (size <= 0) {
-            issues.push("银行回单大小必须大于 0");
+        if (typeof value === "string") {
+            try {
+                var parsed = JSON.parse(value);
+                return Array.isArray(parsed) ? parsed : [value];
+            } catch (ignore) {
+                return value.split(",").map(function (item) {
+                    return item.trim();
+                }).filter(hasText);
+            }
         }
-        if (!hasText(content)) {
-            issues.push("银行回单 Base64 内容不能为空");
-        } else if (base64Size(content) !== size) {
-            issues.push("银行回单 Base64 解码字节数必须等于文件字节数");
-        }
-        if (size > BANK_RECEIPT_TEMPLATE.maxSizeMb * 1024 * 1024) {
-            issues.push("银行回单大小不能超过 10MB");
-        }
-        return issues;
-    }
-
-    function base64Size(value) {
-        try {
-            return window.atob(String(value || "")).length;
-        } catch (error) {
-            return -1;
-        }
-    }
-
-    function deleteInstanceChecks(context, rows) {
-        var activeCount = (rows && rows.activeTasks ? rows.activeTasks.length : 0);
-        var historyCount = (rows && rows.historyTasks ? rows.historyTasks.length : 0);
-        var commentCount = (rows && rows.comments ? rows.comments.length : 0);
-        return [
-            "instanceId: " + (context.instanceId || "-"),
-            "将观察活动任务清理数量: " + activeCount,
-            "将观察历史任务清理数量: " + historyCount,
-            "将观察审批意见清理数量: " + commentCount,
-            "审计日志和回调日志默认保留"
-        ];
+        return [value];
     }
 
     function normalizeList(payload) {
-        if (!payload) {
-            return [];
-        }
         if (Array.isArray(payload)) {
             return payload;
         }
-        if (Array.isArray(payload.items)) {
-            return payload.items;
+        if (!payload) {
+            return [];
         }
         if (Array.isArray(payload.records)) {
             return payload.records;
@@ -200,1628 +123,1228 @@
         if (Array.isArray(payload.content)) {
             return payload.content;
         }
-        if (Array.isArray(payload.data)) {
-            return payload.data;
-        }
         if (payload.data) {
             return normalizeList(payload.data);
         }
-        return [payload];
+        return [];
     }
 
-    createApp({
-        components: {
-            DataTable: {
-                props: ["title", "rows", "columns"],
-                emits: ["row-select"],
-                template: [
-                    '<section class="surface">',
-                    '<div class="section-heading inline"><h2>{{ title }}</h2><p>{{ rows ? rows.length : 0 }} 条</p></div>',
-                    '<div class="table-host">',
-                    '<div v-if="!rows || !rows.length" class="message-box">暂无数据</div>',
-                    '<table v-else>',
-                    '<thead><tr><th v-for="column in columns" :key="column.key">{{ column.label }}</th></tr></thead>',
-                    '<tbody><tr v-for="(row, index) in rows" :key="index" class="clickable" @click="$emit(\'row-select\', row)">',
-                    '<td v-for="column in columns" :key="column.key">{{ format(row[column.key]) }}</td>',
-                    '</tr></tbody>',
-                    '</table>',
-                    '</div>',
-                    '</section>'
-                ].join(""),
-                methods: {
-                    format: function (value) {
-                        if (value === undefined || value === null || value === "") {
-                            return "-";
-                        }
-                        if (typeof value === "object") {
-                            return JSON.stringify(value);
-                        }
-                        return String(value);
-                    }
+    function toQuery(params) {
+        var search = new URLSearchParams();
+        Object.keys(params || {}).forEach(function (key) {
+            var value = params[key];
+            if (Array.isArray(value)) {
+                if (value.length > 0) {
+                    search.set(key, value.join(","));
                 }
-            },
-            JsonPanel: {
-                props: ["title", "value"],
-                template: '<section class="surface"><h2>{{ title }}</h2><pre>{{ format(value) }}</pre></section>',
-                methods: {
-                    format: function (value) {
-                        return JSON.stringify(value || {}, null, 2);
-                    }
-                }
+            } else if (hasText(value)) {
+                search.set(key, value);
             }
-        },
+        });
+        var text = search.toString();
+        return text ? "?" + text : "";
+    }
+
+    function parseJsonObject(text, fallback) {
+        if (!hasText(text)) {
+            return fallback || {};
+        }
+        try {
+            var value = JSON.parse(text);
+            return value && typeof value === "object" && !Array.isArray(value) ? value : (fallback || {});
+        } catch (error) {
+            throw new Error("JSON 格式不正确：" + error.message);
+        }
+    }
+
+    function stringifyRule(value) {
+        if (!value) {
+            return "{}";
+        }
+        if (typeof value === "string") {
+            return hasText(value) ? value : "{}";
+        }
+        return JSON.stringify(value);
+    }
+
+    function extractDefinitionId(row) {
+        return row && (row.definitionId || row.id);
+    }
+
+    function extractInstanceId(row) {
+        return row && (row.instanceId || row.id);
+    }
+
+    function extractTaskId(row) {
+        return row && (row.taskId || row.id);
+    }
+
+    function extractTaskVersion(row) {
+        return row && (row.taskVersion || row.expectedTaskVersion || row.lockVersion || 0);
+    }
+
+    function nowText() {
+        return new Date().toLocaleString("zh-CN", {hour12: false});
+    }
+
+    function defaultDefinitionDraft() {
+        return {
+            definitionId: "",
+            processCode: "entry_application_" + Date.now(),
+            processName: "入金申请测试流程",
+            systemCode: "newoa-demo",
+            remark: "",
+            nodes: [
+                buildNode("start", "开始", "START", 80, 160, 1),
+                buildNode("apply", "申请", "USER_TASK", 260, 160, 2, "STARTER", [], "SINGLE"),
+                buildNode("end", "结束", "END", 520, 160, 3)
+            ],
+            edges: [
+                buildEdge("edge_start_apply", "start", "apply", 1),
+                buildEdge("edge_apply_end", "apply", "end", 2)
+            ],
+            formFields: [
+                {
+                    localId: nextLocalId("field"),
+                    fieldCode: "amount",
+                    fieldName: "金额",
+                    fieldType: "number",
+                    controlType: "number",
+                    required: true
+                }
+            ],
+            attachmentConfigs: []
+        };
+    }
+
+    function buildNode(nodeCode, nodeName, nodeType, x, y, sortOrder, ruleType, selectedApproverIds, mode) {
+        return {
+            localId: nextLocalId("node"),
+            nodeCode: nodeCode,
+            nodeName: nodeName,
+            nodeType: nodeType,
+            pairedGatewayCode: "",
+            approverRuleType: ruleType || (nodeType === "USER_TASK" ? "USER" : ""),
+            approverRuleConfig: stringifyRule(ruleType === "STARTER" ? {} : {userIds: selectedApproverIds || []}),
+            selectedApproverIds: selectedApproverIds || [],
+            multiInstanceMode: mode || "SINGLE",
+            positionX: x,
+            positionY: y,
+            sortOrder: sortOrder
+        };
+    }
+
+    function buildEdge(edgeCode, sourceNodeCode, targetNodeCode, sortOrder) {
+        return {
+            localId: nextLocalId("edge"),
+            edgeCode: edgeCode,
+            sourceNodeCode: sourceNodeCode,
+            targetNodeCode: targetNodeCode,
+            conditionExpression: "",
+            defaultEdge: false,
+            sortOrder: sortOrder
+        };
+    }
+
+    function normalizeNode(node, index) {
+        var ruleConfig = node.approverRuleConfig;
+        var approverIds = [];
+        if (typeof ruleConfig === "string") {
+            try {
+                approverIds = asArray(JSON.parse(ruleConfig).userIds);
+            } catch (ignore) {
+                approverIds = [];
+            }
+        } else if (ruleConfig) {
+            approverIds = asArray(ruleConfig.userIds);
+        }
+        return Object.assign(buildNode(
+            node.nodeCode || ("node_" + index),
+            node.nodeName || ("节点" + (index + 1)),
+            node.nodeType || "USER_TASK",
+            Number(node.positionX || node.x || 120 + index * 180),
+            Number(node.positionY || node.y || 160),
+            node.sortOrder || index + 1,
+            node.approverRuleType || (node.nodeType === "USER_TASK" ? "USER" : ""),
+            approverIds,
+            node.multiInstanceMode || "SINGLE"
+        ), node, {
+            localId: node.localId || nextLocalId("node"),
+            selectedApproverIds: approverIds,
+            approverRuleConfig: stringifyRule(ruleConfig)
+        });
+    }
+
+    function normalizeEdge(edge, index) {
+        return Object.assign(buildEdge(
+            edge.edgeCode || ("edge_" + (index + 1)),
+            edge.sourceNodeCode,
+            edge.targetNodeCode,
+            edge.sortOrder || index + 1
+        ), edge, {localId: edge.localId || nextLocalId("edge")});
+    }
+
+    function normalizeAttachmentConfig(config, index) {
+        var template = findTemplate(config.attachmentTemplateId);
+        return Object.assign({
+            localId: config.localId || nextLocalId("attach"),
+            sourceType: hasText(config.sourceType) ? config.sourceType : "existing",
+            attachmentConfigId: config.attachmentConfigId || "",
+            attachmentTemplateId: config.attachmentTemplateId || "",
+            attachmentCode: config.attachmentCode || (template && template.attachmentCode) || "",
+            attachmentName: config.attachmentName || (template && template.attachmentName) || "",
+            allowedExtensionsText: asArray(config.allowedExtensions || (template && template.allowedExtensions)).join(","),
+            maxSizeBytes: config.maxSizeBytes || (template && template.maxSizeBytes) || 10485760,
+            required: Boolean(config.required),
+            minCount: config.minCount === undefined ? 0 : config.minCount,
+            maxCount: config.maxCount === undefined ? 1 : config.maxCount,
+            applicableNodeCodes: asArray(config.applicableNodeCodes),
+            sortOrder: config.sortOrder || index + 1,
+            pendingTemplatePersist: Boolean(config.pendingTemplatePersist)
+        }, config);
+    }
+
+    function findTemplate(attachmentTemplateId) {
+        return DEFAULT_TEMPLATE_LIBRARY.find(function (template) {
+            return template.attachmentTemplateId === attachmentTemplateId;
+        });
+    }
+
+    function responseSummary(payload) {
+        if (!payload) {
+            return "无响应体";
+        }
+        if (payload.errorCode || payload.message) {
+            return [payload.errorCode, payload.message].filter(hasText).join(" ");
+        }
+        return JSON.stringify(payload).slice(0, 220);
+    }
+
+    var app = Vue.createApp({
         data: function () {
             return {
-                sections: FLOW_CONSOLE_SECTIONS,
-                activeSection: "home",
-                environmentName: "本地",
-                baseUrl: "/api/platform",
-                currentUserId: "user_sales",
-                systemCode: "flow-test-page",
-                operationMode: "auto",
-                manualOperationId: "",
-                lastOperationId: "",
-                connectionStatus: "未检测",
-                showDefinitionDialog: false,
-                showRawDefinition: false,
-                selectedNodeIndex: 0,
-                selectedEdgeIndex: 0,
-                definitionConfigTab: "fields",
-                connectionMode: false,
-                pendingEdgeSourceNodeCode: "",
-                nodeDrag: {
-                    active: false,
-                    nodeCode: "",
-                    offsetX: 0,
-                    offsetY: 0
+                API_PATHS: API_PATHS,
+                users: FLOW_TEST_USERS,
+                apiBaseUrl: "",
+                activeView: "definitions",
+                currentUserId: "u_admin_01",
+                currentRole: "TEST_ADMIN",
+                operationState: {
+                    status: "idle",
+                    label: "准备就绪",
+                    message: "请选择功能开始测试"
                 },
-                selectedApi: null,
-                taskTab: "todo",
-                definitionDraft: buildDepositTemplateDraft(),
-                nodeForm: {},
-                edgeForm: {},
-                formFieldsJson: "[]",
-                attachmentConfigsJson: "[]",
-                draftIssues: [],
-                draftValidationText: "尚未校验",
+                operationLogs: [],
                 definitionFilters: {
                     processCode: "",
                     processName: "",
+                    systemCode: "newoa-demo",
                     definitionStatus: "",
-                    activationStatus: "",
-                    version: "",
-                    creatorUserId: ""
+                    activationStatus: ""
                 },
-                instanceFilters: {
-                    instanceStatus: ""
-                },
-                taskFilters: {
-                    taskId: "",
-                    instanceId: "",
-                    processCode: "",
-                    nodeCode: "",
-                    instanceTitle: "",
-                    todoSource: ""
-                },
-                context: {
-                    definitionId: "",
-                    instanceId: "",
-                    instanceStatus: ""
-                },
-                instanceForm: {
-                    instanceTitle: "入金申请 TEST-BIZ-001",
-                    starterUserId: "user_sales",
-                    starterDeptId: "dept_sales",
-                    applicantName: "测试业务员",
-                    amount: 100000,
-                    accountNo: "TEST-ACCOUNT-001"
-                },
-                instanceAttachmentForm: {
-                    enabled: true,
-                    attachmentCode: DEFAULT_ATTACHMENT_META.attachmentCode,
-                    fileName: "bank-receipt.pdf",
-                    contentType: "application/pdf",
-                    fileSize: 22,
-                    storageKey: "flow-test/bank-receipt.pdf",
-                    contentBase64: DEFAULT_ATTACHMENT_META.contentBase64
-                },
-                taskForm: {
-                    taskId: "",
-                    taskVersion: null,
-                    comment: "同意"
-                },
-                selectedTaskVariables: {},
-                selectedTaskAttachments: [],
                 definitionRows: [],
+                selectedDefinitionId: "",
+                selectedDefinitionDetail: null,
+                selectedReadonlyNodeCode: "",
+                definitionDialog: {
+                    open: false,
+                    mode: "create",
+                    tab: "basic",
+                    connectionMode: false
+                },
+                definitionDraft: defaultDefinitionDraft(),
+                selectedDesigner: {
+                    type: "",
+                    code: ""
+                },
+                connectionClickQueue: [],
+                dragState: null,
+                attachmentTemplateLibrary: clone(DEFAULT_TEMPLATE_LIBRARY),
+                instanceForm: {
+                    definitionId: "",
+                    processCode: "",
+                    businessKey: "",
+                    instanceTitle: "入金申请测试实例",
+                    starterDeptId: "mock-dept"
+                },
+                instanceVariablesText: "{\n  \"amount\": 10000\n}",
+                instanceAttachments: [],
                 instanceRows: [],
-                activeTasks: [],
-                todoTasks: [],
-                completedTasks: [],
-                startedInstances: [],
-                historyTasks: [],
-                comments: [],
-                callbackLogs: [],
-                operationLogs: [],
-                operationLogRows: [],
-                toasts: [],
-                lastRequest: null,
-                lastResponse: {},
-                errorMessage: "",
-                confirmDialog: {
-                    show: false,
-                    title: "",
-                    message: "",
-                    reason: "",
-                    checks: [],
-                    action: null
+                selectedInstanceDetail: null,
+                todoRows: [],
+                completedRows: [],
+                taskDialog: {
+                    open: false,
+                    task: {},
+                    variablesText: "{}",
+                    comment: "",
+                    attachments: [],
+                    rejectTargetNodeCode: "",
+                    transferUserId: "",
+                    addSignUserIds: []
                 },
-                debugRequest: {
-                    method: "GET",
-                    path: "/definitions",
-                    bodyText: "{}"
-                },
-                definitionColumns: [
-                    { key: "definitionId", label: "定义 ID" },
-                    { key: "processCode", label: "流程编码" },
-                    { key: "processName", label: "流程名称" },
-                    { key: "version", label: "版本" },
-                    { key: "definitionStatus", label: "定义状态" },
-                    { key: "activationStatus", label: "激活状态" },
-                    { key: "updatedAt", label: "更新时间" }
-                ],
-                instanceColumns: [
-                    { key: "instanceId", label: "实例 ID" },
-                    { key: "processCode", label: "流程编码" },
-                    { key: "instanceTitle", label: "标题" },
-                    { key: "starterUserId", label: "发起人" },
-                    { key: "instanceStatus", label: "状态" },
-                    { key: "startedAt", label: "启动时间" }
-                ],
-                taskColumns: [
-                    { key: "taskId", label: "任务 ID" },
-                    { key: "instanceId", label: "实例 ID" },
-                    { key: "processCode", label: "流程编码" },
-                    { key: "nodeCode", label: "节点编码" },
-                    { key: "nodeName", label: "节点名称" },
-                    { key: "assigneeUserId", label: "审批人" },
-                    { key: "todoSource", label: "待办来源" },
-                    { key: "taskVersion", label: "任务版本" },
-                    { key: "taskStatus", label: "状态" }
-                ],
-                historyColumns: [
-                    { key: "taskId", label: "任务 ID" },
-                    { key: "instanceId", label: "实例 ID" },
-                    { key: "nodeCode", label: "节点编码" },
-                    { key: "nodeName", label: "节点名称" },
-                    { key: "operatorUserId", label: "办理人" },
-                    { key: "actionType", label: "动作类型" },
-                    { key: "comment", label: "审批意见" },
-                    { key: "completedAt", label: "完成时间" },
-                    { key: "operationId", label: "operationId" }
-                ],
-                commentColumns: [
-                    { key: "taskId", label: "任务 ID" },
-                    { key: "nodeCode", label: "节点编码" },
-                    { key: "nodeName", label: "节点名称" },
-                    { key: "operatorUserId", label: "办理人" },
-                    { key: "actionType", label: "动作类型" },
-                    { key: "comment", label: "审批意见" },
-                    { key: "operationId", label: "operationId" }
-                ],
-                operationColumns: [
-                    { key: "time", label: "时间" },
-                    { key: "label", label: "操作类型" },
-                    { key: "method", label: "方法" },
-                    { key: "path", label: "地址" },
-                    { key: "operationId", label: "operationId" },
-                    { key: "status", label: "状态" },
-                    { key: "durationMs", label: "耗时" }
-                ],
-                callbackColumns: [
-                    { key: "eventType", label: "事件类型" },
-                    { key: "operationId", label: "operationId" },
-                    { key: "eventId", label: "eventId" },
-                    { key: "instanceId", label: "实例 ID" },
-                    { key: "status", label: "状态" },
-                    { key: "createdAt", label: "创建时间" }
-                ],
-                apiCatalog: [
-                    { name: "查询定义", method: "GET", path: "/definitions", body: null },
-                    { name: "创建定义", method: "POST", path: "/definitions", body: { processCode: "deposit_apply_demo", processName: "入金申请测试流程", systemCode: "flow-test-page" } },
-                    { name: "保存流程图", method: "PUT", path: "/definitions/{definitionId}/graph", body: {} },
-                    { name: "发布前校验", method: "GET", path: "/definitions/{definitionId}/publish-validation", body: null },
-                    { name: "发布定义", method: "POST", path: "/definitions/publish", body: { definitionId: "{definitionId}" } },
-                    { name: "激活定义", method: "POST", path: "/definitions/activate", body: { definitionId: "{definitionId}" } },
-                    { name: "停用定义", method: "POST", path: "/definitions/deactivate", body: { definitionId: "{definitionId}" } },
-                    { name: "归档定义", method: "POST", path: "/definitions/archive", body: { definitionId: "{definitionId}" } },
-                    { name: "删除定义", method: "DELETE", path: "/definitions", body: { definitionId: "{definitionId}" } },
-                    { name: "启动实例", method: "POST", path: "/runtime/instances/start", body: {} },
-                    { name: "启动并提交", method: "POST", path: "/runtime/instances/start-submit", body: {} },
-                    { name: "审批通过", method: "POST", path: "/runtime/tasks/approve", body: { taskId: "{taskId}" } },
-                    { name: "更新变量", method: "PUT", path: "/runtime/instances/variables", body: { instanceId: "{instanceId}", variables: {} } },
-                    { name: "终止实例", method: "POST", path: "/runtime/instances/terminate", body: { instanceId: "{instanceId}" } },
-                    { name: "删除实例", method: "DELETE", path: "/runtime/instances", body: { instanceId: "{instanceId}" } },
-                    { name: "实例详情", method: "GET", path: "/runtime/instances/{instanceId}", body: null },
-                    { name: "待办查询", method: "GET", path: "/tasks/todo", body: null },
-                    { name: "已办查询", method: "GET", path: "/tasks/completed", body: null },
-                    { name: "我发起查询", method: "GET", path: "/instances/started", body: null },
-                    { name: "回调日志", method: "GET", path: "/callbacks/logs", body: null }
-                ]
+                completedDialog: {
+                    open: false,
+                    task: {},
+                    attachments: [],
+                    currentNodeCodes: []
+                }
             };
         },
         computed: {
-            connectionStatusClass: function () {
-                if (this.connectionStatus === "连接正常") {
-                    return "ok";
+            canManageDefinitions: function () {
+                return this.currentRole === "TEST_ADMIN" || this.currentRole === "DEFINITION_ADMIN";
+            },
+            selectedGraphNodes: function () {
+                var detail = this.selectedDefinitionDetail || {};
+                return (detail.nodes || []).map(normalizeNode);
+            },
+            selectedGraphEdges: function () {
+                var detail = this.selectedDefinitionDetail || {};
+                return (detail.edges || []).map(normalizeEdge);
+            },
+            selectedAttachmentConfigs: function () {
+                return this.normalizeAttachmentConfigsFromDetail(this.selectedDefinitionDetail);
+            },
+            selectedNode: function () {
+                if (this.selectedDesigner.type !== "node") {
+                    return null;
                 }
-                if (this.connectionStatus === "连接失败") {
-                    return "fail";
+                return this.definitionDraft.nodes.find(function (node) {
+                    return node.nodeCode === this.selectedDesigner.code;
+                }, this) || null;
+            },
+            selectedEdge: function () {
+                if (this.selectedDesigner.type !== "edge") {
+                    return null;
                 }
-                return "";
+                return this.definitionDraft.edges.find(function (edge) {
+                    return edge.edgeCode === this.selectedDesigner.code;
+                }, this) || null;
             },
-            orderedNodes: function () {
-                return clone(this.definitionDraft.nodes).sort(function (a, b) {
-                    return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+            userTaskNodes: function () {
+                return this.definitionDraft.nodes.filter(this.isUserTaskNode);
+            },
+            runnableDefinitions: function () {
+                return this.definitionRows.filter(function (row) {
+                    return row.activationStatus === "ACTIVE" || row.definitionStatus === "PUBLISHED";
                 });
             },
-            canvasWidth: function () {
-                var maxX = 0;
-                this.definitionDraft.nodes.forEach(function (item) {
-                    maxX = Math.max(maxX, Number(item.positionX || 0));
-                });
-                return Math.max(1000, maxX + 260);
-            },
-            canvasHeight: function () {
-                var maxY = 0;
-                this.definitionDraft.nodes.forEach(function (item) {
-                    maxY = Math.max(maxY, Number(item.positionY || 0));
-                });
-                return Math.max(420, maxY + 180);
-            },
-            canvasEdges: function () {
-                var self = this;
-                return this.definitionDraft.edges.map(function (item) {
-                    var source = self.canvasNodeByCode(item.sourceNodeCode);
-                    var target = self.canvasNodeByCode(item.targetNodeCode);
-                    if (!source || !target) {
-                        return null;
-                    }
-                    return {
-                        edgeCode: item.edgeCode,
-                        x1: Number(source.positionX || 0) + 150,
-                        y1: Number(source.positionY || 0) + 41,
-                        x2: Number(target.positionX || 0),
-                        y2: Number(target.positionY || 0) + 41
-                    };
-                }).filter(function (item) {
-                    return item != null;
-                });
-            },
-            definitionCreateSteps: function () {
-                var baseDone = hasText(this.definitionDraft.processCode)
-                        && hasText(this.definitionDraft.processName)
-                        && hasText(this.definitionDraft.systemCode)
-                        && hasText(this.currentUserId);
-                var nodeDone = this.definitionDraft.nodes.length >= 3;
-                var edgeDone = this.definitionDraft.edges.length >= Math.max(0, this.definitionDraft.nodes.length - 1);
-                var configDone = (this.definitionDraft.formFields || []).length > 0
-                        && (this.definitionDraft.attachmentConfigs || []).length > 0;
-                var validationDone = this.draftValidationText === "本地配置校验通过" && !this.draftIssues.length;
-                var rows = [
-                    { index: 1, label: "基础信息", detail: this.definitionDraft.processCode || "未填写流程编码", done: baseDone },
-                    { index: 2, label: "可视化模型", detail: this.definitionDraft.nodes.length + " 个节点", done: nodeDone },
-                    { index: 3, label: "连线配置", detail: this.definitionDraft.edges.length + " 条连线", done: edgeDone },
-                    { index: 4, label: "扩展配置", detail: (this.definitionDraft.formFields || []).length + " 个字段，" + (this.definitionDraft.attachmentConfigs || []).length + " 个附件模板", done: configDone },
-                    { index: 5, label: "校验保存", detail: validationDone ? "可创建并保存" : "等待本地校验", done: validationDone }
-                ];
-                var activeMarked = false;
-                rows.forEach(function (item) {
-                    item.active = !activeMarked && !item.done;
-                    activeMarked = activeMarked || item.active;
-                });
-                if (!activeMarked && rows.length) {
-                    rows[rows.length - 1].active = true;
+            instanceDefinitionAttachments: function () {
+                var row = this.definitionRows.find(function (definition) {
+                    return extractDefinitionId(definition) === this.instanceForm.definitionId;
+                }, this);
+                if (row && Array.isArray(row.attachmentConfigs)) {
+                    return row.attachmentConfigs;
                 }
-                return rows;
-            },
-            selectedTaskId: function () {
-                return this.taskForm.taskId || (this.activeTasks[0] && this.activeTasks[0].taskId) || "";
-            },
-            selectedTaskVersionText: function () {
-                var version = this.taskForm.taskVersion;
-                if (version === null || version === undefined || version === "") {
-                    version = this.activeTasks[0] && this.activeTasks[0].taskVersion;
-                }
-                return version === null || version === undefined || version === "" ? "-" : String(version);
-            },
-            selectedTaskFieldRows: function () {
-                var self = this;
-                var fields = this.definitionDraft.formFields && this.definitionDraft.formFields.length
-                        ? this.definitionDraft.formFields
-                        : DEPOSIT_TEMPLATE.formFields;
-                var variables = this.selectedTaskVariables || {};
-                return fields.map(function (field) {
-                    var code = field.fieldCode || field.code || field.name || "";
-                    return {
-                        code: code,
-                        label: field.fieldName || field.label || code,
-                        value: self.formatFieldValue(variables[code])
-                    };
-                });
-            },
-            selectedTaskAttachmentRows: function () {
-                var self = this;
-                return (this.selectedTaskAttachments || []).map(function (attachment) {
-                    return {
-                        attachmentId: attachment.attachmentId || attachment.id || attachment.storageKey || attachment.fileName,
-                        attachmentCode: attachment.attachmentCode || "-",
-                        fileName: attachment.fileName || "-",
-                        contentType: attachment.contentType || "-",
-                        sizeText: self.formatAttachmentSize(attachment.sizeBytes),
-                        uploadedBy: attachment.uploadedBy || "-"
-                    };
-                });
-            },
-            dashboardStats: function () {
-                return [
-                    { label: "流程定义总数", value: this.definitionRows.length },
-                    { label: "已发布定义数", value: this.countRows(this.definitionRows, "definitionStatus", "PUBLISHED") },
-                    { label: "已激活定义数", value: this.countRows(this.definitionRows, "activationStatus", "ACTIVE") },
-                    { label: "运行中实例数", value: this.countRows(this.instanceRows, "instanceStatus", "RUNNING") },
-                    { label: "当前待办任务数", value: this.todoTasks.length },
-                    { label: "今日异常操作数", value: this.operationLogs.filter(function (item) { return !item.success; }).length }
-                ];
-            },
-            coverageItems: function () {
-                return [
-                    { title: "M0 契约", detail: "operationId、expectedTaskVersion、错误码、回调 eventId" },
-                    { title: "M1 定义", detail: "CRUD、复制、节点、连线、表单字段、附件模板" },
-                    { title: "M2 运行", detail: "启动、申请节点、审批通过、历史归档、流程轨迹" },
-                    { title: "M3 查询", detail: "待办、已办、我发起、活动任务、终止和删除实例" }
-                ];
-            },
-            timelineRows: function () {
-                var rows = [];
-                var self = this;
-                this.historyTasks.forEach(function (item, index) {
-                    rows.push({
-                        id: "history-" + index,
-                        time: item.completedAt || item.createdAt || "-",
-                        title: (item.nodeName || item.nodeCode || "历史任务") + " " + (item.actionType || ""),
-                        detail: "办理人 " + (item.operatorUserId || item.assigneeUserId || "-") + "；operationId " + (item.operationId || "-")
-                    });
-                });
-                this.activeTasks.forEach(function (item, index) {
-                    rows.push({
-                        id: "active-" + index,
-                        time: item.createdAt || "-",
-                        title: (item.nodeName || item.nodeCode || "活动任务") + " 待处理",
-                        detail: "审批人 " + (item.assigneeUserId || "-") + "；任务版本 " + (item.taskVersion == null ? "-" : item.taskVersion)
-                    });
-                });
-                if (!rows.length && self.context.instanceId) {
-                    rows.push({ id: "instance", time: "-", title: "实例已选择", detail: self.context.instanceId });
-                }
-                return rows;
-            },
-            lastRequestPreview: function () {
-                if (!this.lastRequest) {
-                    return {};
-                }
-                return {
-                    method: this.lastRequest.method,
-                    path: this.lastRequest.path,
-                    body: this.lastRequest.body || null
-                };
+                return this.selectedAttachmentConfigs;
             }
         },
         mounted: function () {
-            this.loadDraftForms();
+            this.applyCurrentUser();
+            this.queryAttachmentTemplates().catch(function () {});
+            this.addAttachmentConfig();
+            this.addInstanceAttachment();
+            this.queryDefinitions().catch(function () {});
         },
         methods: {
-            openDefinitionDialog: function () {
-                this.showDefinitionDialog = true;
-                this.loadDraftForms();
-            },
-            closeDefinitionDialog: function () {
-                this.showDefinitionDialog = false;
-            },
-            loadDepositTemplate: function () {
-                this.definitionDraft = buildDepositTemplateDraft(this.definitionDraft);
-                this.selectedNodeIndex = 0;
-                this.selectedEdgeIndex = 0;
-                this.loadDraftForms();
-                this.showToast("已载入入金申请模板");
-            },
-            clearDefinitionDraft: function () {
-                this.definitionDraft = {
-                    processCode: this.definitionDraft.processCode || "custom_process",
-                    processName: this.definitionDraft.processName || "自定义流程",
-                    systemCode: this.systemCode,
-                    instanceTitleTemplate: "${starterName}提交的测试申请",
-                    remark: "",
-                    nodes: [],
-                    edges: [],
-                    formFields: [],
-                    attachmentConfigs: []
-                };
-                this.loadDraftForms();
-            },
-            loadDraftForms: function () {
-                this.formFieldsJson = jsonText(this.definitionDraft.formFields || []);
-                this.attachmentConfigsJson = jsonText(this.definitionDraft.attachmentConfigs || []);
-                this.selectNode(Math.min(this.selectedNodeIndex, Math.max(this.definitionDraft.nodes.length - 1, 0)));
-                this.selectEdge(Math.min(this.selectedEdgeIndex, Math.max(this.definitionDraft.edges.length - 1, 0)));
-            },
-            selectNode: function (index) {
-                this.selectedNodeIndex = index;
-                var item = this.definitionDraft.nodes[index] || {};
-                this.nodeForm = {
-                    nodeCode: item.nodeCode || "",
-                    nodeName: item.nodeName || "",
-                    nodeType: item.nodeType || "USER_TASK",
-                    approverRuleType: item.approverRuleType || "",
-                    approverUserIds: this.userIdsFromRuleConfig(item.approverRuleConfig),
-                    approverRuleConfig: item.approverRuleConfig || "",
-                    positionX: item.positionX == null ? 100 : item.positionX,
-                    positionY: item.positionY == null ? 100 : item.positionY,
-                    sortOrder: item.sortOrder == null ? index + 1 : item.sortOrder
-                };
-            },
-            selectNodeByCode: function (nodeCode) {
-                for (var i = 0; i < this.definitionDraft.nodes.length; i++) {
-                    if (this.definitionDraft.nodes[i].nodeCode === nodeCode) {
-                        this.selectNode(i);
-                        return;
-                    }
-                }
-            },
-            selectEdge: function (index) {
-                this.selectedEdgeIndex = index;
-                var item = this.definitionDraft.edges[index] || {};
-                this.edgeForm = {
-                    edgeCode: item.edgeCode || "",
-                    sourceNodeCode: item.sourceNodeCode || "",
-                    targetNodeCode: item.targetNodeCode || "",
-                    conditionExpression: item.conditionExpression || "",
-                    defaultEdge: Boolean(item.defaultEdge),
-                    sortOrder: item.sortOrder == null ? index + 1 : item.sortOrder
-                };
-            },
-            selectEdgeByCode: function (edgeCode) {
-                for (var i = 0; i < this.definitionDraft.edges.length; i++) {
-                    if (this.definitionDraft.edges[i].edgeCode === edgeCode) {
-                        this.selectEdge(i);
-                        return;
-                    }
-                }
-            },
-            canvasNodeByCode: function (nodeCode) {
-                for (var i = 0; i < this.definitionDraft.nodes.length; i++) {
-                    if (this.definitionDraft.nodes[i].nodeCode === nodeCode) {
-                        return this.definitionDraft.nodes[i];
-                    }
-                }
-                return null;
-            },
-            draftNodeClass: function (item) {
-                var selected = this.definitionDraft.nodes[this.selectedNodeIndex];
-                return {
-                    selected: selected && selected.nodeCode === item.nodeCode,
-                    start: item.nodeType === "START",
-                    task: item.nodeType === "USER_TASK",
-                    end: item.nodeType === "END"
-                };
-            },
-            draftNodeStyle: function (item) {
-                return {
-                    position: "absolute",
-                    left: Number(item.positionX == null ? 80 : item.positionX) + "px",
-                    top: Number(item.positionY == null ? 120 : item.positionY) + "px"
-                };
-            },
-            beginNodeDrag: function (event, nodeCode) {
-                if (this.connectionMode) {
-                    return;
-                }
-                var node = this.canvasNodeByCode(nodeCode);
-                if (!node) {
-                    return;
-                }
-                this.selectNodeByCode(nodeCode);
-                var canvas = event.currentTarget.parentElement;
-                var rect = canvas.getBoundingClientRect();
-                this.nodeDrag = {
-                    active: true,
-                    nodeCode: nodeCode,
-                    offsetX: event.clientX - rect.left + canvas.scrollLeft - Number(node.positionX || 0),
-                    offsetY: event.clientY - rect.top + canvas.scrollTop - Number(node.positionY || 0)
-                };
-            },
-            dragDraftNode: function (event) {
-                if (!this.nodeDrag.active) {
-                    return;
-                }
-                var node = this.canvasNodeByCode(this.nodeDrag.nodeCode);
-                if (!node) {
-                    return;
-                }
-                var rect = event.currentTarget.getBoundingClientRect();
-                node.positionX = Math.max(20, Math.round(event.clientX - rect.left
-                        + event.currentTarget.scrollLeft - this.nodeDrag.offsetX));
-                node.positionY = Math.max(20, Math.round(event.clientY - rect.top
-                        + event.currentTarget.scrollTop - this.nodeDrag.offsetY));
-                if (this.definitionDraft.nodes[this.selectedNodeIndex]
-                        && this.definitionDraft.nodes[this.selectedNodeIndex].nodeCode === node.nodeCode) {
-                    this.nodeForm.positionX = node.positionX;
-                    this.nodeForm.positionY = node.positionY;
-                }
-            },
-            finishNodeDrag: function () {
-                if (!this.nodeDrag.active) {
-                    return;
-                }
-                this.nodeDrag = {
-                    active: false,
-                    nodeCode: "",
-                    offsetX: 0,
-                    offsetY: 0
-                };
-                this.saveDraftGraphAfterCanvasChange("节点坐标已更新");
-            },
-            beginEdgeConnect: function () {
-                this.connectionMode = !this.connectionMode;
-                this.pendingEdgeSourceNodeCode = "";
-                this.showToast(this.connectionMode ? "请选择连线起点节点" : "已退出连线模式");
-            },
-            handleCanvasNodeClick: function (nodeCode) {
-                if (!this.connectionMode) {
-                    this.selectNodeByCode(nodeCode);
-                    return;
-                }
-                if (!hasText(this.pendingEdgeSourceNodeCode)) {
-                    this.pendingEdgeSourceNodeCode = nodeCode;
-                    this.selectNodeByCode(nodeCode);
-                    this.showToast("请选择连线终点节点");
-                    return;
-                }
-                if (this.pendingEdgeSourceNodeCode === nodeCode) {
-                    this.showToast("连线起点和终点不能相同", "warn");
-                    return;
-                }
-                this.createDraftEdgeBetween(this.pendingEdgeSourceNodeCode, nodeCode);
-                this.pendingEdgeSourceNodeCode = "";
-                this.connectionMode = false;
-                this.saveDraftGraphAfterCanvasChange("连线已创建");
-            },
-            createDraftEdgeBetween: function (sourceNodeCode, targetNodeCode) {
-                var baseCode = "E_" + sourceNodeCode + "_" + targetNodeCode;
-                var edgeCode = baseCode;
-                var suffix = 2;
-                while (this.definitionDraft.edges.some(function (item) { return item.edgeCode === edgeCode; })) {
-                    edgeCode = baseCode + "_" + suffix;
-                    suffix += 1;
-                }
-                this.definitionDraft.edges.push(edge(edgeCode, sourceNodeCode, targetNodeCode,
-                        this.definitionDraft.edges.length + 1));
-                this.selectEdge(this.definitionDraft.edges.length - 1);
-            },
-            saveDraftGraphAfterCanvasChange: function (message) {
-                if (!this.context.definitionId) {
-                    this.showToast(message + "，创建定义时提交");
-                    return Promise.resolve(false);
-                }
-                return this.saveGraph();
-            },
-            layoutDraftGraph: function () {
-                var byCode = {};
-                this.definitionDraft.nodes.forEach(function (item) {
-                    byCode[item.nodeCode] = item;
-                });
-                this.orderedNodes.forEach(function (item, index) {
-                    if (byCode[item.nodeCode]) {
-                        byCode[item.nodeCode].positionX = 80 + index * 190;
-                        byCode[item.nodeCode].positionY = 130;
-                        byCode[item.nodeCode].sortOrder = index + 1;
-                    }
-                });
-                this.selectNode(Math.min(this.selectedNodeIndex, Math.max(this.definitionDraft.nodes.length - 1, 0)));
-                this.saveDraftGraphAfterCanvasChange("自动布局已应用");
-            },
-            addDraftNode: function () {
-                var index = this.definitionDraft.nodes.length + 1;
-                this.definitionDraft.nodes.push(node("TASK_" + index, "审批节点" + index, "USER_TASK", 180 + index * 120, 120, "USER", JSON.stringify({ userIds: ["user_manager"] }), index));
-                this.selectNode(this.definitionDraft.nodes.length - 1);
-            },
-            duplicateDraftNode: function () {
-                var source = this.definitionDraft.nodes[this.selectedNodeIndex];
-                if (!source) {
-                    return;
-                }
-                var copy = clone(source);
-                copy.nodeCode = copy.nodeCode + "_COPY";
-                copy.nodeName = copy.nodeName + "复制";
-                copy.sortOrder = this.definitionDraft.nodes.length + 1;
-                this.definitionDraft.nodes.push(copy);
-                this.selectNode(this.definitionDraft.nodes.length - 1);
-            },
-            deleteDraftNode: function () {
-                var removed = this.definitionDraft.nodes.splice(this.selectedNodeIndex, 1)[0];
-                if (removed) {
-                    this.definitionDraft.edges = this.definitionDraft.edges.filter(function (item) {
-                        return item.sourceNodeCode !== removed.nodeCode && item.targetNodeCode !== removed.nodeCode;
-                    });
-                }
-                this.renumberNodes();
-                this.selectNode(Math.max(0, this.selectedNodeIndex - 1));
-            },
-            saveDraftNode: function () {
-                var type = this.nodeForm.nodeType;
-                var ruleType = type === "USER_TASK" ? this.nodeForm.approverRuleType : null;
-                var config = this.nodeForm.approverRuleConfig;
-                if (ruleType === "USER" && hasText(this.nodeForm.approverUserIds)) {
-                    config = JSON.stringify({ userIds: splitCsv(this.nodeForm.approverUserIds) });
-                }
-                if (ruleType === "STARTER") {
-                    config = config || "{}";
-                }
-                var saved = {
-                    nodeCode: this.nodeForm.nodeCode,
-                    nodeName: this.nodeForm.nodeName,
-                    nodeType: type,
-                    approverRuleType: ruleType,
-                    approverRuleConfig: config || null,
-                    multiInstanceMode: type === "USER_TASK" ? "SINGLE" : null,
-                    positionX: Number(this.nodeForm.positionX || 0),
-                    positionY: Number(this.nodeForm.positionY || 0),
-                    sortOrder: Number(this.nodeForm.sortOrder || this.selectedNodeIndex + 1)
-                };
-                if (this.definitionDraft.nodes.length) {
-                    this.definitionDraft.nodes.splice(this.selectedNodeIndex, 1, saved);
-                } else {
-                    this.definitionDraft.nodes.push(saved);
-                    this.selectedNodeIndex = 0;
-                }
-                this.showToast("节点已保存");
-            },
-            addDraftEdge: function () {
-                var index = this.definitionDraft.edges.length + 1;
-                var nodes = this.definitionDraft.nodes;
-                this.definitionDraft.edges.push(edge("E_" + index, nodes[0] ? nodes[0].nodeCode : "", nodes[1] ? nodes[1].nodeCode : "", index));
-                this.selectEdge(this.definitionDraft.edges.length - 1);
-            },
-            deleteDraftEdge: function () {
-                this.definitionDraft.edges.splice(this.selectedEdgeIndex, 1);
-                this.selectEdge(Math.max(0, this.selectedEdgeIndex - 1));
-            },
-            saveDraftEdge: function () {
-                var saved = {
-                    edgeCode: this.edgeForm.edgeCode,
-                    sourceNodeCode: this.edgeForm.sourceNodeCode,
-                    targetNodeCode: this.edgeForm.targetNodeCode,
-                    conditionExpression: this.edgeForm.conditionExpression || null,
-                    defaultEdge: Boolean(this.edgeForm.defaultEdge),
-                    sortOrder: Number(this.edgeForm.sortOrder || this.selectedEdgeIndex + 1)
-                };
-                if (this.definitionDraft.edges.length) {
-                    this.definitionDraft.edges.splice(this.selectedEdgeIndex, 1, saved);
-                } else {
-                    this.definitionDraft.edges.push(saved);
-                    this.selectedEdgeIndex = 0;
-                }
-                this.showToast("连线已保存");
-            },
-            renumberNodes: function () {
-                this.definitionDraft.nodes.forEach(function (item, index) {
-                    item.sortOrder = index + 1;
-                });
-            },
-            validateDefinitionDraftAction: function () {
-                try {
-                    this.syncDraftJson();
-                    this.draftIssues = this.validateDefinitionDraft();
-                } catch (error) {
-                    this.draftIssues = [error.message];
-                }
-                this.draftValidationText = this.draftIssues.length ? "本地配置校验未通过" : "本地配置校验通过";
-                this.showToast(this.draftValidationText, this.draftIssues.length ? "warn" : "success");
-            },
-            validateDefinitionDraft: function () {
-                var issues = [];
-                var codes = {};
-                if (!hasText(this.definitionDraft.processCode)) {
-                    issues.push("流程编码不能为空");
-                }
-                if (!hasText(this.definitionDraft.processName)) {
-                    issues.push("流程名称不能为空");
-                }
-                if (!hasText(this.definitionDraft.systemCode)) {
-                    issues.push("系统编码不能为空");
-                }
-                if (!this.definitionDraft.nodes.length) {
-                    issues.push("至少需要一个节点");
-                }
-                var startCount = 0;
-                var endCount = 0;
-                this.definitionDraft.nodes.forEach(function (item) {
-                    if (!hasText(item.nodeCode)) {
-                        issues.push("节点编码不能为空");
-                    }
-                    if (codes[item.nodeCode]) {
-                        issues.push("节点编码重复：" + item.nodeCode);
-                    }
-                    codes[item.nodeCode] = true;
-                    if (!hasText(item.nodeName)) {
-                        issues.push("节点名称不能为空：" + (item.nodeCode || "-"));
-                    }
-                    if (item.nodeType === "START") {
-                        startCount += 1;
-                    }
-                    if (item.nodeType === "END") {
-                        endCount += 1;
-                    }
-                    if (item.nodeType === "USER_TASK" && !hasText(item.approverRuleType)) {
-                        issues.push("用户任务必须配置审批规则：" + item.nodeCode);
-                    }
-                });
-                if (startCount !== 1) {
-                    issues.push("必须存在且仅存在一个开始节点");
-                }
-                if (endCount < 1) {
-                    issues.push("至少存在一个结束节点");
-                }
-                var edgeCodes = {};
-                this.definitionDraft.edges.forEach(function (item) {
-                    if (!hasText(item.edgeCode)) {
-                        issues.push("连线编码不能为空");
-                    }
-                    if (edgeCodes[item.edgeCode]) {
-                        issues.push("连线编码重复：" + item.edgeCode);
-                    }
-                    edgeCodes[item.edgeCode] = true;
-                    if (!codes[item.sourceNodeCode]) {
-                        issues.push("连线来源节点不存在：" + item.edgeCode);
-                    }
-                    if (!codes[item.targetNodeCode]) {
-                        issues.push("连线目标节点不存在：" + item.edgeCode);
-                    }
-                    if (item.sourceNodeCode === item.targetNodeCode) {
-                        issues.push("连线来源和目标不能相同：" + item.edgeCode);
-                    }
-                });
-                return issues;
-            },
-            syncDraftJson: function () {
-                this.definitionDraft.formFields = this.parseJsonArray(this.formFieldsJson, "表单字段 JSON");
-                this.definitionDraft.attachmentConfigs = this.parseJsonArray(this.attachmentConfigsJson, "附件模板 JSON");
-            },
-            buildGraphRequestBody: function () {
-                this.syncDraftJson();
-                return {
-                    nodes: clone(this.definitionDraft.nodes),
-                    edges: clone(this.definitionDraft.edges),
-                    formFields: clone(this.definitionDraft.formFields),
-                    attachmentConfigs: clone(this.definitionDraft.attachmentConfigs),
-                    operatorUserId: this.currentUserId
-                };
-            },
-            confirmCreateAndSave: function () {
-                var self = this;
-                try {
-                    self.syncDraftJson();
-                } catch (error) {
-                    self.draftIssues = [error.message];
-                    self.draftValidationText = "本地配置校验未通过";
-                    self.showToast(error.message, "warn");
-                    return Promise.resolve(false);
-                }
-                self.draftIssues = self.validateDefinitionDraft();
-                if (self.draftIssues.length) {
-                    self.showToast("本地配置校验未通过", "warn");
-                    return Promise.resolve(false);
-                }
-                return self.sendOperation("创建定义", "POST", "/definitions", {
-                    processCode: self.definitionDraft.processCode,
-                    processName: self.definitionDraft.processName,
-                    systemCode: self.definitionDraft.systemCode,
-                    remark: self.definitionDraft.remark,
-                    operatorUserId: self.currentUserId
-                }).then(function () {
-                    return self.saveGraph();
-                }).then(function () {
-                    self.showDefinitionDialog = false;
-                    self.showToast("保存成功");
-                });
-            },
-            saveGraph: function () {
-                if (!this.context.definitionId) {
-                    this.showToast("请先创建定义", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendOperation("保存流程图", "PUT", "/definitions/" + encodeURIComponent(this.context.definitionId) + "/graph", this.buildGraphRequestBody())
-                        .then(this.bindThis(function () {
-                            this.showToast("保存成功");
-                        }));
-            },
-            validateDefinition: function () {
-                if (!this.context.definitionId) {
-                    this.showToast("请先选择或创建定义", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.saveGraph().then(this.bindThis(function () {
-                    return this.sendRequest("发布前校验", "GET",
-                            "/definitions/" + encodeURIComponent(this.context.definitionId) + "/publish-validation", null);
-                }));
-            },
-            definitionOperation: function (label, action) {
-                if (!this.context.definitionId) {
-                    this.showToast("请先选择或创建定义", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendOperation(label, "POST", "/definitions/" + action, {
-                    definitionId: this.context.definitionId,
-                    operatorUserId: this.currentUserId
-                });
-            },
-            copyDefinition: function () {
-                if (!this.context.definitionId) {
-                    this.showToast("请先选择定义", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendOperation("复制定义", "POST", "/definitions/" + encodeURIComponent(this.context.definitionId) + "/copy", {
-                    operatorUserId: this.currentUserId,
-                    processCode: this.definitionDraft.processCode,
-                    processName: this.definitionDraft.processName + "复制"
-                });
-            },
-            deleteDefinition: function () {
-                var self = this;
-                if (!self.context.definitionId) {
-                    self.showToast("请先选择定义", "warn");
-                    return Promise.resolve(false);
-                }
-                self.openConfirm("删除定义", "将删除流程定义及其关联节点、连线、表单字段、附件模板和运行数据。", function (reason) {
-                    return self.sendOperation("删除定义", "DELETE", "/definitions", {
-                        definitionId: self.context.definitionId,
-                        operatorUserId: self.currentUserId,
-                        reason: reason
-                    });
-                });
-                return Promise.resolve(true);
-            },
-            startInstance: function () {
-                return this.sendOperation("启动实例", "POST", "/runtime/instances/start", this.buildStartInstanceBody());
-            },
-            startAndSubmitInstance: function () {
-                var attachment = this.buildAttachmentMeta();
-                var issues = attachment ? validateBankReceiptAttachment(attachment) : [];
-                if (issues.length) {
-                    this.showToast("银行回单附件模板校验未通过", "warn");
-                    this.errorMessage = issues.join("；");
-                    return Promise.resolve(false);
-                }
-                return this.sendOperation("启动并提交", "POST", "/runtime/instances/start-submit", this.buildStartAndSubmitBody());
-            },
-            buildStartInstanceBody: function () {
-                return {
-                    processCode: this.definitionDraft.processCode,
-                    instanceTitle: this.instanceForm.instanceTitle,
-                    starterUserId: this.instanceForm.starterUserId,
-                    starterDeptId: this.instanceForm.starterDeptId,
-                    variables: this.buildVariables()
-                };
-            },
-            buildStartAndSubmitBody: function () {
-                var body = this.buildStartInstanceBody();
-                var attachment = this.buildAttachmentMeta();
-                if (attachment) {
-                    body.attachments = [attachment];
-                }
-                return body;
-            },
-            approveCurrentTask: function () {
-                return this.sendTaskOperation("审批通过当前任务", "approve", {});
-            },
-            approveWithStaleVersion: function () {
-                var task = this.selectedTask();
-                task.taskVersion = Math.max(0, Number(task.taskVersion || 0) - 1);
-                return this.sendTaskOperation("使用过期任务版本审批", "approve", {}, task);
-            },
-            simulateConcurrentApprove: function () {
-                var task = this.selectedTask();
-                var requestA = this.buildTaskRequest("并发审批 A", "approve", {}, task);
-                var requestB = this.buildTaskRequest("并发审批 B", "approve", {}, task);
-                requestA.body.operationId = this.createOperationId("concurrent-a");
-                requestB.body.operationId = this.createOperationId("concurrent-b");
-                return Promise.all([
-                    this.sendPreparedRequest("并发审批 A", requestA).catch(function (error) { return error; }),
-                    this.sendPreparedRequest("并发审批 B", requestB).catch(function (error) { return error; })
-                ]);
-            },
-            updateVariables: function () {
-                if (!this.context.instanceId) {
-                    this.showToast("请先启动或选择实例", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendOperation("更新测试变量", "PUT", "/runtime/instances/variables", {
-                    instanceId: this.context.instanceId,
-                    variables: this.buildVariables()
-                });
-            },
-            terminateInstance: function () {
-                var self = this;
-                if (!self.context.instanceId) {
-                    self.showToast("请先启动或选择实例", "warn");
-                    return Promise.resolve(false);
-                }
-                self.openConfirm("终止实例", "将终止当前实例并观察活动任务清理结果。", function (reason) {
-                    return self.sendOperation("终止实例", "POST", "/runtime/instances/terminate", {
-                        instanceId: self.context.instanceId,
-                        operatorUserId: self.currentUserId,
-                        reason: reason
-                    });
-                });
-                return Promise.resolve(true);
-            },
-            deleteInstance: function () {
-                var self = this;
-                if (!self.context.instanceId) {
-                    self.showToast("请先启动或选择实例", "warn");
-                    return Promise.resolve(false);
-                }
-                self.openConfirm("删除实例", "将删除当前流程实例，并观察活动任务、历史任务和审批意见清理结果。", function (reason) {
-                    return self.sendOperation("删除实例", "DELETE", "/runtime/instances", {
-                        instanceId: self.context.instanceId,
-                        operatorUserId: self.currentUserId,
-                        reason: reason
-                    });
-                }, deleteInstanceChecks(self.context, {
-                    activeTasks: self.activeTasks,
-                    historyTasks: self.historyTasks,
-                    comments: self.comments
-                }));
-                return Promise.resolve(true);
-            },
-            queryDefinitions: function () {
-                return this.sendRequest("查询定义", "GET", "/definitions" + this.toQuery(this.withPage(this.definitionFilters)), null)
-                        .then(this.bindThis(function (payload) {
-                            this.definitionRows = normalizeList(payload);
-                        }));
-            },
-            queryInstances: function () {
-                var params = this.withPage({
-                    starterUserId: this.instanceForm.starterUserId || this.currentUserId,
-                    processCode: this.definitionDraft.processCode,
-                    instanceStatus: this.instanceFilters.instanceStatus,
-                    instanceTitle: this.instanceForm.instanceTitle
-                });
-                return this.sendRequest("查询实例", "GET", "/instances/started" + this.toQuery(params), null)
-                        .then(this.bindThis(function (payload) {
-                            this.instanceRows = normalizeList(payload);
-                        }));
-            },
-            queryTodoTasks: function () {
-                this.taskTab = "todo";
-                var params = this.withPage({
-                    userId: this.currentUserId,
-                    processCode: this.taskFilters.processCode || this.definitionDraft.processCode,
-                    nodeCode: this.taskFilters.nodeCode,
-                    instanceTitle: this.taskFilters.instanceTitle,
-                    todoSource: this.taskFilters.todoSource
-                });
-                return this.sendRequest("查待办", "GET", "/tasks/todo" + this.toQuery(params), null)
-                        .then(this.bindThis(function (payload) {
-                            this.todoTasks = normalizeList(payload);
-                        }));
-            },
-            queryCompletedTasks: function () {
-                this.taskTab = "done";
-                var params = this.withPage({
-                    userId: this.currentUserId,
-                    processCode: this.taskFilters.processCode || this.definitionDraft.processCode,
-                    nodeCode: this.taskFilters.nodeCode,
-                    instanceTitle: this.taskFilters.instanceTitle
-                });
-                return this.sendRequest("查已办", "GET", "/tasks/completed" + this.toQuery(params), null)
-                        .then(this.bindThis(function (payload) {
-                            this.completedTasks = normalizeList(payload);
-                        }));
-            },
-            queryStartedInstances: function () {
-                this.taskTab = "started";
-                var params = this.withPage({
-                    starterUserId: this.currentUserId,
-                    processCode: this.definitionDraft.processCode,
-                    instanceStatus: this.instanceFilters.instanceStatus,
-                    instanceTitle: this.instanceForm.instanceTitle
-                });
-                return this.sendRequest("查我发起", "GET", "/instances/started" + this.toQuery(params), null)
-                        .then(this.bindThis(function (payload) {
-                            this.startedInstances = normalizeList(payload);
-                        }));
-            },
-            queryActiveTasks: function () {
-                this.taskTab = "active";
-                if (!this.context.instanceId) {
-                    this.showToast("请先启动或选择实例", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendRequest("查活动任务", "GET", "/instances/" + encodeURIComponent(this.context.instanceId) + "/active-tasks", null)
-                        .then(this.bindThis(function (payload) {
-                            this.activeTasks = normalizeList(payload);
-                            this.updateCurrentTaskFromList(this.activeTasks);
-                        }));
-            },
-            queryHistoryTasks: function () {
-                this.taskTab = "history";
-                if (!this.context.instanceId) {
-                    this.showToast("请先启动或选择实例", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendRequest("查历史任务", "GET", "/instances/" + encodeURIComponent(this.context.instanceId) + "/history-tasks", null)
-                        .then(this.bindThis(function (payload) {
-                            this.historyTasks = normalizeList(payload);
-                        }));
-            },
-            queryComments: function () {
-                if (!this.context.instanceId) {
-                    this.showToast("请先启动或选择实例", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendRequest("查审批意见", "GET", "/instances/" + encodeURIComponent(this.context.instanceId) + "/comments", null)
-                        .then(this.bindThis(function (payload) {
-                            this.comments = normalizeList(payload);
-                        }));
-            },
-            queryCallbackLogs: function () {
-                return this.sendRequest("查回调日志", "GET", "/callbacks/logs" + this.toQuery(this.withPage({ instanceId: this.context.instanceId })), null)
-                        .then(this.bindThis(function (payload) {
-                            this.callbackLogs = normalizeList(payload);
-                        }));
-            },
-            queryOperationLogs: function () {
-                return this.markEndpointUnavailable("查操作日志", "操作日志查询接口当前代码暂未提供，本页保留浏览器侧操作流水。");
-            },
-            getDefinition: function () {
-                if (!this.context.definitionId) {
-                    this.showToast("请先选择定义", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendRequest("查定义详情", "GET", "/definitions/" + encodeURIComponent(this.context.definitionId), null)
-                        .then(this.bindThis(function (payload) {
-                            this.applyDefinitionResult(payload);
-                        }));
-            },
-            getInstance: function () {
-                if (!this.context.instanceId) {
-                    this.showToast("请先启动或选择实例", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendRequest("查实例详情", "GET", "/runtime/instances/" + encodeURIComponent(this.context.instanceId), null)
-                        .then(this.bindThis(function (payload) {
-                            this.applyInstanceResult(payload);
-                        }));
-            },
-            pingBackend: function () {
-                var self = this;
-                self.connectionStatus = "检测中";
-                return self.sendRequest("检测连接", "GET", "/definitions?pageNo=1&pageSize=1", null)
-                        .then(function () {
-                            self.connectionStatus = "连接正常";
-                        }).catch(function () {
-                            self.connectionStatus = "连接失败";
-                        });
-            },
-            refreshDefinitionCache: function () {
-                return this.sendOperation("刷新流程定义缓存", "POST", "/admin/definition-cache/refresh", {
-                    operatorUserId: this.currentUserId
-                });
-            },
-            clearTestData: function () {
-                return this.sendOperation("清理测试数据", "POST", "/admin/test-data/clear", {
-                    operatorUserId: this.currentUserId
-                });
-            },
-            repeatLastRequest: function () {
-                if (!this.lastRequest) {
-                    this.showToast("暂无可重复请求", "warn");
-                    return Promise.resolve(false);
-                }
-                return this.sendPreparedRequest("重复上次请求", clone(this.lastRequest));
-            },
-            conflictOperationId: function () {
-                if (!this.lastRequest) {
-                    this.showToast("暂无可复用 operationId 的请求", "warn");
-                    return Promise.resolve(false);
-                }
-                var request = clone(this.lastRequest);
-                request.body = request.body || {};
-                request.body.comment = "同号不同请求 " + new Date().toISOString();
-                return this.sendPreparedRequest("同号不同请求", request);
-            },
-            sendTaskOperation: function (label, actionName, extraBody, overrideTask) {
-                return this.sendPreparedRequest(label, this.buildTaskRequest(label, actionName, extraBody, overrideTask));
-            },
-            buildTaskRequest: function (label, actionName, extraBody, overrideTask) {
-                var selected = overrideTask || this.selectedTask();
-                var body = {
-                    taskId: selected.taskId,
-                    expectedTaskVersion: Number(selected.taskVersion),
-                    operatorUserId: this.currentUserId,
-                    comment: this.taskForm.comment || label
-                };
-                Object.keys(extraBody || {}).forEach(function (key) {
-                    body[key] = extraBody[key];
-                });
-                return {
-                    label: label,
-                    method: "POST",
-                    path: "/runtime/tasks/" + actionName,
-                    body: this.addOperationId(body)
-                };
-            },
-            markEndpointUnavailable: function (label, message) {
-                var request = { label: label, method: "-", path: "当前代码暂未提供", body: null };
-                this.lastRequest = clone(request);
-                this.lastResponse = { code: "ENDPOINT_NOT_READY", message: message };
-                this.errorMessage = message;
-                this.recordOperation(label, request, "NOT_READY", this.lastResponse, false, 0);
-                this.showToast(message, "warn");
-                return Promise.resolve(false);
-            },
-            sendOperation: function (label, method, path, body) {
-                return this.sendRequest(label, method, path, this.addOperationId(body || {}));
-            },
-            sendRequest: function (label, method, path, body) {
-                return this.sendPreparedRequest(label, { label: label, method: method, path: path, body: body });
-            },
-            sendPreparedRequest: function (label, request) {
-                var self = this;
-                var started = Date.now();
-                var headers = { Accept: "application/json" };
-                headers["X-Flow-User-Id"] = self.currentUserId;
-                var options = { method: request.method, headers: headers };
-                if (request.body) {
-                    headers["Content-Type"] = "application/json";
-                    if (request.body.operationId) {
-                        headers["Idempotency-Key"] = request.body.operationId;
-                    }
-                    options.body = JSON.stringify(request.body);
-                }
-                self.lastRequest = clone(request);
-                self.errorMessage = "";
-                return fetch(self.trimTrailingSlash(self.baseUrl) + self.resolvePath(request.path), options)
-                        .then(function (response) {
-                            return response.text().then(function (text) {
-                                var payload = text ? self.parseJsonOrRaw(text) : {};
-                                if (!response.ok) {
-                                    throw { status: response.status, payload: payload };
-                                }
-                                self.lastResponse = payload;
-                                self.recordOperation(label, request, response.status, payload, true, Date.now() - started);
-                                self.applyResult(payload);
-                                return payload;
-                            });
-                        })
-                        .catch(function (error) {
-                            self.lastResponse = error.payload || { message: error.message || "请求失败" };
-                            self.errorMessage = self.errorText(label, request, error);
-                            self.showToast("请求失败", "error");
-                            self.recordOperation(label, request, error.status || "ERR", self.lastResponse, false, Date.now() - started);
-                            return Promise.reject(error);
-                        });
-            },
-            applyResult: function (payload) {
-                if (!payload || typeof payload !== "object") {
-                    return;
-                }
-                if (payload.definitionId || payload.id || payload.processCode) {
-                    this.applyDefinitionResult(payload);
-                }
-                if (payload.instance || payload.instanceId) {
-                    this.applyInstanceResult(payload);
-                }
-                if (payload.createdTasks) {
-                    this.activeTasks = normalizeList(payload.createdTasks);
-                    this.updateCurrentTaskFromList(this.activeTasks);
-                }
-                if (payload.archivedTasks) {
-                    this.historyTasks = normalizeList(payload.archivedTasks).concat(this.historyTasks || []);
-                }
-                if (payload.callbackLogs) {
-                    this.callbackLogs = normalizeList(payload.callbackLogs);
-                }
-            },
-            applyDefinitionResult: function (payload) {
-                var source = payload.data && !payload.definitionId ? payload.data : payload;
-                this.context.definitionId = this.readFirst(source, ["definitionId", "id"], this.context.definitionId);
-                this.definitionDraft.processCode = this.readFirst(source, ["processCode"], this.definitionDraft.processCode);
-                this.definitionDraft.processName = this.readFirst(source, ["processName"], this.definitionDraft.processName);
-                this.definitionDraft.systemCode = this.readFirst(source, ["systemCode"], this.definitionDraft.systemCode);
-            },
-            applyInstanceResult: function (payload) {
-                var instance = payload.instance || payload.data || payload;
-                this.context.instanceId = this.readFirst(instance, ["instanceId", "id"], this.context.instanceId);
-                this.context.instanceStatus = this.readFirst(instance, ["instanceStatus", "status"], this.context.instanceStatus);
-                if (instance.createdTasks) {
-                    this.activeTasks = normalizeList(instance.createdTasks);
-                    this.updateCurrentTaskFromList(this.activeTasks);
-                }
-                if (instance.activeTasks) {
-                    this.activeTasks = normalizeList(instance.activeTasks);
-                    this.updateCurrentTaskFromList(this.activeTasks);
-                }
-                if (instance.historyTasks) {
-                    this.historyTasks = normalizeList(instance.historyTasks);
-                }
-                if (instance.comments) {
-                    this.comments = normalizeList(instance.comments);
-                }
-            },
-            selectDefinitionRow: function (row) {
-                this.applyDefinitionResult(row);
-                this.showToast("已选择定义");
-            },
-            selectInstanceRow: function (row) {
-                this.applyInstanceResult(row);
-                this.showToast("已选择实例");
-            },
-            selectTaskRow: function (row) {
-                this.taskForm.taskId = row.taskId || row.activeTaskId || "";
-                this.taskForm.taskVersion = row.taskVersion == null ? null : row.taskVersion;
-                if (row.instanceId) {
-                    this.context.instanceId = row.instanceId;
-                }
-                this.showToast("已选择任务");
-                return Promise.all([
-                    this.loadSelectedTaskVariables(row),
-                    this.loadSelectedTaskAttachments(row)
-                ]);
-            },
-            loadSelectedTaskVariables: function (row) {
-                var self = this;
-                var selectedTaskId = self.taskForm.taskId;
-                var selectedTaskVersion = self.taskForm.taskVersion;
-                var snapshot = row.variablesSnapshot || row.variables;
-                if (snapshot && typeof snapshot === "object") {
-                    self.applySelectedTaskVariables(snapshot);
-                    return Promise.resolve(true);
-                }
-                self.applySelectedTaskVariables({});
-                if (!row.instanceId) {
-                    return Promise.resolve(false);
-                }
-                return self.sendRequest("读取任务表单字段", "GET", "/runtime/instances/" + encodeURIComponent(row.instanceId), null)
-                        .then(function (payload) {
-                            var instance = payload.instance || payload.data || payload;
-                            self.applySelectedTaskVariables(instance.variables || {});
-                            self.taskForm.taskId = selectedTaskId;
-                            self.taskForm.taskVersion = selectedTaskVersion;
-                            return true;
-                        })
-                        .catch(function () {
-                            self.taskForm.taskId = selectedTaskId;
-                            self.taskForm.taskVersion = selectedTaskVersion;
-                            return false;
-                        });
-            },
-            applySelectedTaskVariables: function (variables) {
-                this.selectedTaskVariables = clone(variables || {});
-            },
-            loadSelectedTaskAttachments: function (row) {
-                this.selectedTaskAttachments = [];
-                if (!row.instanceId) {
-                    return Promise.resolve(false);
-                }
-                return this.sendRequest("读取申请附件", "GET",
-                        "/attachments" + this.toQuery({ instanceId: row.instanceId, ownerType: "INSTANCE",
-                            operatorUserId: this.currentUserId }), null)
-                        .then(this.bindThis(function (payload) {
-                            this.selectedTaskAttachments = normalizeList(payload);
-                            return true;
-                        }))
-                        .catch(this.bindThis(function () {
-                            this.selectedTaskAttachments = [];
-                            return false;
-                        }));
-            },
-            selectedTask: function () {
-                var task = {
-                    taskId: this.taskForm.taskId || (this.activeTasks[0] && this.activeTasks[0].taskId),
-                    taskVersion: this.taskForm.taskVersion
-                };
-                if ((task.taskVersion === null || task.taskVersion === undefined || task.taskVersion === "") && this.activeTasks[0]) {
-                    task.taskVersion = this.activeTasks[0].taskVersion;
-                }
-                if (!task.taskId) {
-                    throw new Error("请先启动或查询活动任务");
-                }
-                if (task.taskVersion === undefined || task.taskVersion === null || task.taskVersion === "") {
-                    throw new Error("缺少任务版本");
-                }
-                return task;
-            },
-            updateCurrentTaskFromList: function (rows) {
-                if (rows && rows.length) {
-                    this.taskForm.taskId = rows[0].taskId || "";
-                    this.taskForm.taskVersion = rows[0].taskVersion == null ? null : rows[0].taskVersion;
-                }
-            },
-            buildVariables: function () {
-                return {
-                    applicantName: this.instanceForm.applicantName,
-                    amount: Number(this.instanceForm.amount || 0),
-                    accountNo: this.instanceForm.accountNo
-                };
-            },
-            buildAttachmentMeta: function () {
-                var form = this.instanceAttachmentForm || {};
-                if (!form.enabled) {
-                    return null;
-                }
-                return {
-                    attachmentCode: form.attachmentCode,
-                    ownerType: "INSTANCE",
-                    fileName: form.fileName,
-                    contentType: form.contentType,
-                    sizeBytes: Number(form.fileSize || 0),
-                    content: form.contentBase64
-                };
-            },
-            buildAttachmentPayloadPreview: function () {
-                var attachment = this.buildAttachmentMeta();
-                if (!attachment) {
-                    return [];
-                }
-                var preview = clone(attachment);
-                preview.storageKey = this.instanceAttachmentForm.storageKey;
-                return [preview];
-            },
-            openConfirm: function (title, message, action, checks) {
-                this.confirmDialog = {
-                    show: true,
-                    title: title,
-                    message: message,
-                    reason: "",
-                    checks: checks || [],
-                    action: action
-                };
-            },
-            closeConfirm: function () {
-                this.confirmDialog.show = false;
-            },
-            runConfirmAction: function () {
-                var action = this.confirmDialog.action;
-                var reason = this.confirmDialog.reason || "测试操作";
-                this.closeConfirm();
-                if (typeof action === "function") {
-                    return action(reason);
-                }
-                return Promise.resolve(false);
-            },
-            selectApi: function (api) {
-                this.selectedApi = api;
-                this.debugRequest.method = api.method;
-                this.debugRequest.path = api.path;
-                this.debugRequest.bodyText = jsonText(api.body || {});
-            },
-            sendDebugRequest: function () {
-                var body = null;
-                if (this.debugRequest.method !== "GET") {
-                    body = this.addOperationId(this.resolveBodyPlaceholders(this.parseJsonObject(this.debugRequest.bodyText, "请求体 JSON")));
-                }
-                return this.sendRequest("接口调试", this.debugRequest.method, this.debugRequest.path, body);
+            switchView: function (view) {
+                this.activeView = view;
+                if (view === "definitions") {
+                    this.queryDefinitions().catch(function () {});
+                } else if (view === "instances") {
+                    this.queryInstances().catch(function () {});
+                } else if (view === "todo") {
+                    this.queryTodoTasks().catch(function () {});
+                } else if (view === "completed") {
+                    this.queryCompletedTasks().catch(function () {});
+                }
+            },
+            applyCurrentUser: function () {
+                var user = this.currentUser();
+                if (user) {
+                    this.currentRole = user.role;
+                    this.instanceForm.starterDeptId = user.deptId;
+                }
+            },
+            currentUser: function () {
+                return this.users.find(function (user) {
+                    return user.userId === this.currentUserId;
+                }, this) || this.users[0];
             },
             resetDefinitionFilters: function () {
                 this.definitionFilters = {
                     processCode: "",
                     processName: "",
+                    systemCode: "newoa-demo",
                     definitionStatus: "",
-                    activationStatus: "",
-                    version: "",
-                    creatorUserId: ""
+                    activationStatus: ""
+                };
+                this.queryDefinitions();
+            },
+            queryDefinitions: function () {
+                var url = API_PATHS.definitions + toQuery(Object.assign({pageNo: 1, pageSize: 50}, this.definitionFilters));
+                return this.sendRequest("查询流程定义", "GET", url).then(function (payload) {
+                    this.definitionRows = normalizeList(payload);
+                    if (!this.selectedDefinitionId && this.definitionRows.length > 0) {
+                        return this.selectDefinition(this.definitionRows[0]);
+                    }
+                    return payload;
+                }.bind(this));
+            },
+            selectDefinition: function (row) {
+                var definitionId = extractDefinitionId(row);
+                if (!definitionId) {
+                    return Promise.resolve();
+                }
+                this.selectedDefinitionId = definitionId;
+                return this.sendRequest("查询定义详情", "GET", API_PATHS.definitionDetail(definitionId)).then(function (payload) {
+                    this.selectedDefinitionDetail = payload || row;
+                    this.captureTemplatesFromDetail(payload);
+                    return payload;
+                }.bind(this));
+            },
+            openDefinitionDialog: function () {
+                this.definitionDraft = defaultDefinitionDraft();
+                this.selectedDesigner = {type: "", code: ""};
+                this.connectionClickQueue = [];
+                this.definitionDialog = {open: true, mode: "create", tab: "basic", connectionMode: false};
+            },
+            closeDefinitionDialog: function () {
+                this.definitionDialog.open = false;
+            },
+            editDefinitionAttachments: function (row) {
+                this.selectDefinition(row).then(function () {
+                    this.definitionDraft = this.definitionDraftFromDetail(this.selectedDefinitionDetail);
+                    this.definitionDialog = {open: true, mode: "attachments", tab: "attachments", connectionMode: false};
+                }.bind(this));
+            },
+            definitionDraftFromDetail: function (detail) {
+                var source = detail || {};
+                return {
+                    definitionId: source.definitionId || source.id || this.selectedDefinitionId,
+                    processCode: source.processCode || "",
+                    processName: source.processName || "",
+                    systemCode: source.systemCode || "newoa-demo",
+                    remark: source.remark || "",
+                    nodes: (source.nodes || []).map(normalizeNode),
+                    edges: (source.edges || []).map(normalizeEdge),
+                    formFields: (source.formFields || []).map(function (field, index) {
+                        return Object.assign({localId: nextLocalId("field"), sortOrder: index + 1}, field);
+                    }),
+                    attachmentConfigs: this.normalizeAttachmentConfigsFromDetail(source)
                 };
             },
-            flowNodeClass: function (item) {
-                if (this.activeTasks.some(function (task) { return task.nodeCode === item.nodeCode; })) {
-                    return "active";
+            addDesignerNode: function (nodeType) {
+                var index = this.definitionDraft.nodes.length + 1;
+                var code = nodeType.toLowerCase() + "_" + index;
+                var nameMap = {
+                    START: "开始",
+                    USER_TASK: "用户任务",
+                    EXCLUSIVE_GATEWAY: "排他网关",
+                    PARALLEL_SPLIT_GATEWAY: "并行分支",
+                    PARALLEL_JOIN_GATEWAY: "并行汇聚",
+                    END: "结束"
+                };
+                var node = buildNode(code, nameMap[nodeType] || "节点", nodeType, 120 + index * 34, 90 + index * 28, index);
+                this.definitionDraft.nodes.push(node);
+                this.selectedDesigner = {type: "node", code: node.nodeCode};
+                this.setOperationState("success", "本地草稿已更新", "节点已添加，保存后写入后端");
+            },
+            beginNodeDrag: function (event, node) {
+                if (this.definitionDialog.connectionMode) {
+                    return;
                 }
-                if (this.historyTasks.some(function (task) { return task.nodeCode === item.nodeCode; })) {
-                    return "done";
-                }
-                return "";
-            },
-            flowNodeStatus: function (item) {
-                var active = this.activeTasks.find(function (task) { return task.nodeCode === item.nodeCode; });
-                if (active) {
-                    return "活动任务 v" + (active.taskVersion == null ? "-" : active.taskVersion);
-                }
-                if (this.historyTasks.some(function (task) { return task.nodeCode === item.nodeCode; })) {
-                    return "已完成";
-                }
-                if (item.nodeType === "END" && this.context.instanceStatus === "COMPLETED") {
-                    return "已办结";
-                }
-                return item.nodeType;
-            },
-            countRows: function (rows, key, value) {
-                return (rows || []).filter(function (item) {
-                    return item[key] === value;
-                }).length;
-            },
-            withPage: function (params) {
-                var copy = clone(params || {});
-                copy.pageNo = copy.pageNo || 1;
-                copy.pageSize = copy.pageSize || 20;
-                return copy;
-            },
-            toQuery: function (params) {
-                var pairs = Object.keys(params || {}).filter(function (key) {
-                    return params[key] !== undefined && params[key] !== null && params[key] !== "";
-                }).map(function (key) {
-                    return encodeURIComponent(key) + "=" + encodeURIComponent(params[key]);
-                });
-                return pairs.length ? "?" + pairs.join("&") : "";
-            },
-            addOperationId: function (body) {
-                var copy = clone(body || {});
-                copy.operationId = this.nextOperationId();
-                return copy;
-            },
-            nextOperationId: function () {
-                if (this.operationMode === "reuse" && this.lastOperationId) {
-                    return this.lastOperationId;
-                }
-                if (this.operationMode === "manual" && hasText(this.manualOperationId)) {
-                    this.lastOperationId = this.manualOperationId;
-                    return this.manualOperationId;
-                }
-                this.lastOperationId = this.createOperationId("op");
-                this.manualOperationId = this.lastOperationId;
-                return this.lastOperationId;
-            },
-            createOperationId: function (prefix) {
-                return prefix + "-" + Date.now() + "-" + Math.floor(Math.random() * 100000);
-            },
-            recordOperation: function (label, request, status, payload, success, durationMs) {
-                this.operationLogs.unshift({
-                    id: Date.now() + Math.random(),
-                    time: nowTime(),
-                    label: label,
-                    method: request.method,
-                    path: request.path,
-                    operationId: request.body && request.body.operationId,
-                    status: status,
-                    durationMs: durationMs,
-                    replayed: Boolean(payload && payload.replayed),
-                    success: success
-                });
-                this.operationLogs = this.operationLogs.slice(0, 60);
-            },
-            showToast: function (message, type) {
-                var self = this;
-                var item = { id: Date.now() + Math.random(), message: message || "操作完成", type: type || "success" };
-                self.toasts.push(item);
-                window.setTimeout(function () {
-                    self.toasts = self.toasts.filter(function (candidate) {
-                        return candidate.id !== item.id;
-                    });
-                }, 2600);
-            },
-            parseJsonArray: function (text, label) {
-                var value = this.parseJsonObject(text, label);
-                if (!Array.isArray(value)) {
-                    throw new Error(label + " 必须是数组");
-                }
-                return value;
-            },
-            formatJson: function (value) {
-                return JSON.stringify(value || {}, null, 2);
-            },
-            formatFieldValue: function (value) {
-                if (value === undefined || value === null || value === "") {
-                    return "-";
-                }
-                if (typeof value === "object") {
-                    return JSON.stringify(value);
-                }
-                return String(value);
-            },
-            formatAttachmentSize: function (value) {
-                var size = Number(value || 0);
-                if (!size) {
-                    return "-";
-                }
-                if (size < 1024) {
-                    return size + " B";
-                }
-                if (size < 1024 * 1024) {
-                    return Math.round(size / 1024 * 10) / 10 + " KB";
-                }
-                return Math.round(size / 1024 / 1024 * 10) / 10 + " MB";
-            },
-            parseJsonObject: function (text, label) {
-                try {
-                    return JSON.parse(text || "{}");
-                } catch (error) {
-                    throw new Error(label + " 格式错误");
+                this.selectedDesigner = {type: "node", code: node.nodeCode};
+                this.dragState = {
+                    node: node,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    originalX: Number(node.positionX || 0),
+                    originalY: Number(node.positionY || 0),
+                    moved: false
+                };
+                if (event.currentTarget.setPointerCapture) {
+                    event.currentTarget.setPointerCapture(event.pointerId);
                 }
             },
-            parseJsonOrRaw: function (text) {
-                try {
-                    return JSON.parse(text);
-                } catch (error) {
-                    return { raw: text };
+            dragDraftNode: function (event) {
+                if (!this.dragState) {
+                    return;
                 }
+                var deltaX = event.clientX - this.dragState.startX;
+                var deltaY = event.clientY - this.dragState.startY;
+                if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
+                    this.dragState.moved = true;
+                }
+                this.dragState.node.positionX = Math.max(0, this.dragState.originalX + deltaX);
+                this.dragState.node.positionY = Math.max(0, this.dragState.originalY + deltaY);
             },
-            readFirst: function (object, keys, fallback) {
-                if (!object) {
-                    return fallback;
+            finishNodeDrag: function () {
+                if (this.dragState && this.dragState.moved) {
+                    this.setOperationState("success", "本地草稿已更新", "节点坐标已更新，保存后写入节点表");
                 }
-                for (var i = 0; i < keys.length; i += 1) {
-                    if (object[keys[i]] !== undefined && object[keys[i]] !== null) {
-                        return object[keys[i]];
+                this.dragState = null;
+            },
+            startConnectionMode: function () {
+                this.definitionDialog.connectionMode = true;
+                this.connectionClickQueue = [];
+                this.setOperationState("idle", "连线模式", "按 1-2、3-4 的顺序点击节点创建连线");
+            },
+            stopConnectionMode: function () {
+                this.definitionDialog.connectionMode = false;
+                this.connectionClickQueue = [];
+                this.setOperationState("idle", "准备就绪", "未配对节点已忽略");
+            },
+            handleCanvasNodeClick: function (nodeCode) {
+                if (this.dragState && this.dragState.moved) {
+                    return;
+                }
+                if (!this.definitionDialog.connectionMode) {
+                    this.selectedDesigner = {type: "node", code: nodeCode};
+                    return;
+                }
+                this.connectionClickQueue.push(nodeCode);
+                this.selectedDesigner = {type: "node", code: nodeCode};
+                if (this.connectionClickQueue.length % 2 === 0) {
+                    var sourceNodeCode = this.connectionClickQueue[this.connectionClickQueue.length - 2];
+                    var targetNodeCode = this.connectionClickQueue[this.connectionClickQueue.length - 1];
+                    if (sourceNodeCode !== targetNodeCode) {
+                        var edgeCode = "edge_" + sourceNodeCode + "_" + targetNodeCode + "_" + this.definitionDraft.edges.length;
+                        var edge = buildEdge(edgeCode, sourceNodeCode, targetNodeCode, this.definitionDraft.edges.length + 1);
+                        this.definitionDraft.edges.push(edge);
+                        this.selectedDesigner = {type: "edge", code: edge.edgeCode};
+                        this.setOperationState("success", "本地草稿已更新", "连线已创建");
                     }
                 }
-                return fallback;
             },
-            resolveBodyPlaceholders: function (value) {
-                var self = this;
-                if (Array.isArray(value)) {
-                    return value.map(function (item) {
-                        return self.resolveBodyPlaceholders(item);
+            selectDesignerEdge: function (edge) {
+                this.selectedDesigner = {type: "edge", code: edge.edgeCode};
+            },
+            handleDesignerDelete: function (event) {
+                var tagName = event.target && event.target.tagName;
+                if (["INPUT", "TEXTAREA", "SELECT"].indexOf(tagName) >= 0) {
+                    return;
+                }
+                this.deleteSelectedDesignerItem();
+            },
+            deleteSelectedDesignerItem: function () {
+                if (this.selectedDesigner.type === "edge") {
+                    this.definitionDraft.edges = this.definitionDraft.edges.filter(function (edge) {
+                        return edge.edgeCode !== this.selectedDesigner.code;
+                    }, this);
+                    this.selectedDesigner = {type: "", code: ""};
+                    return this.persistDefinitionDraftAfterDesignerDelete("连线已删除并同步到后端", "连线已删除，保存后写入后端");
+                } else if (this.selectedDesigner.type === "node") {
+                    var nodeCode = this.selectedDesigner.code;
+                    if (!window.confirm("删除节点会同步删除相关连线，是否继续？")) {
+                        return;
+                    }
+                    this.definitionDraft.nodes = this.definitionDraft.nodes.filter(function (node) {
+                        return node.nodeCode !== nodeCode;
                     });
-                }
-                if (value && typeof value === "object") {
-                    var copy = {};
-                    Object.keys(value).forEach(function (key) {
-                        copy[key] = self.resolveBodyPlaceholders(value[key]);
+                    this.definitionDraft.edges = this.definitionDraft.edges.filter(function (edge) {
+                        return edge.sourceNodeCode !== nodeCode && edge.targetNodeCode !== nodeCode;
                     });
-                    return copy;
-                }
-                if (value === "{definitionId}") {
-                    return self.context.definitionId;
-                }
-                if (value === "{instanceId}") {
-                    return self.context.instanceId;
-                }
-                if (value === "{taskId}") {
-                    return self.selectedTaskId;
-                }
-                return value;
-            },
-            userIdsFromRuleConfig: function (config) {
-                if (!hasText(config)) {
-                    return "";
-                }
-                try {
-                    var json = JSON.parse(config);
-                    return Array.isArray(json.userIds) ? json.userIds.join(",") : "";
-                } catch (error) {
-                    return "";
+                    this.selectedDesigner = {type: "", code: ""};
+                    return this.persistDefinitionDraftAfterDesignerDelete("节点及相关连线已删除并同步到后端", "节点及相关连线已删除，保存后写入后端");
                 }
             },
-            resolvePath: function (path) {
-                return String(path || "")
-                        .replace("{definitionId}", encodeURIComponent(this.context.definitionId || ""))
-                        .replace("{instanceId}", encodeURIComponent(this.context.instanceId || ""))
-                        .replace("{taskId}", encodeURIComponent(this.selectedTaskId || ""));
+            persistDefinitionDraftAfterDesignerDelete: function (syncedMessage, draftMessage) {
+                if (!hasText(this.definitionDraft.definitionId)) {
+                    this.setOperationState("success", "本地草稿已更新", draftMessage);
+                    return Promise.resolve(false);
+                }
+                if (!this.canManageDefinitions) {
+                    this.setOperationState("error", "权限不足", "当前角色不能维护流程定义");
+                    return Promise.resolve(false);
+                }
+                return this.prepareCustomAttachmentTemplates().then(function () {
+                    var graphBody = this.buildGraphRequest();
+                    return this.sendRequest("同步流程图", "PUT", API_PATHS.saveGraph(this.definitionDraft.definitionId), graphBody);
+                }.bind(this)).then(function () {
+                    this.setOperationState("success", "同步成功", syncedMessage);
+                    return this.selectDefinition({definitionId: this.definitionDraft.definitionId});
+                }.bind(this)).then(function () {
+                    return this.queryDefinitions();
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "同步失败", error.message);
+                    return false;
+                }.bind(this));
             },
-            trimTrailingSlash: function (value) {
-                return String(value || "").replace(/\/+$/, "");
+            layoutDraftGraph: function () {
+                this.definitionDraft.nodes.forEach(function (node, index) {
+                    node.positionX = 90 + index * 170;
+                    node.positionY = index % 2 === 0 ? 170 : 260;
+                    node.sortOrder = index + 1;
+                });
+                this.setOperationState("success", "本地草稿已更新", "流程图已自动布局");
             },
-            errorText: function (label, request, error) {
-                var payload = error.payload || {};
-                return label + " 失败；路径：" + request.path + "；状态：" + (error.status || "ERR") +
-                        "；错误码：" + (payload.code || payload.errorCode || "-") +
-                        "；信息：" + (payload.message || payload.errorMessage || error.message || "请求失败");
+            addFormField: function () {
+                var index = this.definitionDraft.formFields.length + 1;
+                this.definitionDraft.formFields.push({
+                    localId: nextLocalId("field"),
+                    fieldCode: "field_" + index,
+                    fieldName: "字段" + index,
+                    fieldType: "string",
+                    controlType: "input",
+                    required: false,
+                    sortOrder: index
+                });
             },
-            bindThis: function (fn) {
-                var self = this;
-                return function () {
-                    return fn.apply(self, arguments);
+            removeFormField: function (index) {
+                this.definitionDraft.formFields.splice(index, 1);
+            },
+            addAttachmentConfig: function () {
+                var template = this.attachmentTemplateLibrary[0] || {};
+                this.definitionDraft.attachmentConfigs.push(normalizeAttachmentConfig({
+                    localId: nextLocalId("attach"),
+                    sourceType: "existing",
+                    attachmentTemplateId: template.attachmentTemplateId || "",
+                    attachmentCode: template.attachmentCode || "",
+                    attachmentName: template.attachmentName || "",
+                    allowedExtensionsText: asArray(template.allowedExtensions).join(","),
+                    maxSizeBytes: template.maxSizeBytes || 10485760,
+                    required: true,
+                    minCount: 1,
+                    maxCount: 5,
+                    applicableNodeCodes: this.userTaskNodes.length > 0 ? [this.userTaskNodes[0].nodeCode] : [],
+                    sortOrder: this.definitionDraft.attachmentConfigs.length + 1
+                }, this.definitionDraft.attachmentConfigs.length));
+            },
+            removeAttachmentConfig: function (index) {
+                this.definitionDraft.attachmentConfigs.splice(index, 1);
+                this.setOperationState("success", "本地草稿已更新", "附件配置行已删除，不会删除全局模板");
+            },
+            handleAttachmentSourceChange: function (item) {
+                if (item.sourceType === "existing") {
+                    this.selectExistingAttachmentTemplate(item);
+                } else {
+                    item.attachmentTemplateId = "";
+                    item.attachmentCode = "";
+                    item.attachmentName = "";
+                    item.allowedExtensionsText = "pdf,jpg,png";
+                    item.maxSizeBytes = 10485760;
+                }
+            },
+            selectExistingAttachmentTemplate: function (item) {
+                var template = this.attachmentTemplateLibrary.find(function (candidate) {
+                    return candidate.attachmentTemplateId === item.attachmentTemplateId;
+                });
+                if (!template) {
+                    return;
+                }
+                item.attachmentCode = template.attachmentCode;
+                item.attachmentName = template.attachmentName;
+                item.allowedExtensionsText = asArray(template.allowedExtensions).join(",");
+                item.maxSizeBytes = template.maxSizeBytes;
+                item.sourceType = "existing";
+                item.pendingTemplatePersist = false;
+            },
+            queryAttachmentTemplates: function () {
+                return this.sendRequest("查询附件模板", "GET", API_PATHS.attachmentTemplates + toQuery({
+                    templateStatus: "ENABLED"
+                })).then(function (payload) {
+                    var templates = normalizeList(payload).map(function (item) {
+                        return {
+                            attachmentTemplateId: item.attachmentTemplateId || item.id,
+                            attachmentCode: item.attachmentCode,
+                            templateVersion: item.templateVersion || 1,
+                            attachmentName: item.attachmentName || item.attachmentCode,
+                            allowedExtensions: asArray(item.allowedExtensions),
+                            maxSizeBytes: item.maxSizeBytes || 10485760
+                        };
+                    }).filter(function (item) {
+                        return hasText(item.attachmentTemplateId) && hasText(item.attachmentCode);
+                    });
+                    if (templates.length > 0) {
+                        this.attachmentTemplateLibrary = templates;
+                    }
+                    return payload;
+                }.bind(this)).catch(function (error) {
+                    this.addOperationLog("查询附件模板", API_PATHS.attachmentTemplates, "error", "", error.message);
+                    throw error;
+                }.bind(this));
+            },
+            createAttachmentTemplate: function (item) {
+                return this.sendRequest("创建附件模板", "POST", API_PATHS.attachmentTemplates,
+                        this.buildAttachmentTemplatePayload(item))
+                        .then(function (created) {
+                            item.attachmentTemplateId = created.attachmentTemplateId || created.id;
+                            item.templateVersion = created.templateVersion;
+                            item.pendingTemplatePersist = false;
+                            this.captureTemplatesFromDetail({attachmentConfigs: [created]});
+                            return item;
+                        }.bind(this));
+            },
+            prepareCustomAttachmentTemplates: function () {
+                var jobs = this.definitionDraft.attachmentConfigs.map(function (item) {
+                    if (item.sourceType !== "custom" || hasText(item.attachmentTemplateId)) {
+                        return Promise.resolve(item);
+                    }
+                    return this.createAttachmentTemplate(item);
+                }, this);
+                return Promise.all(jobs);
+            },
+            buildAttachmentTemplatePayload: function (item) {
+                return {
+                    attachmentCode: item.attachmentCode,
+                    attachmentName: item.attachmentName,
+                    description: item.description || "",
+                    allowedExtensions: asArray(item.allowedExtensionsText),
+                    maxSizeBytes: item.maxSizeBytes,
+                    templateStatus: "ENABLED",
+                    createdBy: this.currentUserId,
+                    updatedBy: this.currentUserId
                 };
+            },
+            saveDefinitionDraft: function () {
+                if (!this.canManageDefinitions) {
+                    this.setOperationState("error", "权限不足", "当前角色不能维护流程定义");
+                    return;
+                }
+                var errors = this.validateDefinitionDraft();
+                if (errors.length > 0) {
+                    this.setOperationState("error", "本地校验失败", errors.join("；"));
+                    return;
+                }
+                var createOrReuse = Promise.resolve({definitionId: this.definitionDraft.definitionId});
+                if (this.definitionDialog.mode === "create" && !hasText(this.definitionDraft.definitionId)) {
+                    var createBody = {
+                        operationId: this.createOperationId("create_definition"),
+                        processCode: this.definitionDraft.processCode,
+                        processName: this.definitionDraft.processName,
+                        systemCode: this.definitionDraft.systemCode,
+                        remark: this.definitionDraft.remark,
+                        operatorUserId: this.currentUserId
+                    };
+                    createOrReuse = this.sendRequest("创建流程定义", "POST", API_PATHS.definitions, createBody);
+                }
+                createOrReuse.then(function (definition) {
+                    this.definitionDraft.definitionId = definition.definitionId || definition.id || this.definitionDraft.definitionId;
+                    return this.prepareCustomAttachmentTemplates();
+                }.bind(this)).then(function () {
+                    var graphBody = this.buildGraphRequest();
+                    return this.sendRequest("保存流程图", "PUT", API_PATHS.saveGraph(this.definitionDraft.definitionId), graphBody);
+                }.bind(this)).then(function () {
+                    return this.sendRequest("图校验", "GET", API_PATHS.validateDefinition(this.definitionDraft.definitionId), {
+                        operationId: this.createOperationId("validate_definition"),
+                        definitionId: this.definitionDraft.definitionId,
+                        operatorUserId: this.currentUserId
+                    });
+                }.bind(this)).then(function () {
+                    this.setOperationState("success", "保存成功", "流程定义保存成功，图校验通过");
+                    this.closeDefinitionDialog();
+                    return this.queryDefinitions();
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "保存失败", error.message);
+                }.bind(this));
+            },
+            buildGraphRequest: function () {
+                return {
+                    operationId: this.createOperationId("save_graph"),
+                    operatorUserId: this.currentUserId,
+                    nodes: this.definitionDraft.nodes.map(function (node, index) {
+                        var copy = Object.assign({}, node);
+                        if (copy.nodeType === "USER_TASK") {
+                            this.buildUserApproverRule(copy);
+                        } else {
+                            copy.approverRuleType = null;
+                            copy.approverRuleConfig = null;
+                            copy.multiInstanceMode = "SINGLE";
+                        }
+                        delete copy.localId;
+                        delete copy.selectedApproverIds;
+                        copy.sortOrder = index + 1;
+                        return copy;
+                    }, this),
+                    edges: this.definitionDraft.edges.map(function (edge, index) {
+                        var copy = Object.assign({}, edge);
+                        delete copy.localId;
+                        copy.sortOrder = index + 1;
+                        return copy;
+                    }),
+                    formFields: this.definitionDraft.formFields.map(function (field, index) {
+                        var copy = Object.assign({}, field);
+                        delete copy.localId;
+                        copy.sortOrder = index + 1;
+                        return copy;
+                    }),
+                    attachmentConfigs: this.definitionDraft.attachmentConfigs.map(function (item, index) {
+                        return this.toAttachmentConfigPayload(item, index);
+                    }, this)
+                };
+            },
+            buildUserApproverRule: function (node) {
+                if (node.approverRuleType === "STARTER") {
+                    node.approverRuleConfig = "{}";
+                    node.multiInstanceMode = "SINGLE";
+                    return node;
+                }
+                if (node.approverRuleType === "USER") {
+                    var ids = asArray(node.selectedApproverIds);
+                    node.approverRuleConfig = JSON.stringify({userIds: ids});
+                    node.multiInstanceMode = ids.length <= 1 ? "SINGLE" : (node.multiInstanceMode || "OR_SIGN");
+                    return node;
+                }
+                node.approverRuleConfig = stringifyRule(node.approverRuleConfig);
+                node.multiInstanceMode = node.multiInstanceMode || "SINGLE";
+                return node;
+            },
+            toAttachmentConfigPayload: function (item, index) {
+                return {
+                    attachmentConfigId: item.attachmentConfigId || "",
+                    definitionId: this.definitionDraft.definitionId,
+                    attachmentTemplateId: item.attachmentTemplateId,
+                    attachmentCode: item.attachmentCode,
+                    required: Boolean(item.required),
+                    minCount: Number(item.minCount || 0),
+                    maxCount: Number(item.maxCount || 0),
+                    applicableNodeCodes: asArray(item.applicableNodeCodes),
+                    sortOrder: item.sortOrder || index + 1
+                };
+            },
+            validateDefinitionDraft: function () {
+                var errors = [];
+                if (!hasText(this.definitionDraft.processCode)) {
+                    errors.push("流程编码必填");
+                }
+                if (!hasText(this.definitionDraft.processName)) {
+                    errors.push("流程名称必填");
+                }
+                var nodeCodes = {};
+                this.definitionDraft.nodes.forEach(function (node) {
+                    if (!hasText(node.nodeCode)) {
+                        errors.push("存在未填写编码的节点");
+                    } else if (nodeCodes[node.nodeCode]) {
+                        errors.push("节点编码重复：" + node.nodeCode);
+                    }
+                    nodeCodes[node.nodeCode] = true;
+                    if (node.nodeType === "USER_TASK" && node.approverRuleType === "USER" && asArray(node.selectedApproverIds).length === 0) {
+                        errors.push("用户任务必须选择审批人：" + node.nodeName);
+                    }
+                });
+                this.definitionDraft.edges.forEach(function (edge) {
+                    if (!nodeCodes[edge.sourceNodeCode] || !nodeCodes[edge.targetNodeCode]) {
+                        errors.push("连线引用不存在的节点：" + edge.edgeCode);
+                    }
+                });
+                var attachmentCodes = {};
+                this.definitionDraft.attachmentConfigs.forEach(function (item) {
+                    if (!hasText(item.attachmentCode)) {
+                        errors.push("附件编码必填");
+                    } else if (attachmentCodes[item.attachmentCode]) {
+                        errors.push("附件编码重复：" + item.attachmentCode);
+                    }
+                    attachmentCodes[item.attachmentCode] = true;
+                    if (item.required && Number(item.minCount || 0) < 1) {
+                        errors.push("必填附件最小数量必须大于等于 1：" + item.attachmentCode);
+                    }
+                    if (Number(item.maxCount || 0) < Number(item.minCount || 0)) {
+                        errors.push("附件最大数量不能小于最小数量：" + item.attachmentCode);
+                    }
+                    if (asArray(item.applicableNodeCodes).length === 0) {
+                        errors.push("附件必须选择适用节点：" + item.attachmentCode);
+                    }
+                });
+                return errors;
+            },
+            publishDefinition: function (row) {
+                this.definitionOperation(row, "发布流程定义", API_PATHS.publishDefinition);
+            },
+            activateDefinition: function (row) {
+                this.definitionOperation(row, "激活流程定义", API_PATHS.activateDefinition);
+            },
+            deactivateDefinition: function (row) {
+                this.definitionOperation(row, "停用流程定义", API_PATHS.deactivateDefinition);
+            },
+            archiveDefinition: function (row) {
+                this.definitionOperation(row, "归档流程定义", API_PATHS.archiveDefinition);
+            },
+            deleteDefinition: function (row) {
+                var definitionId = extractDefinitionId(row);
+                if (!window.confirm("确认删除流程定义 " + definitionId + "？")) {
+                    return;
+                }
+                this.definitionOperation(row, "删除流程定义", API_PATHS.deleteDefinition, "DELETE");
+            },
+            definitionOperation: function (row, label, pathBuilder, method) {
+                var definitionId = extractDefinitionId(row);
+                var path = typeof pathBuilder === "function" ? pathBuilder(definitionId) : pathBuilder;
+                var body = {
+                    operationId: this.createOperationId(label),
+                    definitionId: definitionId,
+                    operatorUserId: this.currentUserId
+                };
+                this.sendRequest(label, method || "POST", path, body).then(function () {
+                    return this.queryDefinitions();
+                }.bind(this)).catch(function () {});
+            },
+            applyInstanceDefinition: function () {
+                var row = this.definitionRows.find(function (definition) {
+                    return extractDefinitionId(definition) === this.instanceForm.definitionId;
+                }, this);
+                this.instanceForm.processCode = row ? row.processCode : "";
+                if (row) {
+                    this.instanceForm.instanceTitle = row.processName + "测试实例";
+                    this.selectDefinition(row);
+                }
+            },
+            startAndSubmitInstance: function () {
+                try {
+                    var startBody = this.buildStartSubmitBody();
+                    this.sendRequest("启动流程", "POST", API_PATHS.startAndSubmit, startBody).then(function (instance) {
+                        this.setOperationState("success", "启动并提交成功", "实例已创建并提交申请节点");
+                        this.queryInstances();
+                        this.queryTodoTasks();
+                        return instance;
+                    }.bind(this)).catch(function (error) {
+                        this.setOperationState("error", "启动并提交失败", error.message);
+                    }.bind(this));
+                } catch (error) {
+                    this.setOperationState("error", "启动参数错误", error.message);
+                }
+            },
+            buildStartSubmitBody: function () {
+                if (!hasText(this.instanceForm.processCode)) {
+                    throw new Error("请选择流程定义");
+                }
+                var user = this.currentUser();
+                return {
+                    operationId: this.createOperationId("start_and_submit"),
+                    processCode: this.instanceForm.processCode,
+                    businessKey: this.instanceForm.businessKey,
+                    instanceTitle: this.instanceForm.instanceTitle,
+                    starterUserId: this.currentUserId,
+                    starterDeptId: user.deptId,
+                    variables: parseJsonObject(this.instanceVariablesText, {}),
+                    attachments: this.buildInstanceAttachments()
+                };
+            },
+            addInstanceAttachment: function () {
+                this.instanceAttachments.push({
+                    localId: nextLocalId("instance_attach"),
+                    enabled: true,
+                    attachmentCode: "bankReceipt",
+                    ownerType: "INSTANCE",
+                    fileName: "bank-receipt.pdf",
+                    contentType: "application/pdf",
+                    sizeBytes: 14,
+                    content: "Zmxvdy1taW5kLXRlc3Q="
+                });
+            },
+            removeInstanceAttachment: function (index) {
+                this.instanceAttachments.splice(index, 1);
+            },
+            buildInstanceAttachments: function () {
+                return this.instanceAttachments.filter(function (attachment) {
+                    return attachment.enabled;
+                }).map(function (attachment) {
+                    return {
+                        attachmentCode: attachment.attachmentCode,
+                        ownerType: "INSTANCE",
+                        fileName: attachment.fileName,
+                        contentType: attachment.contentType,
+                        sizeBytes: attachment.sizeBytes,
+                        content: attachment.content
+                    };
+                });
+            },
+            findCreatedApplyTask: function (instance) {
+                var tasks = normalizeList(instance && (instance.createdTasks || instance.tasks));
+                return tasks.find(function (task) {
+                    return task.nodeCode === "apply" || task.nodeCode === "APPLY";
+                }) || tasks[0];
+            },
+            queryInstances: function () {
+                return this.sendRequest("查询实例", "GET", API_PATHS.startedInstances + toQuery({
+                    starterUserId: this.currentUserId,
+                    pageNo: 1,
+                    pageSize: 50
+                })).then(function (payload) {
+                    this.instanceRows = normalizeList(payload);
+                    return payload;
+                }.bind(this));
+            },
+            selectInstance: function (row) {
+                var instanceId = extractInstanceId(row);
+                if (!instanceId) {
+                    return;
+                }
+                this.sendRequest("查询实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
+                    this.selectedInstanceDetail = payload;
+                }.bind(this));
+            },
+            queryTodoTasks: function () {
+                return this.sendRequest("查询待办", "GET", API_PATHS.todoTasks + toQuery({
+                    userId: this.currentUserId,
+                    pageNo: 1,
+                    pageSize: 50
+                })).then(function (payload) {
+                    this.todoRows = normalizeList(payload);
+                    return payload;
+                }.bind(this));
+            },
+            queryCompletedTasks: function () {
+                return this.sendRequest("查询已办", "GET", API_PATHS.completedTasks + toQuery({
+                    userId: this.currentUserId,
+                    pageNo: 1,
+                    pageSize: 50
+                })).then(function (payload) {
+                    this.completedRows = normalizeList(payload);
+                    return payload;
+                }.bind(this));
+            },
+            openTodoTaskDialog: function (row) {
+                this.taskDialog = {
+                    open: true,
+                    task: row,
+                    variablesText: "{}",
+                    comment: "",
+                    attachments: [],
+                    rejectTargetNodeCode: "",
+                    transferUserId: "",
+                    addSignUserIds: []
+                };
+                var instanceId = row.instanceId;
+                if (hasText(instanceId)) {
+                    this.loadTaskDialogContext(instanceId, "todo");
+                }
+            },
+            openCompletedTaskDialog: function (row) {
+                this.completedDialog = {
+                    open: true,
+                    task: row,
+                    attachments: [],
+                    currentNodeCodes: []
+                };
+                var instanceId = row.instanceId;
+                if (!hasText(instanceId)) {
+                    return;
+                }
+                this.sendRequest("查询已办实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
+                    this.completedDialog.currentNodeCodes = asArray(payload.currentNodeCodes);
+                }.bind(this));
+                this.sendRequest("查询已办附件", "GET", API_PATHS.attachments + toQuery({instanceId: instanceId})).then(function (payload) {
+                    this.completedDialog.attachments = normalizeList(payload);
+                }.bind(this));
+            },
+            loadTaskDialogContext: function (instanceId) {
+                this.sendRequest("查询任务附件", "GET", API_PATHS.attachments + toQuery({instanceId: instanceId})).then(function (payload) {
+                    this.taskDialog.attachments = normalizeList(payload);
+                }.bind(this));
+                this.sendRequest("查询任务实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
+                    this.taskDialog.variablesText = JSON.stringify(payload.variables || payload.variablesJson || {}, null, 2);
+                    if (payload.definitionId && payload.definitionId !== this.selectedDefinitionId) {
+                        this.selectedDefinitionId = payload.definitionId;
+                        return this.selectDefinition({definitionId: payload.definitionId});
+                    }
+                    return payload;
+                }.bind(this));
+            },
+            approveCurrentTask: function () {
+                this.submitTaskAction("审批通过", API_PATHS.taskApprove, {});
+            },
+            rejectCurrentTask: function () {
+                this.submitTaskAction("驳回", API_PATHS.taskReject, {
+                    targetNodeCode: this.taskDialog.rejectTargetNodeCode
+                });
+            },
+            transferCurrentTask: function () {
+                this.submitTaskAction("转办", API_PATHS.taskTransfer, {
+                    targetUserId: this.taskDialog.transferUserId
+                });
+            },
+            addSignCurrentTask: function () {
+                this.submitTaskAction("加签", API_PATHS.taskAddSign, {
+                    addSignUserIds: this.taskDialog.addSignUserIds
+                });
+            },
+            submitTaskAction: function (label, pathBuilder, extra) {
+                var taskId = extractTaskId(this.taskDialog.task);
+                var path = typeof pathBuilder === "function" ? pathBuilder(taskId) : pathBuilder;
+                var body = Object.assign({
+                    operationId: this.createOperationId(label),
+                    taskId: taskId,
+                    expectedTaskVersion: extractTaskVersion(this.taskDialog.task),
+                    operatorUserId: this.currentUserId,
+                    comment: this.taskDialog.comment
+                }, extra || {});
+                this.sendRequest(label, "POST", path, body).then(function () {
+                    this.taskDialog.open = false;
+                    this.queryTodoTasks();
+                    this.queryCompletedTasks();
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", label + "失败", error.message);
+                }.bind(this));
+            },
+            sendRequest: function (label, method, path, body) {
+                var url = this.apiBaseUrl + path;
+                var operationId = body && body.operationId;
+                this.setOperationState("loading", label + "中", path);
+                this.addOperationLog(label, path, "loading", operationId, "请求发送中");
+                var options = {
+                    method: method,
+                    headers: {
+                        "Accept": "application/json",
+                        "X-Flow-User-Id": this.currentUserId,
+                        "X-Flow-Dept-Id": this.currentUser().deptId
+                    }
+                };
+                if (operationId) {
+                    options.headers["Idempotency-Key"] = operationId;
+                }
+                if (method !== "GET" && method !== "HEAD") {
+                    options.headers["Content-Type"] = "application/json";
+                    options.body = JSON.stringify(body || {});
+                }
+                return fetch(url, options).then(function (response) {
+                    return response.text().then(function (text) {
+                        var payload = text ? JSON.parse(text) : null;
+                        if (!response.ok) {
+                            throw new Error(responseSummary(payload) || response.statusText);
+                        }
+                        this.setOperationState("success", label + "成功", path);
+                        this.addOperationLog(label, path, "success", operationId, responseSummary(payload));
+                        return payload;
+                    }.bind(this));
+                }.bind(this)).catch(function (error) {
+                    this.addOperationLog(label, path, "error", operationId, error.message);
+                    this.setOperationState("error", label + "失败", error.message);
+                    throw error;
+                }.bind(this));
+            },
+            setOperationState: function (status, label, message) {
+                this.operationState = {
+                    status: status,
+                    label: label,
+                    message: message || ""
+                };
+            },
+            addOperationLog: function (label, path, status, operationId, summary) {
+                this.operationLogs.unshift({
+                    logId: nextLocalId("log"),
+                    time: nowText(),
+                    label: label,
+                    path: path,
+                    status: status,
+                    operationId: operationId,
+                    summary: summary || ""
+                });
+                if (this.operationLogs.length > 80) {
+                    this.operationLogs.pop();
+                }
+            },
+            createOperationId: function (prefix) {
+                var safePrefix = this.toAsciiToken(prefix);
+                var safeUserId = this.toAsciiToken(this.currentUserId);
+                return safePrefix + "_" + safeUserId + "_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
+            },
+            toAsciiToken: function (value) {
+                var raw = String(value || "");
+                var token = raw.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+                var hash = 0;
+                var index;
+                if (token) {
+                    return token;
+                }
+                if (!raw) {
+                    return "op";
+                }
+                for (index = 0; index < raw.length; index += 1) {
+                    hash = ((hash << 5) - hash) + raw.charCodeAt(index);
+                    hash |= 0;
+                }
+                return "op_" + Math.abs(hash).toString(36);
+            },
+            captureTemplatesFromDetail: function (detail) {
+                var configs = this.normalizeAttachmentConfigsFromDetail(detail);
+                configs.forEach(function (config) {
+                    if (!hasText(config.attachmentTemplateId)) {
+                        return;
+                    }
+                    var exists = this.attachmentTemplateLibrary.some(function (template) {
+                        return template.attachmentTemplateId === config.attachmentTemplateId;
+                    });
+                    if (!exists) {
+                        this.attachmentTemplateLibrary.push({
+                            attachmentTemplateId: config.attachmentTemplateId,
+                            attachmentCode: config.attachmentCode,
+                            templateVersion: config.templateVersion || 1,
+                            attachmentName: config.attachmentName || config.attachmentCode,
+                            allowedExtensions: asArray(config.allowedExtensions || config.allowedExtensionsText),
+                            maxSizeBytes: config.maxSizeBytes || 10485760
+                        });
+                    }
+                }, this);
+            },
+            normalizeAttachmentConfigsFromDetail: function (detail) {
+                if (!detail) {
+                    return [];
+                }
+                var configs = detail.attachmentConfigs || detail.attachmentTemplates || [];
+                return normalizeList(configs).map(normalizeAttachmentConfig);
+            },
+            syncSelectedNodeApprover: function () {
+                if (this.selectedNode) {
+                    this.selectedNode.approverRuleConfig = JSON.stringify({userIds: asArray(this.selectedNode.selectedApproverIds)});
+                    if (this.selectedNode.selectedApproverIds.length <= 1) {
+                        this.selectedNode.multiInstanceMode = "SINGLE";
+                    }
+                }
+            },
+            nodeStyle: function (node) {
+                return {
+                    left: Number(node.positionX || 0) + "px",
+                    top: Number(node.positionY || 0) + "px"
+                };
+            },
+            nodeClass: function (node) {
+                if (node.nodeType === "START") {
+                    return "start";
+                }
+                if (node.nodeType === "END") {
+                    return "end";
+                }
+                if (node.nodeType === "USER_TASK") {
+                    return "user";
+                }
+                return "gateway";
+            },
+            draftEdgeLine: function (edge) {
+                return this.edgeLineFromNodes(edge, this.definitionDraft.nodes);
+            },
+            edgeLine: function (edge) {
+                return this.edgeLineFromNodes(edge, this.selectedGraphNodes);
+            },
+            edgeLineFromNodes: function (edge, nodes) {
+                var source = nodes.find(function (node) {
+                    return node.nodeCode === edge.sourceNodeCode;
+                });
+                var target = nodes.find(function (node) {
+                    return node.nodeCode === edge.targetNodeCode;
+                });
+                if (!source || !target) {
+                    return {x1: 0, y1: 0, x2: 0, y2: 0};
+                }
+                return {
+                    x1: Number(source.positionX || 0) + 66,
+                    y1: Number(source.positionY || 0) + 29,
+                    x2: Number(target.positionX || 0) + 66,
+                    y2: Number(target.positionY || 0) + 29
+                };
+            },
+            attachmentRowKey: function (item) {
+                return item.localId || item.configId || item.attachmentTemplateId || item.attachmentCode;
+            },
+            joinList: function (value) {
+                return asArray(value).join(", ");
+            },
+            isUserTaskNode: function (node) {
+                return node && node.nodeType === "USER_TASK";
             }
         }
-    }).mount("#app");
+    });
+
+    app.mount("#app");
 }());

@@ -276,7 +276,7 @@ public class PlatformStandaloneConfiguration {
                             request.getHeader("X-Flow-Dept-Id"), request.getHeader("X-Flow-Dept-Name"));
                 }
             }
-            return userContext("user_sales", null, "dept_sales", null);
+            return userContext("u_sales_01", null, "mock-dept", null);
         }
     }
 
@@ -290,36 +290,39 @@ public class PlatformStandaloneConfiguration {
     }
 
     private static String displayName(String userId) {
-        if ("user_sales".equals(userId)) {
-            return "Sales User";
+        if ("u_sales_01".equals(userId)) {
+            return "业务员";
         }
-        if ("user_manager".equals(userId)) {
-            return "Manager User";
+        if ("u_group_leader_01".equals(userId)) {
+            return "组长";
         }
-        if ("user_finance".equals(userId)) {
-            return "Finance User";
+        if ("u_dept_manager_01".equals(userId)) {
+            return "部门经理1";
+        }
+        if ("u_dept_manager_02".equals(userId)) {
+            return "部门经理2";
+        }
+        if ("u_finance_01".equals(userId)) {
+            return "财务1";
+        }
+        if ("u_finance_02".equals(userId)) {
+            return "财务2";
+        }
+        if ("u_ceo_01".equals(userId)) {
+            return "CEO";
+        }
+        if ("u_admin_01".equals(userId)) {
+            return "测试管理员";
         }
         return userId;
     }
 
     private static String defaultDepartmentId(String userId) {
-        if ("user_manager".equals(userId)) {
-            return "dept_manager";
-        }
-        if ("user_finance".equals(userId)) {
-            return "dept_finance";
-        }
-        return "dept_sales";
+        return "mock-dept";
     }
 
     private static String displayDepartmentName(String departmentId) {
-        if ("dept_manager".equals(departmentId)) {
-            return "Manager Department";
-        }
-        if ("dept_finance".equals(departmentId)) {
-            return "Finance Department";
-        }
-        return "Sales Department";
+        return "Mock Department";
     }
 
     private static String firstText(String first, String second) {

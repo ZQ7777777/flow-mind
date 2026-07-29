@@ -269,6 +269,26 @@ class OperationIdempotencyServiceTest {
     }
 
     @Test
+    void releasedProcessingLeaseCanBeTakenOverBeforeOriginalLeaseExpires() {
+        LocalDateTime now = LocalDateTime.of(2026, 7, 17, 10, 0);
+        service.beginOrReplay("operation-release-retry",
+                DefinitionActionTypeEnum.SAVE_GRAPH.getOperationActionType(),
+                "operator-001",
+                "hash-001",
+                now);
+
+        service.releaseProcessingLeaseForRetry("operation-release-retry", now.plusSeconds(10));
+        OperationIdempotencyDecision takeover = service.beginOrReplay("operation-release-retry",
+                DefinitionActionTypeEnum.SAVE_GRAPH.getOperationActionType(),
+                "operator-001",
+                "hash-001",
+                now.plusSeconds(11));
+
+        assertEquals(OperationIdempotencyDecisionType.TAKE_OVER, takeover.getType());
+        assertEquals(now.plusMinutes(5).plusSeconds(11), takeover.getRecord().getProcessingExpiresAt());
+    }
+
+    @Test
     void markFailedStoresFailedStatusAndErrorCode() {
         service.begin("operation-003",
                 DefinitionActionTypeEnum.DELETE.getOperationActionType(),

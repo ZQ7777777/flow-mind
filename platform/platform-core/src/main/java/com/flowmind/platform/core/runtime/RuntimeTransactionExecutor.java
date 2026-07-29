@@ -1,5 +1,6 @@
 package com.flowmind.platform.core.runtime;
 
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -13,6 +14,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Component
 public class RuntimeTransactionExecutor {
+
+    private static final int SQLITE_BUSY_MAX_ATTEMPTS = 3;
+    private static final long SQLITE_BUSY_RETRY_DELAY_MILLIS = 50L;
 
     private final TransactionTemplate transactionTemplate;
 
@@ -28,6 +32,36 @@ public class RuntimeTransactionExecutor {
         if (work == null) {
             throw new IllegalArgumentException("work is required");
         }
-        return transactionTemplate.execute(status -> work.execute());
+        for (int attempt = 1; attempt <= SQLITE_BUSY_MAX_ATTEMPTS; attempt++) {
+            try {
+                return transactionTemplate.execute(status -> work.execute());
+            } catch (DataAccessException ex) {
+                if (!isSqliteBusy(ex) || attempt == SQLITE_BUSY_MAX_ATTEMPTS) {
+                    throw ex;
+                }
+                waitBeforeRetry(attempt);
+            }
+        }
+        throw new IllegalStateException("unreachable runtime transaction retry state");
+    }
+
+    private boolean isSqliteBusy(Throwable exception) {
+        Throwable current = exception;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && (message.contains("SQLITE_BUSY") || message.contains("database is locked"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private void waitBeforeRetry(int attempt) {
+        try {
+            Thread.sleep(SQLITE_BUSY_RETRY_DELAY_MILLIS * attempt);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

@@ -14,7 +14,9 @@ class MockCurrentUserProviderTest {
 
         UserContext currentUser = provider.getCurrentUser();
 
-        assertEquals("mock-user", currentUser.getUserId());
+        assertEquals("u_sales_01", currentUser.getUserId());
+        assertEquals("业务员", currentUser.getUserName());
+        assertEquals("mock-dept", currentUser.getDepartmentId());
         assertEquals("Mock Department", currentUser.getDepartmentName());
     }
 

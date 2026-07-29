@@ -17,11 +17,12 @@ class InMemoryOrganizationProviderTest {
     void defaultFixturesCanFindUsersDepartmentsAndRoles() {
         InMemoryOrganizationProvider provider = new InMemoryOrganizationProvider();
 
-        assertTrue(provider.findDepartment("dept_sales").isPresent());
-        assertEquals("Sales User", provider.findUser("user_sales").get().getUserName());
-        assertEquals("user_sales_manager",
-                provider.listUsersByRoleAndDepartment("manager", "dept_sales").get(0).getUserId());
-        assertEquals("user_finance", provider.listUsersByRole("finance").get(0).getUserId());
+        assertTrue(provider.findDepartment("mock-dept").isPresent());
+        assertEquals(8, provider.listUsersByDepartment("mock-dept").size());
+        assertEquals("业务员", provider.findUser("u_sales_01").get().getUserName());
+        assertEquals("u_group_leader_01",
+                provider.listUsersByRoleAndDepartment("manager", "mock-dept").get(0).getUserId());
+        assertEquals("u_finance_01", provider.listUsersByRole("finance").get(0).getUserId());
     }
 
     @Test

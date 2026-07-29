@@ -11,7 +11,7 @@ public class MockCurrentUserProvider implements CurrentUserProvider {
     private volatile UserContext currentUser;
 
     public MockCurrentUserProvider() {
-        this(new UserContext("mock-user", "Mock User", "mock-dept", "Mock Department"));
+        this(new UserContext("u_sales_01", "业务员", "mock-dept", "Mock Department"));
     }
 
     public MockCurrentUserProvider(UserContext currentUser) {

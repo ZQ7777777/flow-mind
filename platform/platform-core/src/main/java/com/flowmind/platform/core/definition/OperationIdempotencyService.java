@@ -131,6 +131,17 @@ public class OperationIdempotencyService {
     }
 
     /**
+     * 提前释放 PROCESSING 租约，让同一请求可在指定时间后重新接管执行。
+     *
+     * @param operationId         客户端幂等操作号
+     * @param processingExpiresAt 新的 PROCESSING 租约截止时间
+     */
+    @Transactional
+    public void releaseProcessingLeaseForRetry(String operationId, LocalDateTime processingExpiresAt) {
+        operationRecordRepository.extendProcessingLease(operationId, processingExpiresAt);
+    }
+
+    /**
      * 创建或判断幂等操作记录，完整覆盖 M0 冻结的 begin/replay/lease 决策语义。
      *
      * @param operationId 客户端传入的幂等操作号

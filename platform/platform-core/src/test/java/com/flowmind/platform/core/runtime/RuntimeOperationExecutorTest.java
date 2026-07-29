@@ -11,6 +11,7 @@ import com.flowmind.platform.testsupport.ExistingConnectionDataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.ByteArrayOutputStream;
@@ -24,7 +25,10 @@ import java.sql.Statement;
 import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 
 class RuntimeOperationExecutorTest {
 
@@ -90,6 +94,17 @@ class RuntimeOperationExecutorTest {
         RuntimeStateException processingError = assertThrows(RuntimeStateException.class,
                 () -> executor.assertExecutable(processing));
         assertEquals(RuntimeErrorCodes.OPERATION_IN_PROGRESS, processingError.getErrorCode());
+    }
+
+    @Test
+    void deterministicFailureMarkerDoesNotExposeDatabaseBusy() {
+        OperationIdempotencyService idempotencyService = mock(OperationIdempotencyService.class);
+        RuntimeOperationExecutor runtimeOperationExecutor = new RuntimeOperationExecutor(idempotencyService);
+        doThrow(new DataAccessResourceFailureException("[SQLITE_BUSY] database is locked"))
+                .when(idempotencyService).markFailed("operation-invalid", RuntimeErrorCodes.INVALID_ACTION);
+
+        assertDoesNotThrow(() -> runtimeOperationExecutor.markDeterministicFailure("operation-invalid",
+                RuntimeErrorCodes.INVALID_ACTION));
     }
 
     private TaskOperationRequest request(String operationId, String comment) {
