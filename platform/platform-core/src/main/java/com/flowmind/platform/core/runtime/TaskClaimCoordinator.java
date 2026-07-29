@@ -19,10 +19,7 @@ import com.flowmind.platform.core.audit.AuditLogCommand;
 import com.flowmind.platform.core.audit.AuditLogWriter;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
-import com.flowmind.platform.core.task.HistoryArchiveCommand;
-import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
-import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
@@ -45,7 +42,6 @@ public class TaskClaimCoordinator {
     private final RuntimeRequestValidator requestValidator;
     private final RuntimeOperationExecutor operationExecutor;
     private final RuntimeTransactionExecutor transactionExecutor;
-    private final HistoryTaskWriter historyTaskWriter;
     private final AuditLogWriter auditLogWriter;
     private final CallbackService callbackService;
     private final DelegateProvider delegateProvider;
@@ -55,7 +51,6 @@ public class TaskClaimCoordinator {
                                 RuntimeRequestValidator requestValidator,
                                 RuntimeOperationExecutor operationExecutor,
                                 RuntimeTransactionExecutor transactionExecutor,
-                                HistoryTaskWriter historyTaskWriter,
                                 AuditLogWriter auditLogWriter,
                                 CallbackService callbackService,
                                 @Nullable DelegateProvider delegateProvider) {
@@ -64,7 +59,6 @@ public class TaskClaimCoordinator {
         this.requestValidator = requestValidator;
         this.operationExecutor = operationExecutor;
         this.transactionExecutor = transactionExecutor;
-        this.historyTaskWriter = historyTaskWriter;
         this.auditLogWriter = auditLogWriter;
         this.callbackService = callbackService;
         this.delegateProvider = delegateProvider;
@@ -83,20 +77,20 @@ public class TaskClaimCoordinator {
                                      final ActionTypeEnum action,
                                      final String operationType,
                                      final WorkflowEventTypeEnum eventType) {
-        final UserContext operator = requestValidator.validateTaskIdentity(request);
+        final UserContext operator = requestValidator.validateTaskIdentity(request); //验证用户
         OperationIdempotencyDecision decision = operationExecutor.begin(request, operationType,
-                operator.getUserId(), null, request.getTaskId(), LocalDateTime.now());
+                operator.getUserId(), null, request.getTaskId(), LocalDateTime.now()); //幂等验证
         if (decision != null && OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
-            return operationExecutor.replayTaskAction(decision);
+            return operationExecutor.replayTaskAction(decision); //满足幂等，返回结果
         }
         operationExecutor.assertExecutable(decision);
-        try {
+        try { //事务执行逻辑：
             return transactionExecutor.execute(new RuntimeTransactionWork<TaskActionResult>() {
                 @Override
                 public TaskActionResult execute() {
                     ProcessActiveTaskEntity task = requireTask(request);
                     ProcessInstanceEntity instance = requireRunningInstance(task);
-                    if (ActionTypeEnum.CLAIM.equals(action)) {
+                    if (ActionTypeEnum.CLAIM.equals(action)) { //认领任务
                         validateClaim(task, operator);
                         if (activeTaskRepository.claim(task.getId(), request.getExpectedTaskVersion().longValue(),
                                 operator.getUserId(), operator.getUserName()) != 1) {
@@ -112,8 +106,7 @@ public class TaskClaimCoordinator {
                     }
                     operationExecutor.bindTarget(request.getOperationId(), instance.getId(), task.getId());
                     ProcessActiveTaskEntity updated = activeTaskRepository.findById(task.getId());
-                    ProcessHistoryTaskEntity history = archive(instance, task, operator, action, request);
-                    TaskActionResult result = result(instance, request, action, operator, history, updated, eventType);
+                    TaskActionResult result = result(instance, request, action, operator, updated, eventType);
                     operationExecutor.markSuccess(request.getOperationId(), result);
                     return result;
                 }
@@ -210,32 +203,10 @@ public class TaskClaimCoordinator {
         }
     }
 
-    private ProcessHistoryTaskEntity archive(ProcessInstanceEntity instance,
-                                             ProcessActiveTaskEntity task,
-                                             UserContext operator,
-                                             ActionTypeEnum action,
-                                             TaskOperationRequest request) {
-        HistoryArchiveCommand command = new HistoryArchiveCommand();
-        command.setInstance(instance);
-        command.setTask(task);
-        command.setOperator(operator);
-        command.setActionType(action);
-        command.setOperationId(request.getOperationId());
-        command.setComment(request.getComment());
-        command.setVariablesSnapshot(RuntimeJsonCodec.readObjectMap(instance.getVariablesJson()));
-        command.setCompletedAt(LocalDateTime.now());
-        Map<String, Object> extra = new LinkedHashMap<String, Object>();
-        extra.put("schemaVersion", Integer.valueOf(1));
-        extra.put("controlAction", Boolean.TRUE);
-        command.setExtraJson(RuntimeJsonCodec.toJson(extra));
-        return historyTaskWriter.archive(command);
-    }
-
     private TaskActionResult result(ProcessInstanceEntity instance,
                                     TaskOperationRequest request,
                                     ActionTypeEnum action,
                                     UserContext operator,
-                                    ProcessHistoryTaskEntity history,
                                     ProcessActiveTaskEntity updated,
                                     WorkflowEventTypeEnum eventType) {
         TaskActionResult result = new TaskActionResult();
@@ -243,11 +214,10 @@ public class TaskClaimCoordinator {
         ProcessInstanceDTO instanceDTO = RuntimeModelMapper.toDto(instance);
         instanceDTO.setCreatedTasks(Collections.<TaskDTO>emptyList());
         result.setInstance(instanceDTO);
-        HistoryTaskDTO historyDTO = RuntimeModelMapper.toDto(history);
-        result.setArchivedTasks(Collections.singletonList(historyDTO));
+        result.setArchivedTasks(Collections.<HistoryTaskDTO>emptyList());
         result.setCreatedTasks(Collections.<TaskDTO>emptyList());
         result.setUpdatedTasks(Collections.singletonList(RuntimeModelMapper.toDto(updated, null, null)));
-        writeAudit(instance, request, action, operator, history);
+        writeAudit(instance, request, action, operator, updated);
         publish(request.getOperationId(), eventType, action, result, operator);
         return result;
     }
@@ -256,7 +226,7 @@ public class TaskClaimCoordinator {
                             TaskOperationRequest request,
                             ActionTypeEnum action,
                             UserContext operator,
-                            ProcessHistoryTaskEntity history) {
+                            ProcessActiveTaskEntity updated) {
         AuditLogCommand command = new AuditLogCommand();
         command.setInstanceId(instance.getId());
         command.setOperationId(request.getOperationId());
@@ -266,7 +236,9 @@ public class TaskClaimCoordinator {
         command.setOperatorId(operator.getUserId());
         Map<String, Object> detail = new LinkedHashMap<String, Object>();
         detail.put("schemaVersion", Integer.valueOf(1));
-        detail.put("historyTaskId", history.getId());
+        detail.put("controlAction", Boolean.TRUE);
+        detail.put("taskStatus", updated.getTaskStatus());
+        detail.put("taskVersion", updated.getLockVersion());
         command.setDetail(detail);
         auditLogWriter.append(command);
     }
