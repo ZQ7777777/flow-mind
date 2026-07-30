@@ -12,6 +12,9 @@
         validateDefinition: function (definitionId) {
             return "/api/platform/definitions/" + encodeURIComponent(definitionId) + "/publish-validation";
         },
+        copyDefinition: function (definitionId) {
+            return "/api/platform/definitions/" + encodeURIComponent(definitionId) + "/copy";
+        },
         publishDefinition: "/api/platform/definitions/publish",
         activateDefinition: "/api/platform/definitions/activate",
         deactivateDefinition: "/api/platform/definitions/deactivate",
@@ -76,6 +79,12 @@
     ];
 
     var idSeed = 1;
+    var CANVAS_MIN_WIDTH = 960;
+    var CANVAS_READONLY_MIN_HEIGHT = 480;
+    var CANVAS_DESIGNER_MIN_HEIGHT = 480;
+    var CANVAS_NODE_WIDTH = 132;
+    var CANVAS_NODE_HEIGHT = 58;
+    var CANVAS_PADDING = 96;
 
     function nextLocalId(prefix) {
         idSeed += 1;
@@ -170,6 +179,80 @@
         return JSON.stringify(value);
     }
 
+    function isJsonObject(value) {
+        return value !== null && typeof value === "object" && !Array.isArray(value);
+    }
+
+    function normalizeListenerConfigValue(value) {
+        if (!hasText(value)) {
+            return "";
+        }
+        return typeof value === "string" ? value : JSON.stringify(value);
+    }
+
+    function parseListenerConfig(value) {
+        var text = normalizeListenerConfigValue(value);
+        if (!hasText(text)) {
+            return {config: {}, error: ""};
+        }
+        try {
+            var config = JSON.parse(text);
+            if (!isJsonObject(config)) {
+                return {config: {}, error: "listenerConfig 必须是 JSON 对象"};
+            }
+            return {config: config, error: ""};
+        } catch (error) {
+            return {config: {}, error: "listenerConfig JSON 格式不正确：" + error.message};
+        }
+    }
+
+    function readListenerRuleEditor(value) {
+        var parsed = parseListenerConfig(value);
+        var editor = {
+            listenerRejectEnabled: false,
+            listenerRejectTargetNodeCodes: [],
+            listenerDirectSendEnabled: false,
+            listenerConfigError: parsed.error
+        };
+        if (parsed.error) {
+            return editor;
+        }
+        var rules = parsed.config.taskActionRules;
+        if (rules === undefined || rules === null) {
+            return editor;
+        }
+        if (!isJsonObject(rules)) {
+            editor.listenerConfigError = "listenerConfig.taskActionRules 必须是 JSON 对象";
+            return editor;
+        }
+        if (rules.reject !== undefined && rules.reject !== null) {
+            if (!isJsonObject(rules.reject)) {
+                editor.listenerConfigError = "listenerConfig.taskActionRules.reject 必须是 JSON 对象";
+                return editor;
+            }
+            editor.listenerRejectEnabled = rules.reject.enabled === true;
+            editor.listenerRejectTargetNodeCodes = Array.isArray(rules.reject.targetNodeCodes)
+                ? rules.reject.targetNodeCodes.filter(hasText) : [];
+        }
+        if (rules.directSend !== undefined && rules.directSend !== null) {
+            if (!isJsonObject(rules.directSend)) {
+                editor.listenerConfigError = "listenerConfig.taskActionRules.directSend 必须是 JSON 对象";
+                return editor;
+            }
+            editor.listenerDirectSendEnabled = rules.directSend.enabled === true;
+        }
+        return editor;
+    }
+
+    function applyListenerRuleEditor(node) {
+        var editor = readListenerRuleEditor(node.listenerConfig);
+        node.listenerRejectEnabled = editor.listenerRejectEnabled;
+        node.listenerRejectTargetNodeCodes = editor.listenerRejectTargetNodeCodes;
+        node.listenerDirectSendEnabled = editor.listenerDirectSendEnabled;
+        node.listenerConfigError = editor.listenerConfigError;
+        return node;
+    }
+
     function extractDefinitionId(row) {
         return row && (row.definitionId || row.id);
     }
@@ -231,6 +314,11 @@
             approverRuleConfig: stringifyRule(ruleType === "STARTER" ? {} : {userIds: selectedApproverIds || []}),
             selectedApproverIds: selectedApproverIds || [],
             multiInstanceMode: mode || "SINGLE",
+            listenerConfig: "",
+            listenerRejectEnabled: false,
+            listenerRejectTargetNodeCodes: [],
+            listenerDirectSendEnabled: false,
+            listenerConfigError: "",
             positionX: x,
             positionY: y,
             sortOrder: sortOrder
@@ -261,7 +349,7 @@
         } else if (ruleConfig) {
             approverIds = asArray(ruleConfig.userIds);
         }
-        return Object.assign(buildNode(
+        var normalized = Object.assign(buildNode(
             node.nodeCode || ("node_" + index),
             node.nodeName || ("节点" + (index + 1)),
             node.nodeType || "USER_TASK",
@@ -274,8 +362,10 @@
         ), node, {
             localId: node.localId || nextLocalId("node"),
             selectedApproverIds: approverIds,
-            approverRuleConfig: stringifyRule(ruleConfig)
+            approverRuleConfig: stringifyRule(ruleConfig),
+            listenerConfig: normalizeListenerConfigValue(node.listenerConfig)
         });
+        return applyListenerRuleEditor(normalized);
     }
 
     function normalizeEdge(edge, index) {
@@ -316,6 +406,9 @@
     function responseSummary(payload) {
         if (!payload) {
             return "无响应体";
+        }
+        if (payload.errorCode === "FLOW_FROZEN_MODEL_PARALLEL_GATEWAY_PAIR_INVALID") {
+            return [payload.errorCode, "并行网关配对无效：请在流程图中为并行分支和并行汇聚设置互相配对，或删除会签定义里不需要的并行网关。"].filter(hasText).join(" ");
         }
         if (payload.errorCode || payload.message) {
             return [payload.errorCode, payload.message].filter(hasText).join(" ");
@@ -656,6 +749,12 @@
                     this.definitionDraft.edges = this.definitionDraft.edges.filter(function (edge) {
                         return edge.sourceNodeCode !== nodeCode && edge.targetNodeCode !== nodeCode;
                     });
+                    this.definitionDraft.nodes.forEach(function (node) {
+                        if (node.pairedGatewayCode === nodeCode) {
+                            node.pairedGatewayCode = "";
+                        }
+                        this.pruneListenerRejectTarget(node, nodeCode);
+                    }, this);
                     this.selectedDesigner = {type: "", code: ""};
                     return this.persistDefinitionDraftAfterDesignerDelete("节点及相关连线已删除并同步到后端", "节点及相关连线已删除，保存后写入后端");
                 }
@@ -865,6 +964,10 @@
                         }
                         delete copy.localId;
                         delete copy.selectedApproverIds;
+                        delete copy.listenerRejectEnabled;
+                        delete copy.listenerRejectTargetNodeCodes;
+                        delete copy.listenerDirectSendEnabled;
+                        delete copy.listenerConfigError;
                         copy.sortOrder = index + 1;
                         return copy;
                     }, this),
@@ -933,7 +1036,37 @@
                     if (node.nodeType === "USER_TASK" && node.approverRuleType === "USER" && asArray(node.selectedApproverIds).length === 0) {
                         errors.push("用户任务必须选择审批人：" + node.nodeName);
                     }
+                    if (node.nodeType === "USER_TASK") {
+                        var listenerEditor = readListenerRuleEditor(node.listenerConfig);
+                        node.listenerConfigError = listenerEditor.listenerConfigError;
+                        if (listenerEditor.listenerConfigError) {
+                            errors.push(node.nodeName + "：" + listenerEditor.listenerConfigError);
+                        } else if (listenerEditor.listenerRejectEnabled
+                                && listenerEditor.listenerRejectTargetNodeCodes.length === 0) {
+                            errors.push(node.nodeName + "：启用驳回时必须至少选择一个允许驳回节点");
+                        }
+                    }
                 });
+                this.definitionDraft.nodes.forEach(function (node) {
+                    var paired;
+                    if (!this.isParallelGatewayNode(node)) {
+                        return;
+                    }
+                    if (!hasText(node.pairedGatewayCode)) {
+                        errors.push("并行网关必须选择配对网关：" + node.nodeName);
+                        return;
+                    }
+                    paired = this.definitionDraft.nodes.find(function (candidate) {
+                        return candidate.nodeCode === node.pairedGatewayCode;
+                    });
+                    if (!this.isExpectedParallelGatewayPair(node, paired)) {
+                        errors.push("并行网关配对类型不匹配：" + node.nodeName);
+                        return;
+                    }
+                    if (paired.pairedGatewayCode !== node.nodeCode) {
+                        errors.push("并行网关配对必须互相指向：" + node.nodeName);
+                    }
+                }, this);
                 this.definitionDraft.edges.forEach(function (edge) {
                     if (!nodeCodes[edge.sourceNodeCode] || !nodeCodes[edge.targetNodeCode]) {
                         errors.push("连线引用不存在的节点：" + edge.edgeCode);
@@ -958,6 +1091,26 @@
                     }
                 });
                 return errors;
+            },
+            copyDefinition: function (row) {
+                var definitionId = extractDefinitionId(row);
+                var body = {
+                    operationId: this.createOperationId("复制流程定义"),
+                    operatorUserId: this.currentUserId
+                };
+                this.sendRequest("复制流程定义", "POST", API_PATHS.copyDefinition(definitionId), body).then(function (definition) {
+                    var copiedDefinitionId = extractDefinitionId(definition);
+                    this.selectedDefinitionId = copiedDefinitionId || definitionId;
+                    return this.queryDefinitions();
+                }.bind(this)).then(function () {
+                    if (!this.selectedDefinitionId) {
+                        return null;
+                    }
+                    var selected = this.definitionRows.find(function (definitionRow) {
+                        return extractDefinitionId(definitionRow) === this.selectedDefinitionId;
+                    }, this);
+                    return selected ? this.selectDefinition(selected) : null;
+                }.bind(this)).catch(function () {});
             },
             publishDefinition: function (row) {
                 this.definitionOperation(row, "发布流程定义", API_PATHS.publishDefinition);
@@ -1408,6 +1561,116 @@
                     }
                 }
             },
+            listenerRejectTargetNodes: function (node) {
+                return this.definitionDraft.nodes.filter(function (candidate) {
+                    return candidate.nodeType === "USER_TASK" && candidate.nodeCode !== node.nodeCode;
+                });
+            },
+            taskRejectTargetNodes: function () {
+                var task = this.taskDialog.task || {};
+                var detailDefinitionId = extractDefinitionId(this.selectedDefinitionDetail);
+                if (hasText(task.definitionId) && task.definitionId !== detailDefinitionId) {
+                    return [];
+                }
+                var currentNode = this.selectedGraphNodes.find(function (node) {
+                    return node.nodeCode === task.nodeCode;
+                });
+                if (!currentNode) {
+                    return [];
+                }
+                var editor = readListenerRuleEditor(currentNode.listenerConfig);
+                if (editor.listenerConfigError || !editor.listenerRejectEnabled) {
+                    return [];
+                }
+                return editor.listenerRejectTargetNodeCodes.map(function (targetNodeCode) {
+                    return this.selectedGraphNodes.find(function (node) {
+                        return node.nodeCode === targetNodeCode && this.isUserTaskNode(node);
+                    }, this);
+                }, this).filter(function (node, index, nodes) {
+                    return node && nodes.indexOf(node) === index;
+                });
+            },
+            syncSelectedNodeListenerRules: function () {
+                if (this.selectedNode) {
+                    this.syncNodeListenerRules(this.selectedNode);
+                }
+            },
+            syncNodeListenerRules: function (node) {
+                var parsed = parseListenerConfig(node.listenerConfig);
+                if (parsed.error) {
+                    node.listenerConfigError = parsed.error;
+                    return false;
+                }
+                var config = parsed.config;
+                var rules = isJsonObject(config.taskActionRules) ? clone(config.taskActionRules) : {};
+                if (node.listenerRejectEnabled) {
+                    var reject = isJsonObject(rules.reject) ? clone(rules.reject) : {};
+                    reject.enabled = true;
+                    reject.targetNodeCodes = asArray(node.listenerRejectTargetNodeCodes).filter(hasText);
+                    rules.reject = reject;
+                } else {
+                    delete rules.reject;
+                }
+                if (node.listenerDirectSendEnabled) {
+                    var directSend = isJsonObject(rules.directSend) ? clone(rules.directSend) : {};
+                    directSend.enabled = true;
+                    directSend.targetMode = "REJECT_SOURCE";
+                    rules.directSend = directSend;
+                } else {
+                    delete rules.directSend;
+                }
+                if (Object.keys(rules).length > 0) {
+                    config.taskActionRules = rules;
+                } else {
+                    delete config.taskActionRules;
+                }
+                node.listenerConfig = Object.keys(config).length > 0 ? JSON.stringify(config) : "";
+                node.listenerConfigError = "";
+                return true;
+            },
+            syncSelectedNodeListenerJson: function () {
+                if (this.selectedNode) {
+                    applyListenerRuleEditor(this.selectedNode);
+                }
+            },
+            pruneListenerRejectTarget: function (node, removedNodeCode) {
+                var editor = readListenerRuleEditor(node.listenerConfig);
+                if (editor.listenerConfigError
+                        || editor.listenerRejectTargetNodeCodes.indexOf(removedNodeCode) < 0) {
+                    return;
+                }
+                node.listenerRejectEnabled = editor.listenerRejectEnabled;
+                node.listenerRejectTargetNodeCodes = editor.listenerRejectTargetNodeCodes.filter(function (targetNodeCode) {
+                    return targetNodeCode !== removedNodeCode;
+                });
+                node.listenerDirectSendEnabled = editor.listenerDirectSendEnabled;
+                if (node.listenerRejectTargetNodeCodes.length === 0) {
+                    node.listenerRejectEnabled = false;
+                }
+                this.syncNodeListenerRules(node);
+            },
+            canvasMetrics: function (nodes, minHeight) {
+                var metrics = {
+                    width: CANVAS_MIN_WIDTH,
+                    height: Number(minHeight || CANVAS_READONLY_MIN_HEIGHT)
+                };
+                asArray(nodes).forEach(function (node) {
+                    metrics.width = Math.max(metrics.width, Number(node.positionX || 0) + CANVAS_NODE_WIDTH + CANVAS_PADDING);
+                    metrics.height = Math.max(metrics.height, Number(node.positionY || 0) + CANVAS_NODE_HEIGHT + CANVAS_PADDING);
+                });
+                return metrics;
+            },
+            canvasSurfaceStyle: function (nodes, minHeight) {
+                var metrics = this.canvasMetrics(nodes, minHeight || CANVAS_DESIGNER_MIN_HEIGHT);
+                return {
+                    width: metrics.width + "px",
+                    height: metrics.height + "px"
+                };
+            },
+            canvasViewBox: function (nodes, minHeight) {
+                var metrics = this.canvasMetrics(nodes, minHeight || CANVAS_DESIGNER_MIN_HEIGHT);
+                return "0 0 " + metrics.width + " " + metrics.height;
+            },
             nodeStyle: function (node) {
                 return {
                     left: Number(node.positionX || 0) + "px",
@@ -1476,6 +1739,55 @@
             },
             isUserTaskNode: function (node) {
                 return node && node.nodeType === "USER_TASK";
+            },
+            isParallelGatewayNode: function (node) {
+                return node && (node.nodeType === "PARALLEL_SPLIT_GATEWAY"
+                    || node.nodeType === "PARALLEL_JOIN_GATEWAY");
+            },
+            parallelGatewayPairOptions: function (node) {
+                var expectedType = this.expectedParallelGatewayPairType(node);
+                if (!expectedType) {
+                    return [];
+                }
+                return this.definitionDraft.nodes.filter(function (candidate) {
+                    return candidate.nodeCode !== node.nodeCode && candidate.nodeType === expectedType;
+                });
+            },
+            syncParallelGatewayPair: function (node) {
+                var pairedCode;
+                if (!node) {
+                    return;
+                }
+                pairedCode = node.pairedGatewayCode;
+                this.definitionDraft.nodes.forEach(function (candidate) {
+                    if (candidate.nodeCode !== node.nodeCode
+                            && (candidate.pairedGatewayCode === node.nodeCode || candidate.pairedGatewayCode === pairedCode)) {
+                        candidate.pairedGatewayCode = "";
+                    }
+                });
+                if (!hasText(pairedCode)) {
+                    return;
+                }
+                this.definitionDraft.nodes.forEach(function (candidate) {
+                    if (candidate.nodeCode === pairedCode && this.isExpectedParallelGatewayPair(node, candidate)) {
+                        candidate.pairedGatewayCode = node.nodeCode;
+                    }
+                }, this);
+            },
+            expectedParallelGatewayPairType: function (node) {
+                if (!node) {
+                    return "";
+                }
+                if (node.nodeType === "PARALLEL_SPLIT_GATEWAY") {
+                    return "PARALLEL_JOIN_GATEWAY";
+                }
+                if (node.nodeType === "PARALLEL_JOIN_GATEWAY") {
+                    return "PARALLEL_SPLIT_GATEWAY";
+                }
+                return "";
+            },
+            isExpectedParallelGatewayPair: function (node, paired) {
+                return Boolean(node && paired && paired.nodeType === this.expectedParallelGatewayPairType(node));
             }
         }
     });

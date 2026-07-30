@@ -352,7 +352,7 @@ tbody tr:hover {
     position: relative;
     height: 420px;
     margin-top: 10px;
-    overflow: hidden;
+    overflow: auto;
     border: 1px solid var(--line);
     border-radius: 8px;
     background:
@@ -364,6 +364,16 @@ tbody tr:hover {
 
 .designer-canvas {
     height: 480px;
+}
+
+.canvas-surface {
+    position: relative;
+    min-width: 960px;
+    min-height: 480px;
+}
+
+.designer-canvas .canvas-surface {
+    min-height: 480px;
 }
 
 .designer-edge-layer {
@@ -520,6 +530,36 @@ tbody tr:hover {
 
 .checkbox-row input {
     width: auto;
+}
+
+.listener-config-panel {
+    display: grid;
+    gap: 8px;
+    margin: 4px 0;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.listener-config-panel legend {
+    padding: 0 6px;
+    font-weight: 700;
+}
+
+.listener-config-panel select[multiple] {
+    min-height: 76px;
+}
+
+.listener-config-panel textarea {
+    min-height: 132px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+}
+
+.field-error {
+    margin: 0;
+    color: var(--rose);
+    font-size: 12px;
 }
 
 .template-api-note {
@@ -683,7 +723,7 @@ tbody tr:hover {
         grid-template-columns: repeat(4, 1fr);
     }
 
-    .flow-canvas {
+    .canvas-surface {
         min-width: 720px;
     }
 }
