@@ -30,6 +30,8 @@
         taskReject: "/api/platform/runtime/tasks/reject",
         taskTransfer: "/api/platform/runtime/tasks/transfer",
         taskAddSign: "/api/platform/runtime/tasks/add-sign",
+        taskClaim: "/api/platform/runtime/tasks/claim",
+        taskUnclaim: "/api/platform/runtime/tasks/unclaim",
         todoTasks: "/api/platform/tasks/todo",
         completedTasks: "/api/platform/tasks/completed",
         activeTasks: function (instanceId) {
@@ -49,14 +51,28 @@
     };
 
     var FLOW_TEST_USERS = [
-        {userId: "u_sales_01", userName: "业务员", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
-        {userId: "u_group_leader_01", userName: "组长", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
-        {userId: "u_dept_manager_01", userName: "部门经理1", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
-        {userId: "u_dept_manager_02", userName: "部门经理2", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
-        {userId: "u_finance_01", userName: "财务1", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
-        {userId: "u_finance_02", userName: "财务2", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
-        {userId: "u_ceo_01", userName: "CEO", role: "TEST_OPERATOR", deptId: "mock-dept", deptName: "Mock Department"},
-        {userId: "u_admin_01", userName: "测试管理员", role: "TEST_ADMIN", deptId: "mock-dept", deptName: "Mock Department"}
+        {userId: "u_sales_01", userName: "业务员", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", departmentName: "销售部", roleCodes: ["sales"]},
+        {userId: "u_group_leader_01", userName: "组长", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", departmentName: "销售部", roleCodes: ["manager"]},
+        {userId: "u_dept_manager_01", userName: "部门经理1", role: "TEST_OPERATOR", deptId: "dept_manager", departmentId: "dept_manager", deptName: "经理部", departmentName: "经理部", roleCodes: ["manager"]},
+        {userId: "u_dept_manager_02", userName: "部门经理2", role: "TEST_OPERATOR", deptId: "dept_manager", departmentId: "dept_manager", deptName: "经理部", departmentName: "经理部", roleCodes: ["manager"]},
+        {userId: "u_finance_01", userName: "财务1", role: "TEST_OPERATOR", deptId: "dept_finance", departmentId: "dept_finance", deptName: "财务部", departmentName: "财务部", roleCodes: ["finance"]},
+        {userId: "u_finance_02", userName: "财务2", role: "TEST_OPERATOR", deptId: "dept_finance", departmentId: "dept_finance", deptName: "财务部", departmentName: "财务部", roleCodes: ["finance"]},
+        {userId: "u_ceo_01", userName: "CEO", role: "TEST_OPERATOR", deptId: "mock-dept", departmentId: "mock-dept", deptName: "Mock Department", departmentName: "Mock Department", roleCodes: ["admin", "manager"]},
+        {userId: "u_admin_01", userName: "测试管理员", role: "TEST_ADMIN", deptId: "mock-dept", departmentId: "mock-dept", deptName: "Mock Department", departmentName: "Mock Department", roleCodes: ["admin", "manager"]}
+    ];
+
+    var FLOW_TEST_DEPARTMENTS = [
+        {departmentId: "dept_sales", departmentName: "销售部"},
+        {departmentId: "dept_manager", departmentName: "经理部"},
+        {departmentId: "dept_finance", departmentName: "财务部"},
+        {departmentId: "mock-dept", departmentName: "默认部门"}
+    ];
+
+    var FLOW_TEST_ROLES = [
+        {roleCode: "manager", roleName: "经理"},
+        {roleCode: "finance", roleName: "财务"},
+        {roleCode: "sales", roleName: "业务"},
+        {roleCode: "admin", roleName: "管理员"}
     ];
 
     var DEFAULT_TEMPLATE_LIBRARY = [
@@ -177,6 +193,35 @@
             return hasText(value) ? value : "{}";
         }
         return JSON.stringify(value);
+    }
+
+    function parseRuleConfig(value) {
+        if (!hasText(value)) {
+            return {};
+        }
+        if (typeof value === "string") {
+            try {
+                return parseJsonObject(value, {});
+            } catch (ignore) {
+                return {};
+            }
+        }
+        return isJsonObject(value) ? value : {};
+    }
+
+    function approverExpressionText(value) {
+        var expression = hasText(value) ? String(value).trim() : "";
+        if (expression === "经理审批") {
+            return "departmentManager(starterDeptId)";
+        }
+        return expression;
+    }
+
+    function normalizeMultiInstanceMode(mode, approverCount) {
+        if (mode === "OR_SIGN" || mode === "COUNTERSIGN") {
+            return mode;
+        }
+        return approverCount > 1 ? "OR_SIGN" : "SINGLE";
     }
 
     function isJsonObject(value) {
@@ -313,6 +358,11 @@
             approverRuleType: ruleType || (nodeType === "USER_TASK" ? "USER" : ""),
             approverRuleConfig: stringifyRule(ruleType === "STARTER" ? {} : {userIds: selectedApproverIds || []}),
             selectedApproverIds: selectedApproverIds || [],
+            selectedDepartmentId: "",
+            selectedRoleCode: "",
+            selectedRoleDepartmentMode: "STARTER",
+            selectedRoleDepartmentId: "",
+            approverExpression: "",
             multiInstanceMode: mode || "SINGLE",
             listenerConfig: "",
             listenerRejectEnabled: false,
@@ -339,16 +389,19 @@
 
     function normalizeNode(node, index) {
         var ruleConfig = node.approverRuleConfig;
+        var parsedRuleConfig = parseRuleConfig(ruleConfig);
         var approverIds = [];
-        if (typeof ruleConfig === "string") {
-            try {
-                approverIds = asArray(JSON.parse(ruleConfig).userIds);
-            } catch (ignore) {
-                approverIds = [];
-            }
-        } else if (ruleConfig) {
-            approverIds = asArray(ruleConfig.userIds);
-        }
+        var departmentId = "";
+        var roleCode = "";
+        var roleDepartmentMode = "STARTER";
+        var roleDepartmentId = "";
+        var approverExpression = "";
+        approverIds = asArray(parsedRuleConfig.userIds);
+        departmentId = hasText(parsedRuleConfig.departmentId) ? String(parsedRuleConfig.departmentId).trim() : "";
+        roleCode = hasText(parsedRuleConfig.roleCode) ? String(parsedRuleConfig.roleCode).trim() : "";
+        roleDepartmentId = departmentId;
+        roleDepartmentMode = hasText(roleDepartmentId) ? "FIXED" : "STARTER";
+        approverExpression = hasText(parsedRuleConfig.expression) ? String(parsedRuleConfig.expression).trim() : "";
         var normalized = Object.assign(buildNode(
             node.nodeCode || ("node_" + index),
             node.nodeName || ("节点" + (index + 1)),
@@ -362,6 +415,11 @@
         ), node, {
             localId: node.localId || nextLocalId("node"),
             selectedApproverIds: approverIds,
+            selectedDepartmentId: departmentId,
+            selectedRoleCode: roleCode,
+            selectedRoleDepartmentMode: roleDepartmentMode,
+            selectedRoleDepartmentId: roleDepartmentId,
+            approverExpression: approverExpression,
             approverRuleConfig: stringifyRule(ruleConfig),
             listenerConfig: normalizeListenerConfigValue(node.listenerConfig)
         });
@@ -421,6 +479,8 @@
             return {
                 API_PATHS: API_PATHS,
                 users: FLOW_TEST_USERS,
+                departments: FLOW_TEST_DEPARTMENTS,
+                roles: FLOW_TEST_ROLES,
                 apiBaseUrl: "",
                 activeView: "definitions",
                 currentUserId: "u_admin_01",
@@ -964,6 +1024,11 @@
                         }
                         delete copy.localId;
                         delete copy.selectedApproverIds;
+                        delete copy.selectedDepartmentId;
+                        delete copy.selectedRoleCode;
+                        delete copy.selectedRoleDepartmentMode;
+                        delete copy.selectedRoleDepartmentId;
+                        delete copy.approverExpression;
                         delete copy.listenerRejectEnabled;
                         delete copy.listenerRejectTargetNodeCodes;
                         delete copy.listenerDirectSendEnabled;
@@ -997,11 +1062,35 @@
                 if (node.approverRuleType === "USER") {
                     var ids = asArray(node.selectedApproverIds);
                     node.approverRuleConfig = JSON.stringify({userIds: ids});
-                    node.multiInstanceMode = ids.length <= 1 ? "SINGLE" : (node.multiInstanceMode || "OR_SIGN");
+                    node.multiInstanceMode = normalizeMultiInstanceMode(node.multiInstanceMode, ids.length);
+                    return node;
+                }
+                if (node.approverRuleType === "DEPARTMENT") {
+                    node.approverRuleConfig = JSON.stringify({departmentId: String(node.selectedDepartmentId || "").trim()});
+                    node.multiInstanceMode = normalizeMultiInstanceMode(node.multiInstanceMode, 0);
+                    return node;
+                }
+                if (node.approverRuleType === "ROLE") {
+                    node.approverRuleConfig = JSON.stringify({roleCode: String(node.selectedRoleCode || "").trim()});
+                    node.multiInstanceMode = normalizeMultiInstanceMode(node.multiInstanceMode, 0);
+                    return node;
+                }
+                if (node.approverRuleType === "ROLE_IN_DEPARTMENT") {
+                    var roleDepartmentConfig = {roleCode: String(node.selectedRoleCode || "").trim()};
+                    if (node.selectedRoleDepartmentMode === "FIXED") {
+                        roleDepartmentConfig.departmentId = String(node.selectedRoleDepartmentId || "").trim();
+                    }
+                    node.approverRuleConfig = JSON.stringify(roleDepartmentConfig);
+                    node.multiInstanceMode = normalizeMultiInstanceMode(node.multiInstanceMode, 0);
+                    return node;
+                }
+                if (node.approverRuleType === "APPROVER_EXPRESSION") {
+                    node.approverRuleConfig = JSON.stringify({expression: approverExpressionText(node.approverExpression)});
+                    node.multiInstanceMode = normalizeMultiInstanceMode(node.multiInstanceMode, 0);
                     return node;
                 }
                 node.approverRuleConfig = stringifyRule(node.approverRuleConfig);
-                node.multiInstanceMode = node.multiInstanceMode || "SINGLE";
+                node.multiInstanceMode = normalizeMultiInstanceMode(node.multiInstanceMode, 0);
                 return node;
             },
             toAttachmentConfigPayload: function (item, index) {
@@ -1033,8 +1122,27 @@
                         errors.push("节点编码重复：" + node.nodeCode);
                     }
                     nodeCodes[node.nodeCode] = true;
-                    if (node.nodeType === "USER_TASK" && node.approverRuleType === "USER" && asArray(node.selectedApproverIds).length === 0) {
-                        errors.push("用户任务必须选择审批人：" + node.nodeName);
+                    if (node.nodeType === "USER_TASK") {
+                        if (node.approverRuleType === "USER" && asArray(node.selectedApproverIds).length === 0) {
+                            errors.push("用户任务必须选择审批人：" + node.nodeName);
+                        }
+                        if (node.approverRuleType === "DEPARTMENT" && !hasText(node.selectedDepartmentId)) {
+                            errors.push("指定部门审批必须选择部门：" + node.nodeName);
+                        }
+                        if (node.approverRuleType === "ROLE" && !hasText(node.selectedRoleCode)) {
+                            errors.push("指定角色审批必须选择角色：" + node.nodeName);
+                        }
+                        if (node.approverRuleType === "ROLE_IN_DEPARTMENT") {
+                            if (!hasText(node.selectedRoleCode)) {
+                                errors.push("部门角色审批必须选择角色：" + node.nodeName);
+                            }
+                            if (node.selectedRoleDepartmentMode === "FIXED" && !hasText(node.selectedRoleDepartmentId)) {
+                                errors.push("部门角色审批使用指定部门时必须选择部门：" + node.nodeName);
+                            }
+                        }
+                        if (node.approverRuleType === "APPROVER_EXPRESSION" && !hasText(node.approverExpression)) {
+                            errors.push("表达式审批必须填写审批人表达式：" + node.nodeName);
+                        }
                     }
                     if (node.nodeType === "USER_TASK") {
                         var listenerEditor = readListenerRuleEditor(node.listenerConfig);
@@ -1410,6 +1518,99 @@
                     operatorUserId: this.currentUserId
                 });
             },
+            isTaskClaimed: function (task) {
+                return !!(task && (hasText(task.assigneeUserId) || task.taskStatus === "CLAIMED"));
+            },
+            isTaskClaimedByCurrentUser: function (task) {
+                return !!(task && hasText(task.assigneeUserId) && task.assigneeUserId === this.currentUserId);
+            },
+            isCurrentUserTaskCandidate: function (task) {
+                if (!task) {
+                    return false;
+                }
+                var candidates = asArray(task.candidateUserIds);
+                return candidates.indexOf(this.currentUserId) >= 0 || hasText(task.delegateFromUserId);
+            },
+            canClaimTask: function (task) {
+                return !!(task && extractTaskId(task) && !this.isTaskClaimed(task)
+                    && this.isCurrentUserTaskCandidate(task));
+            },
+            canUnclaimTask: function (task) {
+                return this.isTaskClaimedByCurrentUser(task);
+            },
+            canHandleTask: function (task) {
+                return this.isTaskClaimedByCurrentUser(task);
+            },
+            taskClaimStatusText: function (task) {
+                return this.isTaskClaimed(task) ? "已认领" : "未认领";
+            },
+            taskAssigneeText: function (task) {
+                if (!task || !this.isTaskClaimed(task)) {
+                    return "-";
+                }
+                return task.assigneeUserName || task.assigneeUserId || "-";
+            },
+            claimTask: function (row) {
+                this.submitTaskClaimAction("认领", API_PATHS.taskClaim, row);
+            },
+            unclaimTask: function (row) {
+                this.submitTaskClaimAction("取消认领", API_PATHS.taskUnclaim, row);
+            },
+            claimCurrentTask: function () {
+                this.claimTask(this.taskDialog.task);
+            },
+            unclaimCurrentTask: function () {
+                this.unclaimTask(this.taskDialog.task);
+            },
+            submitTaskClaimAction: function (label, path, task) {
+                var taskId = extractTaskId(task);
+                if (!hasText(taskId)) {
+                    this.setOperationState("error", label + "失败", "缺少任务 ID");
+                    return;
+                }
+                var body = {
+                    operationId: this.createOperationId(label),
+                    taskId: taskId,
+                    expectedTaskVersion: extractTaskVersion(task),
+                    operatorUserId: this.currentUserId,
+                    comment: this.taskDialog.open ? this.taskDialog.comment : ""
+                };
+                this.sendRequest(label, "POST", path, body).then(function (payload) {
+                    var updatedTask = this.extractUpdatedTask(payload, taskId);
+                    if (updatedTask) {
+                        this.replaceTodoTask(updatedTask);
+                    }
+                    return this.queryTodoTasks().then(function () {
+                        this.syncOpenTaskDialog(taskId, updatedTask);
+                        this.setOperationState("success", label + "成功", "待办已刷新");
+                    }.bind(this));
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", label + "失败", error.message);
+                }.bind(this));
+            },
+            extractUpdatedTask: function (payload, taskId) {
+                var updatedTasks = normalizeList(payload && payload.updatedTasks);
+                return updatedTasks.find(function (task) {
+                    return extractTaskId(task) === taskId;
+                }) || updatedTasks[0] || null;
+            },
+            replaceTodoTask: function (updatedTask) {
+                var updatedTaskId = extractTaskId(updatedTask);
+                this.todoRows = this.todoRows.map(function (row) {
+                    return extractTaskId(row) === updatedTaskId ? updatedTask : row;
+                });
+            },
+            syncOpenTaskDialog: function (taskId, fallbackTask) {
+                if (!this.taskDialog.open || extractTaskId(this.taskDialog.task) !== taskId) {
+                    return;
+                }
+                var freshTask = this.todoRows.find(function (row) {
+                    return extractTaskId(row) === taskId;
+                }) || fallbackTask;
+                if (freshTask) {
+                    this.taskDialog.task = freshTask;
+                }
+            },
             approveCurrentTask: function () {
                 this.submitTaskAction("审批通过", API_PATHS.taskApprove, {});
             },
@@ -1430,6 +1631,10 @@
             },
             submitTaskAction: function (label, pathBuilder, extra) {
                 var taskId = extractTaskId(this.taskDialog.task);
+                if (!this.canHandleTask(this.taskDialog.task)) {
+                    this.setOperationState("error", label + "失败", "请先认领任务");
+                    return;
+                }
                 var path = typeof pathBuilder === "function" ? pathBuilder(taskId) : pathBuilder;
                 var body = Object.assign({
                     operationId: this.createOperationId(label),
@@ -1556,9 +1761,74 @@
             syncSelectedNodeApprover: function () {
                 if (this.selectedNode) {
                     this.selectedNode.approverRuleConfig = JSON.stringify({userIds: asArray(this.selectedNode.selectedApproverIds)});
-                    if (this.selectedNode.selectedApproverIds.length <= 1) {
-                        this.selectedNode.multiInstanceMode = "SINGLE";
-                    }
+                }
+            },
+            syncSelectedNodeDepartment: function () {
+                if (this.selectedNode) {
+                    this.selectedNode.approverRuleConfig = JSON.stringify({
+                        departmentId: String(this.selectedNode.selectedDepartmentId || "").trim()
+                    });
+                }
+            },
+            syncSelectedNodeRole: function () {
+                if (this.selectedNode) {
+                    this.selectedNode.approverRuleConfig = JSON.stringify({
+                        roleCode: String(this.selectedNode.selectedRoleCode || "").trim()
+                    });
+                }
+            },
+            syncSelectedNodeRoleDepartment: function () {
+                if (!this.selectedNode) {
+                    return;
+                }
+                var config = {roleCode: String(this.selectedNode.selectedRoleCode || "").trim()};
+                if (this.selectedNode.selectedRoleDepartmentMode === "FIXED") {
+                    config.departmentId = String(this.selectedNode.selectedRoleDepartmentId || "").trim();
+                }
+                this.selectedNode.approverRuleConfig = JSON.stringify(config);
+            },
+            syncSelectedNodeExpression: function () {
+                if (this.selectedNode) {
+                    this.selectedNode.approverRuleConfig = JSON.stringify({
+                        expression: approverExpressionText(this.selectedNode.approverExpression)
+                    });
+                }
+            },
+            syncSelectedNodeApproverRule: function () {
+                var node = this.selectedNode;
+                if (!node || node.nodeType !== "USER_TASK") {
+                    return;
+                }
+                if (node.approverRuleType === "STARTER") {
+                    node.approverRuleConfig = "{}";
+                    node.multiInstanceMode = "SINGLE";
+                    return;
+                }
+                if (node.approverRuleType === "USER") {
+                    node.selectedApproverIds = asArray(node.selectedApproverIds);
+                    this.syncSelectedNodeApprover();
+                    return;
+                }
+                if (node.approverRuleType === "DEPARTMENT") {
+                    node.selectedDepartmentId = node.selectedDepartmentId || "";
+                    this.syncSelectedNodeDepartment();
+                    return;
+                }
+                if (node.approverRuleType === "ROLE") {
+                    node.selectedRoleCode = node.selectedRoleCode || "";
+                    this.syncSelectedNodeRole();
+                    return;
+                }
+                if (node.approverRuleType === "ROLE_IN_DEPARTMENT") {
+                    node.selectedRoleCode = node.selectedRoleCode || "";
+                    node.selectedRoleDepartmentMode = node.selectedRoleDepartmentMode === "FIXED" ? "FIXED" : "STARTER";
+                    node.selectedRoleDepartmentId = node.selectedRoleDepartmentId || "";
+                    this.syncSelectedNodeRoleDepartment();
+                    return;
+                }
+                if (node.approverRuleType === "APPROVER_EXPRESSION") {
+                    node.approverExpression = node.approverExpression || "";
+                    this.syncSelectedNodeExpression();
                 }
             },
             listenerRejectTargetNodes: function (node) {

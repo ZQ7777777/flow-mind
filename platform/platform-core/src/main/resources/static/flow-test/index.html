@@ -353,9 +353,17 @@
                             <td>{{ row.instanceTitle || row.instanceId }}</td>
                             <td>{{ row.nodeName || row.nodeCode }}</td>
                             <td>{{ joinList(row.candidateUserIds) }}</td>
-                            <td>{{ row.assigneeUserName || row.assigneeUserId || '-' }}</td>
+                            <td>
+                                <div>{{ taskAssigneeText(row) }}</div>
+                                <span class="claim-status" :class="{claimed: isTaskClaimed(row)}">{{ taskClaimStatusText(row) }}</span>
+                            </td>
                             <td>{{ row.taskVersion || row.expectedTaskVersion || 0 }}</td>
-                            <td><button type="button" @click="openTodoTaskDialog(row)">处理</button></td>
+                            <td class="table-actions">
+                                <button type="button" class="primary" v-if="canClaimTask(row)" @click.stop="claimTask(row)">认领</button>
+                                <button type="button" v-if="canHandleTask(row)" @click="openTodoTaskDialog(row)">处理</button>
+                                <button type="button" class="ghost" v-if="canUnclaimTask(row)" @click.stop="unclaimTask(row)">取消认领</button>
+                                <span v-if="isTaskClaimed(row) && !canHandleTask(row)" class="claim-status claimed">已认领</span>
+                            </td>
                         </tr>
                         </tbody>
                     </table>
@@ -534,7 +542,9 @@
                         </label>
                         <label>
                             审批来源
-                            <select v-model="selectedNode.approverRuleType" :disabled="selectedNode.nodeType !== 'USER_TASK'">
+                            <select v-model="selectedNode.approverRuleType"
+                                    :disabled="selectedNode.nodeType !== 'USER_TASK'"
+                                    @change="syncSelectedNodeApproverRule">
                                 <option value="USER">指定用户</option>
                                 <option value="STARTER">发起人</option>
                                 <option value="DEPARTMENT">指定部门</option>
@@ -548,6 +558,60 @@
                             <select v-model="selectedNode.selectedApproverIds" multiple @change="syncSelectedNodeApprover">
                                 <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
                             </select>
+                        </label>
+                        <label v-if="selectedNode.nodeType === 'USER_TASK' && selectedNode.approverRuleType === 'DEPARTMENT'">
+                            指定部门
+                            <select v-model="selectedNode.selectedDepartmentId" @change="syncSelectedNodeDepartment">
+                                <option value="">请选择部门</option>
+                                <option v-for="department in departments"
+                                        :key="department.departmentId"
+                                        :value="department.departmentId">{{ department.departmentName }}</option>
+                            </select>
+                        </label>
+                        <label v-if="selectedNode.nodeType === 'USER_TASK' && selectedNode.approverRuleType === 'ROLE'">
+                            指定角色
+                            <select v-model="selectedNode.selectedRoleCode" @change="syncSelectedNodeRole">
+                                <option value="">请选择角色</option>
+                                <option v-for="role in roles"
+                                        :key="role.roleCode"
+                                        :value="role.roleCode">{{ role.roleName }}</option>
+                            </select>
+                        </label>
+                        <fieldset v-if="selectedNode.nodeType === 'USER_TASK' && selectedNode.approverRuleType === 'ROLE_IN_DEPARTMENT'"
+                                  class="approver-config-panel">
+                            <legend>部门角色</legend>
+                            <label>
+                                指定角色
+                                <select v-model="selectedNode.selectedRoleCode" @change="syncSelectedNodeRoleDepartment">
+                                    <option value="">请选择角色</option>
+                                    <option v-for="role in roles"
+                                            :key="role.roleCode"
+                                            :value="role.roleCode">{{ role.roleName }}</option>
+                                </select>
+                            </label>
+                            <label>
+                                部门来源
+                                <select v-model="selectedNode.selectedRoleDepartmentMode" @change="syncSelectedNodeRoleDepartment">
+                                    <option value="STARTER">发起人部门</option>
+                                    <option value="FIXED">指定部门</option>
+                                </select>
+                            </label>
+                            <label v-if="selectedNode.selectedRoleDepartmentMode === 'FIXED'">
+                                指定部门
+                                <select v-model="selectedNode.selectedRoleDepartmentId" @change="syncSelectedNodeRoleDepartment">
+                                    <option value="">请选择部门</option>
+                                    <option v-for="department in departments"
+                                            :key="department.departmentId"
+                                            :value="department.departmentId">{{ department.departmentName }}</option>
+                                </select>
+                            </label>
+                        </fieldset>
+                        <label v-if="selectedNode.nodeType === 'USER_TASK' && selectedNode.approverRuleType === 'APPROVER_EXPRESSION'">
+                            审批人表达式
+                            <input v-model.trim="selectedNode.approverExpression"
+                                   placeholder="departmentManager(starterDeptId)"
+                                   type="text"
+                                   @input="syncSelectedNodeExpression">
                         </label>
                         <label v-if="selectedNode.nodeType === 'USER_TASK'">
                             多人模式
@@ -763,6 +827,9 @@
                         <dt>任务 ID</dt><dd>{{ taskDialog.task.taskId || taskDialog.task.id }}</dd>
                         <dt>节点</dt><dd>{{ taskDialog.task.nodeName || taskDialog.task.nodeCode }}</dd>
                         <dt>版本</dt><dd>{{ taskDialog.task.taskVersion || 0 }}</dd>
+                        <dt>候选人</dt><dd>{{ joinList(taskDialog.task.candidateUserIds) || '-' }}</dd>
+                        <dt>认领状态</dt><dd><span class="claim-status" :class="{claimed: isTaskClaimed(taskDialog.task)}">{{ taskClaimStatusText(taskDialog.task) }}</span></dd>
+                        <dt>当前办理人</dt><dd>{{ taskAssigneeText(taskDialog.task) }}</dd>
                     </dl>
                     <label>
                         表单变量 JSON
@@ -795,30 +862,32 @@
                 </section>
             </div>
             <div class="action-grid">
-                <button type="button" class="primary" @click="approveCurrentTask">审批通过</button>
+                <button type="button" class="primary" v-if="canClaimTask(taskDialog.task)" @click="claimCurrentTask">认领</button>
+                <button type="button" class="ghost" v-if="canUnclaimTask(taskDialog.task)" @click="unclaimCurrentTask">取消认领</button>
+                <button type="button" class="primary" :disabled="!canHandleTask(taskDialog.task)" @click="approveCurrentTask">审批通过</button>
                 <label>
                     驳回节点
-                    <select v-model="taskDialog.rejectTargetNodeCode">
+                    <select v-model="taskDialog.rejectTargetNodeCode" :disabled="!canHandleTask(taskDialog.task)">
                         <option value="">请选择</option>
                         <option v-for="node in taskRejectTargetNodes()" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
                     </select>
                 </label>
-                <button type="button" @click="rejectCurrentTask">驳回</button>
+                <button type="button" :disabled="!canHandleTask(taskDialog.task)" @click="rejectCurrentTask">驳回</button>
                 <label>
                     转办给
-                    <select v-model="taskDialog.transferUserId">
+                    <select v-model="taskDialog.transferUserId" :disabled="!canHandleTask(taskDialog.task)">
                         <option value="">请选择</option>
                         <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
                     </select>
                 </label>
-                <button type="button" @click="transferCurrentTask">转办</button>
+                <button type="button" :disabled="!canHandleTask(taskDialog.task)" @click="transferCurrentTask">转办</button>
                 <label>
                     加签人
-                    <select v-model="taskDialog.addSignUserIds" multiple>
+                    <select v-model="taskDialog.addSignUserIds" multiple :disabled="!canHandleTask(taskDialog.task)">
                         <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
                     </select>
                 </label>
-                <button type="button" @click="addSignCurrentTask">加签</button>
+                <button type="button" :disabled="!canHandleTask(taskDialog.task)" @click="addSignCurrentTask">加签</button>
             </div>
         </div>
     </section>

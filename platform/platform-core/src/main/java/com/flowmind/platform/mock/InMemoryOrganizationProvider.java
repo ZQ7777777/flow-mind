@@ -110,18 +110,21 @@ public class InMemoryOrganizationProvider implements OrganizationProvider {
 
     private void seedDefaults() {
         addDepartment(new DepartmentDTO("mock-dept", "Mock Department", null));
+        addDepartment(new DepartmentDTO("dept_sales", "销售部", null));
+        addDepartment(new DepartmentDTO("dept_manager", "经理部", null));
+        addDepartment(new DepartmentDTO("dept_finance", "财务部", null));
 
-        addUser(user("u_sales_01", "业务员", "mock-dept", "Mock Department",
+        addUser(user("u_sales_01", "业务员", "dept_sales", "销售部",
                 Collections.singletonList("sales")));
-        addUser(user("u_group_leader_01", "组长", "mock-dept", "Mock Department",
+        addUser(user("u_group_leader_01", "组长", "dept_sales", "销售部",
                 Collections.singletonList("manager")));
-        addUser(user("u_dept_manager_01", "部门经理1", "mock-dept", "Mock Department",
+        addUser(user("u_dept_manager_01", "部门经理1", "dept_manager", "经理部",
                 Collections.singletonList("manager")));
-        addUser(user("u_dept_manager_02", "部门经理2", "mock-dept", "Mock Department",
+        addUser(user("u_dept_manager_02", "部门经理2", "dept_manager", "经理部",
                 Collections.singletonList("manager")));
-        addUser(user("u_finance_01", "财务1", "mock-dept", "Mock Department",
+        addUser(user("u_finance_01", "财务1", "dept_finance", "财务部",
                 Collections.singletonList("finance")));
-        addUser(user("u_finance_02", "财务2", "mock-dept", "Mock Department",
+        addUser(user("u_finance_02", "财务2", "dept_finance", "财务部",
                 Collections.singletonList("finance")));
         addUser(user("u_ceo_01", "CEO", "mock-dept", "Mock Department",
                 Arrays.asList("admin", "manager")));

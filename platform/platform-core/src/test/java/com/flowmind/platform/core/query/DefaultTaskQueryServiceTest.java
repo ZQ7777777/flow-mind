@@ -132,6 +132,40 @@ class DefaultTaskQueryServiceTest {
     }
 
     @Test
+    void todoQueryHidesOpenOrSignSiblingsAfterOneSiblingIsClaimed() {
+        insertTaskGroup("group-or", "OR_SIGN", 2, 0, "{}", 0L);
+        insertTask("task-claimed-by-manager", "manager-001", "Manager One", null, "CLAIMED",
+                "[\"manager-001\"]", LocalDateTime.of(2026, 7, 22, 9, 0), "group-or");
+        insertTask("task-candidate-for-current-user", null, null, null, "ACTIVE",
+                "[\"operator-001\"]", LocalDateTime.of(2026, 7, 22, 9, 1), "group-or");
+        insertTask("task-normal-candidate", null, null, null, "ACTIVE",
+                "[\"operator-001\"]", LocalDateTime.of(2026, 7, 22, 9, 2));
+
+        PageResult<TaskDTO> result = taskQueryService.queryTodoTasks(new TodoTaskQuery());
+
+        assertEquals(Long.valueOf(1L), result.getTotal());
+        assertEquals(1, result.getRecords().size());
+        assertEquals("task-normal-candidate", result.getRecords().get(0).getTaskId());
+    }
+
+    @Test
+    void todoQueryKeepsCountersignSiblingVisibleAfterAnotherSiblingIsClaimed() {
+        insertTaskGroup("group-counter", "COUNTERSIGN", 2, 0, "{}", 0L);
+        insertTask("task-claimed-by-finance-one", "finance-001", "Finance One", null, "CLAIMED",
+                "[\"finance-001\"]", LocalDateTime.of(2026, 7, 22, 9, 0), "group-counter");
+        insertTask("task-candidate-for-current-user", null, null, null, "ACTIVE",
+                "[\"operator-001\"]", LocalDateTime.of(2026, 7, 22, 9, 1), "group-counter");
+
+        PageResult<TaskDTO> result = taskQueryService.queryTodoTasks(new TodoTaskQuery());
+
+        assertEquals(Long.valueOf(1L), result.getTotal());
+        assertEquals(1, result.getRecords().size());
+        assertEquals("task-candidate-for-current-user", result.getRecords().get(0).getTaskId());
+        assertEquals("COUNTERSIGN", jdbcTemplate.queryForObject("SELECT group_type FROM process_task_group WHERE id = ?",
+                String.class, "group-counter"));
+    }
+
+    @Test
     void startedAndActiveTaskQueriesUseCurrentUserAndStableFilters() {
         insertTask("task-active", null, null, null, "ACTIVE", "[\"operator-001\"]",
                 LocalDateTime.of(2026, 7, 22, 9, 0));
@@ -234,13 +268,34 @@ class DefaultTaskQueryServiceTest {
                             String status,
                             String candidates,
                             LocalDateTime createdAt) {
+        insertTask(id, assigneeUserId, assigneeUserName, delegateFromUserId, status, candidates, createdAt, null);
+    }
+
+    private void insertTask(String id,
+                            String assigneeUserId,
+                            String assigneeUserName,
+                            String delegateFromUserId,
+                            String status,
+                            String candidates,
+                            LocalDateTime createdAt,
+                            String taskGroupId) {
         jdbcTemplate.update("INSERT INTO process_active_task "
                         + "(id, instance_id, definition_id, node_code, candidate_user_ids, assignee_user_id, "
-                        + "assignee_user_name, delegate_from_user_id, task_status, lock_version, created_at) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        + "assignee_user_name, delegate_from_user_id, task_status, task_group_id, lock_version, created_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 id, "instance-1", "definition-1", "review", candidates, assigneeUserId,
-                assigneeUserName, delegateFromUserId, status, Long.valueOf(0L),
+                assigneeUserName, delegateFromUserId, status, taskGroupId, Long.valueOf(0L),
                 createdAt.toString());
+    }
+
+    private void insertTaskGroup(String id, String type, int totalCount, int completedCount,
+                                 String branchStateJson, long lockVersion) {
+        jdbcTemplate.update("INSERT INTO process_task_group "
+                        + "(id, instance_id, node_code, group_type, total_count, completed_count, "
+                        + "branch_state_json, group_status, lock_version) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)",
+                id, "instance-1", "review", type, totalCount, completedCount,
+                branchStateJson, Long.valueOf(lockVersion));
     }
 
     private void insertOtherInstance() {

@@ -262,6 +262,19 @@ public class ActiveTaskRepository {
                 id, expectedLockVersion);
     }
 
+    /** 判断同一个活动或签组内是否已有其他任务被认领。 */
+    public boolean hasClaimedSiblingInActiveOrSignGroup(String taskId, String taskGroupId) {
+        if (isBlank(taskId) || isBlank(taskGroupId)) {
+            return false;
+        }
+        Long count = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM process_active_task s "
+                        + "JOIN process_task_group g ON g.id = s.task_group_id "
+                        + "WHERE s.task_group_id = ? AND s.id <> ? AND s.task_status = 'CLAIMED' "
+                        + "AND g.group_type = 'OR_SIGN' AND g.group_status = 'ACTIVE'",
+                Long.class, taskGroupId, taskId);
+        return count != null && count.longValue() > 0L;
+    }
+
     /** 在 ACTIVE 或 CLAIMED 状态下原子变更任务办理人。 */
     public int transfer(String id, long expectedLockVersion, String assigneeUserId, String assigneeUserName) {
         return jdbcTemplate.update(
@@ -302,14 +315,24 @@ public class ActiveTaskRepository {
         sql.append("UNION ALL ");
         appendTodoSourceSelect(sql, "2", "NULL", "NULL");
         sql.append(" WHERE t.task_status = 'ACTIVE' AND t.candidate_user_ids IS NOT NULL "
-                + "AND EXISTS (SELECT 1 FROM json_each(t.candidate_user_ids) c WHERE c.value = ?) ");
+                + "AND EXISTS (SELECT 1 FROM json_each(t.candidate_user_ids) c WHERE c.value = ?) "
+                + "AND NOT EXISTS (SELECT 1 FROM process_active_task s "
+                + "JOIN process_task_group g ON g.id = s.task_group_id "
+                + "WHERE s.task_group_id = t.task_group_id AND s.id <> t.id "
+                + "AND s.task_status = 'CLAIMED' AND g.group_type = 'OR_SIGN' "
+                + "AND g.group_status = 'ACTIVE') ");
         params.add(currentUserId);
         sql.append("UNION ALL ");
         appendTodoSourceSelect(sql, "3", "d.principal_user_id", "d.principal_user_name");
         sql.append(" JOIN delegate_source d ON (t.assignee_user_id = d.principal_user_id "
                 + "OR (t.task_status = 'ACTIVE' AND t.candidate_user_ids IS NOT NULL "
                 + "AND EXISTS (SELECT 1 FROM json_each(t.candidate_user_ids) c "
-                + "WHERE c.value = d.principal_user_id))) "
+                + "WHERE c.value = d.principal_user_id) "
+                + "AND NOT EXISTS (SELECT 1 FROM process_active_task s "
+                + "JOIN process_task_group g ON g.id = s.task_group_id "
+                + "WHERE s.task_group_id = t.task_group_id AND s.id <> t.id "
+                + "AND s.task_status = 'CLAIMED' AND g.group_type = 'OR_SIGN' "
+                + "AND g.group_status = 'ACTIVE'))) "
                 + "WHERE t.task_status IN ('ACTIVE', 'CLAIMED') "
                 + "), ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY task_id "
                 + "ORDER BY source_priority ASC) AS rn FROM candidate_sources) ");

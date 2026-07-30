@@ -330,6 +330,25 @@ tbody tr:hover {
     gap: 6px;
 }
 
+.claim-status {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    margin-top: 4px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.claim-status.claimed {
+    background: #dcfce7;
+    color: #166534;
+}
+
 .empty-cell {
     color: var(--muted);
     text-align: center;
@@ -532,6 +551,7 @@ tbody tr:hover {
     width: auto;
 }
 
+.approver-config-panel,
 .listener-config-panel {
     display: grid;
     gap: 8px;
@@ -541,6 +561,7 @@ tbody tr:hover {
     border-radius: 8px;
 }
 
+.approver-config-panel legend,
 .listener-config-panel legend {
     padding: 0 6px;
     font-weight: 700;
@@ -623,7 +644,7 @@ tbody tr:hover {
 
 .attachment-info strong {
     display: block;
-    overflow: hidden;
+    overflow: auto;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -639,7 +660,7 @@ tbody tr:hover {
 .attachment-owner {
     min-width: 0;
     max-width: 180px;
-    overflow: hidden;
+    overflow: auto;
     text-overflow: ellipsis;
     white-space: nowrap;
     padding: 2px 7px;
@@ -652,7 +673,7 @@ tbody tr:hover {
 
 .action-grid {
     display: grid;
-    grid-template-columns: repeat(7, minmax(120px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 10px;
     align-items: end;
     margin-top: 14px;
