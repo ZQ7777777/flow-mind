@@ -51,19 +51,18 @@
     };
 
     var FLOW_TEST_USERS = [
-        {userId: "u_sales_01", userName: "业务员", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", departmentName: "销售部", roleCodes: ["sales"]},
-        {userId: "u_group_leader_01", userName: "组长", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", departmentName: "销售部", roleCodes: ["manager"]},
-        {userId: "u_dept_manager_01", userName: "部门经理1", role: "TEST_OPERATOR", deptId: "dept_manager", departmentId: "dept_manager", deptName: "经理部", departmentName: "经理部", roleCodes: ["manager"]},
-        {userId: "u_dept_manager_02", userName: "部门经理2", role: "TEST_OPERATOR", deptId: "dept_manager", departmentId: "dept_manager", deptName: "经理部", departmentName: "经理部", roleCodes: ["manager"]},
-        {userId: "u_finance_01", userName: "财务1", role: "TEST_OPERATOR", deptId: "dept_finance", departmentId: "dept_finance", deptName: "财务部", departmentName: "财务部", roleCodes: ["finance"]},
-        {userId: "u_finance_02", userName: "财务2", role: "TEST_OPERATOR", deptId: "dept_finance", departmentId: "dept_finance", deptName: "财务部", departmentName: "财务部", roleCodes: ["finance"]},
-        {userId: "u_ceo_01", userName: "CEO", role: "TEST_OPERATOR", deptId: "mock-dept", departmentId: "mock-dept", deptName: "Mock Department", departmentName: "Mock Department", roleCodes: ["admin", "manager"]},
-        {userId: "u_admin_01", userName: "测试管理员", role: "TEST_ADMIN", deptId: "mock-dept", departmentId: "mock-dept", deptName: "Mock Department", departmentName: "Mock Department", roleCodes: ["admin", "manager"]}
+        {userId: "u_sales_01", userName: "业务员", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", roleCodes: ["sales"]},
+        {userId: "u_group_leader_01", userName: "组长", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", roleCodes: ["group"]},
+        {userId: "u_dept_manager_01", userName: "部门经理1", role: "TEST_OPERATOR", deptId: "dept_manager", departmentId: "dept_sales", deptName: "销售部经理", roleCodes: ["manager"]},
+        {userId: "u_dept_manager_02", userName: "部门经理2", role: "TEST_OPERATOR", deptId: "dept_manager", departmentId: "dept_finance", deptName: "财务部经理", roleCodes: ["manager"]},
+        {userId: "u_finance_01", userName: "财务1", role: "TEST_OPERATOR", deptId: "dept_finance", departmentId: "dept_finance", deptName: "财务部",  roleCodes: ["finance"]},
+        {userId: "u_finance_02", userName: "财务2", role: "TEST_OPERATOR", deptId: "dept_finance", departmentId: "dept_finance", deptName: "财务部",  roleCodes: ["finance"]},
+        {userId: "u_ceo_01", userName: "CEO", role: "TEST_OPERATOR", deptId: "mock-dept", departmentId: "mock-dept", deptName: "Mock Department", departmentName: "Mock Department", roleCodes: ["admin"]},
+        {userId: "u_admin_01", userName: "测试管理员", role: "TEST_ADMIN", deptId: "mock-dept", departmentId: "mock-dept", deptName: "Mock Department", departmentName: "Mock Department", roleCodes: ["admin"]}
     ];
 
     var FLOW_TEST_DEPARTMENTS = [
         {departmentId: "dept_sales", departmentName: "销售部"},
-        {departmentId: "dept_manager", departmentName: "经理部"},
         {departmentId: "dept_finance", departmentName: "财务部"},
         {departmentId: "mock-dept", departmentName: "默认部门"}
     ];
@@ -215,6 +214,10 @@
             return "departmentManager(starterDeptId)";
         }
         return expression;
+    }
+
+    function userDepartmentId(user) {
+        return user ? (user.departmentId || user.deptId || "") : "";
     }
 
     function normalizeMultiInstanceMode(mode, approverCount) {
@@ -622,7 +625,7 @@
                 var user = this.currentUser();
                 if (user) {
                     this.currentRole = user.role;
-                    this.instanceForm.starterDeptId = user.deptId;
+                    this.instanceForm.starterDeptId = userDepartmentId(user);
                 }
                 if (this.activeView === "todo") {
                     this.queryTodoTasks().catch(function () {});
@@ -1295,7 +1298,7 @@
                     businessKey: this.instanceForm.businessKey,
                     instanceTitle: this.instanceForm.instanceTitle,
                     starterUserId: this.currentUserId,
-                    starterDeptId: user.deptId,
+                    starterDeptId: userDepartmentId(user),
                     variables: parseJsonObject(this.instanceVariablesText, {}),
                     attachments: this.buildInstanceAttachments()
                 };
@@ -1661,7 +1664,7 @@
                     headers: {
                         "Accept": "application/json",
                         "X-Flow-User-Id": this.currentUserId,
-                        "X-Flow-Dept-Id": this.currentUser().deptId
+                        "X-Flow-Dept-Id": userDepartmentId(this.currentUser())
                     }
                 };
                 if (operationId) {
