@@ -1,0 +1,201 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  Headers,
+  HttpCode,
+  Inject,
+  Param,
+  Post,
+  Put,
+  Res,
+} from "@nestjs/common";
+import type { Response } from "express";
+import { IdentityService } from "./identity/identity.service.js";
+import { WorkflowService } from "./workflow/workflow.service.js";
+import { EventBusService } from "./workflow/event-bus.service.js";
+
+@Controller()
+export class AppController {
+  constructor(
+    @Inject(IdentityService) private readonly identity: IdentityService,
+    @Inject(WorkflowService) private readonly workflow: WorkflowService,
+    @Inject(EventBusService) private readonly events: EventBusService,
+  ) {}
+
+  @Get("/api/agent/mock-users")
+  listUsers() {
+    return this.identity.listUsers();
+  }
+
+  @Post("/api/agent/sessions")
+  async createSession(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Body() body: { targetRoot?: string },
+  ) {
+    return this.workflow.createSession(this.identity.resolve(userId, userName), body?.targetRoot);
+  }
+
+  @Get("/api/agent/sessions/:sessionId")
+  async getSession(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.workflow.getSnapshot(sessionId, this.identity.resolve(userId, userName));
+  }
+
+  @Post("/api/agent/sessions/:sessionId/messages")
+  @HttpCode(202)
+  async sendMessage(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Body() body: { content: string },
+  ) {
+    return this.workflow.queueMessage(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+      body?.content,
+    );
+  }
+
+  @Get("/api/agent/sessions/:sessionId/events")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache, no-transform")
+  @Header("Connection", "keep-alive")
+  async streamEvents(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Res() response: Response,
+  ): Promise<void> {
+    const user = this.identity.resolve(userId, userName);
+    const snapshot = await this.workflow.getSnapshot(sessionId, user);
+    response.flushHeaders();
+    writeEvent(response, "workflow.snapshot", snapshot);
+    const unsubscribe = this.events.subscribe(sessionId, (event) => writeEvent(response, event.type, event.data));
+    const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 20000);
+    response.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      response.end();
+    });
+  }
+
+  @Get("/api/agent/sessions/:sessionId/requirement")
+  getRequirement(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.workflow.getRequirement(sessionId, this.identity.resolve(userId, userName));
+  }
+
+  @Put("/api/agent/sessions/:sessionId/requirement")
+  updateRequirement(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Body() body: { requirement: unknown },
+  ) {
+    return this.workflow.updateRequirement(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+      body?.requirement,
+    );
+  }
+
+  @Post("/api/agent/sessions/:sessionId/requirement/confirm")
+  @HttpCode(202)
+  confirmRequirement(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: { requirementRevision: number },
+  ) {
+    return this.workflow.confirmRequirement(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+      body?.requirementRevision,
+      idempotencyKey,
+    );
+  }
+
+  @Post("/api/agent/sessions/:sessionId/requirement/reopen")
+  reopenRequirement(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+  ) {
+    return this.workflow.reopenRequirement(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+    );
+  }
+
+  @Get("/api/agent/sessions/:sessionId/process-preview")
+  getProcessPreview(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.workflow.getProcessPreview(sessionId, this.identity.resolve(userId, userName));
+  }
+
+  @Post("/api/agent/sessions/:sessionId/process/confirm")
+  @HttpCode(202)
+  confirmProcess(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: { platformDefinitionId: string; requirementRevision: number },
+  ) {
+    return this.workflow.confirmProcess(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+      body,
+      idempotencyKey,
+    );
+  }
+
+  @Post("/api/agent/sessions/:sessionId/process/retry")
+  @HttpCode(202)
+  retryProcess(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+  ) {
+    return this.workflow.retryProcess(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+      idempotencyKey,
+    );
+  }
+}
+
+function parseVersion(value?: string): number {
+  const normalized = value?.replace(/^W\//, "").replace(/"/g, "");
+  return normalized && /^\d+$/.test(normalized) ? Number(normalized) : Number.NaN;
+}
+
+function writeEvent(response: Response, event: string, data: unknown): void {
+  response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}

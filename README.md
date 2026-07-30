@@ -11,4 +11,6 @@
 - SQLite 文件数据库
 - JUnit 5 / Spring Boot Test
 
+Agent Web M0-M2 实现位于 `agent-web/`，提供需求对话、结构化需求门禁、流程平台草稿落地、流程预览、发布和激活能力。运行说明见 [agent-web/README.md](agent-web/README.md)。
+
 本地环境配置说明见 [doc/本地技术环境配置.md](doc/本地技术环境配置.md)。

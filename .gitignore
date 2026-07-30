@@ -8,3 +8,13 @@ target/
 *.sqlite3
 *.log
 .tmp-maven/
+agent-web/**/node_modules/
+agent-web/**/dist/
+agent-web/**/*.tsbuildinfo
+agent-web/.npm-cache/
+agent-web/.env
+data/agent-web/
+agent-web/.e2e-data/
+agent-web/playwright-report/
+agent-web/test-results/
+/.e2e-data/

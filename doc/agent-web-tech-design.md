@@ -15,7 +15,7 @@
 5. 基于已确认需求和③基础底座契约，由 LLM 直接生成 Spring Boot + Vue3 业务模块。
 6. 在用户预览、编辑并确认代码后，将文件写入指定工作区。
 
-Agent 是开发期生产工具。流程定义和业务代码完成落地后，Agent 不参与业务运行期；运行期由③业务代码通过平台 Starter 调用①流程平台。
+Agent 是开发期生产工具。流程定义和业务代码完成落地后，Agent 不参与业务运行期；运行期由③基础底座和 Agent 生成的业务模块共同承载，并通过平台 Starter 调用①流程平台。待办、已办、我发起、已阅、审批详情和审批动作属于③基础底座的通用能力，不由 Agent 按业务重复生成。
 
 ### 1.2 设计依据
 
@@ -406,8 +406,9 @@ submit_requirement_snapshot({
 - 平台已激活流程定义详情快照。
 - `TargetProjectManifest`。
 - 允许读取的基础底座参考文件清单。
-- 平台 Starter 公开接口约束。
+- 平台 Starter 公开接口约束，以及③基础底座已提供的通用查询、审批详情和审批动作契约。
 - 禁止生成实体、Mapper、业务表和数据库迁移的硬约束。
+- 禁止生成待办、已办、我发起、已阅、审批详情和审批动作等通用能力的硬约束。
 - 必须生成的业务文件清单和完成标准。
 
 自定义工具：
@@ -579,6 +580,9 @@ SQLite 只在 `agent_session` 保存当前有效结构化需求 JSON 和版本�
 
 ③基础底座必须在根目录提供版本化 manifest，例如 `.flowmind/target-manifest.json`：
 
+M0-M2 创建会话时 `targetRoot` 可省略；即使传入也只校验并保存规范化绝对路径，不读取 manifest。
+`AGENT_ALLOWED_TARGET_ROOTS` 白名单、reparse point 和 manifest 契约的强校验在 M3 启动代码生成时执行。
+
 ```json
 {
   "contractVersion": "1.0",
@@ -603,6 +607,14 @@ SQLite 只在 `agent_session` 保存当前有效结构化需求 JSON 和版本�
     "generatedApiDir": "src/api/generated",
     "routeRegistry": "src/router/generated-routes.ts"
   },
+  "providedCapabilities": [
+    "TODO_QUERY",
+    "DONE_QUERY",
+    "INITIATED_QUERY",
+    "READ_QUERY",
+    "APPROVAL_DETAIL",
+    "TASK_ACTION"
+  ],
   "readableReferenceFiles": [
     "backend/pom.xml",
     "frontend/package.json",
@@ -624,8 +636,9 @@ SQLite 只在 `agent_session` 保存当前有效结构化需求 JSON 和版本�
 - 输出路径必须匹配 `allowedOutputPatterns`。
 - 可读取文件必须同时属于目标根目录并出现在 `readableReferenceFiles`。
 - manifest 不允许通过符号链接或 Windows reparse point 跳出目标根。
-- Agent 不能生成或修改通用待办、已办、我发起、已阅和审批框架。
-- 生成前预检基础底座的 `pom.xml` 已引入平台 Starter、通用业务后端依赖，前端已提供业务路由注册点和审批详情嵌入契约；缺失时停止生成并报告契约不兼容，本期不由模型任意改写构建描述文件。
+- `providedCapabilities` 声明③基础底座已经提供的运行期通用能力；首期至少包含待办、已办、我发起、已阅、审批详情和审批动作。
+- Agent 不能生成或修改上述通用能力，也不能生成按业务命名但仅转调平台审批能力的重复包装接口。
+- 生成前预检基础底座的 `pom.xml` 已引入平台 Starter、通用业务后端依赖，通用业务后端已提供审批动作，前端已提供业务路由注册点和审批详情嵌入契约；缺失时停止生成并报告契约不兼容，本期不由模型补造通用能力或任意改写构建描述文件。
 
 ### 7.4 ArtifactManifest
 
@@ -672,13 +685,19 @@ interface ArtifactFile {
 | `id` | TEXT PK | Agent 会话 ID |
 | `owner_user_id` | TEXT | Mock 用户 ID |
 | `owner_user_name` | TEXT | Mock 用户名称 |
+| `target_root` | TEXT NULL | 可选目标工作区绝对路径；M3 前不执行 manifest 强校验 |
 | `state` | TEXT | 当前工作流状态 |
 | `row_version` | INTEGER | 乐观锁版本 |
 | `requirement_revision` | INTEGER | 当前需求版本 |
 | `requirement_json` | TEXT | 当前结构化需求 |
+| `requirement_missing_items_json` | TEXT | 当前版本缺失项 JSON 数组 |
+| `requirement_ambiguities_json` | TEXT | 当前版本歧义项 JSON 数组 |
+| `requirement_ready_for_review` | INTEGER | 当前版本是否可进入门禁一 |
+| `requirement_source` | TEXT NULL | `AGENT/USER_EDIT` |
 | `requirement_confirmed_at` | TEXT NULL | 门禁一确认时间 |
 | `requirement_confirm_key` | TEXT NULL | 门禁一的 Agent Web 幂等号 |
 | `requirement_confirm_hash` | TEXT NULL | 门禁一请求摘要 |
+| `requirement_confirm_result_json` | TEXT NULL | 门禁一首次受理结果摘要 |
 | `pi_session_id` | TEXT | Requirement Pi Session ID |
 | `pi_session_file` | TEXT | Requirement Pi JSONL 路径 |
 | `last_error_code` | TEXT NULL | 最近失败码 |
@@ -704,14 +723,20 @@ interface ArtifactFile {
 | `process_name` | TEXT | 流程名称 |
 | `definition_version` | INTEGER NULL | 平台定义版本 |
 | `status` | TEXT | `DRAFT/VALIDATED/PUBLISHED/ACTIVE/FAILED/SUPERSEDED` |
+| `saga_step` | TEXT | 最近完成的流程平台落地步骤 |
 | `requirement_snapshot_json` | TEXT | 本流程定义消费的确认需求快照 |
 | `validation_json` | TEXT NULL | 平台校验结果 |
+| `platform_snapshot_json` | TEXT NULL | 最近一次平台定义详情快照 |
 | `create_operation_id` | TEXT | 创建/复制幂等号 |
 | `save_operation_id` | TEXT | 保存流程图幂等号 |
 | `publish_operation_id` | TEXT | 发布幂等号 |
 | `activate_operation_id` | TEXT | 激活幂等号 |
 | `process_confirm_key` | TEXT NULL | 门禁二的 Agent Web 幂等号 |
 | `process_confirm_hash` | TEXT NULL | 门禁二请求摘要 |
+| `process_confirm_result_json` | TEXT NULL | 门禁二首次受理结果摘要 |
+| `retry_key` | TEXT NULL | 当前失败步骤重试幂等号 |
+| `retry_hash` | TEXT NULL | 当前失败步骤重试摘要 |
+| `retry_result_json` | TEXT NULL | 当前失败步骤首次重试结果摘要 |
 | `last_error_code` | TEXT NULL | 最近平台错误码 |
 | `last_error_message` | TEXT NULL | 最近平台错误信息 |
 | `created_by` | TEXT | 创建用户 |
@@ -837,6 +862,8 @@ HTTP 语义：
 }
 ```
 
+`targetRoot` 在 M0-M2 为可选字段；空请求体 `{}` 同样允许创建会话。
+
 响应：
 
 ```json
@@ -951,7 +978,7 @@ X-Flow-User-Id: user_sales
 X-Flow-User-Name: Sales User
 ```
 
-并在请求体的 `operatorUserId` 中写入相同用户 ID。部门信息来自 Agent 本地 Mock 用户配置，可选传递：
+对于包含 `operatorUserId` 的流程定义请求，还在请求体中写入相同用户 ID；附件模板接口只使用 `X-Flow-User-Id` 请求头。部门信息来自 Agent 本地 Mock 用户配置，可选传递：
 
 - `X-Flow-Dept-Id`
 - `X-Flow-Dept-Name`
@@ -985,18 +1012,26 @@ X-Flow-User-Name: Sales User
 - 审批人：`USER`、`STARTER`、`DEPARTMENT`、`ROLE`、`ROLE_IN_DEPARTMENT`、`APPROVER_EXPRESSION`
 - 多人模式：`SINGLE`、`OR_SIGN`、`COUNTERSIGN`
 
-### 10.4 附件模板前置接口
+### 10.4 附件模板接口审查与调用规则
 
-当前 `SaveProcessGraphRequest.attachmentConfigs` 只能引用已经存在的 `attachmentTemplateId`，但平台尚未向 Agent 暴露完整的全局附件模板管理 REST API。平台必须先补充：
+`SaveProcessGraphRequest.attachmentConfigs` 只能引用已经存在的 `attachmentTemplateId`。当前
+`ProcessAttachmentTemplateController` 已提供以下实际 REST API：
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| POST | `/api/platform/attachment-templates/versions` | 创建某附件编码的下一模板版本 |
-| GET | `/api/platform/attachment-templates` | 按编码、状态分页查询模板版本 |
-| GET | `/api/platform/attachment-templates/{templateId}` | 查询模板详情 |
-| POST | `/api/platform/attachment-templates/{templateId}/disable` | 禁用未受约束或允许禁用的版本 |
+| 方法 | 当前实际路径 | Controller 行为 | Agent 是否使用 |
+| --- | --- | --- | --- |
+| POST | `/api/platform/attachment-templates` | 创建同一 `attachmentCode` 的下一模板版本，返回新版本 DTO | 是 |
+| GET | `/api/platform/attachment-templates` | 按 `attachmentCode`、`templateStatus`、`templateVersion` 可选过滤，按编码升序、版本降序返回列表 | 是 |
+| GET | `/api/platform/attachment-templates/{attachmentTemplateId}` | 按模板版本 ID 查询详情 | 可选，用于按 ID 复核 |
+| PUT | `/api/platform/attachment-templates/{attachmentTemplateId}` | 原地更新允许修改的版本，也可通过 `templateStatus=DISABLED` 禁用 | 否 |
 
-创建请求至少包含：
+审查结论：
+
+- 当前 `POST + GET` 已满足首期 Agent 创建、查询和复用附件模板版本的最小需求，不再把附件模板 REST API 作为待补充的前置能力。
+- 列表接口当前返回 `List`，不支持分页。Agent 必须同时传入 `attachmentCode` 和 `templateStatus=ENABLED` 做窄查询；首期无需为 Agent 单独增加分页接口。
+- Agent 不负责模板治理，不调用更新或禁用接口。详情查询和模板更新继续作为平台管理能力存在。
+- 附件模板创建是流程草稿落地过程中的一个普通步骤，当前接口不使用 `operationId`；其失败由流程落地状态机统一处理，不建设附件模板专用幂等和恢复机制。
+
+创建请求体使用 `ProcessAttachmentTemplateDTO` 中的模板字段，操作人通过 `X-Flow-User-Id` 请求头传递：
 
 ```json
 {
@@ -1004,25 +1039,24 @@ X-Flow-User-Name: Sales User
   "attachmentName": "银行回单",
   "description": "入金申请银行回单",
   "allowedExtensions": ["pdf", "jpg", "png"],
-  "maxSizeBytes": 10485760,
-  "operatorUserId": "user_sales",
-  "operationId": "op_xxx"
+  "maxSizeBytes": 10485760
 }
 ```
 
 Agent 的处理规则：
 
-1. 按附件编码查询启用模板。
-2. 若名称、格式、大小完全匹配，复用最新启用版本。
-3. 若不存在或规则不同，创建新模板版本。
+1. 调用 `GET /api/platform/attachment-templates?attachmentCode={code}&templateStatus=ENABLED` 查询启用模板；返回结果已按版本降序排列。
+2. 若名称、标准化后的扩展名集合和大小完全匹配，复用最高版本。
+3. 若不存在匹配版本，调用 `POST /api/platform/attachment-templates` 创建下一版本。
 4. 将返回的模板 ID 写入 `attachmentConfigs`。
-5. 必填、数量和适用节点属于流程定义附件配置，不属于全局模板。
+5. 创建或查询失败时，本次流程草稿落地失败；用户重试流程落地时重新从第 1 步查询，不单独恢复附件模板步骤。
+6. 必填、数量和适用节点属于流程定义附件配置，不属于全局模板。
 
 ### 10.5 草稿创建事务边界
 
 流程平台的多个 REST 调用无法与 Agent SQLite 组成分布式事务，因此使用 Saga 式步骤记录：
 
-1. SQLite 创建 `PROCESS_PROVISIONING` 记录并生成所有稳定 operation ID。
+1. SQLite 创建 `PROCESS_PROVISIONING` 记录，并为支持幂等号的流程定义修改操作生成稳定 operation ID。
 2. 创建或复制流程定义草稿。
 3. 创建/复用附件模板。
 4. 保存流程图。
@@ -1032,6 +1066,7 @@ Agent 的处理规则：
 失败处理：
 
 - 已创建草稿但保存失败：保留草稿和 definition ID，修正后用同一 `save_operation_id` 语义重试。
+- 附件模板查询或创建失败：本次流程落地失败；重试流程落地时重新执行附件模板查询和复用逻辑。
 - 校验失败：不是网络失败，保存 `validation_json` 并进入 `PROCESS_REVIEW`，前端展示问题但禁用确认。
 - 同号重试：复用原 `operationId`，不得生成新幂等号。
 - 同号请求内容变化：本地直接拒绝，避免平台返回 operation ID 冲突。
@@ -1055,11 +1090,12 @@ Agent 的处理规则：
 - 业务 Service。
 - 请求/响应 DTO。
 - 业务校验。
-- 平台 Starter 调用适配。
+- 业务发起、业务详情等业务特定场景所需的平台 Starter 调用适配。
 - 必要配置片段或已有配置的受控修改。
 - 发起接口，例如 `POST /api/entry-application/submit`。
 - 详情接口，例如 `GET /api/entry-application/{instanceId}`。
-- 业务语义审批接口，例如 `POST /api/entry-application/{taskId}/approve`；通用待办、已办、我发起查询仍复用基础底座。
+
+审批通过、驳回、退回、转办等任务动作与具体业务名称无关，由③基础底座的通用业务后端统一提供 REST 接口并通过平台 Starter 转调①平台。Agent 不生成 `POST /api/entry-application/{taskId}/approve` 这类按业务命名、内部仅转调平台审批能力的接口。只有发起、业务详情组装和确有业务差异的校验或联动属于 Agent 生成的业务后端；业务差异通过基础底座预定义的扩展契约接入，不能以重复实现通用审批端点的方式接入。
 
 前端：
 
@@ -1078,7 +1114,8 @@ Agent 的处理规则：
 - 独立业务数据库配置。
 - 自行实现的流程流转引擎。
 - 前端直接调用①平台的代码。
-- 通用待办、已办、我发起、已阅或审批详情框架。
+- 通用待办、已办、我发起、已阅、审批详情框架或审批动作 REST 接口。
+- 按业务名称包装但仅转调通用审批能力的 Controller、Service 或前端 API，例如 `/api/entry-application/{taskId}/approve`。
 - Java 9+ API、`record`、`var` 或 Spring Boot 3/Jakarta 代码。
 
 ### 11.3 Spring Boot 约束
@@ -1096,12 +1133,14 @@ Agent 的处理规则：
 ```
 
 - 业务表单值全部写入流程变量。
-- 业务 Service 通过 Starter 暴露的 Service 同进程调用。
-- 待办、已办和我发起等通用查询不在业务模块重复生成。
+- Agent 生成的业务 Service 仅在业务发起、详情组装等业务特定场景通过 Starter 暴露的 Service 同进程调用。
+- 待办、已办、我发起、已阅、审批详情和审批动作由③通用业务后端通过 Starter 统一转调平台，不在业务模块重复生成。
+- 若审批前后确需业务校验或联动，必须使用③基础底座预先定义的扩展点；扩展点不存在时应报告基础底座契约不兼容，而不是由模型自行发明审批接口。
 
 ### 11.4 Vue3 约束
 
 - 业务前端只调用③业务后端。
+- 业务录入页调用 Agent 生成的业务后端；通用待办和审批详情页调用③通用业务后端，业务前端不得新增按业务划分的审批动作客户端。
 - 字段编码必须与平台流程表单字段编码一致。
 - 控件与 `controlType` 一致。
 - 附件控件与附件模板配置一致。
@@ -1253,10 +1292,9 @@ Pi 官方明确说明其没有内置沙箱，工具以 Pi 进程权限运行。�
 
 ### 14.3 平台幂等
 
-- 每个具体平台状态修改步骤拥有独立 `operationId`。
-- operation ID 在第一次调用前写入 SQLite。
-- 网络超时后状态未知时，使用同一 operation ID 重试。
-- 禁止因为点击重试而生成新 operation ID。
+- 对支持幂等号的流程定义创建、保存、发布和激活等状态修改步骤，分别使用独立 `operationId`。
+- operation ID 在第一次调用前写入 SQLite；网络超时后状态未知时使用同一 operation ID 重试，禁止因为点击重试而生成新号。
+- 附件模板接口不使用 `operationId`，失败时由流程落地状态机按 10.4 从查询步骤重新执行。
 
 ### 14.4 错误分类
 
@@ -1266,7 +1304,7 @@ Pi 官方明确说明其没有内置沙箱，工具以 Pi 进程权限运行。�
 | 状态冲突 | 重复确认、过期 revision | `409`，刷新当前快照 |
 | Pi/模型失败 | 认证、限流、响应中断 | 保存失败状态，允许同阶段重试 |
 | 平台校验失败 | `ValidationResult.valid=false` | 展示 issues，不允许激活 |
-| 平台调用未知结果 | 网络超时 | 同 operation ID 重试 |
+| 平台调用未知结果 | 网络超时 | 支持幂等号的流程操作用同 operation ID 重试；附件模板失败则重新执行流程落地 |
 | 文件冲突 | 目标哈希变化 | 拒绝写入，要求重新预览 |
 | 写入失败 | 权限、磁盘空间、部分写入 | 回滚并保留备份 |
 
@@ -1298,7 +1336,7 @@ SQLite 不建设可查询审计中心。可观测性采用结构化应用日志�
 - operation ID 持久化及重试复用。
 - 目标路径规范化、Windows 大小写、`..`、绝对路径、UNC、符号链接/reparse point。
 - Artifact 文件集合与哈希校验。
-- 禁止生成实体、Mapper、数据库迁移和平台直调规则。
+- 禁止生成实体、Mapper、数据库迁移、平台直调和按业务重复包装审批动作的规则。
 - 平台错误和 Pi 错误翻译。
 
 ### 16.2 集成测试
@@ -1308,7 +1346,8 @@ SQLite 不建设可查询审计中心。可观测性采用结构化应用日志�
 - 平台客户端使用 Mock HTTP Server 验证：
   - 创建、保存、校验、发布、激活顺序。
   - 附件模板复用与新版本创建。
-  - 超时后使用相同 operation ID。
+  - 流程定义修改请求超时后使用相同 operation ID。
+  - 附件模板调用失败后流程落地失败，重试时重新执行查询和复用逻辑。
   - 发布成功、激活失败后的恢复。
 - 暂存文件编辑、diff、备份、写入和故障注入回滚。
 - SSE 连接、状态快照和断线重连。
@@ -1333,8 +1372,8 @@ SQLite 不建设可查询审计中心。可观测性采用结构化应用日志�
 5. 人工编辑并完成门禁一。
 6. Agent 后端创建/复用银行回单附件模板，创建流程草稿、保存图并完成发布前校验。
 7. 前端展示流程预览，人工完成门禁二，平台发布并激活。
-8. 启动代码生成，生成 Spring Boot 业务适配层和 Vue3 入金申请页面。
-9. 验证没有实体、Mapper、业务表或通用待办页面。
+8. 启动代码生成，生成只包含业务发起、业务详情等特定能力的 Spring Boot 业务适配层和 Vue3 入金申请页面。
+9. 验证没有实体、Mapper、业务表、通用待办页面或 `/api/entry-application/{taskId}/approve` 一类重复审批接口。
 10. 人工查看 diff、编辑代码并完成门禁三。
 11. 文件写入③基础底座工作区，不创建 Git commit。
 12. “Agent 创建的流程定义”清单可查询该流程。
@@ -1348,7 +1387,7 @@ SQLite 不建设可查询审计中心。可观测性采用结构化应用日志�
 - 建立 Agent Web 前后端工程。
 - 固定 Pi Adapter 边界和依赖版本。
 - 定义领域类型、状态机、SQLite 三张表和 TargetProjectManifest。
-- 提供 Mock 用户、健康检查和目标工作区校验。
+- 提供 Mock 用户、健康检查和可选目标工作区绝对路径规范化；manifest 强校验延后至 M3。
 
 ### M1：对话与需求确认
 
@@ -1358,7 +1397,7 @@ SQLite 不建设可查询审计中心。可观测性采用结构化应用日志�
 
 ### M2：流程平台落地
 
-- 补充平台附件模板管理 API。
+- 对接并测试 `ProcessAttachmentTemplateController` 已提供的附件模板创建、条件查询和详情 API。
 - 实现平台 REST Client、DTO 映射、幂等步骤和流程预览。
 - 实现门禁二、发布激活和平台失败恢复。
 
@@ -1386,10 +1425,10 @@ SQLite 不建设可查询审计中心。可观测性采用结构化应用日志�
 ### 18.1 前置条件
 
 - ①平台独立服务可启动，且当前流程定义 REST API 可用。
-- 平台补充附件模板管理 REST API。
-- ③基础底座提供 `.flowmind/target-manifest.json` 和稳定集成点。
+- ①平台启用 `ProcessAttachmentTemplateController`，可通过 REST 创建和查询附件模板版本。
+- M3 启动代码生成前，③基础底座提供 `.flowmind/target-manifest.json`、通用业务后端审批动作能力和稳定的业务扩展点。
 - 服务端配置可用的 Pi 模型和 Provider 凭据。
-- 目标工作区位于 `AGENT_ALLOWED_TARGET_ROOTS` 白名单下。
+- M3 启动代码生成前，目标工作区位于 `AGENT_ALLOWED_TARGET_ROOTS` 白名单下；M0-M2 验收不依赖目标工程。
 
 ### 18.2 主要风险与应对
 
@@ -1400,7 +1439,7 @@ SQLite 不建设可查询审计中心。可观测性采用结构化应用日志�
 | LLM 生成错误代码 | 强上下文 + 静态禁用规则 + 门禁三；外部人工编译验收 |
 | 模型绕过门禁 | 模型没有平台和目标工作区修改工具 |
 | Pi 无内置沙箱 | 禁用 built-in tools，受限自定义工具和专用 cwd |
-| 平台多调用部分成功 | 稳定 operation ID + Saga 步骤状态 + 精确重试 |
+| 平台多调用部分成功 | 流程操作使用稳定 operation ID 并记录 Saga 步骤状态；附件模板失败时重新执行流程落地 |
 | 目标文件被外部修改 | base SHA-256 再校验，冲突时拒绝覆盖 |
 | 多文件部分写入 | 全量备份、写入日志和逆序回滚 |
 | SQLite 并发能力有限 | 明确单实例、会话 mutex、WAL 和乐观锁 |
