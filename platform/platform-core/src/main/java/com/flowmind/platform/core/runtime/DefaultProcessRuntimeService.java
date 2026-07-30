@@ -1,6 +1,7 @@
 package com.flowmind.platform.core.runtime;
 
 import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
+import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.ProcessAttachmentTemplateDTO;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
@@ -475,6 +476,30 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     @Override
     public TaskActionResult directSend(DirectSendRequest request) {
         return enhancedActions().directSend(request);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public DirectSendContextDTO getDirectSendContext(String taskId) {
+        if (isBlank(taskId)) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "taskId is required");
+        }
+        ProcessActiveTaskEntity task = activeTaskRepository.findById(taskId);
+        if (task == null || enhancedTaskActionCoordinator == null) {
+            DirectSendContextDTO unavailable = new DirectSendContextDTO();
+            unavailable.setTaskId(taskId);
+            unavailable.setAllowed(false);
+            return unavailable;
+        }
+        ProcessInstanceEntity instance = instanceRepository.findById(task.getInstanceId());
+        if (instance == null) {
+            DirectSendContextDTO unavailable = new DirectSendContextDTO();
+            unavailable.setTaskId(taskId);
+            unavailable.setAllowed(false);
+            return unavailable;
+        }
+        ProcessDefinitionDetailDTO definition = definitionLoader.loadForInstance(instance);
+        return enhancedTaskActionCoordinator.getDirectSendContext(task, definition);
     }
 
     /** M5 起提供转办能力。 */

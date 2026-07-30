@@ -1,6 +1,7 @@
 package com.flowmind.platform.web;
 
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
+import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
@@ -74,6 +75,13 @@ public class PlatformQueryController {
     @GetMapping("/api/platform/instances/{instanceId}/active-tasks")
     public List<TaskDTO> queryActiveTasks(@Parameter(description = "Instance id") @PathVariable String instanceId) {
         return taskQueryService.queryActiveTasks(instanceId);
+    }
+
+    @Operation(summary = "Get trusted direct-send context")
+    @GetMapping("/api/platform/tasks/{taskId}/direct-send-context")
+    public DirectSendContextDTO getDirectSendContext(
+            @Parameter(description = "Task id") @PathVariable String taskId) {
+        return processRuntimeService.getDirectSendContext(taskId);
     }
 
     @Operation(summary = "Query history tasks by instance")

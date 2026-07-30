@@ -650,6 +650,20 @@ tbody tr:hover {
     line-height: 1.4;
 }
 
+.attachment-replace-control,
+.task-new-attachments label {
+    display: grid;
+    gap: 5px;
+}
+
+.task-new-attachments {
+    display: grid;
+    gap: 10px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+}
+
 .action-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(120px, 1fr));

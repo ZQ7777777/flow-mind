@@ -44,6 +44,8 @@ public final class RuntimeOperationTypes {
 
     /** 上传实例或任务附件。 */
     public static final String ATTACHMENT_UPLOAD = "ATTACHMENT_UPLOAD";
+    /** 使用新的文件版本替换实例级附件。 */
+    public static final String ATTACHMENT_REPLACE = "ATTACHMENT_REPLACE";
     /** 删除运行时附件。 */
     public static final String ATTACHMENT_DELETE = "ATTACHMENT_DELETE";
 

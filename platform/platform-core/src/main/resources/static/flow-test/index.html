@@ -762,11 +762,15 @@
                     <dl class="detail-list">
                         <dt>任务 ID</dt><dd>{{ taskDialog.task.taskId || taskDialog.task.id }}</dd>
                         <dt>节点</dt><dd>{{ taskDialog.task.nodeName || taskDialog.task.nodeCode }}</dd>
-                        <dt>版本</dt><dd>{{ taskDialog.task.taskVersion || 0 }}</dd>
+                        <dt>版本</dt><dd>{{ taskDialog.task.taskVersion || taskDialog.task.lockVersion || 0 }}</dd>
                     </dl>
                     <label>
                         表单变量 JSON
-                        <textarea v-model.trim="taskDialog.variablesText" rows="6"></textarea>
+                        <textarea v-model.trim="taskDialog.variablesText"
+                                  data-testid="task-variables"
+                                  :readonly="!taskDialog.starterTask"
+                                  rows="6"></textarea>
+                        <small>{{ taskDialog.starterTask ? '申请返工节点可修改' : '非申请节点只读' }}</small>
                     </label>
                     <label>
                         审批意见
@@ -789,36 +793,60 @@
                             </div>
                             <span class="attachment-owner">{{ attachment.ownerType || '-' }}</span>
                             <button type="button" class="ghost" @click="downloadAttachment(attachment)">下载</button>
+                            <label v-if="taskDialog.starterTask && attachment.ownerType === 'INSTANCE'"
+                                   class="attachment-replace-control">
+                                替换
+                                <input type="file"
+                                       data-testid="replace-instance-attachment"
+                                       @change="handleTaskReplacementFileChange(attachment, $event)">
+                                <small v-if="attachment.pendingReplacement">
+                                    待保存：{{ attachment.pendingReplacement.fileName }}
+                                </small>
+                            </label>
                         </li>
                         <li v-if="taskDialog.attachments.length === 0">暂无附件</li>
                     </ul>
                 </section>
             </div>
             <div class="action-grid">
-                <button type="button" class="primary" @click="approveCurrentTask">审批通过</button>
-                <label>
-                    驳回节点
-                    <select v-model="taskDialog.rejectTargetNodeCode">
-                        <option value="">请选择</option>
-                        <option v-for="node in taskRejectTargetNodes()" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
-                    </select>
-                </label>
-                <button type="button" @click="rejectCurrentTask">驳回</button>
-                <label>
-                    转办给
-                    <select v-model="taskDialog.transferUserId">
-                        <option value="">请选择</option>
-                        <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
-                    </select>
-                </label>
-                <button type="button" @click="transferCurrentTask">转办</button>
-                <label>
-                    加签人
-                    <select v-model="taskDialog.addSignUserIds" multiple>
-                        <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
-                    </select>
-                </label>
-                <button type="button" @click="addSignCurrentTask">加签</button>
+                <button v-if="taskDialog.starterTask"
+                        type="button"
+                        class="primary"
+                        data-testid="starter-resubmit"
+                        @click="submitCurrentStarterTask">重新提交</button>
+                <button v-else type="button" class="primary" @click="approveCurrentTask">审批通过</button>
+                <button v-if="taskDialog.directSendContext.allowed"
+                        type="button"
+                        class="primary"
+                        data-testid="direct-send"
+                        @click="directSendCurrentTask">
+                    直送至 {{ taskDialog.directSendContext.targetNodeName || taskDialog.directSendContext.targetNodeCode }}
+                </button>
+                <template v-if="!taskDialog.starterTask">
+                    <label>
+                        驳回节点
+                        <select v-model="taskDialog.rejectTargetNodeCode">
+                            <option value="">请选择</option>
+                            <option v-for="node in taskRejectTargetNodes()" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
+                        </select>
+                    </label>
+                    <button type="button" @click="rejectCurrentTask">驳回</button>
+                    <label>
+                        转办给
+                        <select v-model="taskDialog.transferUserId">
+                            <option value="">请选择</option>
+                            <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
+                        </select>
+                    </label>
+                    <button type="button" @click="transferCurrentTask">转办</button>
+                    <label>
+                        加签人
+                        <select v-model="taskDialog.addSignUserIds" multiple>
+                            <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
+                        </select>
+                    </label>
+                    <button type="button" @click="addSignCurrentTask">加签</button>
+                </template>
             </div>
         </div>
     </section>

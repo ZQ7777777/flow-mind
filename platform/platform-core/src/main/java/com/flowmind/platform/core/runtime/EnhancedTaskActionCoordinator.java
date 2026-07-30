@@ -1,5 +1,7 @@
 package com.flowmind.platform.core.runtime;
 
+import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
+import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
@@ -8,6 +10,7 @@ import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.OperationTargetTypeEnum;
@@ -16,6 +19,7 @@ import com.flowmind.platform.api.enums.TaskStatusEnum;
 import com.flowmind.platform.api.enums.WorkflowEventTypeEnum;
 import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
+import com.flowmind.platform.api.request.CheckAttachmentRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
@@ -23,6 +27,7 @@ import com.flowmind.platform.api.request.TaskOperationRequest;
 import com.flowmind.platform.api.request.TransferTaskRequest;
 import com.flowmind.platform.api.request.WithdrawTaskRequest;
 import com.flowmind.platform.api.service.CallbackService;
+import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.core.audit.AuditLogCommand;
 import com.flowmind.platform.core.audit.AuditLogWriter;
@@ -83,6 +88,10 @@ public class EnhancedTaskActionCoordinator {
     private final CallbackService callbackService;
     private final OrganizationProvider organizationProvider;
     private final TaskActionRuleConfigReader taskActionRuleConfigReader = new TaskActionRuleConfigReader();
+    /** 直送查询和执行共用的可信驳回来源解析器。 */
+    private final DirectSendContextResolver directSendContextResolver;
+    /** 直送完成当前节点前校验实例绑定的附件要求。 */
+    private AttachmentService attachmentService;
     /** M5 统一审计入口，确保增强动作可由管理端审计查询直接检索。 */
     private final AuditLogWriter auditLogWriter;
 
@@ -103,6 +112,7 @@ public class EnhancedTaskActionCoordinator {
         this.instanceRepository = instanceRepository;
         this.activeTaskRepository = activeTaskRepository;
         this.historyRepository = historyRepository;
+        this.directSendContextResolver = new DirectSendContextResolver(historyRepository);
         this.taskGroupRepository = taskGroupRepository;
         this.definitionLoader = definitionLoader;
         this.requestValidator = requestValidator;
@@ -114,6 +124,12 @@ public class EnhancedTaskActionCoordinator {
         this.callbackService = callbackService;
         this.organizationProvider = organizationProviderProvider.getIfAvailable();
         this.auditLogWriter = auditLogWriter;
+    }
+
+    /** 注入正式附件服务，保持已有直接构造测试兼容。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAttachmentService(AttachmentService attachmentService) {
+        this.attachmentService = attachmentService;
     }
 
     public TaskActionResult reject(final RejectTaskRequest request) {
@@ -246,14 +262,19 @@ public class EnhancedTaskActionCoordinator {
             @Override public TaskActionResult run(EnhancedActionContext context) {
                 requireSerial(context.task);
                 requireText(request.getTargetNodeCode(), "targetNodeCode");
-                ProcessHistoryTaskEntity source = findRejectSource(context);
-                String sourceNodeCode = readText(source.getExtraJson(), "sourceNodeCode");
+                DirectSendContextResolver.Resolution resolution =
+                        directSendContextResolver.resolve(context.task, context.definition);
+                if (resolution == null) {
+                    throw state(RuntimeErrorCodes.DIRECT_SEND_SOURCE_NOT_FOUND, "reject source was not found");
+                }
+                ProcessHistoryTaskEntity source = resolution.getRejectHistory();
+                String sourceNodeCode = resolution.getTargetNode().getNodeCode();
                 if (!request.getTargetNodeCode().equals(sourceNodeCode)) {
                     throw validation(RuntimeErrorCodes.DIRECT_SEND_SOURCE_NOT_FOUND,
                             "direct send target must be the reject source node");
                 }
-                assertDirectSendRule(context.definition, context.task.getNodeCode());
-                requireUserTask(context.definition, sourceNodeCode);
+                applyDirectSendVariables(context, request);
+                checkDirectSendAttachments(context);
                 RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(context.instance, context.definition,
                         sourceNodeCode, null, null);
                 complete(context.task, request);
@@ -266,6 +287,46 @@ public class EnhancedTaskActionCoordinator {
                         advance.getCreatedTasks(), Collections.<TaskDTO>emptyList(), WorkflowEventTypeEnum.PROCESS_DIRECT_SENT);
             }
         });
+    }
+
+    /** 返回与执行路径使用相同可信来源和节点规则的只读上下文。 */
+    public DirectSendContextDTO getDirectSendContext(ProcessActiveTaskEntity task,
+                                                     ProcessDefinitionDetailDTO definition) {
+        DirectSendContextResolver.Resolution resolution = directSendContextResolver.resolve(task, definition);
+        return directSendContextResolver.toDto(task == null ? null : task.getId(), resolution);
+    }
+
+    private void applyDirectSendVariables(EnhancedActionContext context, DirectSendRequest request) {
+        if (request.getVariables() == null || request.getVariables().isEmpty()) {
+            return;
+        }
+        ProcessNodeDTO currentNode = requireUserTask(context.definition, context.task.getNodeCode());
+        if (!ApproverRuleTypeEnum.STARTER.equals(currentNode.getApproverRuleType())) {
+            throw validation(RuntimeErrorCodes.INVALID_ACTION,
+                    "only STARTER tasks may update variables while direct sending");
+        }
+        Map<String, Object> variables = readVariables(context.instance);
+        variables.putAll(request.getVariables());
+        String variablesJson = RuntimeJsonCodec.toJson(variables);
+        if (instanceRepository.updateVariablesJson(context.instance.getId(), variablesJson) != 1) {
+            throw state(RuntimeErrorCodes.INVALID_ACTION, "process instance variables cannot be updated");
+        }
+        context.instance.setVariablesJson(variablesJson);
+    }
+
+    private void checkDirectSendAttachments(EnhancedActionContext context) {
+        if (attachmentService == null) {
+            return;
+        }
+        CheckAttachmentRequest request = new CheckAttachmentRequest();
+        request.setInstanceId(context.instance.getId());
+        request.setNodeCode(context.task.getNodeCode());
+        request.setOperatorUserId(context.operator.getUserId());
+        AttachmentTemplateCheckResult result = attachmentService.checkRequiredAttachments(request);
+        if (result == null || !result.isPassed()) {
+            throw validation(RuntimeErrorCodes.INVALID_ACTION,
+                    "required attachments are not satisfied for node: " + context.task.getNodeCode());
+        }
     }
 
     public TaskActionResult transfer(final TransferTaskRequest request) {

@@ -4,6 +4,7 @@ import com.flowmind.platform.api.dto.OperationResult;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
+import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.ClaimTaskRequest;
@@ -90,6 +91,14 @@ public interface ProcessRuntimeService {
      * @return 任务动作结果
      */
     TaskActionResult directSend(DirectSendRequest request);
+
+    /**
+     * 查询活动任务是否可按可信驳回来源直送。
+     *
+     * @param taskId 活动任务 ID
+     * @return 直送上下文
+     */
+    DirectSendContextDTO getDirectSendContext(String taskId);
 
     /**
      * 转办任务。
