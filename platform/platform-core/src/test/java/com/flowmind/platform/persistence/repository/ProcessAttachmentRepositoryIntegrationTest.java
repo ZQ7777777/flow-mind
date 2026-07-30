@@ -132,6 +132,27 @@ class ProcessAttachmentRepositoryIntegrationTest {
     }
 
     @Test
+    void replacementUsesCurrentTaskVersionAndPreservesClosedOriginalMetadata() {
+        insertAttachment("attachment-old", "instance-1", "task-completed", "INSTANCE", "receipt", null,
+                "storage-old", false, LocalDateTime.of(2026, 7, 27, 10, 0));
+
+        assertEquals(0, repository.softDeleteForReplacement("attachment-old", "task-active", "instance-1",
+                Long.valueOf(2), "starter", LocalDateTime.of(2026, 7, 27, 11, 0)));
+        assertEquals(1, repository.softDeleteForReplacement("attachment-old", "task-active", "instance-1",
+                Long.valueOf(3), "starter", LocalDateTime.of(2026, 7, 27, 11, 0)));
+
+        ProcessAttachmentEntity old = repository.findById("attachment-old");
+        assertTrue(Boolean.TRUE.equals(old.getDeleted()));
+        assertEquals("task-completed", old.getTaskId());
+        assertEquals("starter", old.getDeletedBy());
+        ProcessAttachmentEntity replacement = attachmentEntity("attachment-new", "instance-1", "task-active",
+                "INSTANCE", "receipt", "storage-new", LocalDateTime.of(2026, 7, 27, 11, 0));
+        assertEquals(1, repository.insertWhenTaskOpenAndWithinLimit(replacement, Long.valueOf(3),
+                Integer.valueOf(1)));
+        assertEquals(1L, repository.countActiveByInstanceAndCode("instance-1", "receipt"));
+    }
+
+    @Test
     void storageKeyQueriesSupportInstanceBatchAndDefinitionCleanup() {
         insertAttachment("attachment-2", "instance-1", "task-active", "INSTANCE", "receipt", null,
                 "storage-2", false, LocalDateTime.of(2026, 7, 27, 10, 1));
@@ -223,4 +244,3 @@ class ProcessAttachmentRepositoryIntegrationTest {
         }
     }
 }
-

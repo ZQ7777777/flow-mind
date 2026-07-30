@@ -15,6 +15,7 @@ import com.flowmind.platform.api.request.CheckAttachmentRequest;
 import com.flowmind.platform.api.request.DeleteAttachmentRequest;
 import com.flowmind.platform.api.request.DownloadAttachmentRequest;
 import com.flowmind.platform.api.request.OperationRequest;
+import com.flowmind.platform.api.request.ReplaceInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
 import com.flowmind.platform.api.request.StoreFileRequest;
@@ -35,11 +36,13 @@ import com.flowmind.platform.persistence.entity.ProcessAttachmentEntity;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,13 +68,23 @@ public class DefaultAttachmentService implements AttachmentService {
     private final AttachmentAccessGuard accessGuard;
     private final CurrentUserProvider currentUserProvider;
     private final RuntimeOperationExecutor operationExecutor;
+    private final ProcessNodeRepository nodeRepository;
 
     public DefaultAttachmentService(ProcessAttachmentRepository attachmentRepository, ProcessInstanceRepository instanceRepository,
                                     ActiveTaskRepository activeTaskRepository, ProcessDefinitionAttachmentConfigRepository configRepository,
                                     ProcessAttachmentTemplateRepository templateRepository, FileStorageProvider storageProvider,
                                     AttachmentAccessGuard accessGuard, CurrentUserProvider currentUserProvider) {
         this(attachmentRepository, instanceRepository, activeTaskRepository, configRepository, templateRepository,
-                storageProvider, accessGuard, currentUserProvider, null);
+                storageProvider, accessGuard, currentUserProvider, null, null);
+    }
+
+    public DefaultAttachmentService(ProcessAttachmentRepository attachmentRepository, ProcessInstanceRepository instanceRepository,
+                                    ActiveTaskRepository activeTaskRepository, ProcessDefinitionAttachmentConfigRepository configRepository,
+                                    ProcessAttachmentTemplateRepository templateRepository, FileStorageProvider storageProvider,
+                                    AttachmentAccessGuard accessGuard, CurrentUserProvider currentUserProvider,
+                                    RuntimeOperationExecutor operationExecutor) {
+        this(attachmentRepository, instanceRepository, activeTaskRepository, configRepository, templateRepository,
+                storageProvider, accessGuard, currentUserProvider, operationExecutor, null);
     }
 
     @Autowired
@@ -79,11 +92,12 @@ public class DefaultAttachmentService implements AttachmentService {
                                     ActiveTaskRepository activeTaskRepository, ProcessDefinitionAttachmentConfigRepository configRepository,
                                     ProcessAttachmentTemplateRepository templateRepository, FileStorageProvider storageProvider,
                                     AttachmentAccessGuard accessGuard, CurrentUserProvider currentUserProvider,
-                                    RuntimeOperationExecutor operationExecutor) {
+                                    RuntimeOperationExecutor operationExecutor, ProcessNodeRepository nodeRepository) {
         this.attachmentRepository = attachmentRepository; this.instanceRepository = instanceRepository;
         this.activeTaskRepository = activeTaskRepository; this.configRepository = configRepository;
         this.templateRepository = templateRepository; this.storageProvider = storageProvider;
         this.accessGuard = accessGuard; this.currentUserProvider = currentUserProvider; this.operationExecutor = operationExecutor;
+        this.nodeRepository = nodeRepository;
     }
 
     @Override @Transactional
@@ -104,6 +118,109 @@ public class DefaultAttachmentService implements AttachmentService {
         if (request.getExpectedTaskVersion() == null) throw invalid("expectedTaskVersion is required");
         return save(request, request.getInstanceId(), request.getTaskId(), request.getExpectedTaskVersion(), request.getOperatorUserId(),
                 request.getOperationId(), request.getAttachment(), AttachmentOwnerTypeEnum.TASK);
+    }
+
+    @Override
+    @Transactional
+    public AttachmentDTO replaceInstanceAttachment(ReplaceInstanceAttachmentRequest request) {
+        requireText(request == null ? null : request.getOperationId(), "operationId is required");
+        requireText(request == null ? null : request.getInstanceId(), "instanceId is required");
+        requireText(request == null ? null : request.getAttachmentId(), "attachmentId is required");
+        requireText(request == null ? null : request.getSourceTaskId(), "sourceTaskId is required");
+        if (request.getExpectedTaskVersion() == null) throw invalid("expectedTaskVersion is required");
+        UserContext user = requireUser(request.getOperatorUserId());
+        if (operationExecutor != null) {
+            OperationIdempotencyDecision decision = operationExecutor.begin(request,
+                    RuntimeOperationTypes.ATTACHMENT_REPLACE, user.getUserId(), request.getInstanceId(),
+                    request.getSourceTaskId(), LocalDateTime.now());
+            if (OperationIdempotencyDecisionType.REPLAY_SUCCESS.equals(decision.getType())) {
+                return operationExecutor.replayResult(decision, AttachmentDTO.class);
+            }
+            operationExecutor.assertExecutable(decision);
+            try {
+                AttachmentDTO result = replaceInternal(request, user);
+                operationExecutor.markSuccess(request.getOperationId(), result);
+                return result;
+            } catch (RuntimeValidationException ex) {
+                markDeterministicFailureBestEffort(request.getOperationId(), ex.getErrorCode());
+                throw ex;
+            } catch (RuntimeStateException ex) {
+                markDeterministicFailureBestEffort(request.getOperationId(), ex.getErrorCode());
+                throw ex;
+            }
+        }
+        return replaceInternal(request, user);
+    }
+
+    private AttachmentDTO replaceInternal(ReplaceInstanceAttachmentRequest request, UserContext user) {
+        AttachmentUploadItem item = request.getAttachment();
+        if (item == null || item.getOwnerType() != AttachmentOwnerTypeEnum.INSTANCE) {
+            throw invalid("attachment ownerType does not match replace endpoint");
+        }
+        ProcessInstanceEntity instance = requireInstance(request.getInstanceId());
+        ProcessActiveTaskEntity task = requireOpenTask(request.getSourceTaskId(), request.getInstanceId(),
+                request.getExpectedTaskVersion());
+        requireStarterReplacementTask(task);
+        ProcessAttachmentEntity old = requireActiveAttachment(request.getAttachmentId());
+        if (!request.getInstanceId().equals(old.getInstanceId())
+                || !AttachmentOwnerTypeEnum.INSTANCE.name().equals(old.getOwnerType())
+                || !old.getAttachmentCode().equals(item.getAttachmentCode())) {
+            throw invalid("replacement must keep the same instance and attachment code");
+        }
+        allow(user, AttachmentAccessActionEnum.DELETE, request.getInstanceId(), task.getId(), old.getId(),
+                AttachmentOwnerTypeEnum.INSTANCE);
+        allow(user, AttachmentAccessActionEnum.UPLOAD, request.getInstanceId(), task.getId(), null,
+                AttachmentOwnerTypeEnum.INSTANCE);
+        ProcessDefinitionAttachmentConfigEntity config = requireConfig(instance, task.getNodeCode(),
+                item.getAttachmentCode());
+        validateItem(item, config);
+        int maxCount = config.getMaxCount() == null ? Integer.MAX_VALUE : config.getMaxCount().intValue();
+        long activeWithoutOld = attachmentRepository.countActiveByInstanceAndCode(request.getInstanceId(),
+                item.getAttachmentCode()) - 1L;
+        if (activeWithoutOld >= maxCount) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.ATTACHMENT_COUNT_EXCEEDED,
+                    "attachment count exceeds configured maximum");
+        }
+        StoredFile stored;
+        try {
+            stored = storageProvider.store(new StoreFileRequest(request.getOperationId(), item.getFileName(),
+                    item.getContentType(), item.getSizeBytes(), item.getContent()));
+        } catch (RuntimeException ex) {
+            throw new RuntimeStateException(RuntimeErrorCodes.ATTACHMENT_STORAGE_FAILED, "file storage failed");
+        }
+        registerRollbackCleanup(stored.getStorageKey());
+        LocalDateTime changedAt = LocalDateTime.now();
+        if (attachmentRepository.softDeleteForReplacement(old.getId(), request.getSourceTaskId(),
+                request.getInstanceId(), request.getExpectedTaskVersion(), user.getUserId(), changedAt) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.ATTACHMENT_SOURCE_TASK_INVALID,
+                    "replacement task or attachment is no longer active");
+        }
+        ProcessAttachmentEntity entity = new ProcessAttachmentEntity();
+        entity.setId(UUID.randomUUID().toString()); entity.setInstanceId(request.getInstanceId());
+        entity.setTaskId(request.getSourceTaskId()); entity.setOwnerType(AttachmentOwnerTypeEnum.INSTANCE.name());
+        entity.setAttachmentCode(item.getAttachmentCode()); entity.setFieldCode(item.getFieldCode());
+        entity.setFileName(stored.getFileName()); entity.setContentType(stored.getContentType());
+        entity.setSizeBytes(stored.getSizeBytes()); entity.setStorageKey(stored.getStorageKey());
+        entity.setUploadedBy(user.getUserId()); entity.setUploadedAt(changedAt);
+        if (attachmentRepository.insertWhenTaskOpenAndWithinLimit(entity, request.getExpectedTaskVersion(),
+                Integer.valueOf(maxCount)) != 1) {
+            throw new RuntimeStateException(RuntimeErrorCodes.ATTACHMENT_SOURCE_TASK_INVALID,
+                    "replacement task is no longer active");
+        }
+        registerCommitCleanup(old.getStorageKey());
+        return dto(entity);
+    }
+
+    private void requireStarterReplacementTask(ProcessActiveTaskEntity task) {
+        if (task.getTaskGroupId() != null || task.getBranchKey() != null || nodeRepository == null) {
+            throw invalid("only a serial STARTER task may replace instance attachments");
+        }
+        ProcessNodeEntity node = nodeRepository.findByDefinitionIdAndNodeCode(task.getDefinitionId(),
+                task.getNodeCode());
+        if (node == null || !"USER_TASK".equals(node.getNodeType())
+                || !"STARTER".equals(node.getApproverRuleType())) {
+            throw invalid("only a STARTER task may replace instance attachments");
+        }
     }
 
     private AttachmentDTO save(OperationRequest operationRequest, String instanceId, String taskId, Long version, String operatorId, String operationId,

@@ -80,6 +80,17 @@ public class ProcessAttachmentRepository {
                 deletedBy, DefinitionRowMappers.toDbString(deletedAt), id, taskId, instanceId);
     }
 
+    /** Soft-delete an instance attachment only while the current rework task and version remain open. */
+    public int softDeleteForReplacement(String id, String taskId, String instanceId, Long expectedTaskVersion,
+                                        String deletedBy, LocalDateTime deletedAt) {
+        return jdbcTemplate.update("UPDATE process_attachment SET deleted = 1, deleted_by = ?, deleted_at = ? "
+                        + "WHERE id = ? AND instance_id = ? AND owner_type = 'INSTANCE' AND deleted = 0 "
+                        + "AND EXISTS (SELECT 1 FROM process_active_task WHERE id = ? AND instance_id = ? "
+                        + "AND task_status IN ('ACTIVE', 'CLAIMED') AND lock_version = ?)",
+                deletedBy, DefinitionRowMappers.toDbString(deletedAt), id, instanceId,
+                taskId, instanceId, expectedTaskVersion);
+    }
+
     public List<String> findStorageKeysByInstanceId(String instanceId) {
         return jdbcTemplate.queryForList("SELECT storage_key FROM process_attachment WHERE instance_id = ? "
                 + "ORDER BY uploaded_at ASC, id ASC", String.class, instanceId);

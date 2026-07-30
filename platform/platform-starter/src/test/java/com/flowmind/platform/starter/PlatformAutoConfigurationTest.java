@@ -353,14 +353,14 @@ class PlatformAutoConfigurationTest {
                         + "current_node_codes, variables_json, instance_status, started_at) "
                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 "instance-001", "definition-001", "expense", "Expense", Integer.valueOf(1),
-                "Expense Instance", "biz-001", "mock-user", "Mock User", "mock-dept",
+                "Expense Instance", "biz-001", "u_sales_01", "业务员", "mock-dept",
                 "[\"approve\"]", "{}", "RUNNING", "2026-07-23 09:00:00");
         jdbcTemplate.update("INSERT INTO process_active_task "
                         + "(id, instance_id, definition_id, node_code, candidate_user_ids, assignee_user_id, "
                         + "assignee_user_name, task_status, lock_version, created_at, due_at) "
                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                "task-001", "instance-001", "definition-001", "approve", "[\"mock-user\"]",
-                "mock-user", "Mock User", "ACTIVE", Long.valueOf(7L),
+                "task-001", "instance-001", "definition-001", "approve", "[\"u_sales_01\"]",
+                "u_sales_01", "业务员", "ACTIVE", Long.valueOf(7L),
                 "2026-07-23 09:10:00", "2026-07-24 09:10:00");
         jdbcTemplate.update("INSERT INTO process_history_task "
                         + "(id, instance_id, operation_id, active_task_id, node_code, assignee_user_id, "
@@ -368,7 +368,7 @@ class PlatformAutoConfigurationTest {
                         + "started_at, completed_at) "
                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 "history-001", "instance-001", "operation-001", "task-history-001", "approve",
-                "mock-user", "Mock User", "NORMAL", "APPROVE", "approved", "{}",
+                "u_sales_01", "业务员", "NORMAL", "APPROVE", "approved", "{}",
                 "2026-07-23 08:50:00", "2026-07-23 09:20:00");
     }
 

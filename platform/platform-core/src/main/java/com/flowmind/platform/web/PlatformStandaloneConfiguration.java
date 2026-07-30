@@ -212,6 +212,8 @@ public class PlatformStandaloneConfiguration {
         private static final String M2_OPERATION_MIGRATION = "schema/sqlite/002_m2_runtime_operation_actions.sql";
         private static final String ATTACHMENT_OPERATION_MIGRATION =
                 "schema/sqlite/003_attachment_operation_actions.sql";
+        private static final String ATTACHMENT_REPLACE_OPERATION_MIGRATION =
+                "schema/sqlite/004_attachment_replace_operation_action.sql";
 
         private final DataSource dataSource;
 
@@ -229,6 +231,10 @@ public class PlatformStandaloneConfiguration {
                 }
                 if (!schemaSupportsAttachmentActions(connection)) {
                     ScriptUtils.executeSqlScript(connection, new ClassPathResource(ATTACHMENT_OPERATION_MIGRATION));
+                }
+                if (!schemaSupportsAttachmentReplacement(connection)) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(ATTACHMENT_REPLACE_OPERATION_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);
@@ -253,7 +259,17 @@ public class PlatformStandaloneConfiguration {
                     && tableSupportsAttachmentActions(connection, "process_audit_log");
         }
 
+        private boolean schemaSupportsAttachmentReplacement(Connection connection) throws Exception {
+            return tableContainsAction(connection, "process_operation_record", "ATTACHMENT_REPLACE")
+                    && tableContainsAction(connection, "process_audit_log", "ATTACHMENT_REPLACE");
+        }
+
         private boolean tableSupportsAttachmentActions(Connection connection, String tableName) throws Exception {
+            return tableContainsAction(connection, tableName, "ATTACHMENT_UPLOAD")
+                    && tableContainsAction(connection, tableName, "ATTACHMENT_DELETE");
+        }
+
+        private boolean tableContainsAction(Connection connection, String tableName, String action) throws Exception {
             try (Statement statement = connection.createStatement();
                  ResultSet resultSet = statement.executeQuery(
                          "SELECT sql FROM sqlite_master WHERE type = 'table' "
@@ -262,7 +278,7 @@ public class PlatformStandaloneConfiguration {
                     return false;
                 }
                 String definition = resultSet.getString("sql");
-                return definition.contains("ATTACHMENT_UPLOAD") && definition.contains("ATTACHMENT_DELETE");
+                return definition.contains(action);
             }
         }
     }

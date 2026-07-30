@@ -28,10 +28,14 @@
         taskSubmit: "/api/platform/runtime/tasks/submit",
         taskApprove: "/api/platform/runtime/tasks/approve",
         taskReject: "/api/platform/runtime/tasks/reject",
+        taskDirectSend: "/api/platform/runtime/tasks/direct-send",
         taskTransfer: "/api/platform/runtime/tasks/transfer",
         taskAddSign: "/api/platform/runtime/tasks/add-sign",
         taskClaim: "/api/platform/runtime/tasks/claim",
         taskUnclaim: "/api/platform/runtime/tasks/unclaim",
+        directSendContext: function (taskId) {
+            return "/api/platform/tasks/" + encodeURIComponent(taskId) + "/direct-send-context";
+        },
         todoTasks: "/api/platform/tasks/todo",
         completedTasks: "/api/platform/tasks/completed",
         activeTasks: function (instanceId) {
@@ -44,6 +48,13 @@
             return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/comments";
         },
         attachments: "/api/platform/attachments",
+        instanceAttachments: function (instanceId) {
+            return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/attachments";
+        },
+        replaceInstanceAttachment: function (instanceId, attachmentId) {
+            return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/attachments/"
+                + encodeURIComponent(attachmentId);
+        },
         attachmentDownload: function (attachmentId) {
             return "/api/platform/attachments/" + encodeURIComponent(attachmentId) + "/download";
         },
@@ -540,6 +551,8 @@
                     variablesText: "{}",
                     comment: "",
                     attachments: [],
+                    starterTask: false,
+                    directSendContext: {allowed: false},
                     rejectTargetNodeCode: "",
                     transferUserId: "",
                     addSignUserIds: []
@@ -1475,13 +1488,14 @@
                     variablesText: "{}",
                     comment: "",
                     attachments: [],
+                    starterTask: false,
+                    directSendContext: {allowed: false},
                     rejectTargetNodeCode: "",
                     transferUserId: "",
                     addSignUserIds: []
                 };
-                var instanceId = row.instanceId;
-                if (hasText(instanceId)) {
-                    this.loadTaskDialogContext(instanceId, "todo");
+                if (hasText(row.instanceId)) {
+                    this.loadTaskDialogContext(row).catch(function () {});
                 }
             },
             openCompletedTaskDialog: function (row) {
@@ -1502,18 +1516,47 @@
                     this.completedDialog.attachments = normalizeList(payload);
                 }.bind(this));
             },
-            loadTaskDialogContext: function (instanceId) {
-                this.sendRequest("查询任务附件", "GET", this.attachmentQueryPath(instanceId)).then(function (payload) {
-                    this.taskDialog.attachments = normalizeList(payload);
-                }.bind(this));
-                this.sendRequest("查询任务实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
-                    this.taskDialog.variablesText = JSON.stringify(payload.variables || payload.variablesJson || {}, null, 2);
-                    if (payload.definitionId && payload.definitionId !== this.selectedDefinitionId) {
-                        this.selectedDefinitionId = payload.definitionId;
-                        return this.selectDefinition({definitionId: payload.definitionId});
+            loadTaskDialogContext: function (task) {
+                var instanceId = task.instanceId;
+                var taskId = extractTaskId(task);
+                var definitionId = task.definitionId;
+                var definitionJob = hasText(definitionId)
+                    ? this.sendRequest("查询待办流程定义", "GET", API_PATHS.definitionDetail(definitionId))
+                    : Promise.resolve(null);
+                return Promise.all([
+                    this.sendRequest("查询任务实例详情", "GET", API_PATHS.instanceDetail(instanceId)),
+                    this.sendRequest("查询任务附件", "GET", this.attachmentQueryPath(instanceId)),
+                    definitionJob,
+                    this.sendRequest("查询直送上下文", "GET", API_PATHS.directSendContext(taskId))
+                ]).then(function (results) {
+                    if (!this.taskDialog.open || extractTaskId(this.taskDialog.task) !== taskId) {
+                        return results;
                     }
-                    return payload;
+                    var instance = results[0] || {};
+                    var definition = results[2] || this.selectedDefinitionDetail || {};
+                    this.taskDialog.variablesText = JSON.stringify(
+                        instance.variables || instance.variablesJson || {}, null, 2);
+                    this.taskDialog.attachments = normalizeList(results[1]).map(function (attachment) {
+                        return Object.assign({}, attachment, {pendingReplacement: null});
+                    });
+                    this.taskDialog.directSendContext = results[3] || {allowed: false};
+                    this.selectedDefinitionId = definition.definitionId || definitionId || "";
+                    this.selectedDefinitionDetail = definition;
+                    var node = normalizeList(definition.nodes).find(function (candidate) {
+                        return candidate.nodeCode === task.nodeCode;
+                    });
+                    this.taskDialog.starterTask = Boolean(node && node.approverRuleType === "STARTER");
+                    return results;
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "加载待办上下文失败", error.message);
+                    throw error;
                 }.bind(this));
+            },
+            taskAttachmentConfigs: function (definition, nodeCode) {
+                return this.normalizeAttachmentConfigsFromDetail(definition).filter(function (config) {
+                    var nodes = asArray(config.applicableNodeCodes);
+                    return nodes.length === 0 || nodes.indexOf(nodeCode) >= 0;
+                });
             },
             attachmentQueryPath: function (instanceId) {
                 return API_PATHS.attachments + toQuery({
@@ -1615,25 +1658,131 @@
                 }
             },
             approveCurrentTask: function () {
-                this.submitTaskAction("审批通过", API_PATHS.taskApprove, {});
+                this.submitTaskAction("审批通过", API_PATHS.taskApprove, {}).catch(function () {});
+            },
+            submitCurrentStarterTask: function () {
+                try {
+                    this.runTaskActionAfterSaving("重新提交", API_PATHS.taskSubmit, {
+                        variables: parseJsonObject(this.taskDialog.variablesText, {}),
+                        attachments: []
+                    });
+                } catch (error) {
+                    this.setOperationState("error", "重新提交参数错误", error.message);
+                }
+            },
+            directSendCurrentTask: function () {
+                var context = this.taskDialog.directSendContext || {};
+                if (!context.allowed || !hasText(context.targetNodeCode)) {
+                    this.setOperationState("error", "直送失败", "服务端未返回可信的直送目标");
+                    return;
+                }
+                try {
+                    var extra = {targetNodeCode: context.targetNodeCode};
+                    if (this.taskDialog.starterTask) {
+                        extra.variables = parseJsonObject(this.taskDialog.variablesText, {});
+                    }
+                    this.runTaskActionAfterSaving("直送", API_PATHS.taskDirectSend, extra);
+                } catch (error) {
+                    this.setOperationState("error", "直送参数错误", error.message);
+                }
             },
             rejectCurrentTask: function () {
                 this.submitTaskAction("驳回", API_PATHS.taskReject, {
                     targetNodeCode: this.taskDialog.rejectTargetNodeCode
-                });
+                }).catch(function () {});
             },
             transferCurrentTask: function () {
                 this.submitTaskAction("转办", API_PATHS.taskTransfer, {
                     targetUserId: this.taskDialog.transferUserId
-                });
+                }).catch(function () {});
             },
             addSignCurrentTask: function () {
                 this.submitTaskAction("加签", API_PATHS.taskAddSign, {
                     addSignUserIds: this.taskDialog.addSignUserIds
-                });
+                }).catch(function () {});
+            },
+            runTaskActionAfterSaving: function (label, path, extra) {
+                return this.savePendingTaskAttachmentReplacements().then(function () {
+                    return this.submitTaskAction(label, path, extra);
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", label + "失败", error.message);
+                }.bind(this));
+            },
+            handleTaskReplacementFileChange: function (attachment, event) {
+                var file = event && event.target && event.target.files && event.target.files[0];
+                if (!file) {
+                    return;
+                }
+                this.readFileAsBase64(file).then(function (content) {
+                    attachment.pendingReplacement = {
+                        operationId: this.createOperationId("replace_attachment"),
+                        attachmentCode: attachment.attachmentCode,
+                        fieldCode: attachment.fieldCode || "",
+                        ownerType: "INSTANCE",
+                        fileName: file.name,
+                        contentType: file.type || "application/octet-stream",
+                        sizeBytes: file.size,
+                        content: content,
+                        saved: false
+                    };
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "读取替换附件失败", error.message);
+                }.bind(this));
+            },
+            savePendingTaskAttachmentReplacements: function () {
+                if (!this.taskDialog.starterTask) {
+                    return Promise.resolve([]);
+                }
+                var task = this.taskDialog.task;
+                var taskId = extractTaskId(task);
+                var instanceId = task.instanceId;
+                var expectedVersion = extractTaskVersion(task);
+                var jobs = [];
+                this.taskDialog.attachments.forEach(function (attachment) {
+                    var replacement = attachment.pendingReplacement;
+                    if (!replacement || replacement.saved) {
+                        return;
+                    }
+                    jobs.push(function () {
+                        return this.sendRequest("替换实例附件", "PUT",
+                            API_PATHS.replaceInstanceAttachment(instanceId,
+                                attachment.attachmentId || attachment.id), {
+                                operationId: replacement.operationId,
+                                sourceTaskId: taskId,
+                                expectedTaskVersion: expectedVersion,
+                                operatorUserId: this.currentUserId,
+                                attachment: this.attachmentUploadPayload(replacement)
+                            }).then(function (saved) {
+                                replacement.saved = true;
+                                Object.assign(attachment, saved || {});
+                                attachment.pendingReplacement = null;
+                                return saved;
+                            });
+                    }.bind(this));
+                }, this);
+                return jobs.reduce(function (chain, job) {
+                    return chain.then(function (results) {
+                        return job().then(function (saved) {
+                            results.push(saved);
+                            return results;
+                        });
+                    });
+                }, Promise.resolve([]));
+            },
+            attachmentUploadPayload: function (attachment) {
+                return {
+                    attachmentCode: attachment.attachmentCode,
+                    fieldCode: attachment.fieldCode || "",
+                    ownerType: "INSTANCE",
+                    fileName: attachment.fileName,
+                    contentType: attachment.contentType,
+                    sizeBytes: attachment.sizeBytes,
+                    content: attachment.content
+                };
             },
             submitTaskAction: function (label, pathBuilder, extra) {
                 var taskId = extractTaskId(this.taskDialog.task);
+                var instanceId = this.taskDialog.task.instanceId;
                 if (!this.canHandleTask(this.taskDialog.task)) {
                     this.setOperationState("error", label + "失败", "请先认领任务");
                     return;
@@ -1646,12 +1795,27 @@
                     operatorUserId: this.currentUserId,
                     comment: this.taskDialog.comment
                 }, extra || {});
-                this.sendRequest(label, "POST", path, body).then(function () {
-                    this.taskDialog.open = false;
-                    this.queryTodoTasks();
-                    this.queryCompletedTasks();
+                return this.sendRequest(label, "POST", path, body).then(function (result) {
+                    return this.refreshAfterTaskAction(instanceId).then(function () {
+                        this.taskDialog.open = false;
+                        return result;
+                    }.bind(this));
                 }.bind(this)).catch(function (error) {
                     this.setOperationState("error", label + "失败", error.message);
+                    throw error;
+                }.bind(this));
+            },
+            refreshAfterTaskAction: function (instanceId) {
+                return Promise.all([
+                    this.queryTodoTasks(),
+                    this.queryCompletedTasks(),
+                    this.queryInstances(),
+                    this.sendRequest("刷新实例变量", "GET", API_PATHS.instanceDetail(instanceId)),
+                    this.sendRequest("刷新实例附件", "GET", this.attachmentQueryPath(instanceId))
+                ]).then(function (results) {
+                    this.selectedInstanceDetail = results[3];
+                    this.taskDialog.attachments = normalizeList(results[4]);
+                    return results;
                 }.bind(this));
             },
             sendRequest: function (label, method, path, body) {
