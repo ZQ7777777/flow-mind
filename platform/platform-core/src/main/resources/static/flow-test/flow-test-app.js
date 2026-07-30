@@ -12,6 +12,9 @@
         validateDefinition: function (definitionId) {
             return "/api/platform/definitions/" + encodeURIComponent(definitionId) + "/publish-validation";
         },
+        copyDefinition: function (definitionId) {
+            return "/api/platform/definitions/" + encodeURIComponent(definitionId) + "/copy";
+        },
         publishDefinition: "/api/platform/definitions/publish",
         activateDefinition: "/api/platform/definitions/activate",
         deactivateDefinition: "/api/platform/definitions/deactivate",
@@ -73,6 +76,12 @@
     ];
 
     var idSeed = 1;
+    var CANVAS_MIN_WIDTH = 960;
+    var CANVAS_READONLY_MIN_HEIGHT = 480;
+    var CANVAS_DESIGNER_MIN_HEIGHT = 480;
+    var CANVAS_NODE_WIDTH = 132;
+    var CANVAS_NODE_HEIGHT = 58;
+    var CANVAS_PADDING = 96;
 
     function nextLocalId(prefix) {
         idSeed += 1;
@@ -313,6 +322,9 @@
     function responseSummary(payload) {
         if (!payload) {
             return "无响应体";
+        }
+        if (payload.errorCode === "FLOW_FROZEN_MODEL_PARALLEL_GATEWAY_PAIR_INVALID") {
+            return [payload.errorCode, "并行网关配对无效：请在流程图中为并行分支和并行汇聚设置互相配对，或删除会签定义里不需要的并行网关。"].filter(hasText).join(" ");
         }
         if (payload.errorCode || payload.message) {
             return [payload.errorCode, payload.message].filter(hasText).join(" ");
@@ -646,6 +658,11 @@
                     this.definitionDraft.edges = this.definitionDraft.edges.filter(function (edge) {
                         return edge.sourceNodeCode !== nodeCode && edge.targetNodeCode !== nodeCode;
                     });
+                    this.definitionDraft.nodes.forEach(function (node) {
+                        if (node.pairedGatewayCode === nodeCode) {
+                            node.pairedGatewayCode = "";
+                        }
+                    });
                     this.selectedDesigner = {type: "", code: ""};
                     return this.persistDefinitionDraftAfterDesignerDelete("节点及相关连线已删除并同步到后端", "节点及相关连线已删除，保存后写入后端");
                 }
@@ -924,6 +941,26 @@
                         errors.push("用户任务必须选择审批人：" + node.nodeName);
                     }
                 });
+                this.definitionDraft.nodes.forEach(function (node) {
+                    var paired;
+                    if (!this.isParallelGatewayNode(node)) {
+                        return;
+                    }
+                    if (!hasText(node.pairedGatewayCode)) {
+                        errors.push("并行网关必须选择配对网关：" + node.nodeName);
+                        return;
+                    }
+                    paired = this.definitionDraft.nodes.find(function (candidate) {
+                        return candidate.nodeCode === node.pairedGatewayCode;
+                    });
+                    if (!this.isExpectedParallelGatewayPair(node, paired)) {
+                        errors.push("并行网关配对类型不匹配：" + node.nodeName);
+                        return;
+                    }
+                    if (paired.pairedGatewayCode !== node.nodeCode) {
+                        errors.push("并行网关配对必须互相指向：" + node.nodeName);
+                    }
+                }, this);
                 this.definitionDraft.edges.forEach(function (edge) {
                     if (!nodeCodes[edge.sourceNodeCode] || !nodeCodes[edge.targetNodeCode]) {
                         errors.push("连线引用不存在的节点：" + edge.edgeCode);
@@ -948,6 +985,26 @@
                     }
                 });
                 return errors;
+            },
+            copyDefinition: function (row) {
+                var definitionId = extractDefinitionId(row);
+                var body = {
+                    operationId: this.createOperationId("复制流程定义"),
+                    operatorUserId: this.currentUserId
+                };
+                this.sendRequest("复制流程定义", "POST", API_PATHS.copyDefinition(definitionId), body).then(function (definition) {
+                    var copiedDefinitionId = extractDefinitionId(definition);
+                    this.selectedDefinitionId = copiedDefinitionId || definitionId;
+                    return this.queryDefinitions();
+                }.bind(this)).then(function () {
+                    if (!this.selectedDefinitionId) {
+                        return null;
+                    }
+                    var selected = this.definitionRows.find(function (definitionRow) {
+                        return extractDefinitionId(definitionRow) === this.selectedDefinitionId;
+                    }, this);
+                    return selected ? this.selectDefinition(selected) : null;
+                }.bind(this)).catch(function () {});
             },
             publishDefinition: function (row) {
                 this.definitionOperation(row, "发布流程定义", API_PATHS.publishDefinition);
@@ -1293,6 +1350,28 @@
                     }
                 }
             },
+            canvasMetrics: function (nodes, minHeight) {
+                var metrics = {
+                    width: CANVAS_MIN_WIDTH,
+                    height: Number(minHeight || CANVAS_READONLY_MIN_HEIGHT)
+                };
+                asArray(nodes).forEach(function (node) {
+                    metrics.width = Math.max(metrics.width, Number(node.positionX || 0) + CANVAS_NODE_WIDTH + CANVAS_PADDING);
+                    metrics.height = Math.max(metrics.height, Number(node.positionY || 0) + CANVAS_NODE_HEIGHT + CANVAS_PADDING);
+                });
+                return metrics;
+            },
+            canvasSurfaceStyle: function (nodes, minHeight) {
+                var metrics = this.canvasMetrics(nodes, minHeight || CANVAS_DESIGNER_MIN_HEIGHT);
+                return {
+                    width: metrics.width + "px",
+                    height: metrics.height + "px"
+                };
+            },
+            canvasViewBox: function (nodes, minHeight) {
+                var metrics = this.canvasMetrics(nodes, minHeight || CANVAS_DESIGNER_MIN_HEIGHT);
+                return "0 0 " + metrics.width + " " + metrics.height;
+            },
             nodeStyle: function (node) {
                 return {
                     left: Number(node.positionX || 0) + "px",
@@ -1342,6 +1421,55 @@
             },
             isUserTaskNode: function (node) {
                 return node && node.nodeType === "USER_TASK";
+            },
+            isParallelGatewayNode: function (node) {
+                return node && (node.nodeType === "PARALLEL_SPLIT_GATEWAY"
+                    || node.nodeType === "PARALLEL_JOIN_GATEWAY");
+            },
+            parallelGatewayPairOptions: function (node) {
+                var expectedType = this.expectedParallelGatewayPairType(node);
+                if (!expectedType) {
+                    return [];
+                }
+                return this.definitionDraft.nodes.filter(function (candidate) {
+                    return candidate.nodeCode !== node.nodeCode && candidate.nodeType === expectedType;
+                });
+            },
+            syncParallelGatewayPair: function (node) {
+                var pairedCode;
+                if (!node) {
+                    return;
+                }
+                pairedCode = node.pairedGatewayCode;
+                this.definitionDraft.nodes.forEach(function (candidate) {
+                    if (candidate.nodeCode !== node.nodeCode
+                            && (candidate.pairedGatewayCode === node.nodeCode || candidate.pairedGatewayCode === pairedCode)) {
+                        candidate.pairedGatewayCode = "";
+                    }
+                });
+                if (!hasText(pairedCode)) {
+                    return;
+                }
+                this.definitionDraft.nodes.forEach(function (candidate) {
+                    if (candidate.nodeCode === pairedCode && this.isExpectedParallelGatewayPair(node, candidate)) {
+                        candidate.pairedGatewayCode = node.nodeCode;
+                    }
+                }, this);
+            },
+            expectedParallelGatewayPairType: function (node) {
+                if (!node) {
+                    return "";
+                }
+                if (node.nodeType === "PARALLEL_SPLIT_GATEWAY") {
+                    return "PARALLEL_JOIN_GATEWAY";
+                }
+                if (node.nodeType === "PARALLEL_JOIN_GATEWAY") {
+                    return "PARALLEL_SPLIT_GATEWAY";
+                }
+                return "";
+            },
+            isExpectedParallelGatewayPair: function (node, paired) {
+                return Boolean(node && paired && paired.nodeType === this.expectedParallelGatewayPairType(node));
             }
         }
     });

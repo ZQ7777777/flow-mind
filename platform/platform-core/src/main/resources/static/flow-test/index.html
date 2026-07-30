@@ -128,6 +128,7 @@
                             <td>{{ row.activationStatus || '-' }}</td>
                             <td class="table-actions">
                                 <button type="button" @click.stop="selectDefinition(row)">查看</button>
+                                <button type="button" :disabled="!canManageDefinitions" @click.stop="copyDefinition(row)">复制</button>
                                 <button type="button" :disabled="!canManageDefinitions" @click.stop="editDefinitionAttachments(row)">编辑附件配置</button>
                                 <button type="button" :disabled="!canManageDefinitions" @click.stop="publishDefinition(row)">发布</button>
                                 <button type="button" :disabled="!canManageDefinitions" @click.stop="activateDefinition(row)">激活</button>
@@ -147,7 +148,8 @@
                             <span>{{ selectedDefinitionId || '未选择定义' }}</span>
                         </div>
                         <div class="flow-canvas readonly-canvas" aria-label="选中流程定义流程图">
-                            <svg class="designer-edge-layer" viewBox="0 0 960 420" preserveAspectRatio="none">
+                            <div class="canvas-surface" :style="canvasSurfaceStyle(selectedGraphNodes, 480)">
+                            <svg class="designer-edge-layer" :viewBox="canvasViewBox(selectedGraphNodes, 480)" preserveAspectRatio="none">
                                 <line v-for="edge in selectedGraphEdges"
                                       :key="edge.edgeCode"
                                       class="designer-edge"
@@ -167,6 +169,7 @@
                                 <small>{{ node.nodeCode }}</small>
                             </button>
                             <p v-if="selectedGraphNodes.length === 0" class="canvas-empty">选中流程定义后展示已保存流程图</p>
+                            </div>
                         </div>
                     </section>
 
@@ -479,7 +482,8 @@
                         <button type="button" @click="layoutDraftGraph">自动布局</button>
                     </div>
                     <div class="flow-canvas designer-canvas" tabindex="0" @keydown.delete.prevent="deleteSelectedDesignerItem">
-                        <svg class="designer-edge-layer" viewBox="0 0 960 480" preserveAspectRatio="none">
+                        <div class="canvas-surface" :style="canvasSurfaceStyle(definitionDraft.nodes, 480)">
+                        <svg class="designer-edge-layer" :viewBox="canvasViewBox(definitionDraft.nodes, 480)" preserveAspectRatio="none">
                             <line v-for="edge in definitionDraft.edges"
                                   :key="edge.edgeCode"
                                   class="designer-edge"
@@ -504,6 +508,7 @@
                             <small>{{ node.nodeCode }}</small>
                         </button>
                         <p v-if="definitionDraft.nodes.length === 0" class="canvas-empty">从左侧添加节点，拖动后保存坐标</p>
+                        </div>
                     </div>
                 </div>
                 <aside class="property-panel">
@@ -540,6 +545,15 @@
                                 <option value="SINGLE">单人</option>
                                 <option value="OR_SIGN">或签</option>
                                 <option value="COUNTERSIGN">会签</option>
+                            </select>
+                        </label>
+                        <label v-if="isParallelGatewayNode(selectedNode)">
+                            配对网关
+                            <select v-model="selectedNode.pairedGatewayCode" @change="syncParallelGatewayPair(selectedNode)">
+                                <option value="">请选择</option>
+                                <option v-for="node in parallelGatewayPairOptions(selectedNode)" :key="node.nodeCode" :value="node.nodeCode">
+                                    {{ node.nodeName }} / {{ node.nodeCode }}
+                                </option>
                             </select>
                         </label>
                         <div class="coordinate-row">

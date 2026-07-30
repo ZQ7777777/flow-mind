@@ -339,7 +339,7 @@ tbody tr:hover {
     position: relative;
     height: 420px;
     margin-top: 10px;
-    overflow: hidden;
+    overflow: auto;
     border: 1px solid var(--line);
     border-radius: 8px;
     background:
@@ -351,6 +351,16 @@ tbody tr:hover {
 
 .designer-canvas {
     height: 480px;
+}
+
+.canvas-surface {
+    position: relative;
+    min-width: 960px;
+    min-height: 480px;
+}
+
+.designer-canvas .canvas-surface {
+    min-height: 480px;
 }
 
 .designer-edge-layer {
@@ -623,7 +633,7 @@ tbody tr:hover {
         grid-template-columns: repeat(4, 1fr);
     }
 
-    .flow-canvas {
+    .canvas-surface {
         min-width: 720px;
     }
 }
