@@ -547,6 +547,45 @@
                                 <option value="COUNTERSIGN">会签</option>
                             </select>
                         </label>
+                        <fieldset v-if="selectedNode.nodeType === 'USER_TASK'" class="listener-config-panel">
+                            <legend>listenerConfig</legend>
+                            <label class="checkbox-row">
+                                <input v-model="selectedNode.listenerRejectEnabled"
+                                       data-testid="listener-reject-enabled"
+                                       type="checkbox"
+                                       @change="syncSelectedNodeListenerRules">
+                                启用驳回
+                            </label>
+                            <label v-if="selectedNode.listenerRejectEnabled">
+                                允许驳回节点
+                                <select v-model="selectedNode.listenerRejectTargetNodeCodes"
+                                        data-testid="listener-reject-targets"
+                                        multiple
+                                        @change="syncSelectedNodeListenerRules">
+                                    <option v-for="node in listenerRejectTargetNodes(selectedNode)"
+                                            :key="node.nodeCode"
+                                            :value="node.nodeCode">{{ node.nodeName }}</option>
+                                </select>
+                            </label>
+                            <label class="checkbox-row">
+                                <input v-model="selectedNode.listenerDirectSendEnabled"
+                                       data-testid="listener-direct-send-enabled"
+                                       type="checkbox"
+                                       @change="syncSelectedNodeListenerRules">
+                                启用直送（REJECT_SOURCE）
+                            </label>
+                            <label>
+                                高级 listenerConfig JSON
+                                <textarea v-model="selectedNode.listenerConfig"
+                                          data-testid="listener-config-json"
+                                          rows="8"
+                                          placeholder='{"listeners":[],"taskActionRules":{}}'
+                                          @change="syncSelectedNodeListenerJson"></textarea>
+                            </label>
+                            <p v-if="selectedNode.listenerConfigError" class="field-error">
+                                {{ selectedNode.listenerConfigError }}
+                            </p>
+                        </fieldset>
                         <label v-if="isParallelGatewayNode(selectedNode)">
                             配对网关
                             <select v-model="selectedNode.pairedGatewayCode" @change="syncParallelGatewayPair(selectedNode)">
@@ -741,7 +780,7 @@
                     驳回节点
                     <select v-model="taskDialog.rejectTargetNodeCode">
                         <option value="">请选择</option>
-                        <option v-for="node in selectedGraphNodes.filter(isUserTaskNode)" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
+                        <option v-for="node in taskRejectTargetNodes()" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
                     </select>
                 </label>
                 <button type="button" @click="rejectCurrentTask">驳回</button>

@@ -519,6 +519,36 @@ tbody tr:hover {
     width: auto;
 }
 
+.listener-config-panel {
+    display: grid;
+    gap: 8px;
+    margin: 4px 0;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.listener-config-panel legend {
+    padding: 0 6px;
+    font-weight: 700;
+}
+
+.listener-config-panel select[multiple] {
+    min-height: 76px;
+}
+
+.listener-config-panel textarea {
+    min-height: 132px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+}
+
+.field-error {
+    margin: 0;
+    color: var(--rose);
+    font-size: 12px;
+}
+
 .template-api-note {
     margin: 10px 0;
     padding: 10px 12px;

@@ -176,6 +176,80 @@
         return JSON.stringify(value);
     }
 
+    function isJsonObject(value) {
+        return value !== null && typeof value === "object" && !Array.isArray(value);
+    }
+
+    function normalizeListenerConfigValue(value) {
+        if (!hasText(value)) {
+            return "";
+        }
+        return typeof value === "string" ? value : JSON.stringify(value);
+    }
+
+    function parseListenerConfig(value) {
+        var text = normalizeListenerConfigValue(value);
+        if (!hasText(text)) {
+            return {config: {}, error: ""};
+        }
+        try {
+            var config = JSON.parse(text);
+            if (!isJsonObject(config)) {
+                return {config: {}, error: "listenerConfig 必须是 JSON 对象"};
+            }
+            return {config: config, error: ""};
+        } catch (error) {
+            return {config: {}, error: "listenerConfig JSON 格式不正确：" + error.message};
+        }
+    }
+
+    function readListenerRuleEditor(value) {
+        var parsed = parseListenerConfig(value);
+        var editor = {
+            listenerRejectEnabled: false,
+            listenerRejectTargetNodeCodes: [],
+            listenerDirectSendEnabled: false,
+            listenerConfigError: parsed.error
+        };
+        if (parsed.error) {
+            return editor;
+        }
+        var rules = parsed.config.taskActionRules;
+        if (rules === undefined || rules === null) {
+            return editor;
+        }
+        if (!isJsonObject(rules)) {
+            editor.listenerConfigError = "listenerConfig.taskActionRules 必须是 JSON 对象";
+            return editor;
+        }
+        if (rules.reject !== undefined && rules.reject !== null) {
+            if (!isJsonObject(rules.reject)) {
+                editor.listenerConfigError = "listenerConfig.taskActionRules.reject 必须是 JSON 对象";
+                return editor;
+            }
+            editor.listenerRejectEnabled = rules.reject.enabled === true;
+            editor.listenerRejectTargetNodeCodes = Array.isArray(rules.reject.targetNodeCodes)
+                ? rules.reject.targetNodeCodes.filter(hasText) : [];
+        }
+        if (rules.directSend !== undefined && rules.directSend !== null) {
+            if (!isJsonObject(rules.directSend)) {
+                editor.listenerConfigError = "listenerConfig.taskActionRules.directSend 必须是 JSON 对象";
+                return editor;
+            }
+            editor.listenerDirectSendEnabled = rules.directSend.enabled === true;
+        }
+        return editor;
+    }
+
+    function applyListenerRuleEditor(node) {
+        var editor = readListenerRuleEditor(node.listenerConfig);
+        node.listenerRejectEnabled = editor.listenerRejectEnabled;
+        node.listenerRejectTargetNodeCodes = editor.listenerRejectTargetNodeCodes;
+        node.listenerDirectSendEnabled = editor.listenerDirectSendEnabled;
+        node.listenerConfigError = editor.listenerConfigError;
+        return node;
+    }
+
     function extractDefinitionId(row) {
         return row && (row.definitionId || row.id);
     }
@@ -237,6 +311,11 @@
             approverRuleConfig: stringifyRule(ruleType === "STARTER" ? {} : {userIds: selectedApproverIds || []}),
             selectedApproverIds: selectedApproverIds || [],
             multiInstanceMode: mode || "SINGLE",
+            listenerConfig: "",
+            listenerRejectEnabled: false,
+            listenerRejectTargetNodeCodes: [],
+            listenerDirectSendEnabled: false,
+            listenerConfigError: "",
             positionX: x,
             positionY: y,
             sortOrder: sortOrder
@@ -267,7 +346,7 @@
         } else if (ruleConfig) {
             approverIds = asArray(ruleConfig.userIds);
         }
-        return Object.assign(buildNode(
+        var normalized = Object.assign(buildNode(
             node.nodeCode || ("node_" + index),
             node.nodeName || ("节点" + (index + 1)),
             node.nodeType || "USER_TASK",
@@ -280,8 +359,10 @@
         ), node, {
             localId: node.localId || nextLocalId("node"),
             selectedApproverIds: approverIds,
-            approverRuleConfig: stringifyRule(ruleConfig)
+            approverRuleConfig: stringifyRule(ruleConfig),
+            listenerConfig: normalizeListenerConfigValue(node.listenerConfig)
         });
+        return applyListenerRuleEditor(normalized);
     }
 
     function normalizeEdge(edge, index) {
@@ -662,7 +743,8 @@
                         if (node.pairedGatewayCode === nodeCode) {
                             node.pairedGatewayCode = "";
                         }
-                    });
+                        this.pruneListenerRejectTarget(node, nodeCode);
+                    }, this);
                     this.selectedDesigner = {type: "", code: ""};
                     return this.persistDefinitionDraftAfterDesignerDelete("节点及相关连线已删除并同步到后端", "节点及相关连线已删除，保存后写入后端");
                 }
@@ -872,6 +954,10 @@
                         }
                         delete copy.localId;
                         delete copy.selectedApproverIds;
+                        delete copy.listenerRejectEnabled;
+                        delete copy.listenerRejectTargetNodeCodes;
+                        delete copy.listenerDirectSendEnabled;
+                        delete copy.listenerConfigError;
                         copy.sortOrder = index + 1;
                         return copy;
                     }, this),
@@ -939,6 +1025,16 @@
                     nodeCodes[node.nodeCode] = true;
                     if (node.nodeType === "USER_TASK" && node.approverRuleType === "USER" && asArray(node.selectedApproverIds).length === 0) {
                         errors.push("用户任务必须选择审批人：" + node.nodeName);
+                    }
+                    if (node.nodeType === "USER_TASK") {
+                        var listenerEditor = readListenerRuleEditor(node.listenerConfig);
+                        node.listenerConfigError = listenerEditor.listenerConfigError;
+                        if (listenerEditor.listenerConfigError) {
+                            errors.push(node.nodeName + "：" + listenerEditor.listenerConfigError);
+                        } else if (listenerEditor.listenerRejectEnabled
+                                && listenerEditor.listenerRejectTargetNodeCodes.length === 0) {
+                            errors.push(node.nodeName + "：启用驳回时必须至少选择一个允许驳回节点");
+                        }
                     }
                 });
                 this.definitionDraft.nodes.forEach(function (node) {
@@ -1349,6 +1445,94 @@
                         this.selectedNode.multiInstanceMode = "SINGLE";
                     }
                 }
+            },
+            listenerRejectTargetNodes: function (node) {
+                return this.definitionDraft.nodes.filter(function (candidate) {
+                    return candidate.nodeType === "USER_TASK" && candidate.nodeCode !== node.nodeCode;
+                });
+            },
+            taskRejectTargetNodes: function () {
+                var task = this.taskDialog.task || {};
+                var detailDefinitionId = extractDefinitionId(this.selectedDefinitionDetail);
+                if (hasText(task.definitionId) && task.definitionId !== detailDefinitionId) {
+                    return [];
+                }
+                var currentNode = this.selectedGraphNodes.find(function (node) {
+                    return node.nodeCode === task.nodeCode;
+                });
+                if (!currentNode) {
+                    return [];
+                }
+                var editor = readListenerRuleEditor(currentNode.listenerConfig);
+                if (editor.listenerConfigError || !editor.listenerRejectEnabled) {
+                    return [];
+                }
+                return editor.listenerRejectTargetNodeCodes.map(function (targetNodeCode) {
+                    return this.selectedGraphNodes.find(function (node) {
+                        return node.nodeCode === targetNodeCode && this.isUserTaskNode(node);
+                    }, this);
+                }, this).filter(function (node, index, nodes) {
+                    return node && nodes.indexOf(node) === index;
+                });
+            },
+            syncSelectedNodeListenerRules: function () {
+                if (this.selectedNode) {
+                    this.syncNodeListenerRules(this.selectedNode);
+                }
+            },
+            syncNodeListenerRules: function (node) {
+                var parsed = parseListenerConfig(node.listenerConfig);
+                if (parsed.error) {
+                    node.listenerConfigError = parsed.error;
+                    return false;
+                }
+                var config = parsed.config;
+                var rules = isJsonObject(config.taskActionRules) ? clone(config.taskActionRules) : {};
+                if (node.listenerRejectEnabled) {
+                    var reject = isJsonObject(rules.reject) ? clone(rules.reject) : {};
+                    reject.enabled = true;
+                    reject.targetNodeCodes = asArray(node.listenerRejectTargetNodeCodes).filter(hasText);
+                    rules.reject = reject;
+                } else {
+                    delete rules.reject;
+                }
+                if (node.listenerDirectSendEnabled) {
+                    var directSend = isJsonObject(rules.directSend) ? clone(rules.directSend) : {};
+                    directSend.enabled = true;
+                    directSend.targetMode = "REJECT_SOURCE";
+                    rules.directSend = directSend;
+                } else {
+                    delete rules.directSend;
+                }
+                if (Object.keys(rules).length > 0) {
+                    config.taskActionRules = rules;
+                } else {
+                    delete config.taskActionRules;
+                }
+                node.listenerConfig = Object.keys(config).length > 0 ? JSON.stringify(config) : "";
+                node.listenerConfigError = "";
+                return true;
+            },
+            syncSelectedNodeListenerJson: function () {
+                if (this.selectedNode) {
+                    applyListenerRuleEditor(this.selectedNode);
+                }
+            },
+            pruneListenerRejectTarget: function (node, removedNodeCode) {
+                var editor = readListenerRuleEditor(node.listenerConfig);
+                if (editor.listenerConfigError
+                        || editor.listenerRejectTargetNodeCodes.indexOf(removedNodeCode) < 0) {
+                    return;
+                }
+                node.listenerRejectEnabled = editor.listenerRejectEnabled;
+                node.listenerRejectTargetNodeCodes = editor.listenerRejectTargetNodeCodes.filter(function (targetNodeCode) {
+                    return targetNodeCode !== removedNodeCode;
+                });
+                node.listenerDirectSendEnabled = editor.listenerDirectSendEnabled;
+                if (node.listenerRejectTargetNodeCodes.length === 0) {
+                    node.listenerRejectEnabled = false;
+                }
+                this.syncNodeListenerRules(node);
             },
             canvasMetrics: function (nodes, minHeight) {
                 var metrics = {
