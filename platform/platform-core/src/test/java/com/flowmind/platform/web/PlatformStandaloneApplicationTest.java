@@ -17,11 +17,11 @@ import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
-import com.flowmind.platform.mock.InMemoryFileStorageProvider;
 import com.flowmind.platform.mock.InMemoryOrganizationProvider;
 import com.flowmind.platform.mock.MockAttachmentAccessProvider;
 import com.flowmind.platform.mock.RecordingMessagePublisher;
 import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
+import com.flowmind.platform.storage.LocalDiskFileStorageProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -136,7 +136,7 @@ class PlatformStandaloneApplicationTest {
             assertThat(context.getBeansOfType(ProcessDefinitionService.class)).hasSize(1);
             assertThat(context.getBeansOfType(ProcessRuntimeService.class)).hasSize(1);
             assertThat(context.getBeansOfType(TaskQueryService.class)).hasSize(1);
-            assertThat(context.getBean(FileStorageProvider.class)).isInstanceOf(InMemoryFileStorageProvider.class);
+            assertThat(context.getBean(FileStorageProvider.class)).isInstanceOf(LocalDiskFileStorageProvider.class);
             assertThat(context.getBean(AttachmentAccessProvider.class)).isInstanceOf(MockAttachmentAccessProvider.class);
             assertThat(context.getBean(AttachmentAccessProvider.class)
                     .isAllowed(new AttachmentAccessRequest())).isTrue();

@@ -39,6 +39,9 @@
             return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/comments";
         },
         attachments: "/api/platform/attachments",
+        attachmentDownload: function (attachmentId) {
+            return "/api/platform/attachments/" + encodeURIComponent(attachmentId) + "/download";
+        },
         attachmentTemplates: "/api/platform/attachment-templates"
     };
 
@@ -373,6 +376,8 @@
                 selectedInstanceDetail: null,
                 todoRows: [],
                 completedRows: [],
+                startSubmitting: false,
+                lastStartedInstanceId: "",
                 taskDialog: {
                     open: false,
                     task: {},
@@ -465,6 +470,11 @@
                 if (user) {
                     this.currentRole = user.role;
                     this.instanceForm.starterDeptId = user.deptId;
+                }
+                if (this.activeView === "todo") {
+                    this.queryTodoTasks().catch(function () {});
+                } else if (this.activeView === "completed") {
+                    this.queryCompletedTasks().catch(function () {});
                 }
             },
             currentUser: function () {
@@ -991,17 +1001,25 @@
                 }
             },
             startAndSubmitInstance: function () {
+                if (this.startSubmitting) {
+                    return;
+                }
+                this.startSubmitting = true;
                 try {
                     var startBody = this.buildStartSubmitBody();
                     this.sendRequest("启动流程", "POST", API_PATHS.startAndSubmit, startBody).then(function (instance) {
+                        this.lastStartedInstanceId = extractInstanceId(instance) || "";
                         this.setOperationState("success", "启动并提交成功", "实例已创建并提交申请节点");
                         this.queryInstances();
                         this.queryTodoTasks();
                         return instance;
                     }.bind(this)).catch(function (error) {
                         this.setOperationState("error", "启动并提交失败", error.message);
+                    }.bind(this)).then(function () {
+                        this.startSubmitting = false;
                     }.bind(this));
                 } catch (error) {
+                    this.startSubmitting = false;
                     this.setOperationState("error", "启动参数错误", error.message);
                 }
             },
@@ -1024,22 +1042,61 @@
             addInstanceAttachment: function () {
                 this.instanceAttachments.push({
                     localId: nextLocalId("instance_attach"),
-                    enabled: true,
+                    enabled: false,
                     attachmentCode: "bankReceipt",
                     ownerType: "INSTANCE",
-                    fileName: "bank-receipt.pdf",
-                    contentType: "application/pdf",
-                    sizeBytes: 14,
-                    content: "Zmxvdy1taW5kLXRlc3Q="
+                    fileName: "",
+                    contentType: "",
+                    sizeBytes: 0,
+                    content: ""
                 });
             },
             removeInstanceAttachment: function (index) {
                 this.instanceAttachments.splice(index, 1);
             },
+            handleInstanceAttachmentFileChange: function (attachment, event) {
+                var file = event && event.target && event.target.files && event.target.files[0];
+                if (!file) {
+                    return;
+                }
+                this.readFileAsBase64(file).then(function (content) {
+                    attachment.enabled = true;
+                    attachment.fileName = file.name;
+                    attachment.contentType = file.type || "application/octet-stream";
+                    attachment.sizeBytes = file.size;
+                    attachment.content = content;
+                    if (!hasText(attachment.attachmentCode) && this.instanceDefinitionAttachments.length > 0) {
+                        attachment.attachmentCode = this.instanceDefinitionAttachments[0].attachmentCode;
+                    }
+                    this.setOperationState("success", "附件已读取", file.name + " / " + file.size + " bytes");
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "附件读取失败", error.message);
+                }.bind(this));
+            },
+            readFileAsBase64: function (file) {
+                return new Promise(function (resolve, reject) {
+                    var reader = new FileReader();
+                    reader.onload = function () {
+                        var result = String(reader.result || "");
+                        var marker = result.indexOf(",");
+                        resolve(marker >= 0 ? result.substring(marker + 1) : result);
+                    };
+                    reader.onerror = function () {
+                        reject(reader.error || new Error("file read failed"));
+                    };
+                    reader.readAsDataURL(file);
+                });
+            },
             buildInstanceAttachments: function () {
                 return this.instanceAttachments.filter(function (attachment) {
                     return attachment.enabled;
                 }).map(function (attachment) {
+                    if (!hasText(attachment.attachmentCode)) {
+                        throw new Error("附件模板必选");
+                    }
+                    if (!hasText(attachment.fileName) || !hasText(attachment.content)) {
+                        throw new Error("请先选择附件文件");
+                    }
                     return {
                         attachmentCode: attachment.attachmentCode,
                         ownerType: "INSTANCE",
@@ -1049,6 +1106,44 @@
                         content: attachment.content
                     };
                 });
+            },
+            downloadAttachment: function (attachment) {
+                var attachmentId = attachment && (attachment.attachmentId || attachment.id);
+                if (!hasText(attachmentId)) {
+                    this.setOperationState("error", "附件下载失败", "附件 ID 为空");
+                    return;
+                }
+                this.sendRequest("附件下载", "GET", API_PATHS.attachmentDownload(attachmentId) + toQuery({
+                    operatorUserId: this.currentUserId
+                })).then(function (payload) {
+                    this.saveAttachmentContent(payload);
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "附件下载失败", error.message);
+                }.bind(this));
+            },
+            saveAttachmentContent: function (payload) {
+                var meta = (payload && payload.attachment) || {};
+                var content = payload && payload.content;
+                if (!hasText(content)) {
+                    throw new Error("附件内容为空");
+                }
+                var binary = window.atob(content);
+                var bytes = new Uint8Array(binary.length);
+                var index;
+                for (index = 0; index < binary.length; index += 1) {
+                    bytes[index] = binary.charCodeAt(index);
+                }
+                var blob = new Blob([bytes], {type: meta.contentType || "application/octet-stream"});
+                var url = URL.createObjectURL(blob);
+                var link = document.createElement("a");
+                link.href = url;
+                link.download = meta.fileName || "attachment";
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.setTimeout(function () {
+                    URL.revokeObjectURL(url);
+                }, 0);
             },
             findCreatedApplyTask: function (instance) {
                 var tasks = normalizeList(instance && (instance.createdTasks || instance.tasks));
@@ -1081,9 +1176,23 @@
                     pageNo: 1,
                     pageSize: 50
                 })).then(function (payload) {
-                    this.todoRows = normalizeList(payload);
+                    this.todoRows = this.focusCurrentStartedTodos(normalizeList(payload));
                     return payload;
                 }.bind(this));
+            },
+            focusCurrentStartedTodos: function (rows) {
+                var normalized = rows.slice();
+                if (hasText(this.lastStartedInstanceId)) {
+                    var focused = normalized.filter(function (row) {
+                        return row.instanceId === this.lastStartedInstanceId;
+                    }, this);
+                    if (focused.length > 0) {
+                        return focused;
+                    }
+                }
+                return normalized.sort(function (left, right) {
+                    return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+                });
             },
             queryCompletedTasks: function () {
                 return this.sendRequest("查询已办", "GET", API_PATHS.completedTasks + toQuery({
@@ -1125,12 +1234,12 @@
                 this.sendRequest("查询已办实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
                     this.completedDialog.currentNodeCodes = asArray(payload.currentNodeCodes);
                 }.bind(this));
-                this.sendRequest("查询已办附件", "GET", API_PATHS.attachments + toQuery({instanceId: instanceId})).then(function (payload) {
+                this.sendRequest("查询已办附件", "GET", this.attachmentQueryPath(instanceId)).then(function (payload) {
                     this.completedDialog.attachments = normalizeList(payload);
                 }.bind(this));
             },
             loadTaskDialogContext: function (instanceId) {
-                this.sendRequest("查询任务附件", "GET", API_PATHS.attachments + toQuery({instanceId: instanceId})).then(function (payload) {
+                this.sendRequest("查询任务附件", "GET", this.attachmentQueryPath(instanceId)).then(function (payload) {
                     this.taskDialog.attachments = normalizeList(payload);
                 }.bind(this));
                 this.sendRequest("查询任务实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
@@ -1141,6 +1250,12 @@
                     }
                     return payload;
                 }.bind(this));
+            },
+            attachmentQueryPath: function (instanceId) {
+                return API_PATHS.attachments + toQuery({
+                    instanceId: instanceId,
+                    operatorUserId: this.currentUserId
+                });
             },
             approveCurrentTask: function () {
                 this.submitTaskAction("审批通过", API_PATHS.taskApprove, {});
@@ -1339,6 +1454,25 @@
             },
             joinList: function (value) {
                 return asArray(value).join(", ");
+            },
+            formatAttachmentSize: function (sizeBytes) {
+                var size = Number(sizeBytes || 0);
+                if (!size || size < 0) {
+                    return "0 B";
+                }
+                if (size < 1024) {
+                    return size + " B";
+                }
+                if (size < 1024 * 1024) {
+                    return (size / 1024).toFixed(size >= 10 * 1024 ? 0 : 1) + " KB";
+                }
+                return (size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1) + " MB";
+            },
+            formatDateTime: function (value) {
+                if (!hasText(value)) {
+                    return "-";
+                }
+                return String(value).replace("T", " ").slice(0, 19);
             },
             isUserTaskNode: function (node) {
                 return node && node.nodeType === "USER_TASK";

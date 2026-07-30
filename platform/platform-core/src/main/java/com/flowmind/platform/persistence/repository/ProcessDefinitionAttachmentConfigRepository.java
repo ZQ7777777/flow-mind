@@ -29,6 +29,27 @@ public class ProcessDefinitionAttachmentConfigRepository {
 
     public void replaceDraftGroup(String definitionId, String attachmentConfigId,
                                   List<ProcessDefinitionAttachmentConfigEntity> configs) {
+        jdbcTemplate.update("UPDATE process_definition_attachment_config "
+                        + "SET config_status = 'INACTIVE', updated_at = datetime('now') "
+                        + "WHERE definition_id = ? AND config_status = 'DRAFT' "
+                        + "AND attachment_config_id <> ?",
+                definitionId, attachmentConfigId);
+        jdbcTemplate.update("DELETE FROM process_definition_attachment_config "
+                        + "WHERE definition_id = ? AND attachment_config_id = ? AND config_status = 'DRAFT'",
+                definitionId, attachmentConfigId);
+        if (configs == null || configs.isEmpty()) {
+            return;
+        }
+        for (ProcessDefinitionAttachmentConfigEntity config : configs) {
+            ProcessDefinitionAttachmentConfigEntity entity = copyForDefinitionAndGroup(
+                    config, definitionId, attachmentConfigId, config.getId());
+            entity.setConfigStatus("DRAFT");
+            insert(entity);
+        }
+    }
+
+    public void replaceOnlySpecifiedDraftGroup(String definitionId, String attachmentConfigId,
+                                               List<ProcessDefinitionAttachmentConfigEntity> configs) {
         jdbcTemplate.update("DELETE FROM process_definition_attachment_config "
                         + "WHERE definition_id = ? AND attachment_config_id = ? AND config_status = 'DRAFT'",
                 definitionId, attachmentConfigId);
@@ -44,13 +65,15 @@ public class ProcessDefinitionAttachmentConfigRepository {
     }
 
     public int insert(ProcessDefinitionAttachmentConfigEntity entity) {
+        String configStatus = entity.getConfigStatus() == null || entity.getConfigStatus().trim().isEmpty()
+                ? "DRAFT" : entity.getConfigStatus();
         return jdbcTemplate.update("INSERT INTO process_definition_attachment_config "
                         + "(id, attachment_config_id, definition_id, config_status, activated_at, "
                         + "attachment_template_id, attachment_code, required, min_count, max_count, "
                         + "applicable_node_codes, sort_order, created_by, updated_by) "
                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 entity.getId(), entity.getAttachmentConfigId(), entity.getDefinitionId(),
-                entity.getConfigStatus(), toSqlDateTime(entity.getActivatedAt()), entity.getAttachmentTemplateId(),
+                configStatus, toSqlDateTime(entity.getActivatedAt()), entity.getAttachmentTemplateId(),
                 entity.getAttachmentCode(), toSqlBoolean(entity.getRequired()), entity.getMinCount(),
                 entity.getMaxCount(), entity.getApplicableNodeCodes(), entity.getSortOrder(),
                 entity.getCreatedBy(), entity.getUpdatedBy());
@@ -126,7 +149,7 @@ public class ProcessDefinitionAttachmentConfigRepository {
     public int activateGroup(String definitionId, String attachmentConfigId, String updatedBy) {
         jdbcTemplate.update("UPDATE process_definition_attachment_config "
                         + "SET config_status = 'INACTIVE', updated_by = ?, updated_at = datetime('now') "
-                        + "WHERE definition_id = ? AND config_status = 'ACTIVE' "
+                        + "WHERE definition_id = ? AND config_status IN ('ACTIVE', 'DRAFT') "
                         + "AND attachment_config_id <> ?",
                 updatedBy, definitionId, attachmentConfigId);
         return jdbcTemplate.update("UPDATE process_definition_attachment_config "

@@ -1,6 +1,7 @@
 package com.flowmind.platform.web;
 
 import com.flowmind.platform.api.dto.UserContext;
+import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.DelegateProvider;
@@ -16,6 +17,7 @@ import com.flowmind.platform.mock.InMemoryOrganizationProvider;
 import com.flowmind.platform.mock.MockAttachmentAccessProvider;
 import com.flowmind.platform.mock.RecordingMessagePublisher;
 import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
+import com.flowmind.platform.storage.LocalDiskFileStorageProvider;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.beans.factory.InitializingBean;
@@ -144,8 +146,13 @@ public class PlatformStandaloneConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public FileStorageProvider fileStorageProvider() {
-        return new InMemoryFileStorageProvider();
+    public FileStorageProvider fileStorageProvider(
+            @Value("${flow-mind.platform.file-storage.type:local-disk}") String storageType,
+            @Value("${flow-mind.platform.file-storage.local-root:./data/attachments}") String localRoot) {
+        if ("memory".equalsIgnoreCase(storageType) || "in-memory".equalsIgnoreCase(storageType)) {
+            return new InMemoryFileStorageProvider();
+        }
+        return new LocalDiskFileStorageProvider(localRoot);
     }
 
     @Bean
@@ -174,7 +181,14 @@ public class PlatformStandaloneConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public OrganizationProvider organizationProvider() {
-        return new InMemoryOrganizationProvider();
+        InMemoryOrganizationProvider provider = new InMemoryOrganizationProvider();
+        provider.addUser(user("user_sales", "业务员", "dept_sales", "销售部",
+                Collections.singletonList("sales")));
+        provider.addUser(user("user_manager", "部门经理", "dept_manager", "经理部",
+                Collections.singletonList("manager")));
+        provider.addUser(user("user_finance", "财务", "dept_finance", "财务部",
+                Collections.singletonList("finance")));
+        return provider;
     }
 
     /**
@@ -276,7 +290,7 @@ public class PlatformStandaloneConfiguration {
                             request.getHeader("X-Flow-Dept-Id"), request.getHeader("X-Flow-Dept-Name"));
                 }
             }
-            return userContext("u_sales_01", null, "mock-dept", null);
+            return userContext("user_sales", null, "dept_sales", null);
         }
     }
 
@@ -290,6 +304,15 @@ public class PlatformStandaloneConfiguration {
     }
 
     private static String displayName(String userId) {
+        if ("user_sales".equals(userId)) {
+            return "业务员";
+        }
+        if ("user_manager".equals(userId)) {
+            return "部门经理";
+        }
+        if ("user_finance".equals(userId)) {
+            return "财务";
+        }
         if ("u_sales_01".equals(userId)) {
             return "业务员";
         }
@@ -318,11 +341,39 @@ public class PlatformStandaloneConfiguration {
     }
 
     private static String defaultDepartmentId(String userId) {
+        if ("user_sales".equals(userId)) {
+            return "dept_sales";
+        }
+        if ("user_manager".equals(userId)) {
+            return "dept_manager";
+        }
+        if ("user_finance".equals(userId)) {
+            return "dept_finance";
+        }
         return "mock-dept";
     }
 
     private static String displayDepartmentName(String departmentId) {
+        if ("dept_sales".equals(departmentId)) {
+            return "销售部";
+        }
+        if ("dept_manager".equals(departmentId)) {
+            return "经理部";
+        }
+        if ("dept_finance".equals(departmentId)) {
+            return "财务部";
+        }
         return "Mock Department";
+    }
+
+    private static UserDTO user(String userId, String userName, String departmentId, String departmentName,
+                                java.util.List<String> roles) {
+        UserDTO user = new UserDTO(userId, userName);
+        user.setDepartmentId(departmentId);
+        user.setDepartmentName(departmentName);
+        user.setRoleCodes(roles);
+        user.setActive(Boolean.TRUE);
+        return user;
     }
 
     private static String firstText(String first, String second) {

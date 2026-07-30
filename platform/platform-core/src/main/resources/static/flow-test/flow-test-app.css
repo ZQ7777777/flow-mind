@@ -278,6 +278,19 @@ tbody tr:hover {
     margin-bottom: 14px;
 }
 
+.storage-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 4px;
+    padding: 2px 8px;
+    border: 1px solid #99f6e4;
+    border-radius: 999px;
+    background: #ccfbf1;
+    color: var(--teal);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 .filter-grid,
 .form-grid {
     display: grid;
@@ -522,6 +535,19 @@ tbody tr:hover {
     min-height: 72px;
 }
 
+.file-cell {
+    display: grid;
+    gap: 4px;
+}
+
+.file-cell input[type="file"] {
+    min-width: 180px;
+}
+
+.file-cell small {
+    color: var(--muted);
+}
+
 .task-dialog {
     width: min(1120px, 96vw);
 }
@@ -541,13 +567,47 @@ tbody tr:hover {
 }
 
 .task-attachment-list li {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
     gap: 12px;
     padding: 9px 10px;
     border: 1px solid var(--line);
     border-radius: 6px;
     background: #f8fafc;
+}
+
+.attachment-info {
+    min-width: 0;
+}
+
+.attachment-info strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.attachment-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 5px;
+}
+
+.attachment-meta span,
+.attachment-owner {
+    min-width: 0;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #eef2f7;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
 }
 
 .action-grid {

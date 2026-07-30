@@ -207,7 +207,9 @@
                         <p class="eyebrow">Runtime</p>
                         <h2>流程实例</h2>
                     </div>
-                    <button type="button" class="primary" @click="startAndSubmitInstance">启动并提交</button>
+                    <button type="button" class="primary" :disabled="startSubmitting" @click="startAndSubmitInstance">
+                        {{ startSubmitting ? '提交中' : '启动并提交' }}
+                    </button>
                 </div>
 
                 <div class="split-grid">
@@ -236,7 +238,10 @@
                         </label>
 
                         <div class="subsection-title">
-                            <h4>启动前附件</h4>
+                            <div>
+                                <h4>启动前附件</h4>
+                                <span class="storage-badge">本地磁盘存储</span>
+                            </div>
                             <button type="button" @click="addInstanceAttachment">新增附件</button>
                         </div>
                         <div class="table-wrap compact-table attachment-table">
@@ -248,7 +253,7 @@
                                     <th>文件名</th>
                                     <th>类型</th>
                                     <th>大小</th>
-                                    <th>内容</th>
+                                    <th>文件</th>
                                     <th></th>
                                 </tr>
                                 </thead>
@@ -266,8 +271,13 @@
                                     <td><input v-model.trim="attachment.fileName" type="text"></td>
                                     <td><input v-model.trim="attachment.contentType" type="text"></td>
                                     <td><input v-model.number="attachment.sizeBytes" type="number" min="0"></td>
-                                    <td><input v-model.trim="attachment.content" type="text"></td>
-                                    <td><button type="button" class="ghost danger" @click="removeInstanceAttachment(index)">删除</button></td>
+                                    <td class="file-cell">
+                                        <input type="file" @change="handleInstanceAttachmentFileChange(attachment, $event)">
+                                        <small>{{ attachment.content ? '已读取' : '未选择' }}</small>
+                                    </td>
+                                    <td class="table-actions">
+                                        <button type="button" class="ghost danger" @click="removeInstanceAttachment(index)">删除</button>
+                                    </td>
                                 </tr>
                                 </tbody>
                             </table>
@@ -714,8 +724,18 @@
                     <h3>附件</h3>
                     <ul class="task-attachment-list">
                         <li v-for="attachment in taskDialog.attachments" :key="attachment.attachmentId || attachment.id">
-                            <strong>{{ attachment.fileName || attachment.attachmentCode }}</strong>
-                            <span>{{ attachment.ownerType || '-' }}</span>
+                            <div class="attachment-info">
+                                <strong>{{ attachment.fileName || attachment.attachmentCode || '未命名附件' }}</strong>
+                                <div class="attachment-meta">
+                                    <span>{{ attachment.attachmentCode || '-' }}</span>
+                                    <span>{{ formatAttachmentSize(attachment.sizeBytes) }}</span>
+                                    <span>{{ attachment.contentType || '-' }}</span>
+                                    <span>{{ attachment.uploadedBy || '-' }}</span>
+                                    <span>{{ formatDateTime(attachment.uploadedAt) }}</span>
+                                </div>
+                            </div>
+                            <span class="attachment-owner">{{ attachment.ownerType || '-' }}</span>
+                            <button type="button" class="ghost" @click="downloadAttachment(attachment)">下载</button>
                         </li>
                         <li v-if="taskDialog.attachments.length === 0">暂无附件</li>
                     </ul>
@@ -775,6 +795,7 @@
                         <li v-for="attachment in completedDialog.attachments" :key="attachment.attachmentId || attachment.id">
                             <strong>{{ attachment.fileName || attachment.attachmentCode }}</strong>
                             <span>{{ attachment.ownerType || '-' }}</span>
+                            <button type="button" class="ghost" @click="downloadAttachment(attachment)">下载</button>
                         </li>
                         <li v-if="completedDialog.attachments.length === 0">暂无附件</li>
                     </ul>
