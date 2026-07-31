@@ -48,6 +48,7 @@ final class RuntimeRowMappers {
             entity.setAssigneeUserId(resultSet.getString("assignee_user_id"));
             entity.setAssigneeUserName(resultSet.getString("assignee_user_name"));
             entity.setDelegateFromUserId(resultSet.getString("delegate_from_user_id"));
+            entity.setDelegateFromUserName(resultSet.getString("delegate_from_user_name"));
             entity.setTaskStatus(resultSet.getString("task_status"));
             entity.setTaskGroupId(resultSet.getString("task_group_id"));
             entity.setBranchKey(resultSet.getString("branch_key"));

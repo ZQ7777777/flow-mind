@@ -21,6 +21,8 @@ public class TodoTaskQuery extends PageQuery {
     private String nodeCode;
     /** 活动任务状态，典型值：ACTIVE、CLAIMED。 */
     private String taskStatus;
+    /** Todo source, typical values: ALL, OWN, DELEGATED. */
+    private String todoSource;
     /** 任务创建时间起始边界，包含该时间。 */
     private LocalDateTime createdFrom;
     /** 任务创建时间结束边界，包含该时间。 */
@@ -87,6 +89,14 @@ public class TodoTaskQuery extends PageQuery {
 
     public void setTaskStatus(String taskStatus) {
         this.taskStatus = taskStatus;
+    }
+
+    public String getTodoSource() {
+        return todoSource;
+    }
+
+    public void setTodoSource(String todoSource) {
+        this.todoSource = todoSource;
     }
 
     public LocalDateTime getCreatedFrom() {

@@ -7,6 +7,7 @@ import com.flowmind.platform.api.request.DeleteAttachmentRequest;
 import com.flowmind.platform.api.request.DownloadAttachmentRequest;
 import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
+import com.flowmind.platform.api.request.ReplaceInstanceAttachmentRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
 import com.flowmind.platform.core.runtime.RuntimeValidationException;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,6 +38,16 @@ public class AttachmentController {
     public AttachmentDTO saveTask(@PathVariable String taskId, @RequestBody SaveTaskAttachmentRequest request) {
         rejectConflict(taskId, request.getTaskId(), "taskId");
         request.setTaskId(taskId); return attachmentService.saveTaskAttachment(request);
+    }
+    @PutMapping("/instances/{instanceId}/attachments/{attachmentId}")
+    public AttachmentDTO replaceInstance(@PathVariable String instanceId,
+                                         @PathVariable String attachmentId,
+                                         @RequestBody ReplaceInstanceAttachmentRequest request) {
+        rejectConflict(instanceId, request.getInstanceId(), "instanceId");
+        rejectConflict(attachmentId, request.getAttachmentId(), "attachmentId");
+        request.setInstanceId(instanceId);
+        request.setAttachmentId(attachmentId);
+        return attachmentService.replaceInstanceAttachment(request);
     }
     @GetMapping("/attachments")
     public List<AttachmentDTO> query(AttachmentQuery query) { return attachmentService.queryAttachments(query); }

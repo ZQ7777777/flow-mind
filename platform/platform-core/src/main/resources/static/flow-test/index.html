@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
@@ -128,6 +128,7 @@
                             <td>{{ row.activationStatus || '-' }}</td>
                             <td class="table-actions">
                                 <button type="button" @click.stop="selectDefinition(row)">查看</button>
+                                <button type="button" :disabled="!canManageDefinitions" @click.stop="copyDefinition(row)">复制</button>
                                 <button type="button" :disabled="!canManageDefinitions" @click.stop="editDefinitionAttachments(row)">编辑附件配置</button>
                                 <button type="button" :disabled="!canManageDefinitions" @click.stop="publishDefinition(row)">发布</button>
                                 <button type="button" :disabled="!canManageDefinitions" @click.stop="activateDefinition(row)">激活</button>
@@ -147,7 +148,8 @@
                             <span>{{ selectedDefinitionId || '未选择定义' }}</span>
                         </div>
                         <div class="flow-canvas readonly-canvas" aria-label="选中流程定义流程图">
-                            <svg class="designer-edge-layer" viewBox="0 0 960 420" preserveAspectRatio="none">
+                            <div class="canvas-surface" :style="canvasSurfaceStyle(selectedGraphNodes, 480)">
+                            <svg class="designer-edge-layer" :viewBox="canvasViewBox(selectedGraphNodes, 480)" preserveAspectRatio="none">
                                 <line v-for="edge in selectedGraphEdges"
                                       :key="edge.edgeCode"
                                       class="designer-edge"
@@ -167,6 +169,7 @@
                                 <small>{{ node.nodeCode }}</small>
                             </button>
                             <p v-if="selectedGraphNodes.length === 0" class="canvas-empty">选中流程定义后展示已保存流程图</p>
+                            </div>
                         </div>
                     </section>
 
@@ -207,7 +210,12 @@
                         <p class="eyebrow">Runtime</p>
                         <h2>流程实例</h2>
                     </div>
-                    <button type="button" class="primary" @click="startAndSubmitInstance">启动并提交</button>
+                    <div class="table-actions">
+                        <button type="button" v-if="isTestAdmin" @click="queryAdminInstances()">查询全部实例</button>
+                        <button type="button" class="primary" :disabled="startSubmitting" @click="startAndSubmitInstance">
+                            {{ startSubmitting ? '提交中' : '启动并提交' }}
+                        </button>
+                    </div>
                 </div>
 
                 <div class="split-grid">
@@ -226,17 +234,22 @@
                             实例标题
                             <input v-model.trim="instanceForm.instanceTitle" type="text">
                         </label>
-                        <label>
-                            外部业务键
-                            <input v-model.trim="instanceForm.businessKey" type="text">
-                        </label>
-                        <label>
-                            流程变量 JSON
-                            <textarea v-model.trim="instanceVariablesText" rows="6"></textarea>
-                        </label>
+                        <div class="form-field-grid" data-testid="start-form-field">
+                            <label v-for="field in instanceDefinitionFields" :key="formFieldCode(field)" :class="{'field-invalid': startFormFieldError(field)}">
+                                <span class="form-field-label">{{ formFieldLabel(field) }}<span v-if="isStartFieldRequired(field)" class="required-mark">*</span></span>
+                                <textarea v-if="isTextareaField(field)" v-model.trim="instanceFieldValues[formFieldCode(field)]" rows="3" :required="isStartFieldRequired(field)" @input="clearStartFormFieldError(field)"></textarea>
+                                <input v-else-if="formFieldInputType(field) === 'checkbox'" v-model="instanceFieldValues[formFieldCode(field)]" type="checkbox" :required="isStartFieldRequired(field)" @change="clearStartFormFieldError(field)">
+                                <input v-else v-model.trim="instanceFieldValues[formFieldCode(field)]" :type="formFieldInputType(field)" :required="isStartFieldRequired(field)" @input="clearStartFormFieldError(field)">
+                                <p v-if="startFormFieldError(field)" class="field-error">{{ startFormFieldError(field) }}</p>
+                            </label>
+                            <p v-if="instanceDefinitionFields.length === 0" class="muted">暂无表单字段</p>
+                        </div>
 
                         <div class="subsection-title">
-                            <h4>启动前附件</h4>
+                            <div>
+                                <h4>启动前附件</h4>
+                                <span class="storage-badge">本地磁盘存储</span>
+                            </div>
                             <button type="button" @click="addInstanceAttachment">新增附件</button>
                         </div>
                         <div class="table-wrap compact-table attachment-table">
@@ -248,7 +261,7 @@
                                     <th>文件名</th>
                                     <th>类型</th>
                                     <th>大小</th>
-                                    <th>内容</th>
+                                    <th>文件</th>
                                     <th></th>
                                 </tr>
                                 </thead>
@@ -266,8 +279,13 @@
                                     <td><input v-model.trim="attachment.fileName" type="text"></td>
                                     <td><input v-model.trim="attachment.contentType" type="text"></td>
                                     <td><input v-model.number="attachment.sizeBytes" type="number" min="0"></td>
-                                    <td><input v-model.trim="attachment.content" type="text"></td>
-                                    <td><button type="button" class="ghost danger" @click="removeInstanceAttachment(index)">删除</button></td>
+                                    <td class="file-cell">
+                                        <input type="file" @change="handleInstanceAttachmentFileChange(attachment, $event)">
+                                        <small>{{ attachment.content ? '已读取' : '未选择' }}</small>
+                                    </td>
+                                    <td class="table-actions">
+                                        <button type="button" class="ghost danger" @click="removeInstanceAttachment(index)">删除</button>
+                                    </td>
                                 </tr>
                                 </tbody>
                             </table>
@@ -300,7 +318,22 @@
                                     <td>{{ row.instanceTitle }}</td>
                                     <td>{{ row.processName || row.processCode }}</td>
                                     <td>{{ row.starterUserName || row.starterUserId }}</td>
-                                    <td>{{ joinList(row.currentNodeCodes) }}</td>
+                                    <td>
+                                        <div class="instance-node-list">
+                                            <div v-for="nodeCode in currentInstanceNodeCodes(row)"
+                                                 :key="nodeCode"
+                                                 class="instance-node-item">
+                                                <span>{{ nodeCode }}</span>
+                                                <button type="button"
+                                                        class="ghost"
+                                                        :disabled="!canRemindInstanceNode(row, nodeCode)"
+                                                        @click.stop="remindInstanceNode(row, nodeCode)">
+                                                    手动催办
+                                                </button>
+                                            </div>
+                                            <span v-if="currentInstanceNodeCodes(row).length === 0">-</span>
+                                        </div>
+                                    </td>
                                     <td>{{ row.instanceStatus || '-' }}</td>
                                 </tr>
                                 </tbody>
@@ -308,6 +341,72 @@
                         </div>
                     </section>
                 </div>
+
+                <section v-if="selectedInstanceDetail" class="summary-card instance-detail-card">
+                    <div class="card-title">
+                        <div><h3>实例详情</h3><span>{{ selectedInstanceDetail.instanceId || selectedInstanceDetail.id }}</span></div>
+                        <div class="aux-query-actions">
+                            <button type="button" @click="openInstanceQueryDialog('historyTasks')">查询历史任务</button>
+                            <button type="button" @click="openInstanceQueryDialog('comments')">查询审批意见</button>
+                            <button type="button" :disabled="!isTestAdmin" @click="openInstanceQueryDialog('callbackLogs')">查询回调日志</button>
+                            <button type="button" :disabled="!canQuerySelectedInstanceReadRecords" @click="openInstanceQueryDialog('readRecords')">查询已阅记录</button>
+                            <button type="button" :disabled="!isTestAdmin" @click="openInstanceQueryDialog('auditTrace')">审计追溯视图</button>
+                        </div>
+                    </div>
+                    <dl class="detail-list">
+                        <dt>实例标题</dt><dd>{{ selectedInstanceDetail.instanceTitle || '-' }}</dd>
+                        <dt>发起人</dt><dd>{{ selectedInstanceDetail.starterUserName || selectedInstanceDetail.starterUserId || '-' }}</dd>
+                        <dt>实例状态</dt><dd>{{ selectedInstanceDetail.instanceStatus || '-' }}</dd>
+                        <dt>当前节点</dt><dd>{{ joinList(selectedInstanceDetail.currentNodeCodes) || '-' }}</dd>
+                    </dl>
+                    <div class="instance-detail-card">
+                        <div class="subsection-title"><h4>当前活动任务</h4></div>
+                        <div class="active-task-list">
+                            <div v-if="selectedInstanceActiveTasks.length === 0" class="empty-cell">暂无当前活动任务</div>
+                            <article v-for="task in selectedInstanceActiveTasks"
+                                     :key="task.taskId || task.id"
+                                     class="active-task-item">
+                                <div class="active-task-main">
+                                    <strong>{{ task.nodeName || task.nodeCode || '-' }}</strong>
+                                    <span>{{ task.taskId || task.id }}</span>
+                                </div>
+                                <div class="active-task-meta">
+                                    <span>候选人：{{ joinList(task.candidateUserIds) || '-' }}</span>
+                                    <span>办理人：{{ taskAssigneeText(task) }}</span>
+                                    <span>状态：{{ task.taskStatus || '-' }}</span>
+                                    <span>到期：{{ formatDateTime(task.dueAt) }}</span>
+                                </div>
+                                <div class="active-task-actions">
+                                    <button type="button"
+                                            class="primary"
+                                            :disabled="!canRemindInstanceTask(task)"
+                                            @click.stop="remindInstanceTask(task)">
+                                        手动催办
+                                    </button>
+                                </div>
+                            </article>
+                        </div>
+                    </div>
+                    <div class="instance-support-grid">
+                        <div class="instance-variable-editor" data-testid="instance-variable-editor">
+                            <div class="subsection-title"><h4>表单字段</h4><span class="muted">只读</span></div>
+                            <div class="table-wrap compact-table"><table><thead><tr><th>字段</th><th>当前值</th></tr></thead><tbody>
+                            <tr v-if="instanceVariableRows.length === 0"><td colspan="2" class="empty-cell">暂无表单字段</td></tr>
+                            <tr v-for="row in instanceVariableRows" :key="row.fieldCode">
+                                <td>{{ row.fieldName }}</td>
+                                <td data-testid="readonly-instance-field">{{ formatJsonSummary(row.value) }}</td>
+                            </tr>
+                            </tbody></table></div>
+                        </div>
+                        <div class="instance-operations">
+                            <div class="subsection-title"><h4>实例操作</h4></div>
+                            <div class="aux-query-actions">
+                                <button type="button" :disabled="!canAdminOperateSelectedInstance" @click="terminateSelectedInstance()">终止流程</button>
+                                <button type="button" :disabled="!canAdminOperateSelectedInstance" @click="deleteSelectedInstance()">删除实例</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </section>
 
             <section v-show="activeView === 'todo'" class="view-panel">
@@ -318,6 +417,11 @@
                     </div>
                     <button type="button" @click="queryTodoTasks">刷新待办</button>
                 </div>
+                <div class="scope-tabs todo-segmented">
+                    <button type="button" data-testid="todo-scope-own" :class="{active: todoScope === 'own'}" @click="setTodoScope('own')">自己的任务</button>
+                    <button type="button" data-testid="todo-scope-delegated" :class="{active: todoScope === 'delegated'}" @click="setTodoScope('delegated')">委托代办任务</button>
+                    <button type="button" :class="{active: todoScope === 'all'}" @click="setTodoScope('all')">全部</button>
+                </div>
                 <div class="table-wrap">
                     <table>
                         <thead>
@@ -325,24 +429,44 @@
                             <th>任务 ID</th>
                             <th>实例</th>
                             <th>节点</th>
+                            <th>超时时间</th>
+                            <th>提醒标记</th>
                             <th>候选人</th>
                             <th>办理人</th>
+                            <th>任务来源</th>
                             <th>版本</th>
                             <th>操作</th>
                         </tr>
                         </thead>
                         <tbody>
-                        <tr v-if="todoRows.length === 0">
-                            <td colspan="7" class="empty-cell">暂无待办</td>
+                        <tr v-if="filteredTodoRows.length === 0">
+                            <td colspan="10" class="empty-cell">暂无待办</td>
                         </tr>
-                        <tr v-for="row in todoRows" :key="row.taskId || row.id">
+                        <tr v-for="row in filteredTodoRows" :key="row.taskId || row.id">
                             <td>{{ row.taskId || row.id }}</td>
                             <td>{{ row.instanceTitle || row.instanceId }}</td>
                             <td>{{ row.nodeName || row.nodeCode }}</td>
+                            <td>{{ formatDateTime(row.dueAt) }}</td>
+                            <td>
+                                <span v-if="taskTimeoutBadge(row)"
+                                      data-testid="todo-timeout-badge"
+                                      class="timeout-badge"
+                                      :class="taskTimeoutBadgeClass(row)">{{ taskTimeoutBadge(row) }}</span>
+                                <span v-else>-</span>
+                            </td>
                             <td>{{ joinList(row.candidateUserIds) }}</td>
-                            <td>{{ row.assigneeUserName || row.assigneeUserId || '-' }}</td>
+                            <td>
+                                <div>{{ taskAssigneeText(row) }}</div>
+                                <span class="claim-status" :class="{claimed: isTaskClaimed(row)}">{{ taskClaimStatusText(row) }}</span>
+                            </td>
+                            <td>{{ todoScopeLabel(row) }}</td>
                             <td>{{ row.taskVersion || row.expectedTaskVersion || 0 }}</td>
-                            <td><button type="button" @click="openTodoTaskDialog(row)">处理</button></td>
+                            <td class="table-actions">
+                                <button type="button" class="primary" v-if="canClaimTask(row)" @click.stop="claimTask(row)">认领</button>
+                                <button type="button" v-if="canHandleTask(row)" @click="openTodoTaskDialog(row)">处理</button>
+                                <button type="button" class="ghost" v-if="canUnclaimTask(row)" @click.stop="unclaimTask(row)">取消认领</button>
+                                <span v-if="isTaskClaimed(row) && !canHandleTask(row)" class="claim-status claimed">已认领</span>
+                            </td>
                         </tr>
                         </tbody>
                     </table>
@@ -479,7 +603,8 @@
                         <button type="button" @click="layoutDraftGraph">自动布局</button>
                     </div>
                     <div class="flow-canvas designer-canvas" tabindex="0" @keydown.delete.prevent="deleteSelectedDesignerItem">
-                        <svg class="designer-edge-layer" viewBox="0 0 960 480" preserveAspectRatio="none">
+                        <div class="canvas-surface" :style="canvasSurfaceStyle(definitionDraft.nodes, 480)">
+                        <svg class="designer-edge-layer" :viewBox="canvasViewBox(definitionDraft.nodes, 480)" preserveAspectRatio="none">
                             <line v-for="edge in definitionDraft.edges"
                                   :key="edge.edgeCode"
                                   class="designer-edge"
@@ -504,9 +629,10 @@
                             <small>{{ node.nodeCode }}</small>
                         </button>
                         <p v-if="definitionDraft.nodes.length === 0" class="canvas-empty">从左侧添加节点，拖动后保存坐标</p>
+                        </div>
                     </div>
                 </div>
-                <aside class="property-panel">
+                <aside class="property-panel property-panel-scroll">
                     <h3>属性</h3>
                     <template v-if="selectedNode">
                         <label>
@@ -519,7 +645,9 @@
                         </label>
                         <label>
                             审批来源
-                            <select v-model="selectedNode.approverRuleType" :disabled="selectedNode.nodeType !== 'USER_TASK'">
+                            <select v-model="selectedNode.approverRuleType"
+                                    :disabled="selectedNode.nodeType !== 'USER_TASK'"
+                                    @change="syncSelectedNodeApproverRule">
                                 <option value="USER">指定用户</option>
                                 <option value="STARTER">发起人</option>
                                 <option value="DEPARTMENT">指定部门</option>
@@ -534,12 +662,189 @@
                                 <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
                             </select>
                         </label>
+                        <label v-if="selectedNode.nodeType === 'USER_TASK' && selectedNode.approverRuleType === 'DEPARTMENT'">
+                            指定部门
+                            <select v-model="selectedNode.selectedDepartmentId" @change="syncSelectedNodeDepartment">
+                                <option value="">请选择部门</option>
+                                <option v-for="department in departments"
+                                        :key="department.departmentId"
+                                        :value="department.departmentId">{{ department.departmentName }}</option>
+                            </select>
+                        </label>
+                        <label v-if="selectedNode.nodeType === 'USER_TASK' && selectedNode.approverRuleType === 'ROLE'">
+                            指定角色
+                            <select v-model="selectedNode.selectedRoleCode" @change="syncSelectedNodeRole">
+                                <option value="">请选择角色</option>
+                                <option v-for="role in roles"
+                                        :key="role.roleCode"
+                                        :value="role.roleCode">{{ role.roleName }}</option>
+                            </select>
+                        </label>
+                        <fieldset v-if="selectedNode.nodeType === 'USER_TASK' && selectedNode.approverRuleType === 'ROLE_IN_DEPARTMENT'"
+                                  class="approver-config-panel">
+                            <legend>部门角色</legend>
+                            <label>
+                                指定角色
+                                <select v-model="selectedNode.selectedRoleCode" @change="syncSelectedNodeRoleDepartment">
+                                    <option value="">请选择角色</option>
+                                    <option v-for="role in roles"
+                                            :key="role.roleCode"
+                                            :value="role.roleCode">{{ role.roleName }}</option>
+                                </select>
+                            </label>
+                            <label>
+                                部门来源
+                                <select v-model="selectedNode.selectedRoleDepartmentMode" @change="syncSelectedNodeRoleDepartment">
+                                    <option value="STARTER">发起人部门</option>
+                                    <option value="FIXED">指定部门</option>
+                                </select>
+                            </label>
+                            <label v-if="selectedNode.selectedRoleDepartmentMode === 'FIXED'">
+                                指定部门
+                                <select v-model="selectedNode.selectedRoleDepartmentId" @change="syncSelectedNodeRoleDepartment">
+                                    <option value="">请选择部门</option>
+                                    <option v-for="department in departments"
+                                            :key="department.departmentId"
+                                            :value="department.departmentId">{{ department.departmentName }}</option>
+                                </select>
+                            </label>
+                        </fieldset>
+                        <label v-if="selectedNode.nodeType === 'USER_TASK' && selectedNode.approverRuleType === 'APPROVER_EXPRESSION'">
+                            审批人表达式
+                            <input v-model.trim="selectedNode.approverExpression"
+                                   placeholder="departmentManager(starterDeptId)"
+                                   type="text"
+                                   @input="syncSelectedNodeExpression">
+                        </label>
                         <label v-if="selectedNode.nodeType === 'USER_TASK'">
                             多人模式
                             <select v-model="selectedNode.multiInstanceMode">
                                 <option value="SINGLE">单人</option>
                                 <option value="OR_SIGN">或签</option>
                                 <option value="COUNTERSIGN">会签</option>
+                            </select>
+                        </label>
+                        <fieldset v-if="selectedNode.nodeType === 'USER_TASK'" class="timeout-config-panel">
+                            <legend>超时提醒</legend>
+                            <label class="checkbox-row">
+                                <input v-model="selectedNode.timeoutEnabled"
+                                       data-testid="timeout-enabled"
+                                       type="checkbox"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                                启用超时
+                            </label>
+                            <label>
+                                超时时长（分钟）
+                                <input v-model.number="selectedNode.timeoutDurationMinutes"
+                                       data-testid="timeout-duration"
+                                       :disabled="!selectedNode.timeoutEnabled"
+                                       min="0"
+                                       type="number"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                            </label>
+                            <label>
+                                超时动作
+                                <select v-model="selectedNode.timeoutAction"
+                                        data-testid="timeout-action"
+                                        :disabled="!selectedNode.timeoutEnabled"
+                                        @change="syncSelectedNodeTimeoutConfig">
+                                    <option value="REMIND">提醒</option>
+                                    <option value="ALERT">告警</option>
+                                    <option value="JUMP">跳转</option>
+                                    <option value="TERMINATE">终止</option>
+                                    <option value="FORCE_COMPLETE">强制完成</option>
+                                </select>
+                            </label>
+                            <label>
+                                告警级别
+                                <select v-model="selectedNode.timeoutSeverity" :disabled="!selectedNode.timeoutEnabled" @change="syncSelectedNodeTimeoutConfig">
+                                    <option value="LOW">LOW</option>
+                                    <option value="MEDIUM">MEDIUM</option>
+                                    <option value="HIGH">HIGH</option>
+                                </select>
+                            </label>
+                            <label v-if="selectedNode.timeoutAction === 'JUMP'">
+                                跳转目标节点
+                                <select v-model="selectedNode.timeoutTargetNodeCode"
+                                        data-testid="timeout-target-node"
+                                        :disabled="!selectedNode.timeoutEnabled"
+                                        @change="syncSelectedNodeTimeoutConfig">
+                                    <option value="">请选择</option>
+                                    <option v-for="node in timeoutReminderTargetNodes(selectedNode)" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
+                                </select>
+                            </label>
+                            <label class="checkbox-row">
+                                <input v-model="selectedNode.reminderEnabled"
+                                       data-testid="reminder-enabled"
+                                       type="checkbox"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                                启用提醒
+                            </label>
+                            <label>
+                                最大提醒次数
+                                <input v-model.number="selectedNode.reminderMaxCount"
+                                       data-testid="reminder-max-count"
+                                       :disabled="!selectedNode.reminderEnabled"
+                                       min="0"
+                                       type="number"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                            </label>
+                            <label>
+                                提醒文案模板
+                                <input v-model.trim="selectedNode.reminderMessageTemplate"
+                                       data-testid="reminder-message-template"
+                                       :disabled="!selectedNode.reminderEnabled"
+                                       type="text"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                            </label>
+                            <p v-if="selectedNode.timeoutConfigError" class="field-error">{{ selectedNode.timeoutConfigError }}</p>
+                        </fieldset>
+                        <fieldset v-if="selectedNode.nodeType === 'USER_TASK'" class="listener-config-panel">
+                            <legend>listenerConfig</legend>
+                            <label class="checkbox-row">
+                                <input v-model="selectedNode.listenerRejectEnabled"
+                                       data-testid="listener-reject-enabled"
+                                       type="checkbox"
+                                       @change="syncSelectedNodeListenerRules">
+                                启用驳回
+                            </label>
+                            <label v-if="selectedNode.listenerRejectEnabled">
+                                允许驳回节点
+                                <select v-model="selectedNode.listenerRejectTargetNodeCodes"
+                                        data-testid="listener-reject-targets"
+                                        multiple
+                                        @change="syncSelectedNodeListenerRules">
+                                    <option v-for="node in listenerRejectTargetNodes(selectedNode)"
+                                            :key="node.nodeCode"
+                                            :value="node.nodeCode">{{ node.nodeName }}</option>
+                                </select>
+                            </label>
+                            <label class="checkbox-row">
+                                <input v-model="selectedNode.listenerDirectSendEnabled"
+                                       data-testid="listener-direct-send-enabled"
+                                       type="checkbox"
+                                       @change="syncSelectedNodeListenerRules">
+                                启用直送（REJECT_SOURCE）
+                            </label>
+                            <label>
+                                高级 listenerConfig JSON
+                                <textarea v-model="selectedNode.listenerConfig"
+                                          data-testid="listener-config-json"
+                                          rows="8"
+                                          placeholder='{"listeners":[],"taskActionRules":{}}'
+                                          @change="syncSelectedNodeListenerJson"></textarea>
+                            </label>
+                            <p v-if="selectedNode.listenerConfigError" class="field-error">
+                                {{ selectedNode.listenerConfigError }}
+                            </p>
+                        </fieldset>
+                        <label v-if="isParallelGatewayNode(selectedNode)">
+                            配对网关
+                            <select v-model="selectedNode.pairedGatewayCode" @change="syncParallelGatewayPair(selectedNode)">
+                                <option value="">请选择</option>
+                                <option v-for="node in parallelGatewayPairOptions(selectedNode)" :key="node.nodeCode" :value="node.nodeCode">
+                                    {{ node.nodeName }} / {{ node.nodeCode }}
+                                </option>
                             </select>
                         </label>
                         <div class="coordinate-row">
@@ -679,7 +984,30 @@
 
             <div class="modal-footer">
                 <button type="button" @click="closeDefinitionDialog">取消</button>
-                <button type="button" class="primary" :disabled="!canManageDefinitions" @click="saveDefinitionDraft">保存草稿并校验</button>
+                <button type="button" class="primary" data-testid="save-definition-draft" :disabled="!canManageDefinitions" @click="saveDefinitionDraft">保存草稿并校验</button>
+            </div>
+        </div>
+    </section>
+
+    <section v-if="instanceQueryDialog.open" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="实例查询结果弹窗">
+        <div class="modal-panel query-dialog">
+            <div class="modal-header">
+                <div><p class="eyebrow">Instance query</p><h2>{{ instanceQueryDialog.title }}</h2></div>
+                <button type="button" class="ghost" @click="closeInstanceQueryDialog">关闭</button>
+            </div>
+            <div class="query-dialog-list table-wrap compact-table">
+                <table v-if="instanceQueryDialog.queryType === 'historyTasks'"><thead><tr><th>节点</th><th>办理人</th><th>动作</th><th>意见</th><th>完成时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="5" class="empty-cell">暂无历史任务</td></tr><tr v-for="row in queryDialogRows" :key="row.historyTaskId || row.taskId || row.activeTaskId || row.nodeCode + row.startedAt"><td>{{ row.nodeName || row.nodeCode || '-' }}</td><td>{{ row.assigneeUserName || row.assigneeUserId || '-' }}</td><td>{{ row.actionType || row.handleType || '-' }}</td><td>{{ row.comment || '-' }}</td><td>{{ formatDateTime(row.completedAt || row.startedAt) }}</td></tr></tbody></table>
+                <table v-else-if="instanceQueryDialog.queryType === 'comments'"><thead><tr><th>节点</th><th>用户</th><th>意见</th><th>时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="4" class="empty-cell">暂无审批意见</td></tr><tr v-for="row in queryDialogRows" :key="row.commentId || row.taskId + row.createdAt"><td>{{ row.nodeName || row.nodeCode || '-' }}</td><td>{{ row.userName || row.operatorUserId || row.userId || '-' }}</td><td>{{ row.comment || row.commentText || '-' }}</td><td>{{ formatDateTime(row.createdAt || row.commentedAt) }}</td></tr></tbody></table>
+                <table v-else-if="instanceQueryDialog.queryType === 'callbackLogs'"><thead><tr><th>事件</th><th>状态</th><th>重试</th><th>错误</th><th>时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="5" class="empty-cell">暂无回调日志</td></tr><tr v-for="row in queryDialogRows" :key="row.callbackLogId || row.logId"><td>{{ row.eventType || '-' }}</td><td>{{ row.callbackStatus || row.status || '-' }}</td><td>{{ row.retryCount || 0 }}</td><td>{{ row.errorMessage || '-' }}</td><td>{{ formatDateTime(row.createdAt || row.updatedAt) }}</td></tr></tbody></table>
+                <table v-else-if="instanceQueryDialog.queryType === 'readRecords'"><thead><tr><th>阅读用户</th><th>用户 ID</th><th>任务 ID</th><th>阅读时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="4" class="empty-cell">暂无已阅记录</td></tr><tr v-for="record in queryDialogRows" :key="record.readRecordId || record.userId + record.readAt"><td>{{ record.userName || record.userId || '-' }}</td><td>{{ record.userId || '-' }}</td><td>{{ record.taskId || '-' }}</td><td>{{ formatDateTime(record.readAt) }}</td></tr></tbody></table>
+                <table v-else><thead><tr><th>对象</th><th>操作</th><th>操作人</th><th>摘要</th><th>时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="5" class="empty-cell">暂无审计记录</td></tr><tr v-for="row in queryDialogRows" :key="row.auditLogId || row.logId"><td>{{ row.targetType || row.targetId || '-' }}</td><td>{{ row.operationType || row.actionType || '-' }}</td><td>{{ row.operatorUserName || row.operatorUserId || '-' }}</td><td>{{ formatJsonSummary(row.changeSummary || row.detail || row.payload) }}</td><td>{{ formatDateTime(row.createdAt || row.operationAt) }}</td></tr></tbody></table>
+            </div>
+            <div class="query-dialog-footer">
+                <button type="button" :disabled="instanceQueryDialog.pageNo <= 1 || instanceQueryDialog.loading" @click="changeInstanceQueryPage(-1)">上一页</button>
+                <span>第 {{ instanceQueryDialog.pageNo }} / {{ queryDialogTotalPages }} 页，共 {{ instanceQueryDialog.total }} 条</span>
+                <label class="query-page-size">每页 <input v-model.number="instanceQueryDialog.pageSize" type="number" min="1" max="100" @change="queryInstanceDialogPage"></label>
+                <button type="button" :disabled="instanceQueryDialog.pageNo >= queryDialogTotalPages || instanceQueryDialog.loading" @click="changeInstanceQueryPage(1)">下一页</button>
+                <button type="button" @click="queryInstanceDialogPage">刷新</button>
             </div>
         </div>
     </section>
@@ -700,10 +1028,18 @@
                         <dt>任务 ID</dt><dd>{{ taskDialog.task.taskId || taskDialog.task.id }}</dd>
                         <dt>节点</dt><dd>{{ taskDialog.task.nodeName || taskDialog.task.nodeCode }}</dd>
                         <dt>版本</dt><dd>{{ taskDialog.task.taskVersion || 0 }}</dd>
+                        <dt>候选人</dt><dd>{{ joinList(taskDialog.task.candidateUserIds) || '-' }}</dd>
+                        <dt>认领状态</dt><dd><span class="claim-status" :class="{claimed: isTaskClaimed(taskDialog.task)}">{{ taskClaimStatusText(taskDialog.task) }}</span></dd>
+                        <dt>当前办理人</dt><dd>{{ taskAssigneeText(taskDialog.task) }}</dd>
+                        <dt>版本</dt><dd>{{ taskDialog.task.taskVersion || taskDialog.task.lockVersion || 0 }}</dd>
                     </dl>
                     <label>
                         表单变量 JSON
-                        <textarea v-model.trim="taskDialog.variablesText" rows="6"></textarea>
+                        <textarea v-model.trim="taskDialog.variablesText"
+                                  data-testid="task-variables"
+                                  :readonly="!taskDialog.starterTask"
+                                  rows="6"></textarea>
+                        <small>{{ taskDialog.starterTask ? '申请返工节点可修改' : '非申请节点只读' }}</small>
                     </label>
                     <label>
                         审批意见
@@ -714,38 +1050,80 @@
                     <h3>附件</h3>
                     <ul class="task-attachment-list">
                         <li v-for="attachment in taskDialog.attachments" :key="attachment.attachmentId || attachment.id">
-                            <strong>{{ attachment.fileName || attachment.attachmentCode }}</strong>
-                            <span>{{ attachment.ownerType || '-' }}</span>
+                            <div class="attachment-info">
+                                <strong>{{ attachment.fileName || attachment.attachmentCode || '未命名附件' }}</strong>
+                                <div class="attachment-meta">
+                                    <span>{{ attachment.attachmentCode || '-' }}</span>
+                                    <span>{{ formatAttachmentSize(attachment.sizeBytes) }}</span>
+                                    <span>{{ attachment.contentType || '-' }}</span>
+                                    <span>{{ attachment.uploadedBy || '-' }}</span>
+                                    <span>{{ formatDateTime(attachment.uploadedAt) }}</span>
+                                </div>
+                            </div>
+                            <span class="attachment-owner">{{ attachment.ownerType || '-' }}</span>
+                            <button type="button" class="ghost" @click="downloadAttachment(attachment)">下载</button>
+                            <label v-if="taskDialog.starterTask && attachment.ownerType === 'INSTANCE'"
+                                   class="attachment-replace-control">
+                                替换
+                                <input type="file"
+                                       data-testid="replace-instance-attachment"
+                                       @change="handleTaskReplacementFileChange(attachment, $event)">
+                                <small v-if="attachment.pendingReplacement">
+                                    待保存：{{ attachment.pendingReplacement.fileName }}
+                                </small>
+                            </label>
                         </li>
                         <li v-if="taskDialog.attachments.length === 0">暂无附件</li>
                     </ul>
                 </section>
             </div>
-            <div class="action-grid">
-                <button type="button" class="primary" @click="approveCurrentTask">审批通过</button>
-                <label>
-                    驳回节点
-                    <select v-model="taskDialog.rejectTargetNodeCode">
-                        <option value="">请选择</option>
-                        <option v-for="node in selectedGraphNodes.filter(isUserTaskNode)" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
-                    </select>
-                </label>
-                <button type="button" @click="rejectCurrentTask">驳回</button>
-                <label>
-                    转办给
-                    <select v-model="taskDialog.transferUserId">
-                        <option value="">请选择</option>
-                        <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
-                    </select>
-                </label>
-                <button type="button" @click="transferCurrentTask">转办</button>
-                <label>
-                    加签人
-                    <select v-model="taskDialog.addSignUserIds" multiple>
-                        <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
-                    </select>
-                </label>
-                <button type="button" @click="addSignCurrentTask">加签</button>
+            <div v-if="canHandleTask(taskDialog.task)" class="action-grid">
+                <button v-if="taskDialog.starterTask"
+                        type="button"
+                        class="primary"
+                        data-testid="starter-resubmit"
+                        @click="submitCurrentStarterTask">重新提交</button>
+                <button v-else type="button" class="primary" @click="approveCurrentTask">审批通过</button>
+                <button v-if="taskDialog.directSendContext.allowed"
+                        type="button"
+                        class="primary"
+                        data-testid="direct-send"
+                        @click="directSendCurrentTask">
+                    直送至 {{ taskDialog.directSendContext.targetNodeName || taskDialog.directSendContext.targetNodeCode }}
+                </button>
+                <template v-if="!taskDialog.starterTask">
+                    <label>
+                        驳回节点
+                        <select v-model="taskDialog.rejectTargetNodeCode">
+                            <option value="">请选择</option>
+                            <option v-for="node in taskRejectTargetNodes()" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
+                        </select>
+                    </label>
+                    <button type="button" @click="rejectCurrentTask">驳回</button>
+                    <label>
+                        转办给
+                        <select v-model="taskDialog.transferUserId">
+                            <option value="">请选择</option>
+                            <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
+                        </select>
+                    </label>
+                    <button type="button" @click="transferCurrentTask">转办</button>
+                    <label>
+                        代办人
+                        <select v-model="taskDialog.delegateUserId" data-testid="delegate-user">
+                            <option value="">请选择</option>
+                            <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
+                        </select>
+                    </label>
+                    <button type="button" @click="delegateCurrentTask">委托代办</button>
+                    <label>
+                        加签人
+                        <select v-model="taskDialog.addSignUserIds" multiple>
+                            <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
+                        </select>
+                    </label>
+                    <button type="button" @click="addSignCurrentTask">加签</button>
+                </template>
             </div>
         </div>
     </section>
@@ -775,10 +1153,21 @@
                         <li v-for="attachment in completedDialog.attachments" :key="attachment.attachmentId || attachment.id">
                             <strong>{{ attachment.fileName || attachment.attachmentCode }}</strong>
                             <span>{{ attachment.ownerType || '-' }}</span>
+                            <button type="button" class="ghost" @click="downloadAttachment(attachment)">下载</button>
                         </li>
                         <li v-if="completedDialog.attachments.length === 0">暂无附件</li>
                     </ul>
                 </section>
+            </div>
+            <div class="modal-footer">
+                <p class="muted">{{ withdrawDisabledReason }}</p>
+                <button type="button"
+                        class="danger"
+                        data-testid="withdraw-completed-task"
+                        :disabled="!canWithdrawSelectedInstance"
+                        @click="withdrawSelectedInstance()">
+                    撤回
+                </button>
             </div>
         </div>
     </section>
@@ -788,3 +1177,4 @@
 <script src="flow-test-app.js"></script>
 </body>
 </html>
+

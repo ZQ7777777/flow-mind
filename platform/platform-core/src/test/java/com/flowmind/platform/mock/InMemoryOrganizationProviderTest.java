@@ -18,11 +18,15 @@ class InMemoryOrganizationProviderTest {
         InMemoryOrganizationProvider provider = new InMemoryOrganizationProvider();
 
         assertTrue(provider.findDepartment("mock-dept").isPresent());
-        assertEquals(8, provider.listUsersByDepartment("mock-dept").size());
+        assertTrue(provider.findDepartment("dept_finance").isPresent());
+        assertEquals(3, provider.listUsersByDepartment("dept_finance").size());
         assertEquals("业务员", provider.findUser("u_sales_01").get().getUserName());
-        assertEquals("u_group_leader_01",
-                provider.listUsersByRoleAndDepartment("manager", "mock-dept").get(0).getUserId());
+        assertEquals("u_dept_manager_01",
+                provider.listUsersByRoleAndDepartment("manager", "dept_sales").get(0).getUserId());
+        assertEquals("u_dept_manager_02",
+                provider.listUsersByRoleAndDepartment("manager", "dept_finance").get(0).getUserId());
         assertEquals("u_finance_01", provider.listUsersByRole("finance").get(0).getUserId());
+        assertEquals("u_group_leader_01", provider.listUsersByRole("group").get(0).getUserId());
     }
 
     @Test

@@ -73,7 +73,7 @@ public class HistoryTaskWriter {
         command.setTask(context.getTask());
         command.setOperator(context.getOperator());
         command.setActionType(actionType);
-        command.setHandleType(HandleTypeEnum.NORMAL);
+        command.setHandleType(resolveHandleType(context.getTask()));
         command.setComment(comment);
         command.setVariablesSnapshot(variablesSnapshot);
         command.setOperationId(operationId);
@@ -128,7 +128,7 @@ public class HistoryTaskWriter {
         command.setTask(task);
         command.setOperator(operator);
         command.setActionType(actionType);
-        command.setHandleType(HandleTypeEnum.NORMAL);
+        command.setHandleType(resolveHandleType(task));
         command.setComment(reason);
         command.setVariablesSnapshot(variablesSnapshot);
         command.setOperationId(operationId);
@@ -201,9 +201,8 @@ public class HistoryTaskWriter {
         entity.setAssigneeUserId(operator == null ? task.getAssigneeUserId() : operator.getUserId());
         entity.setAssigneeUserName(operator == null ? task.getAssigneeUserName() : operator.getUserName());
         entity.setDelegateFromUserId(task.getDelegateFromUserId());
-        entity.setDelegateFromUserName(null);
-        entity.setHandleType(command.getHandleType() == null
-                ? HandleTypeEnum.NORMAL.name() : command.getHandleType().name());
+        entity.setDelegateFromUserName(task.getDelegateFromUserName());
+        entity.setHandleType(resolveCommandHandleType(command).name());
         entity.setActionType(command.getActionType().name());
         entity.setCommentText(command.getComment());
         entity.setVariablesSnapshot(writeVariables(command.getVariablesSnapshot()));
@@ -211,6 +210,19 @@ public class HistoryTaskWriter {
         entity.setCompletedAt(command.getCompletedAt() == null ? LocalDateTime.now() : command.getCompletedAt());
         entity.setExtraJson(command.getExtraJson());
         return entity;
+    }
+
+    private HandleTypeEnum resolveHandleType(ProcessActiveTaskEntity task) {
+        return task != null && task.getDelegateFromUserId() != null
+                && !task.getDelegateFromUserId().trim().isEmpty()
+                ? HandleTypeEnum.DELEGATE : HandleTypeEnum.NORMAL;
+    }
+
+    private HandleTypeEnum resolveCommandHandleType(HistoryArchiveCommand command) {
+        if (command.getHandleType() == null || HandleTypeEnum.NORMAL.equals(command.getHandleType())) {
+            return resolveHandleType(command.getTask());
+        }
+        return command.getHandleType();
     }
 
     /**

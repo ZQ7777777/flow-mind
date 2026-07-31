@@ -61,6 +61,23 @@ class RuntimeRequestValidatorTest {
     }
 
     @Test
+    void taskActionAllowsDelegatedTaskAssignedToCurrentUser() {
+        RuntimeRequestValidator delegateValidator = new RuntimeRequestValidator(
+                () -> new UserContext("agent-1", "Agent", "dept-1", "Finance"));
+        TaskOperationRequest request = taskRequest(Long.valueOf(4));
+        request.setOperatorUserId("agent-1");
+        ProcessActiveTaskEntity task = activeTask();
+        task.setAssigneeUserId("agent-1");
+        task.setAssigneeUserName("Agent");
+        task.setDelegateFromUserId("principal-1");
+        task.setDelegateFromUserName("Principal");
+
+        assertEquals("agent-1", delegateValidator.validateTaskAction(request, runningInstance(), task).getUserId());
+        assertEquals("principal-1", task.getDelegateFromUserId());
+        assertEquals("Principal", task.getDelegateFromUserName());
+    }
+
+    @Test
     void variableUpdateRejectsTerminalInstanceAndForgedOperator() {
         UpdateVariablesRequest request = new UpdateVariablesRequest();
         request.setOperationId("operation-variable");

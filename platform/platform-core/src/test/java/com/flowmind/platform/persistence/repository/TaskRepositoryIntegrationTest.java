@@ -153,6 +153,22 @@ class TaskRepositoryIntegrationTest {
     }
 
     @Test
+    void detectsClaimedSiblingOnlyInsideActiveOrSignGroup() {
+        insertTaskGroup("group-or", "OR_SIGN", 2, 0, "{}", 0L);
+        insertTaskGroup("group-counter", "COUNTERSIGN", 2, 0, "{}", 0L);
+        insertTask("task-open", "ACTIVE", 0L, "group-or");
+        insertTask("task-claimed", "CLAIMED", 1L, "group-or");
+        insertTask("task-counter-open", "ACTIVE", 0L, "group-counter");
+        insertTask("task-counter-claimed", "CLAIMED", 1L, "group-counter");
+
+        assertTrue(activeTaskRepository.hasClaimedSiblingInActiveOrSignGroup("task-open", "group-or"));
+        assertEquals(false, activeTaskRepository.hasClaimedSiblingInActiveOrSignGroup("task-counter-open", "group-counter"));
+
+        assertEquals(1, taskGroupRepository.cancel("group-or", 0L));
+        assertEquals(false, activeTaskRepository.hasClaimedSiblingInActiveOrSignGroup("task-open", "group-or"));
+    }
+
+    @Test
     void conflictCodeContractIsStable() {
         assertEquals("FLOW_TASK_CONCURRENT_MODIFIED",
                 RepositoryConflictCodes.TASK_CONCURRENT_MODIFIED);

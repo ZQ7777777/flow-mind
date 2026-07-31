@@ -67,6 +67,23 @@ class TaskClaimCoordinatorTest {
                 RuntimeErrorCodes.TASK_CLAIM_PERMISSION_DENIED);
     }
 
+    @Test
+    void claimRejectsOpenOrSignSiblingWhenGroupAlreadyHasClaimedTask() {
+        Fixture fixture = fixture();
+        ProcessActiveTaskEntity task = activeTask("ACTIVE", Long.valueOf(3), null);
+        task.setTaskGroupId("group-or");
+        when(fixture.activeTasks.findById("task-1")).thenReturn(task);
+        when(fixture.activeTasks.hasClaimedSiblingInActiveOrSignGroup("task-1", "group-or")).thenReturn(true);
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.claim(request()));
+
+        assertEquals(RuntimeErrorCodes.TASK_ALREADY_CLAIMED, error.getErrorCode());
+        verify(fixture.activeTasks, never()).claim(any(String.class), any(Long.class), any(String.class),
+                any(String.class));
+        verify(fixture.operations).markDeterministicFailure("op-claim", RuntimeErrorCodes.TASK_ALREADY_CLAIMED);
+    }
+
     private Fixture fixture() {
         ProcessInstanceRepository instances = mock(ProcessInstanceRepository.class);
         ActiveTaskRepository activeTasks = mock(ActiveTaskRepository.class);

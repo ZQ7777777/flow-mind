@@ -3,7 +3,6 @@ package com.flowmind.platform.web;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
-import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
@@ -16,6 +15,7 @@ import com.flowmind.platform.mock.InMemoryOrganizationProvider;
 import com.flowmind.platform.mock.MockAttachmentAccessProvider;
 import com.flowmind.platform.mock.RecordingMessagePublisher;
 import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
+import com.flowmind.platform.storage.LocalDiskFileStorageProvider;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.beans.factory.InitializingBean;
@@ -144,8 +144,13 @@ public class PlatformStandaloneConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public FileStorageProvider fileStorageProvider() {
-        return new InMemoryFileStorageProvider();
+    public FileStorageProvider fileStorageProvider(
+            @Value("${flow-mind.platform.file-storage.type:local-disk}") String storageType,
+            @Value("${flow-mind.platform.file-storage.local-root:./data/attachments}") String localRoot) {
+        if ("memory".equalsIgnoreCase(storageType) || "in-memory".equalsIgnoreCase(storageType)) {
+            return new InMemoryFileStorageProvider();
+        }
+        return new LocalDiskFileStorageProvider(localRoot);
     }
 
     @Bean
@@ -165,12 +170,6 @@ public class PlatformStandaloneConfiguration {
      *
      * @return 委托关系 SPI
      */
-    @Bean
-    @ConditionalOnMissingBean
-    public DelegateProvider delegateProvider() {
-        return (principalUserId, at) -> Collections.emptyList();
-    }
-
     @Bean
     @ConditionalOnMissingBean
     public OrganizationProvider organizationProvider() {
@@ -206,6 +205,10 @@ public class PlatformStandaloneConfiguration {
         private static final String M2_OPERATION_MIGRATION = "schema/sqlite/002_m2_runtime_operation_actions.sql";
         private static final String ATTACHMENT_OPERATION_MIGRATION =
                 "schema/sqlite/003_attachment_operation_actions.sql";
+        private static final String ATTACHMENT_REPLACE_OPERATION_MIGRATION =
+                "schema/sqlite/004_attachment_replace_operation_action.sql";
+        private static final String DELEGATE_FROM_USER_NAME_MIGRATION =
+                "schema/sqlite/005_delegate_from_user_name.sql";
 
         private final DataSource dataSource;
 
@@ -223,6 +226,14 @@ public class PlatformStandaloneConfiguration {
                 }
                 if (!schemaSupportsAttachmentActions(connection)) {
                     ScriptUtils.executeSqlScript(connection, new ClassPathResource(ATTACHMENT_OPERATION_MIGRATION));
+                }
+                if (!schemaSupportsAttachmentReplacement(connection)) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(ATTACHMENT_REPLACE_OPERATION_MIGRATION));
+                }
+                if (!tableHasColumn(connection, "process_active_task", "delegate_from_user_name")) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(DELEGATE_FROM_USER_NAME_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);
@@ -247,7 +258,17 @@ public class PlatformStandaloneConfiguration {
                     && tableSupportsAttachmentActions(connection, "process_audit_log");
         }
 
+        private boolean schemaSupportsAttachmentReplacement(Connection connection) throws Exception {
+            return tableContainsAction(connection, "process_operation_record", "ATTACHMENT_REPLACE")
+                    && tableContainsAction(connection, "process_audit_log", "ATTACHMENT_REPLACE");
+        }
+
         private boolean tableSupportsAttachmentActions(Connection connection, String tableName) throws Exception {
+            return tableContainsAction(connection, tableName, "ATTACHMENT_UPLOAD")
+                    && tableContainsAction(connection, tableName, "ATTACHMENT_DELETE");
+        }
+
+        private boolean tableContainsAction(Connection connection, String tableName, String action) throws Exception {
             try (Statement statement = connection.createStatement();
                  ResultSet resultSet = statement.executeQuery(
                          "SELECT sql FROM sqlite_master WHERE type = 'table' "
@@ -256,7 +277,19 @@ public class PlatformStandaloneConfiguration {
                     return false;
                 }
                 String definition = resultSet.getString("sql");
-                return definition.contains("ATTACHMENT_UPLOAD") && definition.contains("ATTACHMENT_DELETE");
+                return definition.contains(action);
+            }
+        }
+
+        private boolean tableHasColumn(Connection connection, String tableName, String columnName) throws Exception {
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + tableName + ")")) {
+                while (resultSet.next()) {
+                    if (columnName.equals(resultSet.getString("name"))) {
+                        return true;
+                    }
+                }
+                return false;
             }
         }
     }
@@ -276,7 +309,7 @@ public class PlatformStandaloneConfiguration {
                             request.getHeader("X-Flow-Dept-Id"), request.getHeader("X-Flow-Dept-Name"));
                 }
             }
-            return userContext("u_sales_01", null, "mock-dept", null);
+            return userContext("u_admin_01", null, "mock-dept", null);
         }
     }
 
@@ -318,11 +351,25 @@ public class PlatformStandaloneConfiguration {
     }
 
     private static String defaultDepartmentId(String userId) {
+        if ("u_sales_01".equals(userId) || "u_group_leader_01".equals(userId)
+                || "u_dept_manager_01".equals(userId)) {
+            return "dept_sales";
+        }
+        if ("u_dept_manager_02".equals(userId) || "u_finance_01".equals(userId)
+                || "u_finance_02".equals(userId)) {
+            return "dept_finance";
+        }
         return "mock-dept";
     }
 
     private static String displayDepartmentName(String departmentId) {
-        return "Mock Department";
+        if ("dept_sales".equals(departmentId)) {
+            return "销售部";
+        }
+        if ("dept_finance".equals(departmentId)) {
+            return "财务部";
+        }
+        return "默认部门";
     }
 
     private static String firstText(String first, String second) {

@@ -5,7 +5,6 @@ import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.spi.OrganizationProvider;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -109,24 +108,26 @@ public class InMemoryOrganizationProvider implements OrganizationProvider {
     }
 
     private void seedDefaults() {
-        addDepartment(new DepartmentDTO("mock-dept", "Mock Department", null));
+        addDepartment(new DepartmentDTO("dept_sales", "销售部", null));
+        addDepartment(new DepartmentDTO("dept_finance", "财务部", null));
+        addDepartment(new DepartmentDTO("mock-dept", "默认部门", null));
 
-        addUser(user("u_sales_01", "业务员", "mock-dept", "Mock Department",
+        addUser(user("u_sales_01", "业务员", "dept_sales", "销售部",
                 Collections.singletonList("sales")));
-        addUser(user("u_group_leader_01", "组长", "mock-dept", "Mock Department",
+        addUser(user("u_group_leader_01", "组长", "dept_sales", "销售部",
+                Collections.singletonList("group")));
+        addUser(user("u_dept_manager_01", "部门经理1", "dept_sales", "销售部经理",
                 Collections.singletonList("manager")));
-        addUser(user("u_dept_manager_01", "部门经理1", "mock-dept", "Mock Department",
+        addUser(user("u_dept_manager_02", "部门经理2", "dept_finance", "财务部经理",
                 Collections.singletonList("manager")));
-        addUser(user("u_dept_manager_02", "部门经理2", "mock-dept", "Mock Department",
-                Collections.singletonList("manager")));
-        addUser(user("u_finance_01", "财务1", "mock-dept", "Mock Department",
+        addUser(user("u_finance_01", "财务1", "dept_finance", "财务部",
                 Collections.singletonList("finance")));
-        addUser(user("u_finance_02", "财务2", "mock-dept", "Mock Department",
+        addUser(user("u_finance_02", "财务2", "dept_finance", "财务部",
                 Collections.singletonList("finance")));
         addUser(user("u_ceo_01", "CEO", "mock-dept", "Mock Department",
-                Arrays.asList("admin", "manager")));
+                Collections.singletonList("admin")));
         addUser(user("u_admin_01", "测试管理员", "mock-dept", "Mock Department",
-                Arrays.asList("admin", "manager")));
+                Collections.singletonList("admin")));
     }
 
     private static UserDTO user(String userId, String userName, String departmentId, String departmentName,

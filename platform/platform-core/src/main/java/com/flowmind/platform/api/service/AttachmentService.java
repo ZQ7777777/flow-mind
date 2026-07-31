@@ -9,6 +9,7 @@ import com.flowmind.platform.api.request.DeleteAttachmentRequest;
 import com.flowmind.platform.api.request.DownloadAttachmentRequest;
 import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
+import com.flowmind.platform.api.request.ReplaceInstanceAttachmentRequest;
 
 import java.util.List;
 
@@ -31,6 +32,14 @@ public interface AttachmentService {
      * @return 附件元数据
      */
     AttachmentDTO saveTaskAttachment(SaveTaskAttachmentRequest request);
+
+    /**
+     * 使用当前申请任务替换已有实例级附件。
+     *
+     * @param request 替换请求
+     * @return 新附件元数据
+     */
+    AttachmentDTO replaceInstanceAttachment(ReplaceInstanceAttachmentRequest request);
 
     /**
      * 下载附件。

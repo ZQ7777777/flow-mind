@@ -103,11 +103,11 @@ public class ProcessDefinitionAttachmentConfigManager {
             return groupIdResult;
         }
         if (safeConfigs.isEmpty()) {
-            attachmentConfigRepository.replaceDraftGroup(definitionId, groupId,
+            attachmentConfigRepository.replaceOnlySpecifiedDraftGroup(definitionId, groupId,
                     new ArrayList<ProcessDefinitionAttachmentConfigEntity>());
             return result;
         }
-        attachmentConfigRepository.replaceDraftGroup(definitionId, groupId,
+        attachmentConfigRepository.replaceOnlySpecifiedDraftGroup(definitionId, groupId,
                 toEntities(definitionId, groupId, safeConfigs, operatorUserId));
         return result;
     }
@@ -205,10 +205,34 @@ public class ProcessDefinitionAttachmentConfigManager {
                 groupIds.add(entity.getAttachmentConfigId());
             }
         }
-        if (groupIds.size() != 1) {
+        if (groupIds.size() != 1 && !allGeneratedGroupIds(groupIds)) {
             return invalidResult("definition must have exactly one draft attachment configuration group");
         }
-        return activateGroup(definitionId, groupIds.iterator().next(), currentNodes, operatorUserId);
+        return activateGroup(definitionId,
+                groupIds.size() == 1 ? groupIds.iterator().next() : latestGroupId(groupIds),
+                currentNodes, operatorUserId);
+    }
+
+    private boolean allGeneratedGroupIds(Set<String> groupIds) {
+        if (groupIds == null || groupIds.isEmpty()) {
+            return false;
+        }
+        for (String groupId : groupIds) {
+            if (isBlank(groupId) || !groupId.contains(":attachment-config:")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String latestGroupId(Set<String> groupIds) {
+        String latest = null;
+        for (String groupId : groupIds) {
+            if (latest == null || groupId.compareTo(latest) > 0) {
+                latest = groupId;
+            }
+        }
+        return latest;
     }
 
     /**

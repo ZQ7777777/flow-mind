@@ -1,7 +1,6 @@
 package com.flowmind.platform.persistence.repository;
 
 import com.flowmind.platform.api.dto.AdminTaskQuery;
-import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
 import com.flowmind.platform.persistence.entity.TaskQueryEntity;
@@ -39,6 +38,7 @@ public class ActiveTaskRepository {
                     entity.setAssigneeUserId(resultSet.getString("assignee_user_id"));
                     entity.setAssigneeUserName(resultSet.getString("assignee_user_name"));
                     entity.setDelegateFromUserId(resultSet.getString("delegate_from_user_id"));
+                    entity.setDelegateFromUserName(resultSet.getString("delegate_from_user_name"));
                     entity.setTaskStatus(resultSet.getString("task_status"));
                     entity.setTaskGroupId(resultSet.getString("task_group_id"));
                     entity.setBranchKey(resultSet.getString("branch_key"));
@@ -90,14 +90,14 @@ public class ActiveTaskRepository {
     public int insert(ProcessActiveTaskEntity entity) {
         return jdbcTemplate.update("INSERT INTO process_active_task "
                         + "(id, instance_id, definition_id, node_code, candidate_user_ids, assignee_user_id, "
-                        + "assignee_user_name, delegate_from_user_id, task_status, task_group_id, branch_key, "
-                        + "lock_version, created_at, due_at) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'ACTIVE'), ?, ?, "
+                        + "assignee_user_name, delegate_from_user_id, delegate_from_user_name, task_status, "
+                        + "task_group_id, branch_key, lock_version, created_at, due_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'ACTIVE'), ?, ?, "
                         + "COALESCE(?, 0), COALESCE(?, datetime('now')), ?)",
                 entity.getId(), entity.getInstanceId(), entity.getDefinitionId(), entity.getNodeCode(),
                 entity.getCandidateUserIds(), entity.getAssigneeUserId(), entity.getAssigneeUserName(),
-                entity.getDelegateFromUserId(), entity.getTaskStatus(), entity.getTaskGroupId(),
-                entity.getBranchKey(), entity.getLockVersion(),
+                entity.getDelegateFromUserId(), entity.getDelegateFromUserName(), entity.getTaskStatus(),
+                entity.getTaskGroupId(), entity.getBranchKey(), entity.getLockVersion(),
                 DefinitionRowMappers.toDbString(entity.getCreatedAt()),
                 DefinitionRowMappers.toDbString(entity.getDueAt()));
     }
@@ -166,15 +166,14 @@ public class ActiveTaskRepository {
 
     /** 查询当前用户的待办任务读模型。 */
     public List<TaskQueryEntity> queryTodoTasks(TodoTaskQuery query,
-                                                String currentUserId,
-                                                List<DelegateRelationDTO> delegates) {
+                                                String currentUserId) {
         int pageNo = com.flowmind.platform.core.query.PageQueryNormalizer.normalizePageNo(query.getPageNo());
         int pageSize = com.flowmind.platform.core.query.PageQueryNormalizer.normalizePageSize(query.getPageSize());
         List<Object> params = new ArrayList<Object>();
         StringBuilder sql = new StringBuilder();
-        appendTodoCte(sql, params, currentUserId, delegates);
+        appendTodoCte(sql, params, currentUserId);
         sql.append("SELECT * FROM ranked WHERE rn = 1 ");
-        appendTodoFilters(sql, params, query);
+        appendTodoFilters(sql, params, query, currentUserId);
         appendTodoOrder(sql, query);
         sql.append(" LIMIT ? OFFSET ?");
         params.add(Integer.valueOf(pageSize));
@@ -183,12 +182,12 @@ public class ActiveTaskRepository {
     }
 
     /** 统计当前用户待办任务数量。 */
-    public long countTodoTasks(TodoTaskQuery query, String currentUserId, List<DelegateRelationDTO> delegates) {
+    public long countTodoTasks(TodoTaskQuery query, String currentUserId) {
         List<Object> params = new ArrayList<Object>();
         StringBuilder sql = new StringBuilder();
-        appendTodoCte(sql, params, currentUserId, delegates);
+        appendTodoCte(sql, params, currentUserId);
         sql.append("SELECT COUNT(1) FROM ranked WHERE rn = 1 ");
-        appendTodoFilters(sql, params, query);
+        appendTodoFilters(sql, params, query, currentUserId);
         Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
         return count == null ? 0L : count.longValue();
     }
@@ -199,7 +198,7 @@ public class ActiveTaskRepository {
                         + "i.process_code, i.process_name, i.instance_title, i.starter_user_id, "
                         + "i.starter_user_name, t.node_code, n.node_name, t.candidate_user_ids, "
                         + "t.assignee_user_id, t.assignee_user_name, t.delegate_from_user_id, "
-                        + "NULL AS delegate_from_user_name, t.task_group_id, t.branch_key, t.task_status, "
+                        + "t.delegate_from_user_name, t.task_group_id, t.branch_key, t.task_status, "
                         + "t.lock_version, t.created_at, t.due_at "
                         + "FROM process_active_task t "
                         + "JOIN process_instance i ON i.id = t.instance_id "
@@ -262,6 +261,19 @@ public class ActiveTaskRepository {
                 id, expectedLockVersion);
     }
 
+    /** 判断同一个活动或签组内是否已有其他任务被认领。 */
+    public boolean hasClaimedSiblingInActiveOrSignGroup(String taskId, String taskGroupId) {
+        if (isBlank(taskId) || isBlank(taskGroupId)) {
+            return false;
+        }
+        Long count = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM process_active_task s "
+                        + "JOIN process_task_group g ON g.id = s.task_group_id "
+                        + "WHERE s.task_group_id = ? AND s.id <> ? AND s.task_status = 'CLAIMED' "
+                        + "AND g.group_type = 'OR_SIGN' AND g.group_status = 'ACTIVE'",
+                Long.class, taskGroupId, taskId);
+        return count != null && count.longValue() > 0L;
+    }
+
     /** 在 ACTIVE 或 CLAIMED 状态下原子变更任务办理人。 */
     public int transfer(String id, long expectedLockVersion, String assigneeUserId, String assigneeUserName) {
         return jdbcTemplate.update(
@@ -269,6 +281,18 @@ public class ActiveTaskRepository {
                         + "SET assignee_user_id = ?, assignee_user_name = ?, lock_version = lock_version + 1 "
                         + "WHERE id = ? AND task_status IN ('ACTIVE', 'CLAIMED') AND lock_version = ?",
                 assigneeUserId, assigneeUserName, id, expectedLockVersion);
+    }
+
+    /** Mark an open task as delegated to the target assignee. */
+    public int delegateTask(String id, long expectedLockVersion, String assigneeUserId,
+                            String assigneeUserName, String delegateFromUserId, String delegateFromUserName) {
+        return jdbcTemplate.update(
+                "UPDATE process_active_task "
+                        + "SET assignee_user_id = ?, assignee_user_name = ?, delegate_from_user_id = ?, "
+                        + "delegate_from_user_name = ?, "
+                        + "lock_version = lock_version + 1 "
+                        + "WHERE id = ? AND task_status IN ('ACTIVE', 'CLAIMED') AND lock_version = ?",
+                assigneeUserId, assigneeUserName, delegateFromUserId, delegateFromUserName, id, expectedLockVersion);
     }
 
     private int updateTerminalStatus(String id, long expectedLockVersion, String targetStatus) {
@@ -280,51 +304,32 @@ public class ActiveTaskRepository {
 
     private void appendTodoCte(StringBuilder sql,
                                List<Object> params,
-                               String currentUserId,
-                               List<DelegateRelationDTO> delegates) {
-        sql.append("WITH delegate_source(principal_user_id, principal_user_name) AS (");
-        if (delegates == null || delegates.isEmpty()) {
-            sql.append("SELECT NULL AS principal_user_id, NULL AS principal_user_name WHERE 1 = 0");
-        } else {
-            for (int i = 0; i < delegates.size(); i++) {
-                if (i > 0) {
-                    sql.append(" UNION ALL ");
-                }
-                sql.append("SELECT ? AS principal_user_id, ? AS principal_user_name");
-                params.add(delegates.get(i).getPrincipalUserId());
-                params.add(delegates.get(i).getPrincipalUserName());
-            }
-        }
-        sql.append("), candidate_sources AS (");
-        appendTodoSourceSelect(sql, "1", "NULL", "NULL");
+                               String currentUserId) {
+        sql.append("WITH candidate_sources AS (");
+        appendTodoSourceSelect(sql, "1");
         sql.append(" WHERE t.assignee_user_id = ? AND t.task_status IN ('ACTIVE', 'CLAIMED') ");
         params.add(currentUserId);
         sql.append("UNION ALL ");
-        appendTodoSourceSelect(sql, "2", "NULL", "NULL");
+        appendTodoSourceSelect(sql, "2");
         sql.append(" WHERE t.task_status = 'ACTIVE' AND t.candidate_user_ids IS NOT NULL "
-                + "AND EXISTS (SELECT 1 FROM json_each(t.candidate_user_ids) c WHERE c.value = ?) ");
+                + "AND EXISTS (SELECT 1 FROM json_each(t.candidate_user_ids) c WHERE c.value = ?) "
+                + "AND NOT EXISTS (SELECT 1 FROM process_active_task s "
+                + "JOIN process_task_group g ON g.id = s.task_group_id "
+                + "WHERE s.task_group_id = t.task_group_id AND s.id <> t.id "
+                + "AND s.task_status = 'CLAIMED' AND g.group_type = 'OR_SIGN' "
+                + "AND g.group_status = 'ACTIVE') ");
         params.add(currentUserId);
-        sql.append("UNION ALL ");
-        appendTodoSourceSelect(sql, "3", "d.principal_user_id", "d.principal_user_name");
-        sql.append(" JOIN delegate_source d ON (t.assignee_user_id = d.principal_user_id "
-                + "OR (t.task_status = 'ACTIVE' AND t.candidate_user_ids IS NOT NULL "
-                + "AND EXISTS (SELECT 1 FROM json_each(t.candidate_user_ids) c "
-                + "WHERE c.value = d.principal_user_id))) "
-                + "WHERE t.task_status IN ('ACTIVE', 'CLAIMED') "
-                + "), ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY task_id "
+        sql.append("), ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY task_id "
                 + "ORDER BY source_priority ASC) AS rn FROM candidate_sources) ");
     }
 
     private void appendTodoSourceSelect(StringBuilder sql,
-                                        String sourcePriority,
-                                        String delegateFromUserId,
-                                        String delegateFromUserName) {
+                                        String sourcePriority) {
         sql.append("SELECT ").append(sourcePriority).append(" AS source_priority, ")
                 .append("t.id AS task_id, t.instance_id, t.definition_id, i.process_code, i.process_name, ")
                 .append("i.instance_title, i.starter_user_id, i.starter_user_name, t.node_code, n.node_name, ")
                 .append("t.candidate_user_ids, t.assignee_user_id, t.assignee_user_name, ")
-                .append(delegateFromUserId).append(" AS delegate_from_user_id, ")
-                .append(delegateFromUserName).append(" AS delegate_from_user_name, ")
+                .append("t.delegate_from_user_id, t.delegate_from_user_name, ")
                 .append("t.task_group_id, t.branch_key, t.task_status, t.lock_version, t.created_at, t.due_at ")
                 .append("FROM process_active_task t ")
                 .append("JOIN process_instance i ON i.id = t.instance_id ")
@@ -336,7 +341,7 @@ public class ActiveTaskRepository {
                 + "i.process_code, i.process_name, i.instance_title, i.starter_user_id, "
                 + "i.starter_user_name, t.node_code, n.node_name, t.candidate_user_ids, "
                 + "t.assignee_user_id, t.assignee_user_name, t.delegate_from_user_id, "
-                + "NULL AS delegate_from_user_name, t.task_group_id, t.branch_key, t.task_status, "
+                + "t.delegate_from_user_name, t.task_group_id, t.branch_key, t.task_status, "
                 + "t.lock_version, t.created_at, t.due_at "
                 + "FROM process_active_task t "
                 + "JOIN process_instance i ON i.id = t.instance_id "
@@ -391,7 +396,8 @@ public class ActiveTaskRepository {
         }
     }
 
-    private void appendTodoFilters(StringBuilder sql, List<Object> params, TodoTaskQuery query) {
+    private void appendTodoFilters(StringBuilder sql, List<Object> params, TodoTaskQuery query,
+                                   String currentUserId) {
         if (!isBlank(query.getProcessCode())) {
             sql.append("AND process_code = ? ");
             params.add(query.getProcessCode());
@@ -415,6 +421,12 @@ public class ActiveTaskRepository {
         if (!isBlank(query.getTaskStatus())) {
             sql.append("AND task_status = ? ");
             params.add(query.getTaskStatus());
+        }
+        if ("OWN".equalsIgnoreCase(query.getTodoSource())) {
+            sql.append("AND delegate_from_user_id IS NULL ");
+        } else if ("DELEGATED".equalsIgnoreCase(query.getTodoSource())) {
+            sql.append("AND delegate_from_user_id IS NOT NULL AND assignee_user_id = ? ");
+            params.add(currentUserId);
         }
         if (query.getCreatedFrom() != null) {
             sql.append("AND created_at >= ? ");
