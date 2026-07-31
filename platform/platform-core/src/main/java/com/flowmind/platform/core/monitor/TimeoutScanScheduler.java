@@ -23,8 +23,8 @@ public class TimeoutScanScheduler implements InitializingBean, DisposableBean {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(TimeoutScanScheduler.class);
     public static final String DEFAULT_OPERATOR_USER_ID = "system_timeout";
-    public static final long DEFAULT_INITIAL_DELAY_MILLIS = 5000L;
-    public static final long DEFAULT_FIXED_DELAY_MILLIS = 10000L;
+//    public static final long DEFAULT_INITIAL_DELAY_MILLIS = 50000L;
+    public static final long DEFAULT_FIXED_DELAY_MILLIS = 100L;
     public static final int DEFAULT_LIMIT = 50;
 
     private final ProcessMonitorService monitorService;
