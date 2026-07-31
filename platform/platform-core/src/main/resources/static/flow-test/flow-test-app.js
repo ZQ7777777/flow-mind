@@ -383,7 +383,7 @@
             timeoutEnabled: timeout.enabled === true,
             timeoutDurationMinutes: timeout.durationMinutes === undefined || timeout.durationMinutes === null
                 ? 0 : Number(timeout.durationMinutes),
-            timeoutAction: timeout.action || "REMIND",
+            timeoutAction: normalizeTimeoutAction(timeout.action),
             timeoutSeverity: timeout.severity || "MEDIUM",
             timeoutTargetNodeCode: timeout.targetNodeCode || "",
             reminderEnabled: reminder.enabled === true,
@@ -392,6 +392,18 @@
             reminderMessageTemplate: reminder.messageTemplate || "任务已超时，请尽快处理",
             timeoutConfigError: timeoutParsed.error || reminderParsed.error
         };
+    }
+
+    function normalizeTimeoutAction(value) {
+        var action = hasText(value) ? String(value).trim().toUpperCase().replace(/[\s-]+/g, "_") : "REMIND";
+        if (action === "WARNING" || action === "WARN") {
+            return "ALERT";
+        }
+        if (action === "FORCE_COMPETE" || action === "FROCE_COMPETE" || action === "FORCE_COMPELETE"
+                || action === "FORCE_COMPLETED") {
+            return "FORCE_COMPLETE";
+        }
+        return action;
     }
 
     function applyTimeoutReminderEditor(node) {
@@ -2988,7 +3000,8 @@
                     node.timeoutConfigError = "超时时长必须为非负数";
                     return false;
                 }
-                if (node.timeoutEnabled && node.timeoutAction === "JUMP" && !hasText(node.timeoutTargetNodeCode)) {
+                var normalizedAction = normalizeTimeoutAction(node.timeoutAction);
+                if (node.timeoutEnabled && normalizedAction === "JUMP" && !hasText(node.timeoutTargetNodeCode)) {
                     node.timeoutConfigError = "超时动作选择 JUMP 时必须选择目标节点";
                     return false;
                 }
@@ -2997,10 +3010,17 @@
                     return false;
                 }
                 if (node.timeoutEnabled) {
+                    var timeoutAction = normalizedAction;
+                    var supportedActions = ["REMIND", "ALERT", "JUMP", "TERMINATE", "FORCE_COMPLETE"];
+                    if (supportedActions.indexOf(timeoutAction) < 0) {
+                        node.timeoutConfigError = "超时动作不支持：" + node.timeoutAction;
+                        return false;
+                    }
+                    node.timeoutAction = timeoutAction;
                     var timeoutConfig = {
                         enabled: true,
                         durationMinutes: duration,
-                        action: node.timeoutAction || "REMIND"
+                        action: timeoutAction
                     };
                     if (hasText(node.timeoutSeverity)) {
                         timeoutConfig.severity = node.timeoutSeverity;

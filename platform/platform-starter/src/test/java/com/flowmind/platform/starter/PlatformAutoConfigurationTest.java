@@ -37,6 +37,7 @@ import com.flowmind.platform.core.monitor.ReminderDeduplicationGuard;
 import com.flowmind.platform.core.monitor.ReminderPolicyReader;
 import com.flowmind.platform.core.monitor.TimeoutActionExecutor;
 import com.flowmind.platform.core.monitor.TimeoutPolicyReader;
+import com.flowmind.platform.core.monitor.TimeoutScanScheduler;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.runtime.AdminPermissionGuard;
@@ -103,6 +104,7 @@ class PlatformAutoConfigurationTest {
             assertThat(context).hasSingleBean(ProcessNodeRepository.class);
             assertThat(context).hasSingleBean(ProcessCallbackLogRepository.class);
             assertThat(context).hasSingleBean(TimeoutPolicyReader.class);
+            assertThat(context).hasSingleBean(TimeoutScanScheduler.class);
             assertThat(context).hasSingleBean(ReminderPolicyReader.class);
             assertThat(context).hasSingleBean(ReminderDeduplicationGuard.class);
             assertThat(context).hasSingleBean(ActionExceptionAlertWriter.class);
@@ -128,6 +130,13 @@ class PlatformAutoConfigurationTest {
             assertThat(context).hasSingleBean(ApproverResolver.class);
             assertThat(context.getBean(ApproverResolver.class)).isInstanceOf(DefaultApproverResolver.class);
         });
+    }
+
+    @Test
+    void timeoutScanSchedulerCanBeDisabledByConfiguration() {
+        contextRunnerWithDatabase("timeout-scheduler-disabled.db")
+                .withPropertyValues("flow-mind.platform.timeout-scan.enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean(TimeoutScanScheduler.class));
     }
 
     @Test

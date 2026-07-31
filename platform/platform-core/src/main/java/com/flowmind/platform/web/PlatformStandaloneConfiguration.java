@@ -8,6 +8,8 @@ import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.api.spi.WorkflowCallbackHandler;
+import com.flowmind.platform.api.service.ProcessMonitorService;
+import com.flowmind.platform.core.monitor.TimeoutScanScheduler;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
@@ -18,6 +20,7 @@ import com.flowmind.platform.mock.RecordingWorkflowCallbackHandler;
 import com.flowmind.platform.storage.LocalDiskFileStorageProvider;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -163,6 +166,19 @@ public class PlatformStandaloneConfiguration {
     @ConditionalOnMissingBean
     public WorkflowCallbackHandler workflowCallbackHandler() {
         return new RecordingWorkflowCallbackHandler();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "flow-mind.platform.timeout-scan", name = "enabled", havingValue = "true",
+            matchIfMissing = true)
+    public TimeoutScanScheduler timeoutScanScheduler(
+            ProcessMonitorService monitorService,
+            @Value("${flow-mind.platform.timeout-scan.initial-delay-ms:5000}") long initialDelayMs,
+            @Value("${flow-mind.platform.timeout-scan.fixed-delay-ms:10000}") long fixedDelayMs,
+            @Value("${flow-mind.platform.timeout-scan.limit:50}") int limit,
+            @Value("${flow-mind.platform.timeout-scan.operator-user-id:system_timeout}") String operatorUserId) {
+        return new TimeoutScanScheduler(monitorService, true, initialDelayMs, fixedDelayMs, limit, operatorUserId);
     }
 
     /**

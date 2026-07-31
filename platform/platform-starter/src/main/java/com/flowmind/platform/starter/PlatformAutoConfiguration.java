@@ -49,6 +49,7 @@ import com.flowmind.platform.core.monitor.MonitorModelMapper;
 import com.flowmind.platform.core.monitor.ReminderDeduplicationGuard;
 import com.flowmind.platform.core.monitor.ReminderPolicyReader;
 import com.flowmind.platform.core.monitor.TimeoutActionExecutor;
+import com.flowmind.platform.core.monitor.TimeoutScanScheduler;
 import com.flowmind.platform.core.monitor.TimeoutPolicyReader;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.runtime.AdminPermissionGuard;
@@ -407,6 +408,18 @@ public class PlatformAutoConfiguration {
                 alertRepository, requestValidator, operationExecutor, transactionExecutor, auditLogWriter, publisher,
                 processNodeRepository, timeoutPolicyReader, reminderPolicyReader, reminderDeduplicationGuard,
                 timeoutActionExecutor.getIfAvailable(), actionExceptionAlertWriter, adminPermissionGuard);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "flow-mind.platform.timeout-scan", name = "enabled", havingValue = "true",
+            matchIfMissing = true)
+    public TimeoutScanScheduler timeoutScanScheduler(ProcessMonitorService monitorService,
+                                                     PlatformProperties properties) {
+        PlatformProperties.TimeoutScan timeoutScan = properties.getTimeoutScan();
+        return new TimeoutScanScheduler(monitorService, timeoutScan.isEnabled(),
+                timeoutScan.getInitialDelayMs(), timeoutScan.getFixedDelayMs(),
+                timeoutScan.getLimit(), timeoutScan.getOperatorUserId());
     }
 
     @Bean

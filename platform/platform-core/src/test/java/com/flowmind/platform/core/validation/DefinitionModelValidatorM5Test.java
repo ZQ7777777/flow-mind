@@ -219,6 +219,56 @@ class DefinitionModelValidatorM5Test {
                 "review", null);
     }
 
+    @Test
+    void acceptsTimeoutAndReminderConfigOnUserTask() {
+        ProcessNodeDTO draft = userTask("draft");
+        ProcessNodeDTO review = userTask("review");
+        review.setTimeoutConfig("{\"enabled\":true,\"durationMinutes\":30,\"action\":\"JUMP\","
+                + "\"severity\":\"HIGH\",\"targetNodeCode\":\"draft\"}");
+        review.setReminderConfig("{\"enabled\":true,\"maxCount\":2,"
+                + "\"messageTemplate\":\"任务已超时，请尽快处理\"}");
+        ProcessDefinitionDetailDTO definition = definition(
+                nodes(start("start"), draft, review, end("end")),
+                edges(edge("e1", "start", "draft"), edge("e2", "draft", "review"),
+                        edge("e3", "review", "end")));
+
+        ValidationResult result = validator.validate(definition);
+
+        assertTrue(result.isValid());
+        assertTrue(result.getIssues().isEmpty());
+    }
+
+    @Test
+    void rejectsTimeoutJumpTargetThatIsNotAnotherUserTask() {
+        ProcessNodeDTO review = userTask("review");
+        review.setTimeoutConfig("{\"enabled\":true,\"durationMinutes\":30,\"action\":\"JUMP\","
+                + "\"targetNodeCode\":\"end\"}");
+        ProcessDefinitionDetailDTO definition = definition(
+                nodes(start("start"), review, end("end")),
+                edges(edge("e1", "start", "review"), edge("e2", "review", "end")));
+
+        ValidationResult result = validator.validate(definition);
+
+        assertFalse(result.isValid());
+        assertHasIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                "review", null);
+    }
+
+    @Test
+    void rejectsEnabledReminderWithoutEnabledTimeout() {
+        ProcessNodeDTO review = userTask("review");
+        review.setReminderConfig("{\"enabled\":true,\"maxCount\":1}");
+        ProcessDefinitionDetailDTO definition = definition(
+                nodes(start("start"), review, end("end")),
+                edges(edge("e1", "start", "review"), edge("e2", "review", "end")));
+
+        ValidationResult result = validator.validate(definition);
+
+        assertFalse(result.isValid());
+        assertHasIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                "review", null);
+    }
+
     private static ProcessDefinitionDetailDTO definition(java.util.List<ProcessNodeDTO> nodes,
                                                          java.util.List<ProcessEdgeDTO> edges) {
         ProcessDefinitionDetailDTO definition = new ProcessDefinitionDetailDTO();
