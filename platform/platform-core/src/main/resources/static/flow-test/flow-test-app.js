@@ -33,6 +33,9 @@
         taskAddSign: "/api/platform/runtime/tasks/add-sign",
         taskClaim: "/api/platform/runtime/tasks/claim",
         taskUnclaim: "/api/platform/runtime/tasks/unclaim",
+        remindTask: function (taskId) {
+            return "/api/platform/tasks/" + encodeURIComponent(taskId) + "/remind";
+        },
         directSendContext: function (taskId) {
             return "/api/platform/tasks/" + encodeURIComponent(taskId) + "/direct-send-context";
         },
@@ -612,6 +615,9 @@
                     return row.attachmentConfigs;
                 }
                 return this.selectedAttachmentConfigs;
+            },
+            selectedInstanceActiveTasks: function () {
+                return normalizeList(this.selectedInstanceDetail && this.selectedInstanceDetail.activeTasks);
             }
         },
         mounted: function () {
@@ -1286,10 +1292,19 @@
                     var startBody = this.buildStartSubmitBody();
                     this.sendRequest("启动流程", "POST", API_PATHS.startAndSubmit, startBody).then(function (instance) {
                         this.lastStartedInstanceId = extractInstanceId(instance) || "";
-                        this.setOperationState("success", "启动并提交成功", "实例已创建并提交申请节点");
-                        this.queryInstances();
-                        this.queryTodoTasks();
-                        return instance;
+                        return this.autoClaimSpecifiedUserTasks(instance).then(function (claimedCount) {
+                            return Promise.all([
+                                this.queryInstances(),
+                                this.queryTodoTasks()
+                            ]).then(function () {
+                                var message = "实例已创建并提交申请节点";
+                                if (claimedCount > 0) {
+                                    message += " Auto-claimed " + claimedCount + " specified-user task(s).";
+                                }
+                                this.setOperationState("success", "启动并提交成功", message);
+                                return instance;
+                            }.bind(this));
+                        }.bind(this));
                     }.bind(this)).catch(function (error) {
                         this.setOperationState("error", "启动并提交失败", error.message);
                     }.bind(this)).then(function () {
@@ -1428,6 +1443,68 @@
                     return task.nodeCode === "apply" || task.nodeCode === "APPLY";
                 }) || tasks[0];
             },
+            autoClaimSpecifiedUserTasks: function (instance) {
+                var tasks = normalizeList(instance && (instance.createdTasks || instance.tasks));
+                if (tasks.length === 0) {
+                    return Promise.resolve(0);
+                }
+                return this.loadDefinitionForAutoClaim(instance, tasks).then(function (definition) {
+                    var claimableTasks = tasks.filter(function (task) {
+                        return this.isSpecifiedUserTask(task, definition) && this.canClaimTask(task);
+                    }, this);
+                    if (claimableTasks.length === 0) {
+                        return 0;
+                    }
+                    return claimableTasks.reduce(function (chain, task) {
+                        return chain.then(function (claimedCount) {
+                            return this.autoClaimTask(task).then(function () {
+                                return claimedCount + 1;
+                            });
+                        }.bind(this));
+                    }.bind(this), Promise.resolve(0));
+                }.bind(this));
+            },
+            loadDefinitionForAutoClaim: function (instance, tasks) {
+                var definitionId = (instance && instance.definitionId)
+                    || (tasks[0] && tasks[0].definitionId)
+                    || this.instanceForm.definitionId;
+                if (!hasText(definitionId)) {
+                    return Promise.resolve(this.selectedDefinitionDetail || {});
+                }
+                if (this.selectedDefinitionDetail
+                        && extractDefinitionId(this.selectedDefinitionDetail) === definitionId) {
+                    return Promise.resolve(this.selectedDefinitionDetail);
+                }
+                return this.sendRequest("Load definition for auto claim", "GET",
+                    API_PATHS.definitionDetail(definitionId)).then(function (definition) {
+                    this.selectedDefinitionId = definitionId;
+                    this.selectedDefinitionDetail = definition || {};
+                    return this.selectedDefinitionDetail;
+                }.bind(this));
+            },
+            isSpecifiedUserTask: function (task, definition) {
+                var node = normalizeList(definition && definition.nodes).find(function (candidate) {
+                    return candidate.nodeCode === task.nodeCode;
+                });
+                return Boolean(node && node.approverRuleType === "USER");
+            },
+            autoClaimTask: function (task) {
+                var taskId = extractTaskId(task);
+                var body = {
+                    operationId: this.createOperationId("auto_claim"),
+                    taskId: taskId,
+                    expectedTaskVersion: extractTaskVersion(task),
+                    operatorUserId: this.currentUserId,
+                    comment: ""
+                };
+                return this.sendRequest("Auto claim", "POST", API_PATHS.taskClaim, body).then(function (payload) {
+                    var updatedTask = this.extractUpdatedTask(payload, taskId);
+                    if (updatedTask) {
+                        this.replaceTodoTask(updatedTask);
+                    }
+                    return payload;
+                }.bind(this));
+            },
             queryInstances: function () {
                 return this.sendRequest("查询实例", "GET", API_PATHS.startedInstances + toQuery({
                     starterUserId: this.currentUserId,
@@ -1443,8 +1520,23 @@
                 if (!instanceId) {
                     return;
                 }
-                this.sendRequest("查询实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
-                    this.selectedInstanceDetail = payload;
+                return this.loadSelectedInstanceDetail(instanceId);
+            },
+            loadSelectedInstanceDetail: function (instanceId) {
+                return this.sendRequest("查询实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
+                    var detail = payload || {};
+                    var activeTasks = normalizeList(detail.activeTasks);
+                    if (activeTasks.length > 0 || asArray(detail.currentNodeCodes).length === 0) {
+                        this.selectedInstanceDetail = detail;
+                        return detail;
+                    }
+                    return this.sendRequest("查询当前活动任务", "GET", API_PATHS.activeTasks(instanceId))
+                        .then(function (tasksPayload) {
+                            this.selectedInstanceDetail = Object.assign({}, detail, {
+                                activeTasks: normalizeList(tasksPayload)
+                            });
+                            return this.selectedInstanceDetail;
+                        }.bind(this));
                 }.bind(this));
             },
             queryTodoTasks: function () {
@@ -1587,6 +1679,20 @@
             canHandleTask: function (task) {
                 return this.isTaskClaimedByCurrentUser(task);
             },
+            canRemindInstanceTask: function (task) {
+                return !!(task && extractTaskId(task));
+            },
+            currentInstanceNodeCodes: function (row) {
+                return asArray(row && row.currentNodeCodes).filter(hasText);
+            },
+            canRemindInstanceNode: function (row, nodeCode) {
+                return !!(row && extractInstanceId(row) && hasText(nodeCode));
+            },
+            findInstanceActiveTaskByNode: function (tasks, nodeCode) {
+                return normalizeList(tasks).find(function (task) {
+                    return task && task.nodeCode === nodeCode && extractTaskId(task);
+                });
+            },
             taskClaimStatusText: function (task) {
                 return this.isTaskClaimed(task) ? "已认领" : "未认领";
             },
@@ -1607,6 +1713,52 @@
             },
             unclaimCurrentTask: function () {
                 this.unclaimTask(this.taskDialog.task);
+            },
+            remindInstanceTask: function (task) {
+                var taskId = extractTaskId(task);
+                var instanceId = task && task.instanceId;
+                if (!hasText(taskId)) {
+                    this.setOperationState("error", "手动催办失败", "缺少任务 ID");
+                    return Promise.resolve(null);
+                }
+                var body = {
+                    operationId: this.createOperationId("remind"),
+                    taskId: taskId,
+                    expectedTaskVersion: extractTaskVersion(task),
+                    operatorUserId: this.currentUserId
+                };
+                return this.sendRequest("手动催办", "POST", API_PATHS.remindTask(taskId), body).then(function (payload) {
+                    var refresh = hasText(instanceId)
+                        ? this.loadSelectedInstanceDetail(instanceId)
+                        : Promise.resolve(null);
+                    return refresh.then(function () {
+                        return this.queryInstances().then(function () {
+                            var reminderId = payload && (payload.reminderId || payload.id);
+                            this.setOperationState("success", "手动催办成功", reminderId || taskId);
+                            return payload;
+                        }.bind(this));
+                    }.bind(this));
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "手动催办失败", error.message);
+                }.bind(this));
+            },
+            remindInstanceNode: function (row, nodeCode) {
+                var instanceId = extractInstanceId(row);
+                if (!hasText(instanceId) || !hasText(nodeCode)) {
+                    this.setOperationState("error", "手动催办失败", "缺少实例 ID 或节点编码");
+                    return Promise.resolve(null);
+                }
+                return this.loadSelectedInstanceDetail(instanceId).then(function (detail) {
+                    var task = this.findInstanceActiveTaskByNode(detail && detail.activeTasks, nodeCode);
+                    if (!task) {
+                        this.setOperationState("error", "手动催办失败", "当前节点未找到活动任务");
+                        return null;
+                    }
+                    task.instanceId = task.instanceId || instanceId;
+                    return this.remindInstanceTask(task);
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "手动催办失败", error.message);
+                }.bind(this));
             },
             submitTaskClaimAction: function (label, path, task) {
                 var taskId = extractTaskId(task);

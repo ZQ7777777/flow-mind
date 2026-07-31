@@ -200,6 +200,37 @@
                                 </tbody>
                             </table>
                         </div>
+                        <section v-if="selectedInstanceDetail" class="instance-detail-card">
+                            <div class="card-title">
+                                <h3>当前节点</h3>
+                                <span>{{ selectedInstanceDetail.instanceTitle || selectedInstanceDetail.instanceId }}</span>
+                            </div>
+                            <div class="active-task-list">
+                                <div v-if="selectedInstanceActiveTasks.length === 0" class="empty-cell">暂无当前活动任务</div>
+                                <article v-for="task in selectedInstanceActiveTasks"
+                                         :key="task.taskId || task.id"
+                                         class="active-task-item">
+                                    <div class="active-task-main">
+                                        <strong>{{ task.nodeName || task.nodeCode || '-' }}</strong>
+                                        <span>{{ task.taskId || task.id }}</span>
+                                    </div>
+                                    <div class="active-task-meta">
+                                        <span>候选人：{{ joinList(task.candidateUserIds) || '-' }}</span>
+                                        <span>办理人：{{ taskAssigneeText(task) }}</span>
+                                        <span>状态：{{ task.taskStatus || '-' }}</span>
+                                        <span>到期：{{ formatDateTime(task.dueAt) }}</span>
+                                    </div>
+                                    <div class="active-task-actions">
+                                        <button type="button"
+                                                class="primary"
+                                                :disabled="!canRemindInstanceTask(task)"
+                                                @click.stop="remindInstanceTask(task)">
+                                            手动催办
+                                        </button>
+                                    </div>
+                                </article>
+                            </div>
+                        </section>
                     </section>
                 </div>
             </section>
@@ -313,7 +344,22 @@
                                     <td>{{ row.instanceTitle }}</td>
                                     <td>{{ row.processName || row.processCode }}</td>
                                     <td>{{ row.starterUserName || row.starterUserId }}</td>
-                                    <td>{{ joinList(row.currentNodeCodes) }}</td>
+                                    <td>
+                                        <div class="instance-node-list">
+                                            <div v-for="nodeCode in currentInstanceNodeCodes(row)"
+                                                 :key="nodeCode"
+                                                 class="instance-node-item">
+                                                <span>{{ nodeCode }}</span>
+                                                <button type="button"
+                                                        class="ghost"
+                                                        :disabled="!canRemindInstanceNode(row, nodeCode)"
+                                                        @click.stop="remindInstanceNode(row, nodeCode)">
+                                                    手动催办
+                                                </button>
+                                            </div>
+                                            <span v-if="currentInstanceNodeCodes(row).length === 0">-</span>
+                                        </div>
+                                    </td>
                                     <td>{{ row.instanceStatus || '-' }}</td>
                                 </tr>
                                 </tbody>

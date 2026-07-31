@@ -330,6 +330,22 @@ tbody tr:hover {
     gap: 6px;
 }
 
+.instance-node-list {
+    display: grid;
+    gap: 6px;
+}
+
+.instance-node-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.instance-node-item span {
+    overflow-wrap: anywhere;
+}
+
 .claim-status {
     display: inline-flex;
     align-items: center;
@@ -407,6 +423,53 @@ tbody tr:hover {
 
 .instance-detail-card {
     margin-top: 14px;
+}
+
+.active-task-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.active-task-item {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(260px, 1.6fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 0;
+    border-top: 1px solid var(--line);
+}
+
+.active-task-main {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.active-task-main strong {
+    font-size: 14px;
+}
+
+.active-task-main span,
+.active-task-meta {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.active-task-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 10px;
+    min-width: 0;
+}
+
+.active-task-meta span {
+    overflow-wrap: anywhere;
+}
+
+.active-task-actions {
+    display: flex;
+    justify-content: flex-end;
 }
 
 .flow-canvas {
@@ -881,6 +944,7 @@ tbody tr:hover {
     .split-grid,
     .canvas-layout,
     .task-dialog-grid,
+    .active-task-item,
     .action-grid {
         grid-template-columns: 1fr;
     }
