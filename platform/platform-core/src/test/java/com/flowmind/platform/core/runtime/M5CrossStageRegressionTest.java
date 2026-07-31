@@ -17,7 +17,6 @@ import com.flowmind.platform.api.request.TransferTaskRequest;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
-import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.core.audit.DefaultAuditLogWriter;
 import com.flowmind.platform.core.callback.CallbackLogMapper;
@@ -234,9 +233,8 @@ class M5CrossStageRegressionTest {
                 new RuntimeStateValidator(tasks, instances, groups), new HistoryTaskWriter(histories),
                 new RuntimeTransactionExecutor(transactionManager), callbackService,
                 factory.getBeanProvider(OrganizationProvider.class), new DefaultAuditLogWriter(audits));
-        DelegateProvider delegates = (principalUserId, at) -> Collections.emptyList();
         DefaultTaskQueryService queryService = new DefaultTaskQueryService(histories, tasks, instances,
-                new ProcessTraceAssembler(), new RuntimeQueryAssembler(), currentUser, delegates);
+                new ProcessTraceAssembler(), new RuntimeQueryAssembler(), currentUser);
         return new WorkflowFixture(jdbc, tasks, coordinator, queryService, currentUser, audits, callbacks);
     }
 

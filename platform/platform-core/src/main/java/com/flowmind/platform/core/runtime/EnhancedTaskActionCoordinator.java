@@ -20,6 +20,7 @@ import com.flowmind.platform.api.enums.WorkflowEventTypeEnum;
 import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.CheckAttachmentRequest;
+import com.flowmind.platform.api.request.DelegateTaskRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
@@ -352,6 +353,44 @@ public class EnhancedTaskActionCoordinator {
                 return result(context, request, ActionTypeEnum.TRANSFER, Collections.singletonList(archived),
                         Collections.<TaskDTO>emptyList(), Collections.singletonList(RuntimeModelMapper.toDto(context.task,
                                 null, null)), WorkflowEventTypeEnum.TASK_TRANSFERRED);
+            }
+        });
+    }
+
+    public TaskActionResult delegateTask(final DelegateTaskRequest request) {
+        return execute(request, ActionTypeEnum.TRANSFER, new ActionWork() {
+            @Override public TaskActionResult run(EnhancedActionContext context) {
+                requireText(request.getTargetUserId(), "targetUserId");
+                if (request.getTargetUserId().equals(context.operator.getUserId())) {
+                    throw validation(RuntimeErrorCodes.INVALID_ACTION, "cannot delegate task to yourself");
+                }
+                if (!isBlank(context.task.getDelegateFromUserId())) {
+                    throw validation(RuntimeErrorCodes.INVALID_ACTION, "delegated task cannot be delegated again");
+                }
+                String targetUserName = isBlank(request.getTargetUserName())
+                        ? request.getTargetUserId() : request.getTargetUserName();
+                String previousAssigneeUserId = context.task.getAssigneeUserId();
+                String previousAssigneeUserName = context.task.getAssigneeUserName();
+                if (activeTaskRepository.delegateTask(context.task.getId(), request.getExpectedTaskVersion().longValue(),
+                        request.getTargetUserId(), targetUserName, context.operator.getUserId()) != 1) {
+                    throw state(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED, "task was modified while delegating");
+                }
+                context.task.setAssigneeUserId(request.getTargetUserId());
+                context.task.setAssigneeUserName(targetUserName);
+                context.task.setDelegateFromUserId(context.operator.getUserId());
+                context.task.setDelegateFromUserName(context.operator.getUserName());
+                context.task.setLockVersion(Long.valueOf(context.task.getLockVersion().longValue() + 1L));
+                Map<String, Object> metadata = metadata(context, context.task.getNodeCode());
+                metadata.put("delegateAction", Boolean.TRUE);
+                metadata.put("fromAssigneeUserId", previousAssigneeUserId);
+                metadata.put("fromAssigneeUserName", previousAssigneeUserName);
+                metadata.put("delegateFromUserId", context.operator.getUserId());
+                metadata.put("delegateFromUserName", context.operator.getUserName());
+                metadata.put("targetUserIds", Collections.singletonList(request.getTargetUserId()));
+                ProcessHistoryTaskEntity archived = archive(context, ActionTypeEnum.TRANSFER, request, metadata);
+                return result(context, request, ActionTypeEnum.TRANSFER, Collections.singletonList(archived),
+                        Collections.<TaskDTO>emptyList(), Collections.singletonList(RuntimeModelMapper.toDto(context.task,
+                                null, context.operator.getUserName())), WorkflowEventTypeEnum.TASK_TRANSFERRED);
             }
         });
     }

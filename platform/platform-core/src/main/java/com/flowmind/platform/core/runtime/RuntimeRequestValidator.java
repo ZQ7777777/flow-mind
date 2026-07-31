@@ -266,24 +266,26 @@ public class RuntimeRequestValidator {
     /** 校验 ACTIVE 使用候选人权限、CLAIMED 使用受理人权限。 */
     private void assertTaskPermission(ProcessActiveTaskEntity task, String userId) {
         if (TaskStatusEnum.CLAIMED.name().equals(task.getTaskStatus())) {
-            if (!userId.equals(task.getAssigneeUserId())) {
-                throw new RuntimeValidationException(RuntimeErrorCodes.TASK_PERMISSION_DENIED,
-                        "current user is not the task assignee");
+            if (userId.equals(task.getAssigneeUserId())) {
+                return;
             }
-            return;
+            throw new RuntimeValidationException(RuntimeErrorCodes.TASK_PERMISSION_DENIED,
+                    "current user is not the task assignee");
         }
         if (hasText(task.getAssigneeUserId())) {
-            if (!userId.equals(task.getAssigneeUserId())) {
-                throw new RuntimeValidationException(RuntimeErrorCodes.TASK_PERMISSION_DENIED,
-                        "current user is not the task assignee");
+            if (userId.equals(task.getAssigneeUserId())) {
+                return;
             }
-            return;
+            throw new RuntimeValidationException(RuntimeErrorCodes.TASK_PERMISSION_DENIED,
+                    "current user is not the task assignee");
         }
         try {
-            if (!RuntimeJsonCodec.readStringList(task.getCandidateUserIds()).contains(userId)) {
-                throw new RuntimeValidationException(RuntimeErrorCodes.TASK_PERMISSION_DENIED,
-                        "current user is not a task candidate");
+            List<String> candidates = RuntimeJsonCodec.readStringList(task.getCandidateUserIds());
+            if (candidates.contains(userId)) {
+                return;
             }
+            throw new RuntimeValidationException(RuntimeErrorCodes.TASK_PERMISSION_DENIED,
+                    "current user is not a task candidate");
         } catch (IllegalArgumentException ex) {
             if (ex instanceof RuntimeValidationException) {
                 throw (RuntimeValidationException) ex;

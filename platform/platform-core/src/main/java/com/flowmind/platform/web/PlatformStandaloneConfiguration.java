@@ -3,7 +3,6 @@ package com.flowmind.platform.web;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
-import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
@@ -171,12 +170,6 @@ public class PlatformStandaloneConfiguration {
      *
      * @return 委托关系 SPI
      */
-    @Bean
-    @ConditionalOnMissingBean
-    public DelegateProvider delegateProvider() {
-        return (principalUserId, at) -> Collections.emptyList();
-    }
-
     @Bean
     @ConditionalOnMissingBean
     public OrganizationProvider organizationProvider() {

@@ -121,7 +121,6 @@ class PlatformAutoConfigurationTest {
             assertThat(context).hasSingleBean(WorkflowCallbackHandler.class);
             assertThat(context.getBean(WorkflowCallbackHandler.class))
                     .isInstanceOf(RecordingWorkflowCallbackHandler.class);
-            assertThat(context).hasSingleBean(DelegateProvider.class);
             assertThat(context).hasSingleBean(CurrentUserProvider.class);
             assertThat(context.getBean(CurrentUserProvider.class)).isInstanceOf(MockCurrentUserProvider.class);
             assertThat(context).hasSingleBean(OrganizationProvider.class);

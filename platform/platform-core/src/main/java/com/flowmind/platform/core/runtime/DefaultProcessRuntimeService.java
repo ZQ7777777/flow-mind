@@ -28,6 +28,7 @@ import com.flowmind.platform.api.request.AttachmentUploadItem;
 import com.flowmind.platform.api.request.CheckAttachmentRequest;
 import com.flowmind.platform.api.request.ClaimTaskRequest;
 import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
+import com.flowmind.platform.api.request.DelegateTaskRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
@@ -506,6 +507,12 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
     @Override
     public TaskActionResult transfer(TransferTaskRequest request) {
         return enhancedActions().transfer(request);
+    }
+
+    /** 委托代办当前任务。 */
+    @Override
+    public TaskActionResult delegateTask(DelegateTaskRequest request) {
+        return enhancedActions().delegateTask(request);
     }
 
     /** M5 起提供加签能力。 */
@@ -1038,7 +1045,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         history.setAssigneeUserId(operator.getUserId());
         history.setAssigneeUserName(operator.getUserName());
         history.setDelegateFromUserId(task.getDelegateFromUserId());
-        history.setHandleType(HandleTypeEnum.NORMAL.name());
+        history.setDelegateFromUserName(task.getDelegateFromUserName());
+        history.setHandleType(handleType(task));
         history.setActionType(actionType.name());
         history.setCommentText(request.getComment());
         history.setVariablesSnapshot(RuntimeJsonCodec.toJson(variables));
@@ -1073,7 +1081,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         history.setAssigneeUserId(operator.getUserId());
         history.setAssigneeUserName(operator.getUserName());
         history.setDelegateFromUserId(task.getDelegateFromUserId());
-        history.setHandleType(HandleTypeEnum.NORMAL.name());
+        history.setDelegateFromUserName(task.getDelegateFromUserName());
+        history.setHandleType(handleType(task));
         history.setActionType(actionType.name());
         history.setCommentText(reason);
         history.setVariablesSnapshot(RuntimeJsonCodec.toJson(variables));
@@ -1107,7 +1116,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         history.setAssigneeUserId(starter.getUserId());
         history.setAssigneeUserName(starter.getUserName());
         history.setDelegateFromUserId(task.getDelegateFromUserId());
-        history.setHandleType(HandleTypeEnum.NORMAL.name());
+        history.setDelegateFromUserName(task.getDelegateFromUserName());
+        history.setHandleType(handleType(task));
         history.setActionType(ActionTypeEnum.SEND.name());
         history.setVariablesSnapshot(RuntimeJsonCodec.toJson(variables));
         history.setStartedAt(task.getCreatedAt());
@@ -1358,6 +1368,11 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             return RuntimeOperationTypes.APPROVE_TASK;
         }
         throw new IllegalArgumentException("M2 task operation type is unsupported: " + actionType);
+    }
+
+    private String handleType(ProcessActiveTaskEntity task) {
+        return task != null && !isBlank(task.getDelegateFromUserId())
+                ? HandleTypeEnum.DELEGATE.name() : HandleTypeEnum.NORMAL.name();
     }
 
     private <T> T executeInTransaction(RuntimeTransactionWork<T> work) {

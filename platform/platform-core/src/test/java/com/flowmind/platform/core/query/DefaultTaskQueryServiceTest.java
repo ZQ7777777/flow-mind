@@ -1,7 +1,6 @@
 package com.flowmind.platform.core.query;
 
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
-import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
@@ -11,6 +10,7 @@ import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.HandleTypeEnum;
 import com.flowmind.platform.core.task.HistoryArchiveCommand;
 import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity;
@@ -30,7 +30,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,9 +58,7 @@ class DefaultTaskQueryServiceTest {
         historyTaskWriter = new HistoryTaskWriter(historyTaskRepository);
         taskQueryService = new DefaultTaskQueryService(historyTaskRepository, activeTaskRepository,
                 instanceRepository, new ProcessTraceAssembler(), new RuntimeQueryAssembler(),
-                () -> new UserContext("operator-001", "Operator", "dept-001", "Dept"),
-                (delegateUserId, at) -> Arrays.asList(new DelegateRelationDTO("principal-001",
-                        "Principal", "operator-001", "Operator", at.minusDays(1), at.plusDays(1))));
+                () -> new UserContext("operator-001", "Operator", "dept-001", "Dept"));
         insertDefinitionAndInstance();
     }
 
@@ -106,12 +103,30 @@ class DefaultTaskQueryServiceTest {
     }
 
     @Test
-    void todoQueryMergesDirectCandidateAndDelegateTasksWithPreciseCandidateMatch() {
+    void historyWriterArchivesDelegateHandleTypeAndSourceName() {
+        HistoryArchiveCommand command = command("task-delegate-approve", "review", "op-delegate",
+                "delegate approve", LocalDateTime.of(2026, 7, 22, 9, 0));
+        command.getTask().setDelegateFromUserId("principal-001");
+        command.getTask().setDelegateFromUserName("Principal");
+        command.setOperator(new UserContext("operator-001", "Operator", "dept-001", "Dept"));
+
+        historyTaskWriter.archive(command);
+
+        List<HistoryTaskDTO> history = taskQueryService.queryHistoryTasks("instance-1");
+        assertEquals(1, history.size());
+        assertEquals(HandleTypeEnum.DELEGATE, history.get(0).getHandleType());
+        assertEquals("principal-001", history.get(0).getDelegateFromUserId());
+        assertEquals("Principal", history.get(0).getDelegateFromUserName());
+        assertEquals("operator-001", history.get(0).getAssigneeUserId());
+    }
+
+    @Test
+    void todoQuerySeparatesOwnAndDelegatedTasksWithPreciseCandidateMatch() {
         insertTask("task-direct", "operator-001", "Operator", null, "ACTIVE", "[\"other\"]",
                 LocalDateTime.of(2026, 7, 22, 9, 0));
         insertTask("task-candidate", null, null, null, "ACTIVE", "[\"operator-001\",\"other\"]",
                 LocalDateTime.of(2026, 7, 22, 9, 1));
-        insertTask("task-delegate", "principal-001", "Principal", null, "ACTIVE", null,
+        insertTask("task-delegate", "operator-001", "Operator", "principal-001", "ACTIVE", null,
                 LocalDateTime.of(2026, 7, 22, 9, 2));
         insertTask("task-u10", null, null, null, "ACTIVE", "[\"operator-0010\"]",
                 LocalDateTime.of(2026, 7, 22, 9, 3));
@@ -120,15 +135,25 @@ class DefaultTaskQueryServiceTest {
 
         PageResult<TaskDTO> result = taskQueryService.queryTodoTasks(new TodoTaskQuery());
 
-        assertEquals(Long.valueOf(3L), result.getTotal());
-        assertEquals(3, result.getRecords().size());
-        assertEquals("task-delegate", result.getRecords().get(0).getTaskId());
-        assertEquals("principal-001", result.getRecords().get(0).getDelegateFromUserId());
-        assertEquals("task-candidate", result.getRecords().get(1).getTaskId());
-        assertEquals("task-direct", result.getRecords().get(2).getTaskId());
+        assertEquals(Long.valueOf(2L), result.getTotal());
+        assertEquals(2, result.getRecords().size());
+        assertEquals("task-candidate", result.getRecords().get(0).getTaskId());
+        assertEquals("task-direct", result.getRecords().get(1).getTaskId());
         assertEquals(Long.valueOf(0L), result.getRecords().get(0).getTaskVersion());
         assertEquals("review", result.getRecords().get(0).getNodeCode());
         assertEquals("Review", result.getRecords().get(0).getNodeName());
+
+        TodoTaskQuery delegatedOnly = new TodoTaskQuery();
+        delegatedOnly.setTodoSource("DELEGATED");
+        PageResult<TaskDTO> delegated = taskQueryService.queryTodoTasks(delegatedOnly);
+        assertEquals(Long.valueOf(1L), delegated.getTotal());
+        assertEquals("task-delegate", delegated.getRecords().get(0).getTaskId());
+        assertEquals("principal-001", delegated.getRecords().get(0).getDelegateFromUserId());
+
+        TodoTaskQuery all = new TodoTaskQuery();
+        all.setTodoSource("ALL");
+        PageResult<TaskDTO> allTodos = taskQueryService.queryTodoTasks(all);
+        assertEquals(Long.valueOf(3L), allTodos.getTotal());
     }
 
     @Test

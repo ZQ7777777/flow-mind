@@ -56,7 +56,19 @@ public class PlatformQueryController {
     @Operation(summary = "Query todo tasks")
     @GetMapping("/api/platform/tasks/todo")
     public PageResult<TaskDTO> queryTodoTasks(TodoTaskQuery query) {
-        return taskQueryService.queryTodoTasks(query);
+        TodoTaskQuery normalized = query == null ? new TodoTaskQuery() : query;
+        if (isBlank(normalized.getTodoSource())) {
+            normalized.setTodoSource("OWN");
+        }
+        return taskQueryService.queryTodoTasks(normalized);
+    }
+
+    @Operation(summary = "Query delegated todo tasks")
+    @GetMapping("/api/platform/tasks/todo/delegated")
+    public PageResult<TaskDTO> queryDelegatedTodoTasks(TodoTaskQuery query) {
+        TodoTaskQuery normalized = query == null ? new TodoTaskQuery() : query;
+        normalized.setTodoSource("DELEGATED");
+        return taskQueryService.queryTodoTasks(normalized);
     }
 
     @Operation(summary = "Query completed tasks")
@@ -121,5 +133,9 @@ public class PlatformQueryController {
     @GetMapping("/api/platform/instances/{instanceId}")
     public ProcessInstanceDTO getInstance(@Parameter(description = "Instance id") @PathVariable String instanceId) {
         return processRuntimeService.getInstance(instanceId);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }

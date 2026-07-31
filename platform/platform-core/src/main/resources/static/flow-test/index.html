@@ -876,7 +876,7 @@
                     </ul>
                 </section>
             </div>
-            <div class="action-grid">
+            <div v-if="canHandleTask(taskDialog.task)" class="action-grid">
                 <button v-if="taskDialog.starterTask"
                         type="button"
                         class="primary"

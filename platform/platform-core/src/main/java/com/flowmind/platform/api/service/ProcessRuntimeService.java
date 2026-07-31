@@ -9,6 +9,7 @@ import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.ClaimTaskRequest;
 import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
+import com.flowmind.platform.api.request.DelegateTaskRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
@@ -107,6 +108,14 @@ public interface ProcessRuntimeService {
      * @return 任务动作结果
      */
     TaskActionResult transfer(TransferTaskRequest request);
+
+    /**
+     * 委托代办任务。
+     *
+     * @param request 委托代办请求
+     * @return 任务动作结果
+     */
+    TaskActionResult delegateTask(DelegateTaskRequest request);
 
     /**
      * 加签任务。

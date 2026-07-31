@@ -1,6 +1,5 @@
 package com.flowmind.platform.core.query;
 
-import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
@@ -14,7 +13,6 @@ import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
-import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.persistence.entity.HistoryTaskQueryEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
@@ -25,9 +23,7 @@ import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -42,7 +38,6 @@ public class DefaultTaskQueryService implements TaskQueryService {
     private final ProcessTraceAssembler traceAssembler;
     private final RuntimeQueryAssembler queryAssembler;
     private final CurrentUserProvider currentUserProvider;
-    private final DelegateProvider delegateProvider;
     private final ReadRecordManager readRecordManager;
 
     @Autowired
@@ -52,7 +47,6 @@ public class DefaultTaskQueryService implements TaskQueryService {
                                    ProcessTraceAssembler traceAssembler,
                                    RuntimeQueryAssembler queryAssembler,
                                    CurrentUserProvider currentUserProvider,
-                                   DelegateProvider delegateProvider,
                                    ReadRecordManager readRecordManager) {
         this.historyTaskRepository = historyTaskRepository;
         this.activeTaskRepository = activeTaskRepository;
@@ -60,7 +54,6 @@ public class DefaultTaskQueryService implements TaskQueryService {
         this.traceAssembler = traceAssembler;
         this.queryAssembler = queryAssembler;
         this.currentUserProvider = currentUserProvider;
-        this.delegateProvider = delegateProvider;
         this.readRecordManager = readRecordManager;
     }
 
@@ -69,10 +62,9 @@ public class DefaultTaskQueryService implements TaskQueryService {
                                    ProcessInstanceRepository instanceRepository,
                                    ProcessTraceAssembler traceAssembler,
                                    RuntimeQueryAssembler queryAssembler,
-                                   CurrentUserProvider currentUserProvider,
-                                   DelegateProvider delegateProvider) {
+                                   CurrentUserProvider currentUserProvider) {
         this(historyTaskRepository, activeTaskRepository, instanceRepository, traceAssembler, queryAssembler,
-                currentUserProvider, delegateProvider, null);
+                currentUserProvider, null);
     }
 
     @Override
@@ -80,16 +72,18 @@ public class DefaultTaskQueryService implements TaskQueryService {
         TodoTaskQuery normalized = query == null ? new TodoTaskQuery() : query;
         UserContext currentUser = currentUser();
         applyTrustedTodoUser(normalized, currentUser);
+        if (isBlank(normalized.getTodoSource())) {
+            normalized.setTodoSource("OWN");
+        }
         int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
         int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
-        List<DelegateRelationDTO> delegates = currentDelegates(currentUser.getUserId());
         List<TaskDTO> records = new ArrayList<TaskDTO>();
         for (TaskQueryEntity entity : activeTaskRepository.queryTodoTasks(normalized,
-                currentUser.getUserId(), delegates)) {
+                currentUser.getUserId())) {
             records.add(queryAssembler.toTaskDTO(entity));
         }
         return page(records, pageNo, pageSize,
-                activeTaskRepository.countTodoTasks(normalized, currentUser.getUserId(), delegates));
+                activeTaskRepository.countTodoTasks(normalized, currentUser.getUserId()));
     }
 
     @Override
@@ -175,25 +169,6 @@ public class DefaultTaskQueryService implements TaskQueryService {
             throw new IllegalStateException("current user is required");
         }
         return currentUser;
-    }
-
-    private List<DelegateRelationDTO> currentDelegates(String currentUserId) {
-        if (delegateProvider == null) {
-            return Collections.emptyList();
-        }
-        List<DelegateRelationDTO> relations = delegateProvider.findPrincipals(currentUserId, LocalDateTime.now());
-        if (relations == null || relations.isEmpty()) {
-            return Collections.emptyList();
-        }
-        List<DelegateRelationDTO> results = new ArrayList<DelegateRelationDTO>();
-        for (DelegateRelationDTO relation : relations) {
-            if (relation != null && !isBlank(relation.getPrincipalUserId())
-                    && (isBlank(relation.getDelegateUserId())
-                    || currentUserId.equals(relation.getDelegateUserId()))) {
-                results.add(relation);
-            }
-        }
-        return results;
     }
 
     private void applyTrustedTodoUser(TodoTaskQuery query, UserContext currentUser) {

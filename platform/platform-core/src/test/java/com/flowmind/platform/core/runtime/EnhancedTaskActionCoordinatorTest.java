@@ -12,6 +12,7 @@ import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.request.AddSignRequest;
+import com.flowmind.platform.api.request.DelegateTaskRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
@@ -526,6 +527,34 @@ class EnhancedTaskActionCoordinatorTest {
         assertEquals(java.util.Collections.singletonList("history-1"),
                 audit.getValue().getDetail().get("historyTaskIds"));
         verify(operations, never()).markDeterministicFailure(eq("op-transfer"), any(String.class));
+    }
+
+    @Test
+    void delegateTaskUpdatesAssigneeAndMarksDelegateSourceWithoutOrganizationSpi() {
+        Fixture fixture = fixture(ActionTypeEnum.TRANSFER);
+        DelegateTaskRequest request = taskRequest(new DelegateTaskRequest(), "op-delegate",
+                fixture.task, fixture.operator);
+        request.setTargetUserId("user-b");
+        request.setTargetUserName("User B");
+        ProcessHistoryTaskEntity archived = history("delegate-history", "user-a", "manager",
+                ActionTypeEnum.TRANSFER.name(), "{}");
+
+        when(fixture.tasks.delegateTask("task-1", 3L, "user-b", "User B", "user-a")).thenReturn(1);
+        when(fixture.historyWriter.archive(any())).thenReturn(archived);
+
+        TaskActionResult result = fixture.coordinator.delegateTask(request);
+
+        assertEquals("user-b", result.getUpdatedTasks().get(0).getAssigneeUserId());
+        assertEquals("User B", result.getUpdatedTasks().get(0).getAssigneeUserName());
+        assertEquals("user-a", result.getUpdatedTasks().get(0).getDelegateFromUserId());
+        assertEquals("User A", result.getUpdatedTasks().get(0).getDelegateFromUserName());
+        verify(fixture.tasks).delegateTask("task-1", 3L, "user-b", "User B", "user-a");
+        verify(fixture.organization, never()).findUser(any(String.class));
+        org.mockito.ArgumentCaptor<HistoryArchiveCommand> archive =
+                org.mockito.ArgumentCaptor.forClass(HistoryArchiveCommand.class);
+        verify(fixture.historyWriter).archive(archive.capture());
+        assertEquals("user-a", archive.getValue().getTask().getDelegateFromUserId());
+        assertEquals("User A", archive.getValue().getTask().getDelegateFromUserName());
     }
 
     private <T extends com.flowmind.platform.api.request.TaskOperationRequest> T taskRequest(T request,

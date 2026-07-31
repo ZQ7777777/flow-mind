@@ -1,7 +1,6 @@
 package com.flowmind.platform.starter;
 
 import com.flowmind.platform.api.dto.AlertDTO;
-import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
@@ -28,7 +27,6 @@ import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
-import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.OrganizationProvider;
@@ -100,7 +98,6 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Collections;
 import java.util.List;
 
 @Configuration
@@ -298,18 +295,13 @@ public class PlatformAutoConfiguration {
                                              ProcessTraceAssembler traceAssembler,
                                              RuntimeQueryAssembler queryAssembler,
                                              ReadRecordManager readRecordManager,
-                                             ObjectProvider<CurrentUserProvider> currentUserProvider,
-                                             ObjectProvider<DelegateProvider> delegateProvider) {
+                                             ObjectProvider<CurrentUserProvider> currentUserProvider) {
         CurrentUserProvider currentUser = currentUserProvider.getIfAvailable();
         if (currentUser == null) {
             currentUser = new RequiredCurrentUserProvider();
         }
-        DelegateProvider delegates = delegateProvider.getIfAvailable();
-        if (delegates == null) {
-            delegates = (principalUserId, at) -> Collections.<DelegateRelationDTO>emptyList();
-        }
         return new DefaultTaskQueryService(historyTaskRepository, activeTaskRepository, instanceRepository,
-                traceAssembler, queryAssembler, currentUser, delegates, readRecordManager);
+                traceAssembler, queryAssembler, currentUser, readRecordManager);
     }
 
     @Bean
@@ -468,14 +460,6 @@ public class PlatformAutoConfiguration {
             matchIfMissing = true)
     public WorkflowCallbackHandler workflowCallbackHandler() {
         return new RecordingWorkflowCallbackHandler();
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnProperty(prefix = "flow-mind.platform.mock", name = "enabled", havingValue = "true",
-            matchIfMissing = true)
-    public DelegateProvider delegateProvider() {
-        return (principalUserId, at) -> Collections.<DelegateRelationDTO>emptyList();
     }
 
     @Bean

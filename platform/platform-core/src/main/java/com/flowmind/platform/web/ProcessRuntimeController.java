@@ -8,6 +8,7 @@ import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.ClaimTaskRequest;
 import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
+import com.flowmind.platform.api.request.DelegateTaskRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
@@ -98,6 +99,12 @@ public class ProcessRuntimeController {
     @PostMapping("/api/platform/runtime/tasks/transfer")
     public TaskActionResult transfer(@RequestBody TransferTaskRequest request) {
         return runtimeService.transfer(request);
+    }
+
+    @Operation(summary = "Delegate task")
+    @PostMapping("/api/platform/runtime/tasks/delegate")
+    public TaskActionResult delegateTask(@RequestBody DelegateTaskRequest request) {
+        return runtimeService.delegateTask(request);
     }
 
     @Operation(summary = "Add sign task")
