@@ -372,7 +372,8 @@ public class EnhancedTaskActionCoordinator {
                 String previousAssigneeUserId = context.task.getAssigneeUserId();
                 String previousAssigneeUserName = context.task.getAssigneeUserName();
                 if (activeTaskRepository.delegateTask(context.task.getId(), request.getExpectedTaskVersion().longValue(),
-                        request.getTargetUserId(), targetUserName, context.operator.getUserId()) != 1) {
+                        request.getTargetUserId(), targetUserName, context.operator.getUserId(),
+                        context.operator.getUserName()) != 1) {
                     throw state(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED, "task was modified while delegating");
                 }
                 context.task.setAssigneeUserId(request.getTargetUserId());

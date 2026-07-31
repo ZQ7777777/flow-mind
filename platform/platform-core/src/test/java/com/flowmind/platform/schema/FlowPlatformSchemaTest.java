@@ -110,6 +110,7 @@ class FlowPlatformSchemaTest {
             Set<String> columns = tableColumns(connection, "process_active_task");
             assertTrue(columns.contains("definition_id"));
             assertTrue(columns.contains("lock_version"));
+            assertTrue(columns.contains("delegate_from_user_name"));
             assertFalse(columns.contains("version"));
         }
     }

@@ -158,7 +158,7 @@ class FlowTestStaticPageTest {
     }
 
     @Test
-    void delegateActionShouldUseTransferApiAndOwnTodoShouldHideTransferredTasks() throws IOException {
+    void delegateActionShouldUseDelegateApiAndOwnTodoShouldHideTransferredTasks() throws IOException {
         String script = loadResource("/static/flow-test/flow-test-app.js");
 
         String todoFilter = substringBetween(script,
@@ -169,9 +169,12 @@ class FlowTestStaticPageTest {
                 "todoScopeLabel: function (task) {");
 
         assertThat(script)
-                .contains("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
-                .doesNotContain("delegateTask: \"/api/platform/runtime/tasks/delegate\"")
+                .contains("delegateTask: \"/api/platform/runtime/tasks/delegate\"")
                 .contains("targetUserId: this.taskDialog.delegateUserId")
+                .contains("todoSource: this.todoSourceForCurrentScope()")
+                .contains("setTodoScope: function (scope)")
+                .contains("todoSourceForCurrentScope: function ()")
+                .contains("return \"DELEGATED\"")
                 .doesNotContain("delegateUserId: this.taskDialog.delegateUserId");
         assertThat(todoFilter)
                 .contains("return this.isOwnTodoTask(row);");
@@ -310,6 +313,8 @@ class FlowTestStaticPageTest {
                 .doesNotContain("recoverSelectedInstance")
                 .contains("data-testid=\"todo-scope-own\"")
                 .contains("data-testid=\"todo-scope-delegated\"")
+                .contains("@click=\"setTodoScope('own')\"")
+                .contains("@click=\"setTodoScope('delegated')\"")
                 .contains("data-testid=\"delegate-user\"")
                 .contains("@click=\"delegateCurrentTask\"")
                 .doesNotContain("外部业务键")
@@ -396,7 +401,7 @@ class FlowTestStaticPageTest {
                 .contains("isCurrentUserTaskCandidate: function (task)")
                 .contains("submitTaskClaimAction")
                 .contains("taskWithdraw: \"/api/platform/runtime/tasks/withdraw\"")
-                .contains("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
+                .contains("delegateTask: \"/api/platform/runtime/tasks/delegate\"")
                 .doesNotContain("updateVariables: \"/api/platform/runtime/instances/variables\"")
                 .contains("terminateInstance: \"/api/platform/runtime/instances/terminate\"")
                 .contains("deleteInstance: \"/api/platform/runtime/instances\"")
@@ -405,7 +410,7 @@ class FlowTestStaticPageTest {
                 .contains("callbackLogs: \"/api/platform/admin/callback-logs\"")
                 .contains("auditLogs: \"/api/platform/admin/audit-logs\"")
                 .contains("taskWithdraw: \"/api/platform/runtime/tasks/withdraw\"")
-                .contains("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
+                .contains("delegateTask: \"/api/platform/runtime/tasks/delegate\"")
                 .contains("reminders: \"/api/platform/reminders\"")
                 .contains("taskRemind: function (taskId)")
                 .contains("\"/api/platform/tasks/\" + encodeURIComponent(taskId) + \"/remind\"")

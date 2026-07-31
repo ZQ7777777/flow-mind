@@ -539,7 +539,7 @@ class EnhancedTaskActionCoordinatorTest {
         ProcessHistoryTaskEntity archived = history("delegate-history", "user-a", "manager",
                 ActionTypeEnum.TRANSFER.name(), "{}");
 
-        when(fixture.tasks.delegateTask("task-1", 3L, "user-b", "User B", "user-a")).thenReturn(1);
+        when(fixture.tasks.delegateTask("task-1", 3L, "user-b", "User B", "user-a", "User A")).thenReturn(1);
         when(fixture.historyWriter.archive(any())).thenReturn(archived);
 
         TaskActionResult result = fixture.coordinator.delegateTask(request);
@@ -548,7 +548,7 @@ class EnhancedTaskActionCoordinatorTest {
         assertEquals("User B", result.getUpdatedTasks().get(0).getAssigneeUserName());
         assertEquals("user-a", result.getUpdatedTasks().get(0).getDelegateFromUserId());
         assertEquals("User A", result.getUpdatedTasks().get(0).getDelegateFromUserName());
-        verify(fixture.tasks).delegateTask("task-1", 3L, "user-b", "User B", "user-a");
+        verify(fixture.tasks).delegateTask("task-1", 3L, "user-b", "User B", "user-a", "User A");
         verify(fixture.organization, never()).findUser(any(String.class));
         org.mockito.ArgumentCaptor<HistoryArchiveCommand> archive =
                 org.mockito.ArgumentCaptor.forClass(HistoryArchiveCommand.class);

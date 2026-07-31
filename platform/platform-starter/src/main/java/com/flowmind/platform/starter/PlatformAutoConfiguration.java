@@ -492,6 +492,8 @@ public class PlatformAutoConfiguration {
                 "schema/sqlite/003_attachment_operation_actions.sql";
         private static final String ATTACHMENT_REPLACE_OPERATION_MIGRATION =
                 "schema/sqlite/004_attachment_replace_operation_action.sql";
+        private static final String DELEGATE_FROM_USER_NAME_MIGRATION =
+                "schema/sqlite/005_delegate_from_user_name.sql";
 
         private final DataSource dataSource;
 
@@ -513,6 +515,10 @@ public class PlatformAutoConfiguration {
                 if (!schemaSupportsAttachmentReplacement(connection)) {
                     ScriptUtils.executeSqlScript(connection,
                             new ClassPathResource(ATTACHMENT_REPLACE_OPERATION_MIGRATION));
+                }
+                if (!tableHasColumn(connection, "process_active_task", "delegate_from_user_name")) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(DELEGATE_FROM_USER_NAME_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);
@@ -557,6 +563,18 @@ public class PlatformAutoConfiguration {
                 }
                 String definition = resultSet.getString("sql");
                 return definition.contains(action);
+            }
+        }
+
+        private boolean tableHasColumn(Connection connection, String tableName, String columnName) throws Exception {
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + tableName + ")")) {
+                while (resultSet.next()) {
+                    if (columnName.equals(resultSet.getString("name"))) {
+                        return true;
+                    }
+                }
+                return false;
             }
         }
     }

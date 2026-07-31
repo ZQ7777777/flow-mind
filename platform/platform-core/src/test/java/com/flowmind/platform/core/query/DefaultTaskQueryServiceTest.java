@@ -149,6 +149,7 @@ class DefaultTaskQueryServiceTest {
         assertEquals(Long.valueOf(1L), delegated.getTotal());
         assertEquals("task-delegate", delegated.getRecords().get(0).getTaskId());
         assertEquals("principal-001", delegated.getRecords().get(0).getDelegateFromUserId());
+        assertEquals("Principal", delegated.getRecords().get(0).getDelegateFromUserName());
 
         TodoTaskQuery all = new TodoTaskQuery();
         all.setTodoSource("ALL");
@@ -306,10 +307,12 @@ class DefaultTaskQueryServiceTest {
                             String taskGroupId) {
         jdbcTemplate.update("INSERT INTO process_active_task "
                         + "(id, instance_id, definition_id, node_code, candidate_user_ids, assignee_user_id, "
-                        + "assignee_user_name, delegate_from_user_id, task_status, task_group_id, lock_version, created_at) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        + "assignee_user_name, delegate_from_user_id, delegate_from_user_name, task_status, "
+                        + "task_group_id, lock_version, created_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 id, "instance-1", "definition-1", "review", candidates, assigneeUserId,
-                assigneeUserName, delegateFromUserId, status, taskGroupId, Long.valueOf(0L),
+                assigneeUserName, delegateFromUserId,
+                delegateFromUserId == null ? null : "Principal", status, taskGroupId, Long.valueOf(0L),
                 createdAt.toString());
     }
 

@@ -418,9 +418,9 @@
                     <button type="button" @click="queryTodoTasks">刷新待办</button>
                 </div>
                 <div class="scope-tabs todo-segmented">
-                    <button type="button" data-testid="todo-scope-own" :class="{active: todoScope === 'own'}" @click="todoScope = 'own'">自己的任务</button>
-                    <button type="button" data-testid="todo-scope-delegated" :class="{active: todoScope === 'delegated'}" @click="todoScope = 'delegated'">委托代办任务</button>
-                    <button type="button" :class="{active: todoScope === 'all'}" @click="todoScope = 'all'">全部</button>
+                    <button type="button" data-testid="todo-scope-own" :class="{active: todoScope === 'own'}" @click="setTodoScope('own')">自己的任务</button>
+                    <button type="button" data-testid="todo-scope-delegated" :class="{active: todoScope === 'delegated'}" @click="setTodoScope('delegated')">委托代办任务</button>
+                    <button type="button" :class="{active: todoScope === 'all'}" @click="setTodoScope('all')">全部</button>
                 </div>
                 <div class="table-wrap">
                     <table>

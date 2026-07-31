@@ -35,7 +35,7 @@
         taskTransfer: "/api/platform/runtime/tasks/transfer",
         taskAddSign: "/api/platform/runtime/tasks/add-sign",
         taskWithdraw: "/api/platform/runtime/tasks/withdraw",
-        delegateTask: "/api/platform/runtime/tasks/transfer",
+        delegateTask: "/api/platform/runtime/tasks/delegate",
         taskRemind: function (taskId) {
             return "/api/platform/tasks/" + encodeURIComponent(taskId) + "/remind";
         },
@@ -2096,6 +2096,7 @@
             queryTodoTasks: function () {
                 return this.sendRequest("查询待办", "GET", API_PATHS.todoTasks + toQuery({
                     userId: this.currentUserId,
+                    todoSource: this.todoSourceForCurrentScope(),
                     pageNo: 1,
                     pageSize: 50
                 })).then(function (payload) {
@@ -2107,6 +2108,21 @@
                         return payload;
                     });
                 }.bind(this));
+            },
+            setTodoScope: function (scope) {
+                this.todoScope = scope;
+                if (this.activeView === "todo") {
+                    this.queryTodoTasks().catch(function () {});
+                }
+            },
+            todoSourceForCurrentScope: function () {
+                if (this.todoScope === "delegated") {
+                    return "DELEGATED";
+                }
+                if (this.todoScope === "all") {
+                    return "ALL";
+                }
+                return "OWN";
             },
             recordTodoRowsRead: function (rows) {
                 var seen = {};
