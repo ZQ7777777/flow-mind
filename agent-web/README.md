@@ -29,6 +29,42 @@ npm run dev:frontend
 浏览器访问 `http://127.0.0.1:5173`。生产构建后由 NestJS 在
 `http://127.0.0.1:3100` 同源托管前端。
 
+## Windows 一键启动与停止
+
+仓库根目录的 PowerShell 脚本会分别打开流程平台、Agent 后端和前端的终端窗口；已占用
+`8080`、`3100` 或 `5173` 的服务会被保留，不会被脚本自动结束。
+
+真实对话需要先在**执行启动脚本的同一个 PowerShell 窗口**设置模型与凭据。不要把 API Key
+写入 `.env`、脚本或提交到仓库：当前工程直接读取进程环境变量。
+
+```powershell
+cd E:\resume_project\flow-mind
+$env:PI_MODEL = "openai/gpt-5.6-terra"
+$env:OPENAI_API_KEY = "your-api-key"
+.\scripts\Start-AgentWeb.ps1
+```
+
+若流程平台已经单独启动，可跳过它：
+
+```powershell
+.\scripts\Start-AgentWeb.ps1 -SkipPlatform
+```
+
+仅查看将执行的动作而不启动服务：
+
+```powershell
+.\scripts\Start-AgentWeb.ps1 -WhatIf
+```
+
+关闭服务时运行下列脚本，确认后它会结束监听开发端口的完整进程树：
+
+```powershell
+.\scripts\Stop-AgentWeb.ps1
+```
+
+不需要确认时可使用 `-Force`。启动完成后访问 `http://127.0.0.1:5173`；可通过
+`http://127.0.0.1:3100/health/ready` 检查模型认证是否成功。
+
 ## 确定性验收模式
 
 自动化测试使用 `NODE_ENV=test` 下的受限 fake Pi 和 Mock HTTP 平台。若只需本地演示 UI，
