@@ -1,4 +1,4 @@
-﻿package com.flowmind.platform.web;
+package com.flowmind.platform.web;
 
 import org.junit.jupiter.api.Test;
 
@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Static resource contract tests for the local flow function console.
+ * 流程平台功能测试前端静态资源契约测试。
  *
  * @author FlowMind
  * @since 2026-07-29
@@ -19,117 +19,198 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FlowTestStaticPageTest {
 
     @Test
-    void saveDefinitionDraftValidationLoopShouldUseCurrentVueContext() throws IOException {
-        String script = loadResource("/static/flow-test/flow-test-app.js");
-
-        String validationBlock = substringBetween(script,
-                "var nodeCodes = {};",
-                "this.definitionDraft.edges.forEach(function (edge) {");
-
-        assertThat(validationBlock)
-                .contains("readListenerRuleEditor(node.listenerConfig)")
-                .contains("this.isParallelGatewayNode(node)")
-                .contains("paired = this.definitionDraft.nodes.find(function (candidate)")
-                .contains("}, this);");
-    }
-
-    @Test
-    void startSubmitShouldUseCurrentVariableAndAttachmentPayload() throws IOException {
+    void instancePageShouldExposeReminderActionsWithoutRegressingExistingFunctions() throws IOException {
         String html = loadResource("/static/flow-test/index.html");
         String script = loadResource("/static/flow-test/flow-test-app.js");
 
-        assertThat(html)
-                .contains("data-testid=\"start-form-field\"")
-                .contains(":required=\"isStartFieldRequired(field)\"")
-                .contains("@click=\"startAndSubmitInstance\"")
-                .contains("@change=\"handleInstanceAttachmentFileChange(attachment, $event)\"")
-                .contains("v-model.trim=\"attachment.contentType\"");
+        String instancePage = substringBetween(html,
+                "<section v-show=\"activeView === 'instances'\"",
+                "<section v-show=\"activeView === 'todo'\"");
 
-        assertThat(script)
-                .contains("buildStartSubmitBody: function ()")
-                .contains("variables: this.buildStartVariables()")
-                .contains("buildStartVariables: function ()")
-                .contains("this.buildVariablesFromFields(this.instanceDefinitionFields, this.instanceFieldValues, true)")
-                .contains("attachments: this.buildInstanceAttachments()")
-                .contains("autoClaimSpecifiedUserTasks: function (instance)")
-                .contains("isSpecifiedUserTask: function (task, definition)")
-                .contains("autoClaimTask: function (task)")
-                .contains("this.autoClaimSpecifiedUserTasks(instance)")
-                .contains("attachmentUploadPayload: function (attachment)");
-    }
-
-    @Test
-    void todoActionsShouldMatchCurrentStaticPage() throws IOException {
-        String html = loadResource("/static/flow-test/index.html");
-        String script = loadResource("/static/flow-test/flow-test-app.js");
-
-        assertThat(html)
-                .contains("@click=\"queryTodoTasks\"")
-                .contains("@click.stop=\"claimTask(row)\"")
-                .contains("@click.stop=\"unclaimTask(row)\"")
-                .contains("@click=\"openTodoTaskDialog(row)\"")
-                .contains("v-model=\"taskDialog.transferUserId\"")
-                .contains("@click=\"transferCurrentTask\"")
-                .contains("@click=\"addSignCurrentTask\"")
-                .contains("data-testid=\"todo-scope-delegated\"")
-                .contains("@click=\"delegateCurrentTask\"");
-
-        assertThat(script)
-                .contains("todoTasks: \"/api/platform/tasks/todo\"")
-                .contains("taskClaim: \"/api/platform/runtime/tasks/claim\"")
-                .contains("taskUnclaim: \"/api/platform/runtime/tasks/unclaim\"")
-                .contains("taskTransfer: \"/api/platform/runtime/tasks/transfer\"")
-                .contains("taskAddSign: \"/api/platform/runtime/tasks/add-sign\"")
-                .contains("queryTodoTasks: function ()")
-                .contains("canClaimTask: function (task)")
-                .contains("canUnclaimTask: function (task)")
-                .contains("canHandleTask: function (task)")
-                .contains("transferCurrentTask: function ()")
-                .contains("targetUserId: this.taskDialog.transferUserId")
-                .contains("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
-                .contains("delegateCurrentTask")
-                .contains("filteredTodoRows: function ()")
-                .contains("todoScope: \"own\"")
-                .doesNotContain("delegateTask: \"/api/platform/runtime/tasks/delegate\"")
-                .doesNotContain("delegateUserId: this.taskDialog.delegateUserId");
-    }
-
-    @Test
-    void instanceSelectionShouldLoadDetailWithoutReadRecordOrWithdrawUi() throws IOException {
-        String html = loadResource("/static/flow-test/index.html");
-        String script = loadResource("/static/flow-test/flow-test-app.js");
-
-        assertThat(html)
-                .contains("@click=\"selectInstance(row)\"")
-                .contains("selectedInstanceActiveTasks")
+        assertThat(instancePage)
                 .contains("currentInstanceNodeCodes(row)")
                 .contains("@click.stop=\"remindInstanceNode(row, nodeCode)\"")
+                .contains("selectedInstanceActiveTasks")
                 .contains("@click.stop=\"remindInstanceTask(task)\"")
                 .contains("手动催办")
-                .contains("@click=\"withdrawSelectedInstance()\"")
-                .contains("@click=\"openInstanceQueryDialog('readRecords')\"");
+                .contains("data-testid=\"readonly-instance-field\"")
+                .contains("@click=\"terminateSelectedInstance()\"")
+                .contains("@click=\"deleteSelectedInstance()\"")
+                .doesNotContain("保存表单字段")
+                .doesNotContain("操作意见")
+                .doesNotContain(">撤回实例</button>");
 
         assertThat(script)
-                .contains("selectInstance: function (row)")
+                .contains("taskRemind: function (taskId)")
+                .doesNotContain("remindTask: function (taskId)")
                 .contains("loadSelectedInstanceDetail: function (instanceId)")
-                .contains("API_PATHS.instanceDetail(instanceId)")
-                .contains("this.selectedInstanceDetail = enrichedDetail")
                 .contains("activeTasks: normalizeList(tasksPayload)")
-                .contains("activeTasks: function (instanceId)")
-                .contains("remindTask: function (taskId)")
-                .contains("\"/api/platform/tasks/\" + encodeURIComponent(taskId) + \"/remind\"")
-                .contains("currentInstanceNodeCodes: function (row)")
-                .contains("findInstanceActiveTaskByNode: function (tasks, nodeCode)")
+                .contains("canRemindInstanceTask: function (task)")
+                .contains("task.expectedTaskVersion !== undefined")
                 .contains("remindInstanceNode: function (row, nodeCode)")
                 .contains("remindInstanceTask: function (task)")
-                .contains("this.sendRequest(\"手动催办\", \"POST\", API_PATHS.remindTask(taskId), body)")
-                .contains("historyTasks: function (instanceId)")
-                .contains("comments: function (instanceId)")
+                .contains("expectedTaskVersion: extractTaskVersion(task)")
+                .contains("this.sendRequest(\"手动催办\", \"POST\", API_PATHS.taskRemind(taskId), body)")
+                .contains("autoClaimSpecifiedUserTasks: function (instance)")
+                .contains("this.autoClaimSpecifiedUserTasks(instance)")
+                .contains("normalizeJsonConfigValue")
+                .contains("readTimeoutReminderEditor")
+                .contains("todoTimeoutPriority");
+    }
+
+    @Test
+    void instanceDetailShouldKeepFormReadonlyAndOnlyExposeTerminateAndDeleteOperations() throws IOException {
+        String html = loadResource("/static/flow-test/index.html");
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        String instanceDetail = substringBetween(html,
+                "<section v-if=\"selectedInstanceDetail\"",
+                "</section>");
+
+        assertThat(instanceDetail)
+                .contains("<h4>表单字段</h4><span class=\"muted\">只读</span>")
+                .contains("data-testid=\"readonly-instance-field\"")
+                .contains("{{ formatJsonSummary(row.value) }}")
+                .contains("@click=\"terminateSelectedInstance()\"")
+                .contains("@click=\"deleteSelectedInstance()\"")
+                .doesNotContain("保存表单字段")
+                .doesNotContain("updateSelectedInstanceVariables()")
+                .doesNotContain("v-model")
+                .doesNotContain("操作意见");
+
+        assertThat(script)
+                .doesNotContain("updateSelectedInstanceVariables: function ()")
+                .doesNotContain("updateVariables: \"/api/platform/runtime/instances/variables\"")
+                .doesNotContain("instanceOperationComment")
+                .contains("terminateSelectedInstance: function ()")
+                .contains("deleteSelectedInstance: function ()")
+                .contains("comment: \"\"");
+    }
+
+    @Test
+    void completedTaskDetailShouldExposeWithdrawUsingPreviousHandlerRule() throws IOException {
+        String html = loadResource("/static/flow-test/index.html");
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        assertThat(html)
+                .contains("data-testid=\"withdraw-completed-task\"")
+                .contains(":disabled=\"!canWithdrawSelectedInstance\"")
+                .contains("@click=\"withdrawSelectedInstance()\"")
+                .doesNotContain(">撤回实例</button>");
+
+        assertThat(script)
+                .contains("taskWithdraw: \"/api/platform/runtime/tasks/withdraw\"")
+                .contains("selectedActiveTask: function ()")
+                .contains("selectedPreviousHandlerTask: function ()")
+                .contains("[\"SEND\", \"APPROVE\", \"REJECT\", \"RETURN\", \"DIRECT_SEND\"]")
+                .contains("history.activeTaskId !== currentTaskId")
+                .contains("activeTasks.length === 1")
+                .contains("task.taskStatus === \"ACTIVE\" || task.taskStatus === \"CLAIMED\"")
+                .contains("!hasText(task.taskGroupId)")
+                .contains("!hasText(task.branchKey)")
+                .contains("previous.assigneeUserId === this.currentUserId")
+                .contains("this.completedDialog.instanceDetail = payload;")
+                .contains("withdrawSelectedInstance: function ()")
+                .contains("operationId: this.createOperationId(\"withdraw\")")
+                .contains("taskId: extractTaskId(task)")
+                .contains("expectedTaskVersion: extractTaskVersion(task)")
+                .contains("operatorUserId: this.currentUserId")
+                .contains("comment: \"\"")
+                .contains("this.sendRequest(\"撤回\", \"POST\", API_PATHS.taskWithdraw, body)")
+                .contains("this.refreshAfterWithdraw(instanceId)")
+                .contains("this.completedDialog.open = false")
+                .contains("撤回要求流程恰好只有一个活动任务")
+                .contains("会签、或签或并行任务不支持撤回")
+                .contains("找不到可恢复的上一办理节点")
+                .contains("仅运行中的流程实例可以撤回");
+    }
+
+    @Test
+    void saveDefinitionDraftValidationLoopShouldBindVueInstance() throws IOException {
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        String nodeValidationLoop = substringBetween(script,
+                "var nodeCodes = {};",
+                "var paired;");
+
+        assertThat(nodeValidationLoop)
+                .contains("this.validateNodeTimeoutConfig(node)")
+                .contains("                }, this);");
+    }
+
+    @Test
+    void startSubmitShouldRequireEveryStartFormField() throws IOException {
+        String html = loadResource("/static/flow-test/index.html");
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        assertThat(html)
+                .contains(":required=\"isStartFieldRequired(field)\"")
+                .contains(":class=\"{'field-invalid': startFormFieldError(field)}\"")
+                .contains("{{ startFormFieldError(field) }}");
+
+        assertThat(script)
+                .contains("startFieldErrors: {}")
+                .contains("validateStartFormFields: function ()")
+                .contains("请先为流程定义配置表单字段")
+                .contains("请填写必填表单字段：")
+                .contains("this.validateStartFormFields();")
+                .contains("this.startFieldErrors = errors;");
+    }
+
+    @Test
+    void delegateActionShouldUseTransferApiAndOwnTodoShouldHideTransferredTasks() throws IOException {
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        String todoFilter = substringBetween(script,
+                "filteredTodoRows: function () {",
+                "instanceDefinitionAttachments: function () {");
+        String ownTodoHelper = substringBetween(script,
+                "isOwnTodoTask: function (row) {",
+                "todoScopeLabel: function (task) {");
+
+        assertThat(script)
+                .contains("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
+                .doesNotContain("delegateTask: \"/api/platform/runtime/tasks/delegate\"")
+                .contains("targetUserId: this.taskDialog.delegateUserId")
+                .doesNotContain("delegateUserId: this.taskDialog.delegateUserId");
+        assertThat(todoFilter)
+                .contains("return this.isOwnTodoTask(row);");
+        assertThat(ownTodoHelper)
+                .contains("!hasText(row.delegateFromUserId)")
+                .contains("!hasText(row.assigneeUserId) || row.assigneeUserId === this.currentUserId");
+    }
+
+    @Test
+    void selectingInstanceShouldMarkReadAndWithdrawShouldFollowPreviousHandlerRule() throws IOException {
+        String html = loadResource("/static/flow-test/index.html");
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        String readRecordPermission = substringBetween(script,
+                "canQuerySelectedInstanceReadRecords: function () {",
+                "canWithdrawSelectedInstance: function () {");
+
+        assertThat(html)
+                .contains("data-testid=\"withdraw-completed-task\"")
+                .doesNotContain(":disabled=\"!canStarterOperateSelectedInstance\"");
+        assertThat(readRecordPermission)
+                .contains("return !!extractInstanceId(this.selectedInstanceDetail);")
+                .doesNotContain("starterUserId")
+                .doesNotContain("isTestAdmin");
+
+        assertThat(script)
                 .contains("markRead: function (instanceId)")
-                .contains("recordSelectedInstanceRead: function (instanceId)")
+                .contains("\"/api/platform/instances/\" + encodeURIComponent(instanceId) + \"/read\"")
                 .contains("canWithdrawSelectedInstance: function ()")
+                .contains("selectedPreviousHandlerTask")
+                .contains("previous.assigneeUserId === this.currentUserId")
+                .contains("return this.sendRequest(\"记录已阅\", \"POST\", API_PATHS.markRead(instanceId), {})")
+                .contains("this.recordSelectedInstanceRead(instanceId);")
                 .contains("recordTodoRowsRead: function (rows)")
-                .doesNotContain("recoverSelectedInstance");
+                .contains("return this.recordTodoRowsRead(this.todoRows).then(function () {")
+                .contains("return this.markSelectedInstanceRead(instanceId).catch(function () {")
+                .doesNotContain("fetch(this.apiBaseUrl + path")
+                .doesNotContain("this.markSelectedInstanceRead(instanceId).catch(function () {})")
+                .doesNotContain("canStarterOperateSelectedInstance");
     }
 
     @Test
@@ -139,6 +220,7 @@ class FlowTestStaticPageTest {
         String css = loadResource("/static/flow-test/flow-test-app.css");
 
         assertThat(html)
+                .contains("流程平台功能测试")
                 .contains("id=\"app\"")
                 .contains("vue.global.prod.js")
                 .contains("flow-test-app.css")
@@ -150,8 +232,18 @@ class FlowTestStaticPageTest {
                 .contains("attachment-info")
                 .contains("formatAttachmentSize(attachment.sizeBytes)")
                 .contains("downloadAttachment(attachment)")
+                .contains("@click.stop=\"claimTask(row)\"")
+                .contains("@click.stop=\"unclaimTask(row)\"")
+                .contains("taskClaimStatusText(row)")
+                .contains("canHandleTask(taskDialog.task)")
                 .contains("@keydown.delete=\"handleDesignerDelete\"")
                 .contains("@click=\"startConnectionMode\"")
+                .contains("@click=\"startAndSubmitInstance\"")
+                .contains("data-testid=\"start-form-field\"")
+                .contains("v-for=\"field in instanceDefinitionFields\"")
+                .contains("v-model.trim=\"instanceFieldValues[formFieldCode(field)]\"")
+                .doesNotContain("外部业务键")
+                .doesNotContain("流程变量 JSON")
                 .contains("data-testid=\"listener-reject-enabled\"")
                 .contains("data-testid=\"listener-reject-targets\"")
                 .contains("data-testid=\"listener-direct-send-enabled\"")
@@ -159,6 +251,11 @@ class FlowTestStaticPageTest {
                 .contains("data-testid=\"starter-resubmit\"")
                 .contains("data-testid=\"direct-send\"")
                 .contains("data-testid=\"replace-instance-attachment\"")
+                .doesNotContain("data-testid=\"new-instance-attachment\"")
+                .doesNotContain("新增实例附件")
+                .contains(":readonly=\"!taskDialog.starterTask\"")
+                .contains("@click=\"directSendCurrentTask\"")
+
                 .contains("data-testid=\"listener-config-json\"")
                 .contains("data-testid=\"timeout-enabled\"")
                 .contains("data-testid=\"timeout-duration\"")
@@ -197,7 +294,8 @@ class FlowTestStaticPageTest {
                 .doesNotContain("v-if=\"commentRows.length === 0\"")
                 .doesNotContain("v-if=\"auditTraceRows.length === 0\"")
                 .contains("instanceVariableRows")
-                .contains("@click=\"updateSelectedInstanceVariables()\"")
+                .contains("data-testid=\"readonly-instance-field\"")
+                .doesNotContain("@click=\"updateSelectedInstanceVariables()\"")
                 .contains("@click=\"withdrawSelectedInstance()\"")
                 .contains("@click=\"queryAdminInstances()\"")
                 .contains("@click=\"terminateSelectedInstance()\"")
@@ -223,19 +321,47 @@ class FlowTestStaticPageTest {
                 .contains("class=\"canvas-surface\"")
                 .contains(":viewBox=\"canvasViewBox(selectedGraphNodes, 480)\"")
                 .contains(":viewBox=\"canvasViewBox(definitionDraft.nodes, 480)\"")
-                .doesNotContain("data-testid=\"new-instance-attachment\"")
+                .doesNotContain("viewBox=\"0 0 960 420\"")
+                .doesNotContain("viewBox=\"0 0 960 480\"")
+                .doesNotContain("灰度发布")
                 .doesNotContain("/gray")
-                .doesNotContain("businessKey: this.instanceForm.businessKey")
                 .doesNotContain("businessKey: this.instanceForm.businessKey")
                 .doesNotContain("instanceVariablesText");
 
         assertThat(script)
                 .contains("Vue.createApp")
                 .contains("FLOW_TEST_USERS")
+                .contains("业务员")
+                .contains("组长")
+                .contains("部门经理1")
+                .contains("部门经理2")
+                .contains("财务1")
+                .contains("财务2")
+                .contains("CEO")
+                .contains("测试管理员")
+                .contains("u_sales_01")
+                .contains("u_group_leader_01")
+                .contains("u_dept_manager_01")
+                .contains("u_dept_manager_02")
+                .contains("u_finance_01")
+                .contains("u_finance_02")
+                .contains("u_ceo_01")
+                .contains("u_admin_01")
                 .contains("currentUserId: \"u_admin_01\"")
                 .contains("starterDeptId: \"mock-dept\"")
+                .contains("mock-dept")
+                .contains("dept_sales")
+                .contains("dept_manager")
+                .contains("dept_finance")
+                .doesNotContain("{departmentId: \"dept_manager\"")
                 .contains("FLOW_TEST_DEPARTMENTS")
                 .contains("FLOW_TEST_ROLES")
+                .doesNotContain("user_sales")
+                .doesNotContain("user_sales_manager")
+                .doesNotContain("user_manager")
+                .doesNotContain("user_finance")
+                .doesNotContain("user_admin")
+                .doesNotContain("mock-user")
                 .contains("API_PATHS")
                 .contains("\"/api/platform/definitions\"")
                 .contains("publishDefinition: \"/api/platform/definitions/publish\"")
@@ -244,18 +370,56 @@ class FlowTestStaticPageTest {
                 .contains("archiveDefinition: \"/api/platform/definitions/archive\"")
                 .contains("deleteDefinition: \"/api/platform/definitions\"")
                 .contains("copyDefinition: function (definitionId)")
+                .contains("\"/api/platform/definitions/\" + encodeURIComponent(definitionId) + \"/copy\"")
+                .doesNotContain("publishDefinition: function (definitionId)")
+                .doesNotContain("activateDefinition: function (definitionId)")
+                .doesNotContain("deactivateDefinition: function (definitionId)")
+                .doesNotContain("archiveDefinition: function (definitionId)")
+                .doesNotContain("deleteDefinition: function (definitionId)")
                 .contains("\"/api/platform/definitions/\" + encodeURIComponent(definitionId) + \"/graph\"")
                 .contains("\"/api/platform/definitions/\" + encodeURIComponent(definitionId) + \"/publish-validation\"")
+                .doesNotContain("\"/api/platform/definitions/\" + encodeURIComponent(definitionId) + \"/validate\"")
                 .contains("startAndSubmit: \"/api/platform/runtime/instances/start-submit\"")
                 .contains("taskSubmit: \"/api/platform/runtime/tasks/submit\"")
                 .contains("taskApprove: \"/api/platform/runtime/tasks/approve\"")
                 .contains("taskReject: \"/api/platform/runtime/tasks/reject\"")
                 .contains("taskDirectSend: \"/api/platform/runtime/tasks/direct-send\"")
+                .contains("taskTransfer: \"/api/platform/runtime/tasks/transfer\"")
+                .contains("taskAddSign: \"/api/platform/runtime/tasks/add-sign\"")
                 .contains("directSendContext: function (taskId)")
+                .contains("\"/api/platform/tasks/\" + encodeURIComponent(taskId) + \"/direct-send-context\"")
                 .contains("replaceInstanceAttachment: function (instanceId, attachmentId)")
+                .contains("taskClaim: \"/api/platform/runtime/tasks/claim\"")
+                .contains("taskUnclaim: \"/api/platform/runtime/tasks/unclaim\"")
+                .contains("canClaimTask: function (task)")
+                .contains("canUnclaimTask: function (task)")
+                .contains("isCurrentUserTaskCandidate: function (task)")
+                .contains("submitTaskClaimAction")
+                .contains("taskWithdraw: \"/api/platform/runtime/tasks/withdraw\"")
+                .contains("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
+                .doesNotContain("updateVariables: \"/api/platform/runtime/instances/variables\"")
+                .contains("terminateInstance: \"/api/platform/runtime/instances/terminate\"")
+                .contains("deleteInstance: \"/api/platform/runtime/instances\"")
+                .contains("adminInstances: \"/api/platform/admin/instances\"")
+                .doesNotContain("adminJump: function (instanceId)")
+                .contains("callbackLogs: \"/api/platform/admin/callback-logs\"")
+                .contains("auditLogs: \"/api/platform/admin/audit-logs\"")
+                .contains("taskWithdraw: \"/api/platform/runtime/tasks/withdraw\"")
+                .contains("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
+                .contains("reminders: \"/api/platform/reminders\"")
+                .contains("taskRemind: function (taskId)")
+                .contains("\"/api/platform/tasks/\" + encodeURIComponent(taskId) + \"/remind\"")
+                .contains("adminTimeoutScan: \"/api/platform/admin/timeout-scan\"")
+                .contains("readRecords: function (instanceId)")
+                .contains("adminInstances: \"/api/platform/admin/instances\"")
+                .contains("\"/api/platform/instances/\" + encodeURIComponent(instanceId) + \"/read-records\"")
+                .doesNotContain("\"/api/platform/instances/start-and-submit\"")
+                .contains("\"/api/platform/tasks/todo\"")
                 .contains("\"/api/platform/tasks/completed\"")
                 .contains("\"/api/platform/instances/started\"")
                 .contains("\"/api/platform/attachments\"")
+                .contains("attachmentQueryPath")
+                .contains("API_PATHS.attachmentDownload(attachmentId)")
                 .contains("\"/api/platform/attachment-templates\"")
                 .contains("queryAttachmentTemplates")
                 .contains("createAttachmentTemplate")
@@ -284,7 +448,7 @@ class FlowTestStaticPageTest {
                 .contains("queryInstanceComments")
                 .contains("queryInstanceCallbackLogs")
                 .contains("queryInstanceAuditTrace")
-                .contains("updateSelectedInstanceVariables")
+                .doesNotContain("updateSelectedInstanceVariables")
                 .contains("withdrawSelectedInstance")
                 .contains("terminateSelectedInstance")
                 .contains("deleteSelectedInstance")
@@ -307,6 +471,9 @@ class FlowTestStaticPageTest {
                 .contains("并行网关配对无效：请在流程图中为并行分支和并行汇聚设置互相配对，或删除会签定义里不需要的并行网关")
                 .contains("isParallelGatewayNode: function (node)")
                 .contains("parallelGatewayPairOptions: function (node)")
+                .contains("并行网关必须选择配对网关")
+                .contains("并行网关配对必须互相指向")
+                .doesNotContain("pairFirstUnpairedParallelGateway")
                 .contains("copyDefinition: function (row)")
                 .contains("CANVAS_MIN_WIDTH")
                 .contains("canvasSurfaceStyle: function (nodes, minHeight)")
@@ -316,17 +483,34 @@ class FlowTestStaticPageTest {
                 .contains("connectionClickQueue")
                 .contains("deleteSelectedDesignerItem")
                 .contains("persistDefinitionDraftAfterDesignerDelete")
+                .contains("this.sendRequest(\"同步流程图\", \"PUT\", API_PATHS.saveGraph")
+                .contains("连线已删除并同步到后端")
                 .contains("buildUserApproverRule")
                 .contains("normalizeMultiInstanceMode")
+                .contains("node.multiInstanceMode = normalizeMultiInstanceMode(node.multiInstanceMode, ids.length)")
+                .doesNotContain("node.multiInstanceMode = ids.length <= 1 ? \"SINGLE\" : (node.multiInstanceMode || \"OR_SIGN\")")
+                .contains("buildStartSubmitBody")
+                .contains("buildStartVariables")
+                .contains("applyInstanceFormFields")
+                .contains("buildInstanceVariableRows")
+                .contains("attachments: this.buildInstanceAttachments()")
                 .contains("startSubmitting")
                 .contains("lastStartedInstanceId")
                 .contains("focusCurrentStartedTodos")
+                .contains("enrichTodoTimeoutReminders")
+                .contains("taskTimeoutBadge: function (task)")
+                .contains("queryTaskTimeoutReminder")
+                .contains("queryInstanceReadRecords")
+                .contains("reminderType: \"TIMEOUT\"")
                 .contains("formatAttachmentSize")
                 .contains("formatDateTime")
                 .contains("sizeBytes: 0")
                 .contains("content: \"\"")
+                .doesNotContain("content: \"Zmxvdy1taW5kLXRlc3Q=\"")
+                .doesNotContain("sizeBytes: 1280")
                 .contains("var user = this.currentUser()")
                 .contains("userDepartmentId(user)")
+                .contains("starterDeptId: userDepartmentId(user)")
                 .contains("\"X-Flow-Dept-Id\": userDepartmentId(this.currentUser())")
                 .contains("openTodoTaskDialog")
                 .contains("loadTaskDialogContext: function (task)")
@@ -335,15 +519,18 @@ class FlowTestStaticPageTest {
                 .contains("directSendCurrentTask")
                 .contains("savePendingTaskAttachmentReplacements")
                 .contains("replacement.saved = true")
+                .doesNotContain("handleTaskNewAttachmentFileChange")
+                .doesNotContain("pendingAttachments")
                 .contains("refreshAfterTaskAction")
+                .contains("todoScope: \"own\"")
+                .contains("filteredTodoRows: function ()")
+                .contains("taskSourceLabel: function (task)")
+                .contains("delegateCurrentTask")
                 .contains("openCompletedTaskDialog")
                 .contains("setOperationState")
                 .contains("operationLogs")
+                .contains("\"X-Flow-Dept-Id\"")
                 .doesNotContain("\"X-Flow-Dept-Name\"")
-                .doesNotContain("\"/api/platform/definitions/\" + encodeURIComponent(definitionId) + \"/validate\"")
-                .doesNotContain("\"/api/platform/instances/start-and-submit\"")
-                .doesNotContain("handleTaskNewAttachmentFileChange")
-                .doesNotContain("pendingAttachments");
                 .contains("definitionId: definitionId")
                 .contains("typeof pathBuilder === \"function\"")
                 .contains("var path = typeof pathBuilder === \"function\" ? pathBuilder(taskId) : pathBuilder")
@@ -371,15 +558,35 @@ class FlowTestStaticPageTest {
                 .contains(".listener-config-panel")
                 .contains(".timeout-config-panel")
                 .contains(".timeout-badge")
-                .contains(".active-task-list")
-                .contains(".instance-node-list")
+                .contains(".instance-support-grid")
+                .contains(".query-dialog")
+                .contains(".query-dialog-list")
+                .contains(".query-dialog-footer")
+                .contains(".property-panel-scroll")
+                .contains("grid-template-columns: minmax(140px, 170px) minmax(0, 1fr) 280px")
+                .contains("width: 280px")
+                .contains("height: calc(92vh - 210px)")
+                .contains("max-height: calc(92vh - 210px)")
+                .contains("overflow-y: auto")
+                .doesNotContain("grid-template-columns: minmax(140px, 170px) minmax(0, 1fr) minmax(240px, 320px)")
+                .contains(".audit-trace-list")
+                .contains(".todo-segmented")
+                .contains(".timeout-badge.overdue")
+                .contains(".timeout-badge.reminded")
+                .contains(".scope-tabs")
+                .contains(".aux-query-actions")
+                .contains(".audit-trace-table")
+                .contains(".field-error")
+                .contains(".storage-badge")
+                .contains(".attachment-meta")
                 .contains(".task-dialog")
                 .contains(".status-bar")
                 .contains(".operation-log")
                 .contains(":focus-visible")
                 .contains("@media (max-width: 960px)")
                 .contains("overflow: auto")
-                .doesNotContain("body {\n    overflow: hidden;");
+                .doesNotContain("body {\n    overflow: hidden;")
+                .doesNotContain(".right-rail");
     }
 
     private String loadResource(String path) throws IOException {
@@ -404,4 +611,3 @@ class FlowTestStaticPageTest {
         return value.substring(startIndex, endIndex);
     }
 }
-

@@ -22,7 +22,6 @@
         deleteDefinition: "/api/platform/definitions",
         startAndSubmit: "/api/platform/runtime/instances/start-submit",
         adminInstances: "/api/platform/admin/instances",
-        updateVariables: "/api/platform/runtime/instances/variables",
         terminateInstance: "/api/platform/runtime/instances/terminate",
         deleteInstance: "/api/platform/runtime/instances",
         instanceDetail: function (instanceId) {
@@ -42,9 +41,6 @@
         },
         taskClaim: "/api/platform/runtime/tasks/claim",
         taskUnclaim: "/api/platform/runtime/tasks/unclaim",
-        remindTask: function (taskId) {
-            return "/api/platform/tasks/" + encodeURIComponent(taskId) + "/remind";
-        },
         directSendContext: function (taskId) {
             return "/api/platform/tasks/" + encodeURIComponent(taskId) + "/direct-send-context";
         },
@@ -355,6 +351,63 @@
         return node;
     }
 
+    function normalizeJsonConfigValue(value) {
+        if (!hasText(value)) {
+            return "";
+        }
+        return typeof value === "string" ? value : JSON.stringify(value);
+    }
+
+    function parseJsonConfigValue(value, label) {
+        var text = normalizeJsonConfigValue(value);
+        if (!hasText(text)) {
+            return {config: {}, error: ""};
+        }
+        try {
+            var config = JSON.parse(text);
+            if (!isJsonObject(config)) {
+                return {config: {}, error: label + " 必须是 JSON 对象"};
+            }
+            return {config: config, error: ""};
+        } catch (error) {
+            return {config: {}, error: label + " JSON 格式不正确：" + error.message};
+        }
+    }
+
+    function readTimeoutReminderEditor(node) {
+        var timeoutParsed = parseJsonConfigValue(node && node.timeoutConfig, "timeoutConfig");
+        var reminderParsed = parseJsonConfigValue(node && node.reminderConfig, "reminderConfig");
+        var timeout = timeoutParsed.config || {};
+        var reminder = reminderParsed.config || {};
+        return {
+            timeoutEnabled: timeout.enabled === true,
+            timeoutDurationMinutes: timeout.durationMinutes === undefined || timeout.durationMinutes === null
+                ? 0 : Number(timeout.durationMinutes),
+            timeoutAction: timeout.action || "REMIND",
+            timeoutSeverity: timeout.severity || "MEDIUM",
+            timeoutTargetNodeCode: timeout.targetNodeCode || "",
+            reminderEnabled: reminder.enabled === true,
+            reminderMaxCount: reminder.maxCount === undefined || reminder.maxCount === null
+                ? 1 : Number(reminder.maxCount),
+            reminderMessageTemplate: reminder.messageTemplate || "任务已超时，请尽快处理",
+            timeoutConfigError: timeoutParsed.error || reminderParsed.error
+        };
+    }
+
+    function applyTimeoutReminderEditor(node) {
+        var editor = readTimeoutReminderEditor(node);
+        node.timeoutEnabled = editor.timeoutEnabled;
+        node.timeoutDurationMinutes = editor.timeoutDurationMinutes;
+        node.timeoutAction = editor.timeoutAction;
+        node.timeoutSeverity = editor.timeoutSeverity;
+        node.timeoutTargetNodeCode = editor.timeoutTargetNodeCode;
+        node.reminderEnabled = editor.reminderEnabled;
+        node.reminderMaxCount = editor.reminderMaxCount;
+        node.reminderMessageTemplate = editor.reminderMessageTemplate;
+        node.timeoutConfigError = editor.timeoutConfigError;
+        return node;
+    }
+
     function extractDefinitionId(row) {
         return row && (row.definitionId || row.id);
     }
@@ -373,6 +426,27 @@
 
     function nowText() {
         return new Date().toLocaleString("zh-CN", {hour12: false});
+    }
+
+    function parseDateTimeValue(value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        var normalized = String(value).replace(" ", "T");
+        var date = new Date(normalized);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function todoTimeoutPriority(task) {
+        var dueAt = parseDateTimeValue(task && task.dueAt);
+        if (!dueAt) {
+            return 3;
+        }
+        var diff = dueAt.getTime() - Date.now();
+        if (diff <= 0) {
+            return 0;
+        }
+        return diff <= 30 * 60 * 1000 ? 1 : 2;
     }
 
     function defaultDefinitionDraft() {
@@ -426,6 +500,17 @@
             listenerRejectTargetNodeCodes: [],
             listenerDirectSendEnabled: false,
             listenerConfigError: "",
+            timeoutConfig: "",
+            reminderConfig: "",
+            timeoutEnabled: false,
+            timeoutDurationMinutes: 0,
+            timeoutAction: "REMIND",
+            timeoutSeverity: "MEDIUM",
+            timeoutTargetNodeCode: "",
+            reminderEnabled: false,
+            reminderMaxCount: 1,
+            reminderMessageTemplate: "任务已超时，请尽快处理",
+            timeoutConfigError: "",
             positionX: x,
             positionY: y,
             sortOrder: sortOrder
@@ -478,8 +563,11 @@
             selectedRoleDepartmentId: roleDepartmentId,
             approverExpression: approverExpression,
             approverRuleConfig: stringifyRule(ruleConfig),
-            listenerConfig: normalizeListenerConfigValue(node.listenerConfig)
+            listenerConfig: normalizeListenerConfigValue(node.listenerConfig),
+            timeoutConfig: normalizeJsonConfigValue(node.timeoutConfig),
+            reminderConfig: normalizeJsonConfigValue(node.reminderConfig)
         });
+        applyTimeoutReminderEditor(normalized);
         return applyListenerRuleEditor(normalized);
     }
 
@@ -601,7 +689,6 @@
                     total: 0,
                     loading: false
                 },
-                instanceOperationComment: "",
                 todoRows: [],
                 todoScope: "own",
                 todoReminderStatusByTaskId: {},
@@ -625,7 +712,8 @@
                     open: false,
                     task: {},
                     attachments: [],
-                    currentNodeCodes: []
+                    currentNodeCodes: [],
+                    instanceDetail: null
                 }
             };
         },
@@ -639,19 +727,76 @@
             canQuerySelectedInstanceReadRecords: function () {
                 return !!extractInstanceId(this.selectedInstanceDetail);
             },
-            canWithdrawSelectedInstance: function () {
-                var previous = this.selectedPreviousHandlerTask;
-                return !!previous && previous.assigneeUserId === this.currentUserId;
+            selectedActiveTask: function () {
+                var detail = this.completedDialog.instanceDetail;
+                var activeTasks = normalizeList(detail && detail.activeTasks);
+                return activeTasks.length === 1 ? activeTasks[0] : null;
             },
             selectedPreviousHandlerTask: function () {
-                var detail = this.selectedInstanceDetail || {};
-                var histories = normalizeList(detail.historyTasks).concat(this.historyTaskRows || []);
-                return histories.filter(function (task) {
-                    return hasText(task.assigneeUserId) && task.actionType !== "WITHDRAW" && task.handleType !== "WITHDRAW";
-                }).sort(function (left, right) {
-                    return String(right.completedAt || right.endedAt || right.updatedAt || right.createdAt || right.startedAt || "")
-                        .localeCompare(String(left.completedAt || left.endedAt || left.updatedAt || left.createdAt || left.startedAt || ""));
-                })[0] || null;
+                var currentTaskId = extractTaskId(this.selectedActiveTask);
+                var detail = this.completedDialog.instanceDetail;
+                var historyTasks = normalizeList(detail && detail.historyTasks);
+                var withdrawSourceActions = ["SEND", "APPROVE", "REJECT", "RETURN", "DIRECT_SEND"];
+                var index;
+                for (index = historyTasks.length - 1; index >= 0; index -= 1) {
+                    var history = historyTasks[index] || {};
+                    if (withdrawSourceActions.indexOf(history.actionType) >= 0
+                            && history.activeTaskId !== currentTaskId) {
+                        return history;
+                    }
+                }
+                return null;
+            },
+            canWithdrawSelectedInstance: function () {
+                var detail = this.completedDialog.instanceDetail || {};
+                var activeTasks = normalizeList(detail.activeTasks);
+                var task = this.selectedActiveTask;
+                var previous = this.selectedPreviousHandlerTask;
+                var taskVersion = task && (task.taskVersion !== undefined && task.taskVersion !== null
+                    ? task.taskVersion : task.expectedTaskVersion);
+                return detail.instanceStatus === "RUNNING"
+                    && activeTasks.length === 1
+                    && !!extractTaskId(task)
+                    && taskVersion !== undefined
+                    && taskVersion !== null
+                    && (task.taskStatus === "ACTIVE" || task.taskStatus === "CLAIMED")
+                    && !hasText(task.taskGroupId)
+                    && !hasText(task.branchKey)
+                    && !!previous
+                    && previous.assigneeUserId === this.currentUserId;
+            },
+            withdrawDisabledReason: function () {
+                var detail = this.completedDialog.instanceDetail || {};
+                var activeTasks = normalizeList(detail.activeTasks);
+                var task = this.selectedActiveTask;
+                var previous = this.selectedPreviousHandlerTask;
+                var taskVersion = task && (task.taskVersion !== undefined && task.taskVersion !== null
+                    ? task.taskVersion : task.expectedTaskVersion);
+                if (!extractInstanceId(detail)) {
+                    return "正在加载实例详情";
+                }
+                if (detail.instanceStatus !== "RUNNING") {
+                    return "仅运行中的流程实例可以撤回";
+                }
+                if (activeTasks.length !== 1) {
+                    return "撤回要求流程恰好只有一个活动任务";
+                }
+                if (hasText(task.taskGroupId) || hasText(task.branchKey)) {
+                    return "会签、或签或并行任务不支持撤回";
+                }
+                if (task.taskStatus !== "ACTIVE" && task.taskStatus !== "CLAIMED") {
+                    return "当前任务状态不允许撤回";
+                }
+                if (!extractTaskId(task) || taskVersion === undefined || taskVersion === null) {
+                    return "活动任务缺少任务 ID 或版本";
+                }
+                if (!previous) {
+                    return "找不到可恢复的上一办理节点";
+                }
+                if (previous.assigneeUserId !== this.currentUserId) {
+                    return "仅上一办理人 " + (previous.assigneeUserName || previous.assigneeUserId || "-") + " 可以撤回";
+                }
+                return "将撤回至 " + (previous.nodeName || previous.nodeCode || "上一节点");
             },
             canAdminOperateSelectedInstance: function () {
                 return this.isTestAdmin && !!extractInstanceId(this.selectedInstanceDetail);
@@ -1326,6 +1471,10 @@
                                 && listenerEditor.listenerRejectTargetNodeCodes.length === 0) {
                             errors.push(node.nodeName + "：启用驳回时必须至少选择一个允许驳回节点");
                         }
+                        var timeoutError = this.validateNodeTimeoutConfig(node);
+                        if (timeoutError) {
+                            errors.push(node.nodeName + "：" + timeoutError);
+                        }
                     }
                 }, this);
                 this.definitionDraft.nodes.forEach(function (node) {
@@ -1879,37 +2028,35 @@
             queryInstanceReadRecords: function () {
                 return this.openInstanceQueryDialog("readRecords");
             },
-            updateSelectedInstanceVariables: function () {
-                var instanceId = this.requireSelectedInstanceId("更新表单字段");
-                if (!instanceId) {
+            withdrawSelectedInstance: function () {
+                if (!this.canWithdrawSelectedInstance) {
+                    this.setOperationState("error", "撤回失败", this.withdrawDisabledReason);
+                    return Promise.resolve(null);
+                }
+                var detail = this.completedDialog.instanceDetail;
+                var instanceId = extractInstanceId(detail);
+                var task = this.selectedActiveTask;
+                var previous = this.selectedPreviousHandlerTask;
+                var targetNodeName = previous.nodeName || previous.nodeCode || "上一节点";
+                if (!window.confirm("确认撤回至 " + targetNodeName + "？当前下游任务将被取消。")) {
                     return Promise.resolve(null);
                 }
                 var body = {
-                    operationId: this.createOperationId("update_variables"),
-                    instanceId: instanceId,
+                    operationId: this.createOperationId("withdraw"),
+                    taskId: extractTaskId(task),
+                    expectedTaskVersion: extractTaskVersion(task),
                     operatorUserId: this.currentUserId,
-                    variables: this.buildVariablesFromFields(this.selectedInstanceFields, this.instanceVariableValues, true)
+                    comment: ""
                 };
-                return this.sendRequest("更新表单字段", "PUT", API_PATHS.updateVariables, body).then(function (payload) {
-                    return this.selectInstance({instanceId: extractInstanceId(payload) || instanceId});
-                }.bind(this)).then(function (payload) {
-                    if (this.instanceQueryDialog.open && this.instanceQueryDialog.queryType === "auditTrace") {
-                        this.queryInstanceDialogPage().catch(function () {});
-                    }
-                    return payload;
-                }.bind(this));
-            },
-            withdrawSelectedInstance: function () {
-                var instanceId = this.requireSelectedInstanceId("撤回实例");
-                if (!instanceId) {
-                    return Promise.resolve(null);
-                }
-                if (!this.canWithdrawSelectedInstance) {
-                    this.setOperationState("error", "撤回实例失败", "只有当前节点的上一办理人可以撤回");
-                    return Promise.resolve(null);
-                }
-                return this.sendRequest("查询活动任务", "GET", API_PATHS.activeTasks(instanceId)).then(function (payload) {
-                    return this.submitStandaloneTaskAction("撤回实例", API_PATHS.taskWithdraw, normalizeList(payload)[0], {});
+                return this.sendRequest("撤回", "POST", API_PATHS.taskWithdraw, body).then(function (result) {
+                    return this.refreshAfterWithdraw(instanceId).then(function () {
+                        this.completedDialog.open = false;
+                        this.setOperationState("success", "撤回成功", "流程已撤回至 " + targetNodeName);
+                        return result;
+                    }.bind(this));
+                }.bind(this)).catch(function (error) {
+                    this.setOperationState("error", "撤回失败", error.message);
+                    throw error;
                 }.bind(this));
             },
             terminateSelectedInstance: function () {
@@ -1921,7 +2068,7 @@
                     operationId: this.createOperationId("terminate_instance"),
                     instanceId: instanceId,
                     operatorUserId: this.currentUserId,
-                    comment: this.instanceOperationComment
+                    comment: ""
                 }).then(function () {
                     return this.selectInstance({instanceId: instanceId});
                 }.bind(this)).then(function () {
@@ -2083,7 +2230,8 @@
                     open: true,
                     task: row,
                     attachments: [],
-                    currentNodeCodes: []
+                    currentNodeCodes: [],
+                    instanceDetail: null
                 };
                 var instanceId = row.instanceId;
                 if (!hasText(instanceId)) {
@@ -2091,6 +2239,10 @@
                 }
                 this.recordSelectedInstanceRead(instanceId);
                 this.sendRequest("查询已办实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
+                    if (!this.completedDialog.open || this.completedDialog.task.instanceId !== instanceId) {
+                        return;
+                    }
+                    this.completedDialog.instanceDetail = payload;
                     this.completedDialog.currentNodeCodes = asArray(payload.currentNodeCodes);
                 }.bind(this));
                 this.sendRequest("查询已办附件", "GET", this.attachmentQueryPath(instanceId)).then(function (payload) {
@@ -2169,7 +2321,13 @@
                 return this.isTaskClaimedByCurrentUser(task);
             },
             canRemindInstanceTask: function (task) {
-                return !!(task && extractTaskId(task));
+                var taskVersion = task && (task.taskVersion !== undefined && task.taskVersion !== null
+                    ? task.taskVersion
+                    : (task.expectedTaskVersion !== undefined && task.expectedTaskVersion !== null
+                        ? task.expectedTaskVersion : task.lockVersion));
+                return !!(task && extractTaskId(task)
+                    && taskVersion !== undefined
+                    && taskVersion !== null);
             },
             currentInstanceNodeCodes: function (row) {
                 return asArray(row && row.currentNodeCodes).filter(hasText);
@@ -2216,7 +2374,7 @@
                     expectedTaskVersion: extractTaskVersion(task),
                     operatorUserId: this.currentUserId
                 };
-                return this.sendRequest("手动催办", "POST", API_PATHS.remindTask(taskId), body).then(function (payload) {
+                return this.sendRequest("手动催办", "POST", API_PATHS.taskRemind(taskId), body).then(function (payload) {
                     var refresh = hasText(instanceId)
                         ? this.loadSelectedInstanceDetail(instanceId)
                         : Promise.resolve(null);
@@ -2470,7 +2628,7 @@
                     taskId: taskId,
                     expectedTaskVersion: extractTaskVersion(task),
                     operatorUserId: this.currentUserId,
-                    comment: this.instanceOperationComment
+                    comment: ""
                 }, extra || {});
                 return this.sendRequest(label, "POST", path, body).then(function (payload) {
                     return Promise.all([
@@ -2485,6 +2643,17 @@
                         }
                         return payload;
                     }.bind(this));
+                }.bind(this));
+            },
+            refreshAfterWithdraw: function (instanceId) {
+                return Promise.all([
+                    this.queryTodoTasks(),
+                    this.queryCompletedTasks(),
+                    this.queryInstances(),
+                    this.sendRequest("刷新撤回实例", "GET", API_PATHS.instanceDetail(instanceId))
+                ]).then(function (results) {
+                    this.completedDialog.instanceDetail = results[3];
+                    return results;
                 }.bind(this));
             },
             refreshAfterTaskAction: function (instanceId) {
@@ -3196,12 +3365,6 @@
 
     app.mount("#app");
 }());
-
-
-
-
-
-
 
 
 

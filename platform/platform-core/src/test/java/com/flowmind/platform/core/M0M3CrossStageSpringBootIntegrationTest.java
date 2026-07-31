@@ -15,6 +15,7 @@ import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.dto.WorkflowEvent;
@@ -36,12 +37,16 @@ import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
 import com.flowmind.platform.api.request.StartProcessRequest;
 import com.flowmind.platform.api.request.SubmitTaskRequest;
 import com.flowmind.platform.api.request.TerminateProcessRequest;
+import com.flowmind.platform.api.request.WithdrawTaskRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.ProcessDefinitionService;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
+import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.core.audit.AuditLogWriter;
+import com.flowmind.platform.core.audit.DefaultAuditLogWriter;
 import com.flowmind.platform.core.callback.CallbackLogMapper;
 import com.flowmind.platform.core.callback.CallbackOutboxService;
 import com.flowmind.platform.core.callback.DefaultCallbackService;
@@ -53,6 +58,7 @@ import com.flowmind.platform.core.definition.ProcessFormFieldDefinitionManager;
 import com.flowmind.platform.core.runtime.ApproverResolveRequestFactory;
 import com.flowmind.platform.core.runtime.CountersignTaskCoordinator;
 import com.flowmind.platform.core.runtime.DefaultProcessRuntimeService;
+import com.flowmind.platform.core.runtime.EnhancedTaskActionCoordinator;
 import com.flowmind.platform.core.runtime.InstanceTaskCancellationService;
 import com.flowmind.platform.core.runtime.RuntimeDefinitionLoader;
 import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
@@ -70,6 +76,7 @@ import com.flowmind.platform.core.validation.ProcessFormFieldValidator;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
+import com.flowmind.platform.persistence.repository.ProcessAuditLogRepository;
 import com.flowmind.platform.persistence.repository.ProcessCallbackLogRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
@@ -84,6 +91,7 @@ import com.flowmind.platform.persistence.repository.TaskGroupRepository;
 import com.flowmind.platform.testsupport.SchemaTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -258,6 +266,39 @@ class M0M3CrossStageSpringBootIntegrationTest {
         assertEquals(1, countOpenTasks(instance.getInstanceId(), "finance"));
         assertEquals(2, countByInstance("process_history_task", instance.getInstanceId()));
         assertEquals(5, countByInstance("process_callback_log", instance.getInstanceId()));
+    }
+
+    @Test
+    void withdrawByPreviousHandlerCancelsCurrentTaskAndRecreatesPreviousNode() {
+        createAndActivateDefinition("e2e-withdraw", PROCESS_CODE);
+        ProcessInstanceDTO instance = runtimeService.startAndSubmit(
+                startRequest("e2e-withdraw-start", PROCESS_CODE));
+        String managerTaskId = openTaskId(instance.getInstanceId(), "manager");
+
+        currentUserProvider.setCurrent(user("starter", "Starter"));
+        WithdrawTaskRequest request = new WithdrawTaskRequest();
+        request.setOperationId("e2e-withdraw-action");
+        request.setTaskId(managerTaskId);
+        request.setExpectedTaskVersion(Long.valueOf(0L));
+        request.setOperatorUserId("starter");
+        request.setComment("");
+
+        TaskActionResult result = runtimeService.withdraw(request);
+
+        assertEquals("e2e-withdraw-action", result.getOperationId());
+        assertEquals("CANCELED", taskStatus(managerTaskId));
+        assertEquals(1, countOpenTasks(instance.getInstanceId(), "apply"));
+        assertEquals("starter", jdbcTemplate.queryForObject(
+                "SELECT json_extract(candidate_user_ids, '$[0]') FROM process_active_task "
+                        + "WHERE instance_id = ? AND node_code = 'apply' AND task_status = 'ACTIVE'",
+                String.class, instance.getInstanceId()));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM process_history_task WHERE instance_id = ? "
+                        + "AND active_task_id = ? AND action_type = 'WITHDRAW'",
+                Integer.class, instance.getInstanceId(), managerTaskId).intValue());
+        assertEquals("SUCCESS", operationStatus("e2e-withdraw-action"));
+        assertEquals(Collections.singletonList("apply"),
+                runtimeService.getInstance(instance.getInstanceId()).getCurrentNodeCodes());
     }
 
     @Test
@@ -910,6 +951,9 @@ class M0M3CrossStageSpringBootIntegrationTest {
         @Bean ProcessCallbackLogRepository callbackLogRepository(JdbcTemplate jdbc) {
             return new ProcessCallbackLogRepository(jdbc);
         }
+        @Bean ProcessAuditLogRepository auditLogRepository(JdbcTemplate jdbc) {
+            return new ProcessAuditLogRepository(jdbc);
+        }
         @Bean ProcessInstanceDeletionRepository instanceDeletionRepository(JdbcTemplate jdbc) {
             return new ProcessInstanceDeletionRepository(jdbc);
         }
@@ -1019,6 +1063,36 @@ class M0M3CrossStageSpringBootIntegrationTest {
         }
 
         @Bean
+        RuntimeOperationExecutor runtimeOperationExecutor(ProcessOperationRecordRepository operations) {
+            return new RuntimeOperationExecutor(new OperationIdempotencyService(operations));
+        }
+
+        @Bean
+        AuditLogWriter auditLogWriter(ProcessAuditLogRepository audits) {
+            return new DefaultAuditLogWriter(audits);
+        }
+
+        @Bean
+        EnhancedTaskActionCoordinator enhancedTaskActionCoordinator(
+                ProcessInstanceRepository instances,
+                ActiveTaskRepository tasks,
+                ProcessHistoryTaskRepository histories,
+                TaskGroupRepository groups,
+                RuntimeDefinitionLoader definitions,
+                RuntimeRequestValidator validator,
+                RuntimeOperationExecutor operations,
+                RuntimeNodeAdvancer advancer,
+                RuntimeStateValidator stateValidator,
+                HistoryTaskWriter historyWriter,
+                RuntimeTransactionExecutor transactions,
+                CallbackService callbacks,
+                ObjectProvider<OrganizationProvider> organizations,
+                AuditLogWriter audits) {
+            return new EnhancedTaskActionCoordinator(instances, tasks, histories, groups, definitions, validator,
+                    operations, advancer, stateValidator, historyWriter, transactions, callbacks, organizations, audits);
+        }
+
+        @Bean
         InstanceTaskCancellationService cancellationService(ActiveTaskRepository tasks,
                                                             TaskGroupRepository groups,
                                                             HistoryTaskWriter histories) {
@@ -1037,7 +1111,7 @@ class M0M3CrossStageSpringBootIntegrationTest {
                                              HistoryTaskRepository legacyHistories,
                                              RuntimeDefinitionLoader definitions,
                                              RuntimeRequestValidator validator,
-                                             ProcessOperationRecordRepository operations,
+                                             RuntimeOperationExecutor operations,
                                              RuntimeNodeAdvancer advancer,
                                              AttachmentService attachments,
                                              CallbackService callbacks,
@@ -1047,11 +1121,14 @@ class M0M3CrossStageSpringBootIntegrationTest {
                                               InstanceTaskCancellationService cancellation,
                                               ProcessInstanceDeletionRepository deletion,
                                               TaskGroupRepository groups,
-                                              ProcessDefinitionRepository definitionRepository) {
-            return new DefaultProcessRuntimeService(instances, tasks, legacyHistories, definitions, validator,
-                    new RuntimeOperationExecutor(new OperationIdempotencyService(operations)), advancer,
+                                              ProcessDefinitionRepository definitionRepository,
+                                              EnhancedTaskActionCoordinator enhancedActions) {
+            DefaultProcessRuntimeService service = new DefaultProcessRuntimeService(
+                    instances, tasks, legacyHistories, definitions, validator, operations, advancer,
                     attachments, callbacks, stateValidator, histories, transactions, cancellation, deletion,
                     groups, definitionRepository);
+            service.setEnhancedTaskActionCoordinator(enhancedActions);
+            return service;
         }
 
     }

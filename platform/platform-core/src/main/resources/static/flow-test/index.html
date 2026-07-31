@@ -200,37 +200,6 @@
                                 </tbody>
                             </table>
                         </div>
-                        <section v-if="selectedInstanceDetail" class="instance-detail-card">
-                            <div class="card-title">
-                                <h3>当前节点</h3>
-                                <span>{{ selectedInstanceDetail.instanceTitle || selectedInstanceDetail.instanceId }}</span>
-                            </div>
-                            <div class="active-task-list">
-                                <div v-if="selectedInstanceActiveTasks.length === 0" class="empty-cell">暂无当前活动任务</div>
-                                <article v-for="task in selectedInstanceActiveTasks"
-                                         :key="task.taskId || task.id"
-                                         class="active-task-item">
-                                    <div class="active-task-main">
-                                        <strong>{{ task.nodeName || task.nodeCode || '-' }}</strong>
-                                        <span>{{ task.taskId || task.id }}</span>
-                                    </div>
-                                    <div class="active-task-meta">
-                                        <span>候选人：{{ joinList(task.candidateUserIds) || '-' }}</span>
-                                        <span>办理人：{{ taskAssigneeText(task) }}</span>
-                                        <span>状态：{{ task.taskStatus || '-' }}</span>
-                                        <span>到期：{{ formatDateTime(task.dueAt) }}</span>
-                                    </div>
-                                    <div class="active-task-actions">
-                                        <button type="button"
-                                                class="primary"
-                                                :disabled="!canRemindInstanceTask(task)"
-                                                @click.stop="remindInstanceTask(task)">
-                                            手动催办
-                                        </button>
-                                    </div>
-                                </article>
-                            </div>
-                        </section>
                     </section>
                 </div>
             </section>
@@ -390,23 +359,48 @@
                         <dt>实例状态</dt><dd>{{ selectedInstanceDetail.instanceStatus || '-' }}</dd>
                         <dt>当前节点</dt><dd>{{ joinList(selectedInstanceDetail.currentNodeCodes) || '-' }}</dd>
                     </dl>
+                    <div class="instance-detail-card">
+                        <div class="subsection-title"><h4>当前活动任务</h4></div>
+                        <div class="active-task-list">
+                            <div v-if="selectedInstanceActiveTasks.length === 0" class="empty-cell">暂无当前活动任务</div>
+                            <article v-for="task in selectedInstanceActiveTasks"
+                                     :key="task.taskId || task.id"
+                                     class="active-task-item">
+                                <div class="active-task-main">
+                                    <strong>{{ task.nodeName || task.nodeCode || '-' }}</strong>
+                                    <span>{{ task.taskId || task.id }}</span>
+                                </div>
+                                <div class="active-task-meta">
+                                    <span>候选人：{{ joinList(task.candidateUserIds) || '-' }}</span>
+                                    <span>办理人：{{ taskAssigneeText(task) }}</span>
+                                    <span>状态：{{ task.taskStatus || '-' }}</span>
+                                    <span>到期：{{ formatDateTime(task.dueAt) }}</span>
+                                </div>
+                                <div class="active-task-actions">
+                                    <button type="button"
+                                            class="primary"
+                                            :disabled="!canRemindInstanceTask(task)"
+                                            @click.stop="remindInstanceTask(task)">
+                                        手动催办
+                                    </button>
+                                </div>
+                            </article>
+                        </div>
+                    </div>
                     <div class="instance-support-grid">
                         <div class="instance-variable-editor" data-testid="instance-variable-editor">
-                            <div class="subsection-title"><h4>表单字段</h4><button type="button" :disabled="instanceVariableRows.length === 0" @click="updateSelectedInstanceVariables()">保存表单字段</button></div>
+                            <div class="subsection-title"><h4>表单字段</h4><span class="muted">只读</span></div>
                             <div class="table-wrap compact-table"><table><thead><tr><th>字段</th><th>当前值</th></tr></thead><tbody>
                             <tr v-if="instanceVariableRows.length === 0"><td colspan="2" class="empty-cell">暂无表单字段</td></tr>
-                            <tr v-for="row in instanceVariableRows" :key="row.fieldCode"><td>{{ row.fieldName }}</td><td>
-                                <textarea v-if="isTextareaField(row.field)" v-model.trim="instanceVariableValues[row.fieldCode]" rows="2"></textarea>
-                                <input v-else-if="formFieldInputType(row.field) === 'checkbox'" v-model="instanceVariableValues[row.fieldCode]" type="checkbox">
-                                <input v-else v-model.trim="instanceVariableValues[row.fieldCode]" :type="formFieldInputType(row.field)">
-                            </td></tr>
+                            <tr v-for="row in instanceVariableRows" :key="row.fieldCode">
+                                <td>{{ row.fieldName }}</td>
+                                <td data-testid="readonly-instance-field">{{ formatJsonSummary(row.value) }}</td>
+                            </tr>
                             </tbody></table></div>
                         </div>
                         <div class="instance-operations">
                             <div class="subsection-title"><h4>实例操作</h4></div>
-                            <label>操作意见<textarea v-model.trim="instanceOperationComment" rows="3"></textarea></label>
                             <div class="aux-query-actions">
-                                <button type="button" :disabled="!canWithdrawSelectedInstance" @click="withdrawSelectedInstance()">撤回实例</button>
                                 <button type="button" :disabled="!canAdminOperateSelectedInstance" @click="terminateSelectedInstance()">终止流程</button>
                                 <button type="button" :disabled="!canAdminOperateSelectedInstance" @click="deleteSelectedInstance()">删除实例</button>
                             </div>
@@ -1166,6 +1160,16 @@
                     </ul>
                 </section>
             </div>
+            <div class="modal-footer">
+                <p class="muted">{{ withdrawDisabledReason }}</p>
+                <button type="button"
+                        class="danger"
+                        data-testid="withdraw-completed-task"
+                        :disabled="!canWithdrawSelectedInstance"
+                        @click="withdrawSelectedInstance()">
+                    撤回
+                </button>
+            </div>
         </div>
     </section>
 </div>
@@ -1174,8 +1178,4 @@
 <script src="flow-test-app.js"></script>
 </body>
 </html>
-
-
-
-
 
