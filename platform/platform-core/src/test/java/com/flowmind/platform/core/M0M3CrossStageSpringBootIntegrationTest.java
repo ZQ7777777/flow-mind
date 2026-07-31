@@ -30,6 +30,7 @@ import com.flowmind.platform.api.request.DeleteAttachmentRequest;
 import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
 import com.flowmind.platform.api.request.DownloadAttachmentRequest;
 import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
+import com.flowmind.platform.api.request.ReplaceInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveProcessGraphRequest;
 import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
 import com.flowmind.platform.api.request.StartProcessRequest;
@@ -1081,6 +1082,11 @@ class M0M3CrossStageSpringBootIntegrationTest {
         @Override
         public AttachmentDTO saveTaskAttachment(SaveTaskAttachmentRequest request) {
             return new AttachmentDTO();
+        }
+
+        @Override
+        public AttachmentDTO replaceInstanceAttachment(ReplaceInstanceAttachmentRequest request) {
+            throw new UnsupportedOperationException("not required by M0-M3 E2E");
         }
 
         @Override

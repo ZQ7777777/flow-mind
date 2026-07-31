@@ -100,7 +100,9 @@ class RuntimeRequestContractTest {
                 taskFixture("reject", RejectTaskRequest.class, properties("targetNodeCode", "rework")),
                 taskFixture("return", ReturnTaskRequest.class, Collections.<String, Object>emptyMap()),
                 taskFixture("withdraw", WithdrawTaskRequest.class, Collections.<String, Object>emptyMap()),
-                taskFixture("direct-send", DirectSendRequest.class, properties("targetNodeCode", "archive")),
+                taskFixture("direct-send", DirectSendRequest.class, properties(
+                        "targetNodeCode", "archive",
+                        "variables", variables("corrected", Boolean.TRUE))),
                 taskFixture("transfer", TransferTaskRequest.class, properties("targetUserId", "user-002")),
                 taskFixture("add-sign", AddSignRequest.class, properties(
                         "addSignUserIds", Arrays.asList("user-003", "user-004"))),
@@ -134,6 +136,14 @@ class RuntimeRequestContractTest {
                         "attachment", attachment)),
                 taskFixture("save task attachment", SaveTaskAttachmentRequest.class, properties(
                         "instanceId", "instance-007",
+                        "attachment", attachment)),
+                fixture("replace instance attachment", ReplaceInstanceAttachmentRequest.class, properties(
+                        "operationId", "replace-instance-attachment-operation",
+                        "instanceId", "instance-006",
+                        "attachmentId", "attachment-001",
+                        "sourceTaskId", "starter-rework-task",
+                        "expectedTaskVersion", Long.valueOf(4L),
+                        "operatorUserId", "operator-006",
                         "attachment", attachment)),
                 fixture("delete attachment", DeleteAttachmentRequest.class, properties(
                         "operationId", "delete-attachment-operation",
@@ -173,6 +183,7 @@ class RuntimeRequestContractTest {
                         RemindTaskRequest.class,
                         SaveInstanceAttachmentRequest.class,
                         SaveTaskAttachmentRequest.class,
+                        ReplaceInstanceAttachmentRequest.class,
                         DeleteAttachmentRequest.class,
                         TimeoutScanRequest.class,
                         HandleAlertRequest.class));

@@ -1,10 +1,8 @@
 package com.flowmind.platform.web;
 
 import com.flowmind.platform.api.dto.UserContext;
-import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
-import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
@@ -174,21 +172,8 @@ public class PlatformStandaloneConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public DelegateProvider delegateProvider() {
-        return (principalUserId, at) -> Collections.emptyList();
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
     public OrganizationProvider organizationProvider() {
-        InMemoryOrganizationProvider provider = new InMemoryOrganizationProvider();
-        provider.addUser(user("user_sales", "业务员", "dept_sales", "销售部",
-                Collections.singletonList("sales")));
-        provider.addUser(user("user_manager", "部门经理", "dept_manager", "经理部",
-                Collections.singletonList("manager")));
-        provider.addUser(user("user_finance", "财务", "dept_finance", "财务部",
-                Collections.singletonList("finance")));
-        return provider;
+        return new InMemoryOrganizationProvider();
     }
 
     /**
@@ -220,6 +205,8 @@ public class PlatformStandaloneConfiguration {
         private static final String M2_OPERATION_MIGRATION = "schema/sqlite/002_m2_runtime_operation_actions.sql";
         private static final String ATTACHMENT_OPERATION_MIGRATION =
                 "schema/sqlite/003_attachment_operation_actions.sql";
+        private static final String ATTACHMENT_REPLACE_OPERATION_MIGRATION =
+                "schema/sqlite/004_attachment_replace_operation_action.sql";
 
         private final DataSource dataSource;
 
@@ -237,6 +224,10 @@ public class PlatformStandaloneConfiguration {
                 }
                 if (!schemaSupportsAttachmentActions(connection)) {
                     ScriptUtils.executeSqlScript(connection, new ClassPathResource(ATTACHMENT_OPERATION_MIGRATION));
+                }
+                if (!schemaSupportsAttachmentReplacement(connection)) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(ATTACHMENT_REPLACE_OPERATION_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);
@@ -261,7 +252,17 @@ public class PlatformStandaloneConfiguration {
                     && tableSupportsAttachmentActions(connection, "process_audit_log");
         }
 
+        private boolean schemaSupportsAttachmentReplacement(Connection connection) throws Exception {
+            return tableContainsAction(connection, "process_operation_record", "ATTACHMENT_REPLACE")
+                    && tableContainsAction(connection, "process_audit_log", "ATTACHMENT_REPLACE");
+        }
+
         private boolean tableSupportsAttachmentActions(Connection connection, String tableName) throws Exception {
+            return tableContainsAction(connection, tableName, "ATTACHMENT_UPLOAD")
+                    && tableContainsAction(connection, tableName, "ATTACHMENT_DELETE");
+        }
+
+        private boolean tableContainsAction(Connection connection, String tableName, String action) throws Exception {
             try (Statement statement = connection.createStatement();
                  ResultSet resultSet = statement.executeQuery(
                          "SELECT sql FROM sqlite_master WHERE type = 'table' "
@@ -270,7 +271,7 @@ public class PlatformStandaloneConfiguration {
                     return false;
                 }
                 String definition = resultSet.getString("sql");
-                return definition.contains("ATTACHMENT_UPLOAD") && definition.contains("ATTACHMENT_DELETE");
+                return definition.contains(action);
             }
         }
     }
@@ -290,7 +291,7 @@ public class PlatformStandaloneConfiguration {
                             request.getHeader("X-Flow-Dept-Id"), request.getHeader("X-Flow-Dept-Name"));
                 }
             }
-            return userContext("user_sales", null, "dept_sales", null);
+            return userContext("u_admin_01", null, "mock-dept", null);
         }
     }
 
@@ -304,15 +305,6 @@ public class PlatformStandaloneConfiguration {
     }
 
     private static String displayName(String userId) {
-        if ("user_sales".equals(userId)) {
-            return "业务员";
-        }
-        if ("user_manager".equals(userId)) {
-            return "部门经理";
-        }
-        if ("user_finance".equals(userId)) {
-            return "财务";
-        }
         if ("u_sales_01".equals(userId)) {
             return "业务员";
         }
@@ -341,13 +333,12 @@ public class PlatformStandaloneConfiguration {
     }
 
     private static String defaultDepartmentId(String userId) {
-        if ("user_sales".equals(userId)) {
+        if ("u_sales_01".equals(userId) || "u_group_leader_01".equals(userId)
+                || "u_dept_manager_01".equals(userId)) {
             return "dept_sales";
         }
-        if ("user_manager".equals(userId)) {
-            return "dept_manager";
-        }
-        if ("user_finance".equals(userId)) {
+        if ("u_dept_manager_02".equals(userId) || "u_finance_01".equals(userId)
+                || "u_finance_02".equals(userId)) {
             return "dept_finance";
         }
         return "mock-dept";
@@ -357,23 +348,10 @@ public class PlatformStandaloneConfiguration {
         if ("dept_sales".equals(departmentId)) {
             return "销售部";
         }
-        if ("dept_manager".equals(departmentId)) {
-            return "经理部";
-        }
         if ("dept_finance".equals(departmentId)) {
             return "财务部";
         }
-        return "Mock Department";
-    }
-
-    private static UserDTO user(String userId, String userName, String departmentId, String departmentName,
-                                java.util.List<String> roles) {
-        UserDTO user = new UserDTO(userId, userName);
-        user.setDepartmentId(departmentId);
-        user.setDepartmentName(departmentName);
-        user.setRoleCodes(roles);
-        user.setActive(Boolean.TRUE);
-        return user;
+        return "默认部门";
     }
 
     private static String firstText(String first, String second) {

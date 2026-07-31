@@ -1,7 +1,6 @@
 package com.flowmind.platform.starter;
 
 import com.flowmind.platform.api.dto.AlertDTO;
-import com.flowmind.platform.api.dto.DelegateRelationDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
@@ -28,7 +27,6 @@ import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
-import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.OrganizationProvider;
@@ -100,7 +98,6 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Collections;
 import java.util.List;
 
 @Configuration
@@ -298,18 +295,13 @@ public class PlatformAutoConfiguration {
                                              ProcessTraceAssembler traceAssembler,
                                              RuntimeQueryAssembler queryAssembler,
                                              ReadRecordManager readRecordManager,
-                                             ObjectProvider<CurrentUserProvider> currentUserProvider,
-                                             ObjectProvider<DelegateProvider> delegateProvider) {
+                                             ObjectProvider<CurrentUserProvider> currentUserProvider) {
         CurrentUserProvider currentUser = currentUserProvider.getIfAvailable();
         if (currentUser == null) {
             currentUser = new RequiredCurrentUserProvider();
         }
-        DelegateProvider delegates = delegateProvider.getIfAvailable();
-        if (delegates == null) {
-            delegates = (principalUserId, at) -> Collections.<DelegateRelationDTO>emptyList();
-        }
         return new DefaultTaskQueryService(historyTaskRepository, activeTaskRepository, instanceRepository,
-                traceAssembler, queryAssembler, currentUser, delegates, readRecordManager);
+                traceAssembler, queryAssembler, currentUser, readRecordManager);
     }
 
     @Bean
@@ -448,9 +440,10 @@ public class PlatformAutoConfiguration {
                                                FileStorageProvider storage,
                                                AttachmentAccessGuard guard,
                                                CurrentUserProvider currentUser,
-                                               RuntimeOperationExecutor operationExecutor) {
+                                               RuntimeOperationExecutor operationExecutor,
+                                               ProcessNodeRepository nodeRepository) {
         return new DefaultAttachmentService(attachments, instances, tasks, configs, templates, storage, guard, currentUser,
-                operationExecutor);
+                operationExecutor, nodeRepository);
     }
 
     @Bean
@@ -467,14 +460,6 @@ public class PlatformAutoConfiguration {
             matchIfMissing = true)
     public WorkflowCallbackHandler workflowCallbackHandler() {
         return new RecordingWorkflowCallbackHandler();
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnProperty(prefix = "flow-mind.platform.mock", name = "enabled", havingValue = "true",
-            matchIfMissing = true)
-    public DelegateProvider delegateProvider() {
-        return (principalUserId, at) -> Collections.<DelegateRelationDTO>emptyList();
     }
 
     @Bean
@@ -505,6 +490,8 @@ public class PlatformAutoConfiguration {
         private static final String M2_OPERATION_MIGRATION = "schema/sqlite/002_m2_runtime_operation_actions.sql";
         private static final String ATTACHMENT_OPERATION_MIGRATION =
                 "schema/sqlite/003_attachment_operation_actions.sql";
+        private static final String ATTACHMENT_REPLACE_OPERATION_MIGRATION =
+                "schema/sqlite/004_attachment_replace_operation_action.sql";
 
         private final DataSource dataSource;
 
@@ -522,6 +509,10 @@ public class PlatformAutoConfiguration {
                 }
                 if (!schemaSupportsAttachmentActions(connection)) {
                     ScriptUtils.executeSqlScript(connection, new ClassPathResource(ATTACHMENT_OPERATION_MIGRATION));
+                }
+                if (!schemaSupportsAttachmentReplacement(connection)) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(ATTACHMENT_REPLACE_OPERATION_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);
@@ -546,7 +537,17 @@ public class PlatformAutoConfiguration {
                     && tableSupportsAttachmentActions(connection, "process_audit_log");
         }
 
+        private boolean schemaSupportsAttachmentReplacement(Connection connection) throws Exception {
+            return tableContainsAction(connection, "process_operation_record", "ATTACHMENT_REPLACE")
+                    && tableContainsAction(connection, "process_audit_log", "ATTACHMENT_REPLACE");
+        }
+
         private boolean tableSupportsAttachmentActions(Connection connection, String tableName) throws Exception {
+            return tableContainsAction(connection, tableName, "ATTACHMENT_UPLOAD")
+                    && tableContainsAction(connection, tableName, "ATTACHMENT_DELETE");
+        }
+
+        private boolean tableContainsAction(Connection connection, String tableName, String action) throws Exception {
             try (Statement statement = connection.createStatement();
                  ResultSet resultSet = statement.executeQuery(
                          "SELECT sql FROM sqlite_master WHERE type = 'table' "
@@ -555,7 +556,7 @@ public class PlatformAutoConfiguration {
                     return false;
                 }
                 String definition = resultSet.getString("sql");
-                return definition.contains("ATTACHMENT_UPLOAD") && definition.contains("ATTACHMENT_DELETE");
+                return definition.contains(action);
             }
         }
     }

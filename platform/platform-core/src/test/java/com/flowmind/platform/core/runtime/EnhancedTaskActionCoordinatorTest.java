@@ -1,5 +1,7 @@
 package com.flowmind.platform.core.runtime;
 
+import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
+import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
@@ -10,12 +12,14 @@ import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.request.AddSignRequest;
+import com.flowmind.platform.api.request.DelegateTaskRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
 import com.flowmind.platform.api.request.TransferTaskRequest;
 import com.flowmind.platform.api.request.WithdrawTaskRequest;
 import com.flowmind.platform.api.service.CallbackService;
+import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.spi.OrganizationProvider;
 import com.flowmind.platform.core.audit.AuditLogCommand;
 import com.flowmind.platform.core.audit.AuditLogWriter;
@@ -35,6 +39,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -286,6 +291,42 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void directSendRejectsForgedTargetAndGroupedContextIsUnavailable() {
+        Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
+        DirectSendRequest request = taskRequest(new DirectSendRequest(), "op-direct-forged",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("forged");
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
+                "{\"taskActionRules\":{\"directSend\":{\"enabled\":true,\"targetMode\":\"REJECT_SOURCE\"}}}"),
+                userNode("finance", null)));
+        when(fixture.histories.findLatestByInstanceAndActions("instance-1", ActionTypeEnum.REJECT.name()))
+                .thenReturn(java.util.Collections.singletonList(history("reject-source", "finance-user",
+                        "finance", ActionTypeEnum.REJECT.name(),
+                        "{\"schemaVersion\":1,\"sourceNodeCode\":\"finance\",\"createdTaskIds\":[\"task-1\"]}")));
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.directSend(request));
+        assertEquals(RuntimeErrorCodes.DIRECT_SEND_SOURCE_NOT_FOUND, error.getErrorCode());
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+
+        fixture.task.setTaskGroupId("group-1");
+        assertEquals(false, fixture.coordinator.getDirectSendContext(fixture.task, fixture.definition).isAllowed());
+    }
+
+    @Test
+    void directSendContextIsUnavailableWhenRuleIsClosedOrTaskAlreadyConsumed() {
+        Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager", null), userNode("finance", null)));
+        assertEquals(false, fixture.coordinator.getDirectSendContext(fixture.task, fixture.definition).isAllowed());
+
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
+                "{\"taskActionRules\":{\"directSend\":{\"enabled\":true,\"targetMode\":\"REJECT_SOURCE\"}}}"),
+                userNode("finance", null)));
+        fixture.task.setTaskStatus("COMPLETED");
+        assertEquals(false, fixture.coordinator.getDirectSendContext(fixture.task, fixture.definition).isAllowed());
+    }
+
+    @Test
     void directSendConsumesRejectSourceAndAdvancesBackToSourceNode() {
         Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
         DirectSendRequest request = taskRequest(new DirectSendRequest(), "op-direct-success", fixture.task, fixture.operator);
@@ -306,6 +347,87 @@ class EnhancedTaskActionCoordinatorTest {
         assertNotNull(result);
         verify(fixture.tasks).complete("task-1", 3L);
         verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("manager"), eq(null), eq(null), eq(null));
+    }
+
+    @Test
+    void trustedDirectSendContextExposesOnlyRejectSourceTarget() {
+        Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
+        ProcessNodeDTO current = userNode("manager",
+                "{\"taskActionRules\":{\"directSend\":{\"enabled\":true,\"targetMode\":\"REJECT_SOURCE\"}}}");
+        ProcessNodeDTO finance = userNode("finance", null);
+        finance.setNodeName("财务审批");
+        fixture.definition.setNodes(java.util.Arrays.asList(current, finance));
+        when(fixture.histories.findLatestByInstanceAndActions("instance-1", ActionTypeEnum.REJECT.name()))
+                .thenReturn(java.util.Collections.singletonList(history("reject-source", "finance-user",
+                        "finance", ActionTypeEnum.REJECT.name(),
+                        "{\"schemaVersion\":1,\"sourceNodeCode\":\"finance\",\"createdTaskIds\":[\"task-1\"]}")));
+
+        DirectSendContextDTO context = fixture.coordinator.getDirectSendContext(fixture.task, fixture.definition);
+
+        assertEquals(true, context.isAllowed());
+        assertEquals("finance", context.getTargetNodeCode());
+        assertEquals("财务审批", context.getTargetNodeName());
+    }
+
+    @Test
+    void starterDirectSendUpdatesVariablesAndChecksAttachmentsBeforeCompletingTask() {
+        Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
+        fixture.task.setNodeCode("apply");
+        fixture.instance.setVariablesJson("{\"amount\":100}");
+        DirectSendRequest request = taskRequest(new DirectSendRequest(), "op-direct-starter",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("manager");
+        java.util.Map<String, Object> variables = new LinkedHashMap<String, Object>();
+        variables.put("amount", Integer.valueOf(250));
+        request.setVariables(variables);
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                userNode("apply", ApproverRuleTypeEnum.STARTER,
+                        "{\"taskActionRules\":{\"directSend\":{\"enabled\":true,\"targetMode\":\"REJECT_SOURCE\"}}}"),
+                userNode("manager", null)));
+        when(fixture.histories.findLatestByInstanceAndActions("instance-1", ActionTypeEnum.REJECT.name()))
+                .thenReturn(java.util.Collections.singletonList(history("reject-source", "manager-user",
+                        "manager", ActionTypeEnum.REJECT.name(),
+                        "{\"schemaVersion\":1,\"sourceNodeCode\":\"manager\",\"createdTaskIds\":[\"task-1\"]}")));
+        when(fixture.instances.updateVariablesJson(eq("instance-1"), any(String.class))).thenReturn(1);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("direct-history", "user-a", "apply", ActionTypeEnum.DIRECT_SEND.name(), "{}"));
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("manager"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+        AttachmentService attachments = mock(AttachmentService.class);
+        AttachmentTemplateCheckResult passed = new AttachmentTemplateCheckResult(); passed.setPassed(true);
+        when(attachments.checkRequiredAttachments(any())).thenReturn(passed);
+        fixture.coordinator.setAttachmentService(attachments);
+
+        fixture.coordinator.directSend(request);
+
+        verify(fixture.instances).updateVariablesJson(eq("instance-1"),
+                org.mockito.ArgumentMatchers.contains("\"amount\":250"));
+        verify(attachments).checkRequiredAttachments(any());
+        verify(fixture.tasks).complete("task-1", 3L);
+    }
+
+    @Test
+    void nonStarterDirectSendRejectsVariableMutationBeforeTaskCompletion() {
+        Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
+        DirectSendRequest request = taskRequest(new DirectSendRequest(), "op-direct-user",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        request.setVariables(java.util.Collections.<String, Object>singletonMap("amount", Integer.valueOf(250)));
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
+                "{\"taskActionRules\":{\"directSend\":{\"enabled\":true,\"targetMode\":\"REJECT_SOURCE\"}}}"),
+                userNode("finance", null)));
+        when(fixture.histories.findLatestByInstanceAndActions("instance-1", ActionTypeEnum.REJECT.name()))
+                .thenReturn(java.util.Collections.singletonList(history("reject-source", "finance-user",
+                        "finance", ActionTypeEnum.REJECT.name(),
+                        "{\"schemaVersion\":1,\"sourceNodeCode\":\"finance\",\"createdTaskIds\":[\"task-1\"]}")));
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.directSend(request));
+
+        assertEquals(RuntimeErrorCodes.INVALID_ACTION, error.getErrorCode());
+        verify(fixture.instances, never()).updateVariablesJson(any(String.class), any(String.class));
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
     }
 
     @Test
@@ -405,6 +527,34 @@ class EnhancedTaskActionCoordinatorTest {
         assertEquals(java.util.Collections.singletonList("history-1"),
                 audit.getValue().getDetail().get("historyTaskIds"));
         verify(operations, never()).markDeterministicFailure(eq("op-transfer"), any(String.class));
+    }
+
+    @Test
+    void delegateTaskUpdatesAssigneeAndMarksDelegateSourceWithoutOrganizationSpi() {
+        Fixture fixture = fixture(ActionTypeEnum.TRANSFER);
+        DelegateTaskRequest request = taskRequest(new DelegateTaskRequest(), "op-delegate",
+                fixture.task, fixture.operator);
+        request.setTargetUserId("user-b");
+        request.setTargetUserName("User B");
+        ProcessHistoryTaskEntity archived = history("delegate-history", "user-a", "manager",
+                ActionTypeEnum.TRANSFER.name(), "{}");
+
+        when(fixture.tasks.delegateTask("task-1", 3L, "user-b", "User B", "user-a")).thenReturn(1);
+        when(fixture.historyWriter.archive(any())).thenReturn(archived);
+
+        TaskActionResult result = fixture.coordinator.delegateTask(request);
+
+        assertEquals("user-b", result.getUpdatedTasks().get(0).getAssigneeUserId());
+        assertEquals("User B", result.getUpdatedTasks().get(0).getAssigneeUserName());
+        assertEquals("user-a", result.getUpdatedTasks().get(0).getDelegateFromUserId());
+        assertEquals("User A", result.getUpdatedTasks().get(0).getDelegateFromUserName());
+        verify(fixture.tasks).delegateTask("task-1", 3L, "user-b", "User B", "user-a");
+        verify(fixture.organization, never()).findUser(any(String.class));
+        org.mockito.ArgumentCaptor<HistoryArchiveCommand> archive =
+                org.mockito.ArgumentCaptor.forClass(HistoryArchiveCommand.class);
+        verify(fixture.historyWriter).archive(archive.capture());
+        assertEquals("user-a", archive.getValue().getTask().getDelegateFromUserId());
+        assertEquals("User A", archive.getValue().getTask().getDelegateFromUserName());
     }
 
     private <T extends com.flowmind.platform.api.request.TaskOperationRequest> T taskRequest(T request,

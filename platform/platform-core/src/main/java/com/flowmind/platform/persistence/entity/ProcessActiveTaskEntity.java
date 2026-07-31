@@ -41,6 +41,10 @@ public class ProcessActiveTaskEntity {
      */
     private String delegateFromUserId;
     /**
+     * Runtime-only delegate source user name snapshot.
+     */
+    private String delegateFromUserName;
+    /**
      * 任务状态，典型值：ACTIVE、CLAIMED、COMPLETED、CANCELED。
      */
     private String taskStatus;

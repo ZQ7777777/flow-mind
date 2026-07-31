@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FlowPlatformSchemaTest {
@@ -27,6 +28,8 @@ class FlowPlatformSchemaTest {
     private static final String M2_OPERATION_MIGRATION = "/schema/sqlite/002_m2_runtime_operation_actions.sql";
     private static final String ATTACHMENT_OPERATION_MIGRATION =
             "/schema/sqlite/003_attachment_operation_actions.sql";
+    private static final String ATTACHMENT_REPLACE_OPERATION_MIGRATION =
+            "/schema/sqlite/004_attachment_replace_operation_action.sql";
 
     @Test
     void schemaInitializesAndEnforcesDefinitionConstraints() throws Exception {
@@ -150,6 +153,8 @@ class FlowPlatformSchemaTest {
                     "operation-attachment-upload", "ATTACHMENT_UPLOAD"));
             assertDoesNotThrow(() -> insertOperationRecord(connection, "record-attachment-delete",
                     "operation-attachment-delete", "ATTACHMENT_DELETE"));
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-attachment-replace",
+                    "operation-attachment-replace", "ATTACHMENT_REPLACE"));
             for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
                 String suffix = actionType.name();
                 assertDoesNotThrow(() -> insertOperationRecord(connection, "record-" + suffix,
@@ -188,6 +193,7 @@ class FlowPlatformSchemaTest {
             createPreM2OperationRecordTable(connection);
             insertOperationRecord(connection, "record-approve", "operation-approve", "APPROVE");
             executeScript(connection, M2_OPERATION_MIGRATION);
+            createMinimalProcessInstanceTable(connection);
             createPreAttachmentAuditLogTable(connection);
             insertAuditLog(connection, "audit-approve", "TASK", "task-approve", "APPROVE");
 
@@ -219,6 +225,65 @@ class FlowPlatformSchemaTest {
     }
 
     @Test
+    void attachmentReplaceMigrationPreservesExistingRecordsAndAddsReplaceAction() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            createPreM2OperationRecordTable(connection);
+            insertOperationRecord(connection, "record-approve", "operation-approve", "APPROVE");
+            executeScript(connection, M2_OPERATION_MIGRATION);
+            createMinimalProcessInstanceTable(connection);
+            createPreAttachmentAuditLogTable(connection);
+            insertAuditLog(connection, "audit-approve", "TASK", "task-approve", "APPROVE");
+            executeScript(connection, ATTACHMENT_OPERATION_MIGRATION);
+
+            executeScript(connection, ATTACHMENT_REPLACE_OPERATION_MIGRATION);
+
+            assertDoesNotThrow(() -> insertOperationRecord(connection, "record-attachment-replace",
+                    "operation-attachment-replace", "ATTACHMENT_REPLACE"));
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-attachment-replace", "ATTACHMENT",
+                    "attachment-replace", "ATTACHMENT_REPLACE"));
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT action_type FROM process_operation_record WHERE id = 'record-approve'")) {
+                assertTrue(resultSet.next());
+                assertEquals("APPROVE", resultSet.getString("action_type"));
+                assertFalse(resultSet.next());
+            }
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT action_type FROM process_audit_log WHERE id = 'audit-approve'")) {
+                assertTrue(resultSet.next());
+                assertEquals("APPROVE", resultSet.getString("action_type"));
+                assertFalse(resultSet.next());
+            }
+        }
+    }
+
+    @Test
+    void attachmentReplaceMigrationKeepsOrphanAuditLogsWithNullInstanceId() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            createMinimalProcessInstanceTable(connection);
+            createPreM2OperationRecordTable(connection);
+            insertOperationRecord(connection, "record-approve", "operation-approve", "APPROVE");
+            createPreAttachmentAuditLogTable(connection);
+            insertAuditLog(connection, "audit-orphan", "missing-instance", "TASK", "task-orphan", "APPROVE");
+
+            executeScript(connection, ATTACHMENT_REPLACE_OPERATION_MIGRATION);
+
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT instance_id FROM process_audit_log WHERE id = 'audit-orphan'")) {
+                assertTrue(resultSet.next());
+                assertNull(resultSet.getString("instance_id"));
+                assertFalse(resultSet.next());
+            }
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery("PRAGMA foreign_key_check")) {
+                assertFalse(resultSet.next());
+            }
+        }
+    }
+
+    @Test
     void auditLogSupportsRuntimeAndDefinitionNamespacedActions() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             executeSchema(connection);
@@ -228,6 +293,8 @@ class FlowPlatformSchemaTest {
                     "attachment-upload", "ATTACHMENT_UPLOAD"));
             assertDoesNotThrow(() -> insertAuditLog(connection, "audit-attachment-delete", "ATTACHMENT",
                     "attachment-delete", "ATTACHMENT_DELETE"));
+            assertDoesNotThrow(() -> insertAuditLog(connection, "audit-attachment-replace", "ATTACHMENT",
+                    "attachment-replace", "ATTACHMENT_REPLACE"));
             for (DefinitionActionTypeEnum actionType : DefinitionActionTypeEnum.values()) {
                 String suffix = actionType.name();
                 assertDoesNotThrow(() -> insertAuditLog(connection, "audit-" + suffix, "DEFINITION",
@@ -384,11 +451,24 @@ class FlowPlatformSchemaTest {
 
     private static void insertAuditLog(Connection connection, String id, String targetType, String targetId,
                                        String actionType) throws SQLException {
+        insertAuditLog(connection, id, null, targetType, targetId, actionType);
+    }
+
+    private static void insertAuditLog(Connection connection, String id, String instanceId, String targetType,
+                                       String targetId, String actionType) throws SQLException {
         try (Statement statement = connection.createStatement()) {
             statement.executeUpdate("INSERT INTO process_audit_log "
-                    + "(id, operation_id, target_type, target_id, action_type, operator_id, detail_json) "
-                    + "VALUES ('" + id + "', 'operation-" + id + "', '" + targetType + "', '" + targetId
+                    + "(id, instance_id, operation_id, target_type, target_id, action_type, operator_id, detail_json) "
+                    + "VALUES ('" + id + "', " + (instanceId == null ? "NULL" : "'" + instanceId + "'")
+                    + ", 'operation-" + id + "', '" + targetType + "', '" + targetId
                     + "', '" + actionType + "', 'operator-001', '{}')");
+        }
+    }
+
+    private static void createMinimalProcessInstanceTable(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = ON");
+            statement.execute("CREATE TABLE process_instance (id TEXT PRIMARY KEY)");
         }
     }
 }

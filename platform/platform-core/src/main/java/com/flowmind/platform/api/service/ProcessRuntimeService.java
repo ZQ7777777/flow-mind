@@ -4,10 +4,12 @@ import com.flowmind.platform.api.dto.OperationResult;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
+import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.request.AddSignRequest;
 import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.ClaimTaskRequest;
 import com.flowmind.platform.api.request.DeleteProcessInstanceRequest;
+import com.flowmind.platform.api.request.DelegateTaskRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.ReturnTaskRequest;
@@ -92,12 +94,28 @@ public interface ProcessRuntimeService {
     TaskActionResult directSend(DirectSendRequest request);
 
     /**
+     * 查询活动任务是否可按可信驳回来源直送。
+     *
+     * @param taskId 活动任务 ID
+     * @return 直送上下文
+     */
+    DirectSendContextDTO getDirectSendContext(String taskId);
+
+    /**
      * 转办任务。
      *
      * @param request 转办请求
      * @return 任务动作结果
      */
     TaskActionResult transfer(TransferTaskRequest request);
+
+    /**
+     * 委托代办任务。
+     *
+     * @param request 委托代办请求
+     * @return 任务动作结果
+     */
+    TaskActionResult delegateTask(DelegateTaskRequest request);
 
     /**
      * 加签任务。

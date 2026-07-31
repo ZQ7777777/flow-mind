@@ -8,6 +8,7 @@ import com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum;
 import com.flowmind.platform.api.request.AttachmentUploadItem;
 import com.flowmind.platform.api.request.CheckAttachmentRequest;
 import com.flowmind.platform.api.request.DeleteAttachmentRequest;
+import com.flowmind.platform.api.request.ReplaceInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
@@ -24,11 +25,13 @@ import com.flowmind.platform.persistence.entity.ProcessAttachmentEntity;
 import com.flowmind.platform.persistence.entity.ProcessAttachmentTemplateEntity;
 import com.flowmind.platform.persistence.entity.ProcessDefinitionAttachmentConfigEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import com.flowmind.platform.persistence.repository.ProcessDefinitionAttachmentConfigRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -215,16 +218,102 @@ class DefaultAttachmentServiceTest {
         verify(fixture.storage).delete("storage-rollback");
     }
 
+    @Test
+    void starterReworkTaskAtomicallyReplacesInstanceAttachmentAtMaxCountOne() {
+        Fixture fixture = new Fixture(true);
+        fixture.config.setMaxCount(1);
+        ProcessAttachmentEntity old = fixture.attachment(false);
+        old.setTaskId("closed-original-task");
+        old.setAttachmentCode("receipt");
+        when(fixture.attachments.findById("attachment-1")).thenReturn(old);
+        when(fixture.attachments.countActiveByInstanceAndCode("instance-1", "receipt")).thenReturn(1L);
+        when(fixture.attachments.softDeleteForReplacement(eq("attachment-1"), eq("task-1"), eq("instance-1"),
+                eq(0L), eq("user-1"), any())).thenReturn(1);
+        when(fixture.attachments.insertWhenTaskOpenAndWithinLimit(any(), eq(0L), eq(1))).thenReturn(1);
+        when(fixture.storage.store(any())).thenReturn(
+                new StoredFile("storage-new", "receipt-new.pdf", "application/pdf", 3L));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            AttachmentDTO replaced = fixture.service.replaceInstanceAttachment(fixture.replaceRequest());
+            assertEquals("storage-new", replaced.getStorageKey());
+            for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+                synchronization.afterCommit();
+                synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED);
+            }
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+        verify(fixture.attachments).softDeleteForReplacement(eq("attachment-1"), eq("task-1"),
+                eq("instance-1"), eq(0L), eq("user-1"), any());
+        verify(fixture.storage).delete("storage-1");
+    }
+
+    @Test
+    void nonStarterOrCrossCodeReplacementIsRejectedBeforeStorage() {
+        Fixture fixture = new Fixture(true);
+        fixture.node.setApproverRuleType("USER");
+        assertThrows(RuntimeValidationException.class,
+                () -> fixture.service.replaceInstanceAttachment(fixture.replaceRequest()));
+        fixture.node.setApproverRuleType("STARTER");
+        ProcessAttachmentEntity old = fixture.attachment(false);
+        old.setAttachmentCode("other");
+        when(fixture.attachments.findById("attachment-1")).thenReturn(old);
+        assertThrows(RuntimeValidationException.class,
+                () -> fixture.service.replaceInstanceAttachment(fixture.replaceRequest()));
+        verify(fixture.storage, never()).store(any());
+    }
+
+    @Test
+    void replacementMetadataFailureCleansNewStoredFileOnRollback() {
+        Fixture fixture = new Fixture(true);
+        ProcessAttachmentEntity old = fixture.attachment(false);
+        old.setAttachmentCode("receipt");
+        when(fixture.attachments.findById("attachment-1")).thenReturn(old);
+        when(fixture.attachments.countActiveByInstanceAndCode("instance-1", "receipt")).thenReturn(1L);
+        when(fixture.storage.store(any())).thenReturn(
+                new StoredFile("storage-new", "receipt-new.pdf", "application/pdf", 3L));
+        when(fixture.attachments.softDeleteForReplacement(any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
+        when(fixture.attachments.insertWhenTaskOpenAndWithinLimit(any(), any(), any())).thenReturn(0);
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            assertThrows(RuntimeStateException.class,
+                    () -> fixture.service.replaceInstanceAttachment(fixture.replaceRequest()));
+            for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+                synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+            }
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+        verify(fixture.storage).delete("storage-new");
+        verify(fixture.storage, never()).delete("storage-1");
+    }
+
+    @Test
+    void replacementReplayReturnsStoredResultWithoutWritingFile() {
+        RuntimeOperationExecutor operations = mock(RuntimeOperationExecutor.class);
+        Fixture fixture = new Fixture(true, operations);
+        AttachmentDTO replayed = new AttachmentDTO(); replayed.setAttachmentId("replacement-1");
+        when(operations.begin(any(), any(), any(), any(), any(), any())).thenReturn(
+                new OperationIdempotencyDecision(OperationIdempotencyDecisionType.REPLAY_SUCCESS, null));
+        when(operations.replayResult(any(), eq(AttachmentDTO.class))).thenReturn(replayed);
+        assertEquals("replacement-1",
+                fixture.service.replaceInstanceAttachment(fixture.replaceRequest()).getAttachmentId());
+        verify(fixture.storage, never()).store(any());
+    }
+
     private static final class Fixture {
         private final ProcessAttachmentRepository attachments = mock(ProcessAttachmentRepository.class);
         private final ProcessInstanceRepository instances = mock(ProcessInstanceRepository.class);
         private final ActiveTaskRepository tasks = mock(ActiveTaskRepository.class);
         private final ProcessDefinitionAttachmentConfigRepository configs = mock(ProcessDefinitionAttachmentConfigRepository.class);
         private final ProcessAttachmentTemplateRepository templates = mock(ProcessAttachmentTemplateRepository.class);
+        private final ProcessNodeRepository nodes = mock(ProcessNodeRepository.class);
         private final FileStorageProvider storage = mock(FileStorageProvider.class);
         private final DefaultAttachmentService service;
         private final ProcessActiveTaskEntity task = new ProcessActiveTaskEntity();
         private final ProcessDefinitionAttachmentConfigEntity config = new ProcessDefinitionAttachmentConfigEntity();
+        private final ProcessNodeEntity node = new ProcessNodeEntity();
 
         private Fixture(boolean allowed) {
             this(allowed, null);
@@ -233,15 +322,17 @@ class DefaultAttachmentServiceTest {
         private Fixture(boolean allowed, RuntimeOperationExecutor operations) {
             CurrentUserProvider users = () -> new UserContext("user-1", "User", null, null);
             service = new DefaultAttachmentService(attachments, instances, tasks, configs, templates, storage,
-                    new AttachmentAccessGuard(request -> allowed), users, operations);
+                    new AttachmentAccessGuard(request -> allowed), users, operations, nodes);
             ProcessInstanceEntity instance = new ProcessInstanceEntity(); instance.setId("instance-1"); instance.setDefinitionId("definition-1"); instance.setAttachmentConfigId("config-1");
-            task.setId("task-1"); task.setInstanceId("instance-1"); task.setNodeCode("apply"); task.setTaskStatus("ACTIVE"); task.setLockVersion(0L);
+            task.setId("task-1"); task.setInstanceId("instance-1"); task.setDefinitionId("definition-1"); task.setNodeCode("apply"); task.setTaskStatus("ACTIVE"); task.setLockVersion(0L);
+            node.setDefinitionId("definition-1"); node.setNodeCode("apply"); node.setNodeType("USER_TASK"); node.setApproverRuleType("STARTER");
             config.setAttachmentCode("receipt"); config.setAttachmentTemplateId("template-1"); config.setApplicableNodeCodes("[\"apply\"]"); config.setMinCount(1); config.setMaxCount(2); config.setRequired(Boolean.TRUE);
             ProcessAttachmentTemplateEntity template = new ProcessAttachmentTemplateEntity(); template.setAllowedExtensions("[\"pdf\"]"); template.setMaxSizeBytes(1024L);
             when(instances.findById("instance-1")).thenReturn(instance); when(tasks.findById("task-1")).thenReturn(task);
             when(configs.findByDefinitionIdAndAttachmentConfigId("definition-1", "config-1")).thenReturn(Collections.singletonList(config));
             when(templates.findById("template-1")).thenReturn(Optional.of(template));
             when(attachments.countActiveByInstanceAndCode("instance-1", "receipt")).thenReturn(0L);
+            when(nodes.findByDefinitionIdAndNodeCode("definition-1", "apply")).thenReturn(node);
         }
 
         private SaveInstanceAttachmentRequest request() {
@@ -260,6 +351,15 @@ class DefaultAttachmentServiceTest {
 
         private DeleteAttachmentRequest deleteRequest() {
             DeleteAttachmentRequest request = new DeleteAttachmentRequest(); request.setOperationId("op-delete-1"); request.setAttachmentId("attachment-1"); request.setOperatorUserId("user-1"); return request;
+        }
+
+        private ReplaceInstanceAttachmentRequest replaceRequest() {
+            ReplaceInstanceAttachmentRequest request = new ReplaceInstanceAttachmentRequest();
+            request.setOperationId("op-replace-1"); request.setInstanceId("instance-1");
+            request.setAttachmentId("attachment-1"); request.setSourceTaskId("task-1");
+            request.setExpectedTaskVersion(0L); request.setOperatorUserId("user-1");
+            request.setAttachment(request().getAttachment());
+            return request;
         }
 
         private ProcessAttachmentEntity attachment(boolean deleted) {

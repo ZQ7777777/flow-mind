@@ -66,23 +66,23 @@ class PlatformStandaloneApplicationTest {
 
         UserContext currentUser = provider.getCurrentUser();
 
-        assertThat(currentUser.getUserId()).isEqualTo("user_sales");
-        assertThat(currentUser.getDepartmentId()).isEqualTo("dept_sales");
+        assertThat(currentUser.getUserId()).isEqualTo("u_admin_01");
+        assertThat(currentUser.getDepartmentId()).isEqualTo("mock-dept");
     }
 
     @Test
     void standaloneCurrentUserProviderShouldUseFlowTestUserHeader() {
         CurrentUserProvider provider = new PlatformStandaloneConfiguration().currentUserProvider();
         MockHttpServletRequest request = new MockHttpServletRequest();
-        request.addHeader("X-Flow-User-Id", "user_manager");
+        request.addHeader("X-Flow-User-Id", "u_dept_manager_01");
 
         try {
             RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
 
             UserContext currentUser = provider.getCurrentUser();
 
-            assertThat(currentUser.getUserId()).isEqualTo("user_manager");
-            assertThat(currentUser.getDepartmentId()).isEqualTo("dept_manager");
+            assertThat(currentUser.getUserId()).isEqualTo("u_dept_manager_01");
+            assertThat(currentUser.getDepartmentId()).isEqualTo("dept_sales");
         } finally {
             RequestContextHolder.resetRequestAttributes();
         }
@@ -94,14 +94,28 @@ class PlatformStandaloneApplicationTest {
         ApproverResolver resolver = configuration.approverResolver(configuration.organizationProvider());
         ApproverResolveRequest request = new ApproverResolveRequest();
         Map<String, Object> config = new LinkedHashMap<String, Object>();
-        config.put("userIds", Arrays.asList("user_manager", "user_finance"));
+        config.put("userIds", Arrays.asList("u_dept_manager_01", "u_finance_01"));
         request.setApproverRuleType(ApproverRuleTypeEnum.USER);
         request.setApproverRuleConfig(config);
 
         List<UserDTO> users = resolver.resolveApprovers(request);
 
-        assertThat(users).extracting("userId").containsExactly("user_finance", "user_manager");
+        assertThat(users).extracting("userId").containsExactly("u_dept_manager_01", "u_finance_01");
         assertThat(resolver).isInstanceOf(DefaultApproverResolver.class);
+    }
+
+    @Test
+    void standaloneApproverResolverShouldResolveDepartmentManagerExpression() {
+        PlatformStandaloneConfiguration configuration = new PlatformStandaloneConfiguration();
+        ApproverResolver resolver = configuration.approverResolver(configuration.organizationProvider());
+
+        ApproverResolveRequest salesRequest = expressionRequest("dept_sales");
+        ApproverResolveRequest financeRequest = expressionRequest("dept_finance");
+
+        assertThat(resolver.resolveApprovers(salesRequest)).extracting("userId")
+                .containsExactly("u_dept_manager_01");
+        assertThat(resolver.resolveApprovers(financeRequest)).extracting("userId")
+                .containsExactly("u_dept_manager_02");
     }
 
     @Test
@@ -118,6 +132,15 @@ class PlatformStandaloneApplicationTest {
         request.setApproverRuleConfig(Collections.<String, Object>singletonMap("roleCode", "unknown-role"));
         assertThatThrownBy(() -> resolver.resolveApprovers(request))
                 .hasMessageContaining("approver rule resolved no valid user");
+    }
+
+    private ApproverResolveRequest expressionRequest(String starterDeptId) {
+        ApproverResolveRequest request = new ApproverResolveRequest();
+        request.setApproverRuleType(ApproverRuleTypeEnum.APPROVER_EXPRESSION);
+        request.setApproverRuleConfig(Collections.<String, Object>singletonMap(
+                "expression", "departmentManager(starterDeptId)"));
+        request.setStarterDeptId(starterDeptId);
+        return request;
     }
 
     @Test

@@ -153,6 +153,10 @@ public class TaskClaimCoordinator {
             throw new RuntimeValidationException(RuntimeErrorCodes.TASK_CLAIM_PERMISSION_DENIED,
                     "task already has another assignee");
         }
+        if (activeTaskRepository.hasClaimedSiblingInActiveOrSignGroup(task.getId(), task.getTaskGroupId())) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.TASK_ALREADY_CLAIMED,
+                    "or-sign task group already has a claimed task");
+        }
         List<String> candidates = RuntimeJsonCodec.readStringList(task.getCandidateUserIds());
         List<String> allowedPrincipals = claimablePrincipalUserIds(operator.getUserId(), LocalDateTime.now());
         boolean matched = false;
