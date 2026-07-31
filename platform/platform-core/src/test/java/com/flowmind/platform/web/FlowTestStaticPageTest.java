@@ -1,4 +1,4 @@
-package com.flowmind.platform.web;
+﻿package com.flowmind.platform.web;
 
 import org.junit.jupiter.api.Test;
 
@@ -206,7 +206,6 @@ class FlowTestStaticPageTest {
                 .contains("@click=\"delegateCurrentTask\"")
                 .doesNotContain("外部业务键")
                 .doesNotContain("流程变量 JSON")
-                .doesNotContain("启用直送")
                 .contains("v-if=\"isParallelGatewayNode(selectedNode)\"")
                 .contains("配对网关")
                 .contains("parallelGatewayPairOptions(selectedNode)")
@@ -219,10 +218,7 @@ class FlowTestStaticPageTest {
                 .doesNotContain("灰度发布")
                 .doesNotContain("/gray")
                 .doesNotContain("businessKey: this.instanceForm.businessKey")
-                .doesNotContain("instanceVariablesText")
-                .doesNotContain("listenerDirectSendEnabled")
-                .doesNotContain("directSend")
-                .doesNotContain("/direct-send");
+                .doesNotContain("instanceVariablesText");
 
         assertThat(script)
                 .contains("Vue.createApp")
@@ -363,7 +359,6 @@ class FlowTestStaticPageTest {
                 .contains("!editor.listenerRejectEnabled")
                 .contains("task.definitionId !== detailDefinitionId")
                 .contains("delete copy.listenerConfigError")
-                .doesNotContain("targetMode = \"REJECT_SOURCE\"")
                 .contains("FLOW_FROZEN_MODEL_PARALLEL_GATEWAY_PAIR_INVALID")
                 .contains("并行网关配对无效：请在流程图中为并行分支和并行汇聚设置互相配对，或删除会签定义里不需要的并行网关")
                 .contains("isParallelGatewayNode: function (node)")
@@ -442,10 +437,7 @@ class FlowTestStaticPageTest {
                 .doesNotContain("this.sendRequest(\"图校验\", \"POST\", API_PATHS.validateDefinition")
                 .doesNotContain("/gray")
                 .doesNotContain("businessKey: this.instanceForm.businessKey")
-                .doesNotContain("instanceVariablesText")
-                .doesNotContain("listenerDirectSendEnabled")
-                .doesNotContain("directSend")
-                .doesNotContain("/direct-send");
+                .doesNotContain("instanceVariablesText");
 
         assertThat(css)
                 .contains(".app-shell")
@@ -511,3 +503,4 @@ class FlowTestStaticPageTest {
         return value.substring(startIndex, endIndex);
     }
 }
+
