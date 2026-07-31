@@ -59,6 +59,36 @@ class FlowTestStaticPageTest {
     }
 
     @Test
+    void todoReminderBadgeShouldShowManualAndTimeoutRemindersWithoutTaskDialogReminderAction() throws IOException {
+        String html = loadResource("/static/flow-test/index.html");
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        String taskDialog = substringBetween(html,
+                "<section v-if=\"taskDialog.open\"",
+                "</section>");
+
+        assertThat(taskDialog)
+                .doesNotContain("@click=\"remindCurrentTask\"")
+                .doesNotContain(">手动催办</button>");
+
+        assertThat(script)
+                .contains("return this.enrichTodoReminders(this.todoRows)")
+                .contains("enrichTodoReminders: function (rows)")
+                .contains("return hasText(extractTaskId(task));")
+                .contains("queryTaskReminders: function (task)")
+                .contains("this.sendRequest(\"查询任务提醒\", \"GET\", API_PATHS.reminders + toQuery({")
+                .contains("reminderBadgeLabel: function (reminder)")
+                .contains("reminder.reminderType === \"MANUAL\"")
+                .contains("return failed ? \"手动催办失败\" : \"手动催办\"")
+                .contains("reminder.reminderType === \"TIMEOUT\"")
+                .contains("return failed ? \"超时催办失败\" : \"超时催办\"")
+                .contains("this.rememberTaskReminderStatus(task, [payload])")
+                .doesNotContain("queryTaskTimeoutReminder")
+                .doesNotContain("reminderType: \"TIMEOUT\"")
+                .doesNotContain("remindCurrentTask: function ()");
+    }
+
+    @Test
     void instanceDetailShouldKeepFormReadonlyAndOnlyExposeTerminateAndDeleteOperations() throws IOException {
         String html = loadResource("/static/flow-test/index.html");
         String script = loadResource("/static/flow-test/flow-test-app.js");
@@ -497,11 +527,11 @@ class FlowTestStaticPageTest {
                 .contains("startSubmitting")
                 .contains("lastStartedInstanceId")
                 .contains("focusCurrentStartedTodos")
-                .contains("enrichTodoTimeoutReminders")
+                .contains("enrichTodoReminders")
                 .contains("taskTimeoutBadge: function (task)")
-                .contains("queryTaskTimeoutReminder")
+                .contains("queryTaskReminders")
                 .contains("queryInstanceReadRecords")
-                .contains("reminderType: \"TIMEOUT\"")
+                .contains("reminderBadgeLabel")
                 .contains("formatAttachmentSize")
                 .contains("formatDateTime")
                 .contains("sizeBytes: 0")
