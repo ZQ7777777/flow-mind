@@ -305,6 +305,10 @@ public class RuntimeRequestValidator {
     }
 
     private UserContext currentUser() {
+        UserContext systemOperator = SystemOperatorContext.current();
+        if (systemOperator != null && hasText(systemOperator.getUserId())) {
+            return systemOperator;
+        }
         UserContext currentUser = currentUserProvider == null ? null : currentUserProvider.getCurrentUser();
         if (currentUser == null || !hasText(currentUser.getUserId())) {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "current user is unavailable");

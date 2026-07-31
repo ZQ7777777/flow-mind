@@ -10,6 +10,7 @@ import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ValidationResult;
+import com.flowmind.platform.api.enums.AlertSeverityEnum;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
@@ -17,6 +18,8 @@ import com.flowmind.platform.core.definition.ConditionExpressionSyntaxValidator;
 import com.flowmind.platform.core.definition.NodeListenerConfigReader;
 import com.flowmind.platform.core.definition.TaskActionRuleConfigReader;
 import com.flowmind.platform.core.definition.TaskActionRuleConfigReader.TaskActionRules;
+import com.flowmind.platform.core.monitor.TimeoutPolicy;
+import com.flowmind.platform.core.monitor.TimeoutPolicyReader;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -49,6 +52,7 @@ public class DefinitionModelValidator {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final NodeListenerConfigReader nodeListenerConfigReader = new NodeListenerConfigReader();
     private final TaskActionRuleConfigReader taskActionRuleConfigReader = new TaskActionRuleConfigReader();
+    private final TimeoutPolicyReader timeoutPolicyReader = new TimeoutPolicyReader();
     /** 表单字段稳定排序规则。 */
     private static final Comparator<ProcessFormFieldDTO> FORM_FIELD_ORDER =
             new Comparator<ProcessFormFieldDTO>() {
@@ -113,6 +117,7 @@ public class DefinitionModelValidator {
         validateConditionExpressions(result, graph);
         validateNodeListenerConfig(result, graph);
         validateTaskActionRules(result, graph);
+        validateTimeoutConfiguration(result, graph);
         validateFiniteEnding(result, graph);
         validateReachability(result, graph);
         validateExtensionConfiguration(result, definition, graph);
@@ -420,6 +425,122 @@ public class DefinitionModelValidator {
             if (target == null || !USER_TASK.equals(target.getNodeType())) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_TASK_ACTION_RULE_INVALID,
                         "Reject target node must exist and be a user task: " + targetNodeCode + ".",
+                        node.getNodeCode(), null);
+            }
+        }
+    }
+
+    private void validateTimeoutConfiguration(ValidationResult result, DefinitionGraphIndex graph) {
+        for (ProcessNodeDTO node : graph.getNodes()) {
+            boolean hasTimeoutConfig = !isBlank(node.getTimeoutConfig());
+            boolean hasReminderConfig = !isBlank(node.getReminderConfig());
+            if (!hasTimeoutConfig && !hasReminderConfig) {
+                continue;
+            }
+            if (!USER_TASK.equals(node.getNodeType())) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                        "Timeout and reminder configuration can only be configured on user task node.",
+                        node.getNodeCode(), null);
+                continue;
+            }
+            JsonNode timeout = readConfigObject(result, node, node.getTimeoutConfig(), "timeoutConfig");
+            JsonNode reminder = readConfigObject(result, node, node.getReminderConfig(), "reminderConfig");
+            boolean timeoutEnabled = timeout != null && booleanValue(timeout.get("enabled"));
+            boolean reminderEnabled = reminder != null && booleanValue(reminder.get("enabled"));
+            if (timeout != null) {
+                validateTimeoutConfig(result, graph, node, timeout, timeoutEnabled);
+            }
+            if (reminder != null) {
+                validateReminderConfig(result, node, reminder, reminderEnabled, timeoutEnabled);
+            }
+        }
+    }
+
+    private JsonNode readConfigObject(ValidationResult result, ProcessNodeDTO node, String json, String label) {
+        if (isBlank(json)) {
+            return null;
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(json);
+            if (root == null || root.isNull()) {
+                return null;
+            }
+            if (!root.isObject()) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                        label + " must be a JSON object.", node.getNodeCode(), null);
+                return null;
+            }
+            return root;
+        } catch (JsonProcessingException ex) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                    label + " must be valid JSON.", node.getNodeCode(), null);
+            return null;
+        }
+    }
+
+    private void validateTimeoutConfig(ValidationResult result,
+                                       DefinitionGraphIndex graph,
+                                       ProcessNodeDTO node,
+                                       JsonNode timeout,
+                                       boolean enabled) {
+        if (!enabled) {
+            return;
+        }
+        Integer duration = integerValue(timeout.get("durationMinutes"));
+        if (duration == null || duration.intValue() < 0) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                    "Enabled timeoutConfig requires non-negative durationMinutes.",
+                    node.getNodeCode(), null);
+        }
+        JsonNode severity = timeout.get("severity");
+        if (severity != null && !severity.isNull()) {
+            try {
+                AlertSeverityEnum.valueOf(severity.asText().trim().toUpperCase(java.util.Locale.ROOT));
+            } catch (IllegalArgumentException ex) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                        "timeoutConfig severity is unsupported: " + severity.asText() + ".",
+                        node.getNodeCode(), null);
+            }
+        }
+        String action = timeout.has("action")
+                ? timeoutPolicyReader.normalizeAction(timeout.get("action").asText()) : TimeoutPolicy.ACTION_ALERT;
+        if (!timeoutPolicyReader.isSupportedAction(action)) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                    "timeoutConfig action is unsupported: " + timeout.get("action").asText() + ".",
+                    node.getNodeCode(), null);
+            return;
+        }
+        if (TimeoutPolicy.ACTION_JUMP.equals(action)) {
+            String targetNodeCode = timeout.has("targetNodeCode") ? timeout.get("targetNodeCode").asText() : null;
+            ProcessNodeDTO target = graph.getNodesByCode().get(targetNodeCode);
+            if (isBlank(targetNodeCode) || target == null || !USER_TASK.equals(target.getNodeType())
+                    || targetNodeCode.equals(node.getNodeCode())) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                        "timeoutConfig JUMP targetNodeCode must reference another user task node.",
+                        node.getNodeCode(), null);
+            }
+        }
+    }
+
+    private void validateReminderConfig(ValidationResult result,
+                                        ProcessNodeDTO node,
+                                        JsonNode reminder,
+                                        boolean reminderEnabled,
+                                        boolean timeoutEnabled) {
+        if (!reminderEnabled) {
+            return;
+        }
+        if (!timeoutEnabled) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                    "Enabled reminderConfig requires enabled timeoutConfig.",
+                    node.getNodeCode(), null);
+        }
+        JsonNode maxCount = reminder.get("maxCount");
+        if (maxCount != null) {
+            Integer value = integerValue(maxCount);
+            if (value == null || value.intValue() < 0) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_TIMEOUT_CONFIGURATION_INVALID,
+                        "reminderConfig maxCount must be non-negative.",
                         node.getNodeCode(), null);
             }
         }
@@ -806,6 +927,30 @@ public class DefinitionModelValidator {
             return false;
         }
         return hasTextValue(value);
+    }
+
+    private Integer integerValue(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (node.isIntegralNumber()) {
+            return Integer.valueOf(node.intValue());
+        }
+        if (node.isTextual()) {
+            try {
+                return Integer.valueOf(node.asText());
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private boolean booleanValue(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return false;
+        }
+        return node.isBoolean() ? node.booleanValue() : "true".equalsIgnoreCase(node.asText());
     }
 
     private boolean hasTextValue(Object value) {

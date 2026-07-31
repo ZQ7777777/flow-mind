@@ -6,6 +6,7 @@ import com.flowmind.platform.api.enums.InstanceStatusEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
 import com.flowmind.platform.api.request.ApproverResolveRequest;
+import com.flowmind.platform.api.request.TerminateProcessRequest;
 import com.flowmind.platform.api.request.StartProcessRequest;
 import com.flowmind.platform.api.request.TaskOperationRequest;
 import com.flowmind.platform.api.request.UpdateVariablesRequest;
@@ -95,6 +96,23 @@ class RuntimeRequestValidatorTest {
         request.setOperatorUserId("user-2");
         RuntimeValidationException forged = assertThrows(RuntimeValidationException.class,
                 () -> validator.validateVariableUpdate(request, instance));
+        assertEquals(RuntimeErrorCodes.INVALID_ACTION, forged.getErrorCode());
+    }
+
+    @Test
+    void systemOperatorContextCanRunBackgroundInstanceOperation() {
+        TerminateProcessRequest request = new TerminateProcessRequest();
+        request.setOperationId("operation-timeout-terminate");
+        request.setInstanceId("instance-1");
+        request.setOperatorUserId("system_timeout");
+
+        SystemOperatorContext.runAs(new UserContext("system_timeout", "System Timeout", "system", "System"),
+                () -> assertEquals("system_timeout",
+                        validator.validateInstanceOperationIdentity(request, "instance-1", "system_timeout")
+                                .getUserId()));
+
+        RuntimeValidationException forged = assertThrows(RuntimeValidationException.class,
+                () -> validator.validateInstanceOperationIdentity(request, "instance-1", "system_timeout"));
         assertEquals(RuntimeErrorCodes.INVALID_ACTION, forged.getErrorCode());
     }
 
