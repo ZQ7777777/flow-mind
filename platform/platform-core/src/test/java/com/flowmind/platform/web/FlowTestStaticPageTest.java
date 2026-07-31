@@ -39,15 +39,17 @@ class FlowTestStaticPageTest {
         String script = loadResource("/static/flow-test/flow-test-app.js");
 
         assertThat(html)
-                .contains("v-model.trim=\"instanceVariablesText\"")
+                .contains("data-testid=\"start-form-field\"")
+                .contains(":required=\"isStartFieldRequired(field)\"")
                 .contains("@click=\"startAndSubmitInstance\"")
                 .contains("@change=\"handleInstanceAttachmentFileChange(attachment, $event)\"")
-                .contains("v-model.trim=\"attachment.contentType\"")
-                .doesNotContain("data-testid=\"start-form-field\"");
+                .contains("v-model.trim=\"attachment.contentType\"");
 
         assertThat(script)
                 .contains("buildStartSubmitBody: function ()")
-                .contains("variables: parseJsonObject(this.instanceVariablesText, {})")
+                .contains("variables: this.buildStartVariables()")
+                .contains("buildStartVariables: function ()")
+                .contains("this.buildVariablesFromFields(this.instanceDefinitionFields, this.instanceFieldValues, true)")
                 .contains("attachments: this.buildInstanceAttachments()")
                 .contains("autoClaimSpecifiedUserTasks: function (instance)")
                 .contains("isSpecifiedUserTask: function (task, definition)")
@@ -69,8 +71,8 @@ class FlowTestStaticPageTest {
                 .contains("v-model=\"taskDialog.transferUserId\"")
                 .contains("@click=\"transferCurrentTask\"")
                 .contains("@click=\"addSignCurrentTask\"")
-                .doesNotContain("data-testid=\"todo-scope-delegated\"")
-                .doesNotContain("@click=\"delegateCurrentTask\"");
+                .contains("data-testid=\"todo-scope-delegated\"")
+                .contains("@click=\"delegateCurrentTask\"");
 
         assertThat(script)
                 .contains("todoTasks: \"/api/platform/tasks/todo\"")
@@ -84,9 +86,12 @@ class FlowTestStaticPageTest {
                 .contains("canHandleTask: function (task)")
                 .contains("transferCurrentTask: function ()")
                 .contains("targetUserId: this.taskDialog.transferUserId")
-                .doesNotContain("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
+                .contains("delegateTask: \"/api/platform/runtime/tasks/transfer\"")
+                .contains("delegateCurrentTask")
+                .contains("filteredTodoRows: function ()")
+                .contains("todoScope: \"own\"")
                 .doesNotContain("delegateTask: \"/api/platform/runtime/tasks/delegate\"")
-                .doesNotContain("delegateCurrentTask");
+                .doesNotContain("delegateUserId: this.taskDialog.delegateUserId");
     }
 
     @Test
@@ -101,14 +106,14 @@ class FlowTestStaticPageTest {
                 .contains("@click.stop=\"remindInstanceNode(row, nodeCode)\"")
                 .contains("@click.stop=\"remindInstanceTask(task)\"")
                 .contains("手动催办")
-                .doesNotContain("@click=\"withdrawSelectedInstance()\"")
-                .doesNotContain("@click=\"openInstanceQueryDialog('readRecords')\"");
+                .contains("@click=\"withdrawSelectedInstance()\"")
+                .contains("@click=\"openInstanceQueryDialog('readRecords')\"");
 
         assertThat(script)
                 .contains("selectInstance: function (row)")
                 .contains("loadSelectedInstanceDetail: function (instanceId)")
                 .contains("API_PATHS.instanceDetail(instanceId)")
-                .contains("this.selectedInstanceDetail = detail")
+                .contains("this.selectedInstanceDetail = enrichedDetail")
                 .contains("activeTasks: normalizeList(tasksPayload)")
                 .contains("activeTasks: function (instanceId)")
                 .contains("remindTask: function (taskId)")
@@ -120,9 +125,11 @@ class FlowTestStaticPageTest {
                 .contains("this.sendRequest(\"手动催办\", \"POST\", API_PATHS.remindTask(taskId), body)")
                 .contains("historyTasks: function (instanceId)")
                 .contains("comments: function (instanceId)")
-                .doesNotContain("markRead: function (instanceId)")
-                .doesNotContain("recordTodoRowsRead: function (rows)")
-                .doesNotContain("canWithdrawSelectedInstance: function ()");
+                .contains("markRead: function (instanceId)")
+                .contains("recordSelectedInstanceRead: function (instanceId)")
+                .contains("canWithdrawSelectedInstance: function ()")
+                .contains("recordTodoRowsRead: function (rows)")
+                .doesNotContain("recoverSelectedInstance");
     }
 
     @Test

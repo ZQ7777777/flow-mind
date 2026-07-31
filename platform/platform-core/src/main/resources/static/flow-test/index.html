@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
@@ -241,9 +241,12 @@
                         <p class="eyebrow">Runtime</p>
                         <h2>流程实例</h2>
                     </div>
-                    <button type="button" class="primary" :disabled="startSubmitting" @click="startAndSubmitInstance">
-                        {{ startSubmitting ? '提交中' : '启动并提交' }}
-                    </button>
+                    <div class="table-actions">
+                        <button type="button" v-if="isTestAdmin" @click="queryAdminInstances()">查询全部实例</button>
+                        <button type="button" class="primary" :disabled="startSubmitting" @click="startAndSubmitInstance">
+                            {{ startSubmitting ? '提交中' : '启动并提交' }}
+                        </button>
+                    </div>
                 </div>
 
                 <div class="split-grid">
@@ -262,14 +265,16 @@
                             实例标题
                             <input v-model.trim="instanceForm.instanceTitle" type="text">
                         </label>
-                        <label>
-                            外部业务键
-                            <input v-model.trim="instanceForm.businessKey" type="text">
-                        </label>
-                        <label>
-                            流程变量 JSON
-                            <textarea v-model.trim="instanceVariablesText" rows="6"></textarea>
-                        </label>
+                        <div class="form-field-grid" data-testid="start-form-field">
+                            <label v-for="field in instanceDefinitionFields" :key="formFieldCode(field)" :class="{'field-invalid': startFormFieldError(field)}">
+                                <span class="form-field-label">{{ formFieldLabel(field) }}<span v-if="isStartFieldRequired(field)" class="required-mark">*</span></span>
+                                <textarea v-if="isTextareaField(field)" v-model.trim="instanceFieldValues[formFieldCode(field)]" rows="3" :required="isStartFieldRequired(field)" @input="clearStartFormFieldError(field)"></textarea>
+                                <input v-else-if="formFieldInputType(field) === 'checkbox'" v-model="instanceFieldValues[formFieldCode(field)]" type="checkbox" :required="isStartFieldRequired(field)" @change="clearStartFormFieldError(field)">
+                                <input v-else v-model.trim="instanceFieldValues[formFieldCode(field)]" :type="formFieldInputType(field)" :required="isStartFieldRequired(field)" @input="clearStartFormFieldError(field)">
+                                <p v-if="startFormFieldError(field)" class="field-error">{{ startFormFieldError(field) }}</p>
+                            </label>
+                            <p v-if="instanceDefinitionFields.length === 0" class="muted">暂无表单字段</p>
+                        </div>
 
                         <div class="subsection-title">
                             <div>
@@ -367,6 +372,47 @@
                         </div>
                     </section>
                 </div>
+
+                <section v-if="selectedInstanceDetail" class="summary-card instance-detail-card">
+                    <div class="card-title">
+                        <div><h3>实例详情</h3><span>{{ selectedInstanceDetail.instanceId || selectedInstanceDetail.id }}</span></div>
+                        <div class="aux-query-actions">
+                            <button type="button" @click="openInstanceQueryDialog('historyTasks')">查询历史任务</button>
+                            <button type="button" @click="openInstanceQueryDialog('comments')">查询审批意见</button>
+                            <button type="button" :disabled="!isTestAdmin" @click="openInstanceQueryDialog('callbackLogs')">查询回调日志</button>
+                            <button type="button" :disabled="!canQuerySelectedInstanceReadRecords" @click="openInstanceQueryDialog('readRecords')">查询已阅记录</button>
+                            <button type="button" :disabled="!isTestAdmin" @click="openInstanceQueryDialog('auditTrace')">审计追溯视图</button>
+                        </div>
+                    </div>
+                    <dl class="detail-list">
+                        <dt>实例标题</dt><dd>{{ selectedInstanceDetail.instanceTitle || '-' }}</dd>
+                        <dt>发起人</dt><dd>{{ selectedInstanceDetail.starterUserName || selectedInstanceDetail.starterUserId || '-' }}</dd>
+                        <dt>实例状态</dt><dd>{{ selectedInstanceDetail.instanceStatus || '-' }}</dd>
+                        <dt>当前节点</dt><dd>{{ joinList(selectedInstanceDetail.currentNodeCodes) || '-' }}</dd>
+                    </dl>
+                    <div class="instance-support-grid">
+                        <div class="instance-variable-editor" data-testid="instance-variable-editor">
+                            <div class="subsection-title"><h4>表单字段</h4><button type="button" :disabled="instanceVariableRows.length === 0" @click="updateSelectedInstanceVariables()">保存表单字段</button></div>
+                            <div class="table-wrap compact-table"><table><thead><tr><th>字段</th><th>当前值</th></tr></thead><tbody>
+                            <tr v-if="instanceVariableRows.length === 0"><td colspan="2" class="empty-cell">暂无表单字段</td></tr>
+                            <tr v-for="row in instanceVariableRows" :key="row.fieldCode"><td>{{ row.fieldName }}</td><td>
+                                <textarea v-if="isTextareaField(row.field)" v-model.trim="instanceVariableValues[row.fieldCode]" rows="2"></textarea>
+                                <input v-else-if="formFieldInputType(row.field) === 'checkbox'" v-model="instanceVariableValues[row.fieldCode]" type="checkbox">
+                                <input v-else v-model.trim="instanceVariableValues[row.fieldCode]" :type="formFieldInputType(row.field)">
+                            </td></tr>
+                            </tbody></table></div>
+                        </div>
+                        <div class="instance-operations">
+                            <div class="subsection-title"><h4>实例操作</h4></div>
+                            <label>操作意见<textarea v-model.trim="instanceOperationComment" rows="3"></textarea></label>
+                            <div class="aux-query-actions">
+                                <button type="button" :disabled="!canWithdrawSelectedInstance" @click="withdrawSelectedInstance()">撤回实例</button>
+                                <button type="button" :disabled="!canAdminOperateSelectedInstance" @click="terminateSelectedInstance()">终止流程</button>
+                                <button type="button" :disabled="!canAdminOperateSelectedInstance" @click="deleteSelectedInstance()">删除实例</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </section>
 
             <section v-show="activeView === 'todo'" class="view-panel">
@@ -377,6 +423,11 @@
                     </div>
                     <button type="button" @click="queryTodoTasks">刷新待办</button>
                 </div>
+                <div class="scope-tabs todo-segmented">
+                    <button type="button" data-testid="todo-scope-own" :class="{active: todoScope === 'own'}" @click="todoScope = 'own'">自己的任务</button>
+                    <button type="button" data-testid="todo-scope-delegated" :class="{active: todoScope === 'delegated'}" @click="todoScope = 'delegated'">委托代办任务</button>
+                    <button type="button" :class="{active: todoScope === 'all'}" @click="todoScope = 'all'">全部</button>
+                </div>
                 <div class="table-wrap">
                     <table>
                         <thead>
@@ -384,25 +435,37 @@
                             <th>任务 ID</th>
                             <th>实例</th>
                             <th>节点</th>
+                            <th>超时时间</th>
+                            <th>提醒标记</th>
                             <th>候选人</th>
                             <th>办理人</th>
+                            <th>任务来源</th>
                             <th>版本</th>
                             <th>操作</th>
                         </tr>
                         </thead>
                         <tbody>
-                        <tr v-if="todoRows.length === 0">
-                            <td colspan="7" class="empty-cell">暂无待办</td>
+                        <tr v-if="filteredTodoRows.length === 0">
+                            <td colspan="10" class="empty-cell">暂无待办</td>
                         </tr>
-                        <tr v-for="row in todoRows" :key="row.taskId || row.id">
+                        <tr v-for="row in filteredTodoRows" :key="row.taskId || row.id">
                             <td>{{ row.taskId || row.id }}</td>
                             <td>{{ row.instanceTitle || row.instanceId }}</td>
                             <td>{{ row.nodeName || row.nodeCode }}</td>
+                            <td>{{ formatDateTime(row.dueAt) }}</td>
+                            <td>
+                                <span v-if="taskTimeoutBadge(row)"
+                                      data-testid="todo-timeout-badge"
+                                      class="timeout-badge"
+                                      :class="taskTimeoutBadgeClass(row)">{{ taskTimeoutBadge(row) }}</span>
+                                <span v-else>-</span>
+                            </td>
                             <td>{{ joinList(row.candidateUserIds) }}</td>
                             <td>
                                 <div>{{ taskAssigneeText(row) }}</div>
                                 <span class="claim-status" :class="{claimed: isTaskClaimed(row)}">{{ taskClaimStatusText(row) }}</span>
                             </td>
+                            <td>{{ todoScopeLabel(row) }}</td>
                             <td>{{ row.taskVersion || row.expectedTaskVersion || 0 }}</td>
                             <td class="table-actions">
                                 <button type="button" class="primary" v-if="canClaimTask(row)" @click.stop="claimTask(row)">认领</button>
@@ -575,7 +638,7 @@
                         </div>
                     </div>
                 </div>
-                <aside class="property-panel">
+                <aside class="property-panel property-panel-scroll">
                     <h3>属性</h3>
                     <template v-if="selectedNode">
                         <label>
@@ -667,6 +730,81 @@
                                 <option value="COUNTERSIGN">会签</option>
                             </select>
                         </label>
+                        <fieldset v-if="selectedNode.nodeType === 'USER_TASK'" class="timeout-config-panel">
+                            <legend>超时提醒</legend>
+                            <label class="checkbox-row">
+                                <input v-model="selectedNode.timeoutEnabled"
+                                       data-testid="timeout-enabled"
+                                       type="checkbox"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                                启用超时
+                            </label>
+                            <label>
+                                超时时长（分钟）
+                                <input v-model.number="selectedNode.timeoutDurationMinutes"
+                                       data-testid="timeout-duration"
+                                       :disabled="!selectedNode.timeoutEnabled"
+                                       min="0"
+                                       type="number"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                            </label>
+                            <label>
+                                超时动作
+                                <select v-model="selectedNode.timeoutAction"
+                                        data-testid="timeout-action"
+                                        :disabled="!selectedNode.timeoutEnabled"
+                                        @change="syncSelectedNodeTimeoutConfig">
+                                    <option value="REMIND">提醒</option>
+                                    <option value="ALERT">告警</option>
+                                    <option value="JUMP">跳转</option>
+                                    <option value="TERMINATE">终止</option>
+                                    <option value="FORCE_COMPLETE">强制完成</option>
+                                </select>
+                            </label>
+                            <label>
+                                告警级别
+                                <select v-model="selectedNode.timeoutSeverity" :disabled="!selectedNode.timeoutEnabled" @change="syncSelectedNodeTimeoutConfig">
+                                    <option value="LOW">LOW</option>
+                                    <option value="MEDIUM">MEDIUM</option>
+                                    <option value="HIGH">HIGH</option>
+                                </select>
+                            </label>
+                            <label v-if="selectedNode.timeoutAction === 'JUMP'">
+                                跳转目标节点
+                                <select v-model="selectedNode.timeoutTargetNodeCode"
+                                        data-testid="timeout-target-node"
+                                        :disabled="!selectedNode.timeoutEnabled"
+                                        @change="syncSelectedNodeTimeoutConfig">
+                                    <option value="">请选择</option>
+                                    <option v-for="node in timeoutReminderTargetNodes(selectedNode)" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }}</option>
+                                </select>
+                            </label>
+                            <label class="checkbox-row">
+                                <input v-model="selectedNode.reminderEnabled"
+                                       data-testid="reminder-enabled"
+                                       type="checkbox"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                                启用提醒
+                            </label>
+                            <label>
+                                最大提醒次数
+                                <input v-model.number="selectedNode.reminderMaxCount"
+                                       data-testid="reminder-max-count"
+                                       :disabled="!selectedNode.reminderEnabled"
+                                       min="0"
+                                       type="number"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                            </label>
+                            <label>
+                                提醒文案模板
+                                <input v-model.trim="selectedNode.reminderMessageTemplate"
+                                       data-testid="reminder-message-template"
+                                       :disabled="!selectedNode.reminderEnabled"
+                                       type="text"
+                                       @change="syncSelectedNodeTimeoutConfig">
+                            </label>
+                            <p v-if="selectedNode.timeoutConfigError" class="field-error">{{ selectedNode.timeoutConfigError }}</p>
+                        </fieldset>
                         <fieldset v-if="selectedNode.nodeType === 'USER_TASK'" class="listener-config-panel">
                             <legend>listenerConfig</legend>
                             <label class="checkbox-row">
@@ -852,7 +990,30 @@
 
             <div class="modal-footer">
                 <button type="button" @click="closeDefinitionDialog">取消</button>
-                <button type="button" class="primary" :disabled="!canManageDefinitions" @click="saveDefinitionDraft">保存草稿并校验</button>
+                <button type="button" class="primary" data-testid="save-definition-draft" :disabled="!canManageDefinitions" @click="saveDefinitionDraft">保存草稿并校验</button>
+            </div>
+        </div>
+    </section>
+
+    <section v-if="instanceQueryDialog.open" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="实例查询结果弹窗">
+        <div class="modal-panel query-dialog">
+            <div class="modal-header">
+                <div><p class="eyebrow">Instance query</p><h2>{{ instanceQueryDialog.title }}</h2></div>
+                <button type="button" class="ghost" @click="closeInstanceQueryDialog">关闭</button>
+            </div>
+            <div class="query-dialog-list table-wrap compact-table">
+                <table v-if="instanceQueryDialog.queryType === 'historyTasks'"><thead><tr><th>节点</th><th>办理人</th><th>动作</th><th>意见</th><th>完成时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="5" class="empty-cell">暂无历史任务</td></tr><tr v-for="row in queryDialogRows" :key="row.historyTaskId || row.taskId || row.activeTaskId || row.nodeCode + row.startedAt"><td>{{ row.nodeName || row.nodeCode || '-' }}</td><td>{{ row.assigneeUserName || row.assigneeUserId || '-' }}</td><td>{{ row.actionType || row.handleType || '-' }}</td><td>{{ row.comment || '-' }}</td><td>{{ formatDateTime(row.completedAt || row.startedAt) }}</td></tr></tbody></table>
+                <table v-else-if="instanceQueryDialog.queryType === 'comments'"><thead><tr><th>节点</th><th>用户</th><th>意见</th><th>时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="4" class="empty-cell">暂无审批意见</td></tr><tr v-for="row in queryDialogRows" :key="row.commentId || row.taskId + row.createdAt"><td>{{ row.nodeName || row.nodeCode || '-' }}</td><td>{{ row.userName || row.operatorUserId || row.userId || '-' }}</td><td>{{ row.comment || row.commentText || '-' }}</td><td>{{ formatDateTime(row.createdAt || row.commentedAt) }}</td></tr></tbody></table>
+                <table v-else-if="instanceQueryDialog.queryType === 'callbackLogs'"><thead><tr><th>事件</th><th>状态</th><th>重试</th><th>错误</th><th>时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="5" class="empty-cell">暂无回调日志</td></tr><tr v-for="row in queryDialogRows" :key="row.callbackLogId || row.logId"><td>{{ row.eventType || '-' }}</td><td>{{ row.callbackStatus || row.status || '-' }}</td><td>{{ row.retryCount || 0 }}</td><td>{{ row.errorMessage || '-' }}</td><td>{{ formatDateTime(row.createdAt || row.updatedAt) }}</td></tr></tbody></table>
+                <table v-else-if="instanceQueryDialog.queryType === 'readRecords'"><thead><tr><th>阅读用户</th><th>用户 ID</th><th>任务 ID</th><th>阅读时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="4" class="empty-cell">暂无已阅记录</td></tr><tr v-for="record in queryDialogRows" :key="record.readRecordId || record.userId + record.readAt"><td>{{ record.userName || record.userId || '-' }}</td><td>{{ record.userId || '-' }}</td><td>{{ record.taskId || '-' }}</td><td>{{ formatDateTime(record.readAt) }}</td></tr></tbody></table>
+                <table v-else><thead><tr><th>对象</th><th>操作</th><th>操作人</th><th>摘要</th><th>时间</th></tr></thead><tbody><tr v-if="queryDialogRows.length === 0"><td colspan="5" class="empty-cell">暂无审计记录</td></tr><tr v-for="row in queryDialogRows" :key="row.auditLogId || row.logId"><td>{{ row.targetType || row.targetId || '-' }}</td><td>{{ row.operationType || row.actionType || '-' }}</td><td>{{ row.operatorUserName || row.operatorUserId || '-' }}</td><td>{{ formatJsonSummary(row.changeSummary || row.detail || row.payload) }}</td><td>{{ formatDateTime(row.createdAt || row.operationAt) }}</td></tr></tbody></table>
+            </div>
+            <div class="query-dialog-footer">
+                <button type="button" :disabled="instanceQueryDialog.pageNo <= 1 || instanceQueryDialog.loading" @click="changeInstanceQueryPage(-1)">上一页</button>
+                <span>第 {{ instanceQueryDialog.pageNo }} / {{ queryDialogTotalPages }} 页，共 {{ instanceQueryDialog.total }} 条</span>
+                <label class="query-page-size">每页 <input v-model.number="instanceQueryDialog.pageSize" type="number" min="1" max="100" @change="queryInstanceDialogPage"></label>
+                <button type="button" :disabled="instanceQueryDialog.pageNo >= queryDialogTotalPages || instanceQueryDialog.loading" @click="changeInstanceQueryPage(1)">下一页</button>
+                <button type="button" @click="queryInstanceDialogPage">刷新</button>
             </div>
         </div>
     </section>
@@ -954,12 +1115,21 @@
                     </label>
                     <button type="button" @click="transferCurrentTask">转办</button>
                     <label>
+                        代办人
+                        <select v-model="taskDialog.delegateUserId" data-testid="delegate-user">
+                            <option value="">请选择</option>
+                            <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
+                        </select>
+                    </label>
+                    <button type="button" @click="delegateCurrentTask">委托代办</button>
+                    <label>
                         加签人
                         <select v-model="taskDialog.addSignUserIds" multiple>
                             <option v-for="user in users" :key="user.userId" :value="user.userId">{{ user.userName }}</option>
                         </select>
                     </label>
                     <button type="button" @click="addSignCurrentTask">加签</button>
+                    <button type="button" @click="remindCurrentTask">手动催办</button>
                 </template>
             </div>
         </div>
@@ -1004,3 +1174,8 @@
 <script src="flow-test-app.js"></script>
 </body>
 </html>
+
+
+
+
+

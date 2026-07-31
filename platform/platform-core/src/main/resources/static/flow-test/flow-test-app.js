@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
     "use strict";
 
     var API_PATHS = {
@@ -21,6 +21,10 @@
         archiveDefinition: "/api/platform/definitions/archive",
         deleteDefinition: "/api/platform/definitions",
         startAndSubmit: "/api/platform/runtime/instances/start-submit",
+        adminInstances: "/api/platform/admin/instances",
+        updateVariables: "/api/platform/runtime/instances/variables",
+        terminateInstance: "/api/platform/runtime/instances/terminate",
+        deleteInstance: "/api/platform/runtime/instances",
         instanceDetail: function (instanceId) {
             return "/api/platform/instances/" + encodeURIComponent(instanceId);
         },
@@ -31,6 +35,11 @@
         taskDirectSend: "/api/platform/runtime/tasks/direct-send",
         taskTransfer: "/api/platform/runtime/tasks/transfer",
         taskAddSign: "/api/platform/runtime/tasks/add-sign",
+        taskWithdraw: "/api/platform/runtime/tasks/withdraw",
+        delegateTask: "/api/platform/runtime/tasks/transfer",
+        taskRemind: function (taskId) {
+            return "/api/platform/tasks/" + encodeURIComponent(taskId) + "/remind";
+        },
         taskClaim: "/api/platform/runtime/tasks/claim",
         taskUnclaim: "/api/platform/runtime/tasks/unclaim",
         remindTask: function (taskId) {
@@ -50,6 +59,9 @@
         comments: function (instanceId) {
             return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/comments";
         },
+        adminHistoryTasks: "/api/platform/admin/history-tasks",
+        callbackLogs: "/api/platform/admin/callback-logs",
+        auditLogs: "/api/platform/admin/audit-logs",
         attachments: "/api/platform/attachments",
         instanceAttachments: function (instanceId) {
             return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/attachments";
@@ -61,7 +73,15 @@
         attachmentDownload: function (attachmentId) {
             return "/api/platform/attachments/" + encodeURIComponent(attachmentId) + "/download";
         },
-        attachmentTemplates: "/api/platform/attachment-templates"
+        attachmentTemplates: "/api/platform/attachment-templates",
+        reminders: "/api/platform/reminders",
+        adminTimeoutScan: "/api/platform/admin/timeout-scan",
+        readRecords: function (instanceId) {
+            return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/read-records";
+        },
+        markRead: function (instanceId) {
+            return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/read";
+        }
     };
 
     var FLOW_TEST_USERS = [
@@ -168,6 +188,26 @@
             return normalizeList(payload.data);
         }
         return [];
+    }
+
+    function extractTotalCount(payload, fallback) {
+        if (!payload) {
+            return fallback || 0;
+        }
+        var keys = ["total", "totalCount", "totalElements", "count"];
+        for (var index = 0; index < keys.length; index += 1) {
+            var value = payload[keys[index]];
+            if (hasText(value)) {
+                var parsed = Number(value);
+                if (!Number.isNaN(parsed)) {
+                    return parsed;
+                }
+            }
+        }
+        if (payload.data) {
+            return extractTotalCount(payload.data, fallback);
+        }
+        return fallback || 0;
     }
 
     function toQuery(params) {
@@ -540,11 +580,31 @@
                     instanceTitle: "入金申请测试实例",
                     starterDeptId: "mock-dept"
                 },
-                instanceVariablesText: "{\n  \"amount\": 10000\n}",
+                instanceFieldValues: {},
+                startFieldErrors: {},
+                instanceVariableValues: {},
                 instanceAttachments: [],
                 instanceRows: [],
                 selectedInstanceDetail: null,
+                readRecordRows: [],
+                historyTaskRows: [],
+                commentRows: [],
+                callbackLogRows: [],
+                auditTraceRows: [],
+                instanceQueryDialog: {
+                    open: false,
+                    queryType: "",
+                    title: "",
+                    rows: [],
+                    pageNo: 1,
+                    pageSize: 20,
+                    total: 0,
+                    loading: false
+                },
+                instanceOperationComment: "",
                 todoRows: [],
+                todoScope: "own",
+                todoReminderStatusByTaskId: {},
                 completedRows: [],
                 startSubmitting: false,
                 lastStartedInstanceId: "",
@@ -558,6 +618,7 @@
                     directSendContext: {allowed: false},
                     rejectTargetNodeCode: "",
                     transferUserId: "",
+                    delegateUserId: "",
                     addSignUserIds: []
                 },
                 completedDialog: {
@@ -569,8 +630,31 @@
             };
         },
         computed: {
+            isTestAdmin: function () {
+                return this.currentRole === "TEST_ADMIN";
+            },
             canManageDefinitions: function () {
                 return this.currentRole === "TEST_ADMIN" || this.currentRole === "DEFINITION_ADMIN";
+            },
+            canQuerySelectedInstanceReadRecords: function () {
+                return !!extractInstanceId(this.selectedInstanceDetail);
+            },
+            canWithdrawSelectedInstance: function () {
+                var previous = this.selectedPreviousHandlerTask;
+                return !!previous && previous.assigneeUserId === this.currentUserId;
+            },
+            selectedPreviousHandlerTask: function () {
+                var detail = this.selectedInstanceDetail || {};
+                var histories = normalizeList(detail.historyTasks).concat(this.historyTaskRows || []);
+                return histories.filter(function (task) {
+                    return hasText(task.assigneeUserId) && task.actionType !== "WITHDRAW" && task.handleType !== "WITHDRAW";
+                }).sort(function (left, right) {
+                    return String(right.completedAt || right.endedAt || right.updatedAt || right.createdAt || right.startedAt || "")
+                        .localeCompare(String(left.completedAt || left.endedAt || left.updatedAt || left.createdAt || left.startedAt || ""));
+                })[0] || null;
+            },
+            canAdminOperateSelectedInstance: function () {
+                return this.isTestAdmin && !!extractInstanceId(this.selectedInstanceDetail);
             },
             selectedGraphNodes: function () {
                 var detail = this.selectedDefinitionDetail || {};
@@ -606,6 +690,61 @@
                 return this.definitionRows.filter(function (row) {
                     return row.activationStatus === "ACTIVE" || row.definitionStatus === "PUBLISHED";
                 });
+            },
+            instanceDefinitionFields: function () {
+                var definitionId = this.instanceForm.definitionId;
+                var detail = this.selectedDefinitionDetail || {};
+                var row = this.definitionRows.find(function (definition) {
+                    return extractDefinitionId(definition) === definitionId;
+                });
+                if (extractDefinitionId(detail) === definitionId && Array.isArray(detail.formFields)) {
+                    return detail.formFields;
+                }
+                return row && Array.isArray(row.formFields) ? row.formFields : [];
+            },
+            selectedInstanceFields: function () {
+                var detail = this.selectedInstanceDetail || {};
+                var definitionId = detail.definitionId || this.instanceForm.definitionId || this.selectedDefinitionId;
+                var selectedDetail = this.selectedDefinitionDetail || {};
+                var row = this.definitionRows.find(function (definition) {
+                    return extractDefinitionId(definition) === definitionId;
+                });
+                if (extractDefinitionId(selectedDetail) === definitionId && Array.isArray(selectedDetail.formFields)) {
+                    return selectedDetail.formFields;
+                }
+                return row && Array.isArray(row.formFields) ? row.formFields : [];
+            },
+            instanceVariableRows: function () {
+                return this.selectedInstanceFields.map(function (field) {
+                    var fieldCode = this.formFieldCode(field);
+                    return {
+                        field: field,
+                        fieldCode: fieldCode,
+                        fieldName: this.formFieldLabel(field),
+                        value: this.instanceVariableValues[fieldCode]
+                    };
+                }, this);
+            },
+            queryDialogRows: function () {
+                return this.instanceQueryDialog.rows || [];
+            },
+            queryDialogTotalPages: function () {
+                var pageSize = Math.max(1, Number(this.instanceQueryDialog.pageSize) || 20);
+                var total = Math.max(0, Number(this.instanceQueryDialog.total) || 0);
+                return Math.max(1, Math.ceil(total / pageSize));
+            },
+            filteredTodoRows: function () {
+                if (this.todoScope === "delegated") {
+                    return this.todoRows.filter(function (row) {
+                        return hasText(row.delegateFromUserId);
+                    });
+                }
+                if (this.todoScope === "all") {
+                    return this.todoRows;
+                }
+                return this.todoRows.filter(function (row) {
+                    return this.isOwnTodoTask(row);
+                }, this);
             },
             instanceDefinitionAttachments: function () {
                 var row = this.definitionRows.find(function (definition) {
@@ -1055,6 +1194,15 @@
                         delete copy.listenerRejectTargetNodeCodes;
                         delete copy.listenerDirectSendEnabled;
                         delete copy.listenerConfigError;
+                        delete copy.timeoutEnabled;
+                        delete copy.timeoutDurationMinutes;
+                        delete copy.timeoutAction;
+                        delete copy.timeoutSeverity;
+                        delete copy.timeoutTargetNodeCode;
+                        delete copy.reminderEnabled;
+                        delete copy.reminderMaxCount;
+                        delete copy.reminderMessageTemplate;
+                        delete copy.timeoutConfigError;
                         copy.sortOrder = index + 1;
                         return copy;
                     }, this),
@@ -1280,8 +1428,12 @@
                 this.instanceForm.processCode = row ? row.processCode : "";
                 if (row) {
                     this.instanceForm.instanceTitle = row.processName + "测试实例";
-                    this.selectDefinition(row);
+                    return this.selectDefinition(row).then(function () {
+                        this.applyInstanceFormFields();
+                    }.bind(this));
                 }
+                this.applyInstanceFormFields();
+                return Promise.resolve();
             },
             startAndSubmitInstance: function () {
                 if (this.startSubmitting) {
@@ -1319,17 +1471,20 @@
                 if (!hasText(this.instanceForm.processCode)) {
                     throw new Error("请选择流程定义");
                 }
+                this.validateStartFormFields();
                 var user = this.currentUser();
                 return {
                     operationId: this.createOperationId("start_and_submit"),
                     processCode: this.instanceForm.processCode,
-                    businessKey: this.instanceForm.businessKey,
                     instanceTitle: this.instanceForm.instanceTitle,
                     starterUserId: this.currentUserId,
                     starterDeptId: userDepartmentId(user),
-                    variables: parseJsonObject(this.instanceVariablesText, {}),
+                    variables: this.buildStartVariables(),
                     attachments: this.buildInstanceAttachments()
                 };
+            },
+            buildStartVariables: function () {
+                return this.buildVariablesFromFields(this.instanceDefinitionFields, this.instanceFieldValues, true);
             },
             addInstanceAttachment: function () {
                 this.instanceAttachments.push({
@@ -1443,6 +1598,16 @@
                     return task.nodeCode === "apply" || task.nodeCode === "APPLY";
                 }) || tasks[0];
             },
+            queryAdminInstances: function () {
+                if (!this.isTestAdmin) {
+                    this.setOperationState("error", "查询全部实例失败", "仅测试管理员可以查询全部实例");
+                    return Promise.resolve([]);
+                }
+                return this.sendRequest("查询全部实例", "GET", API_PATHS.adminInstances + toQuery({pageNo: 1, pageSize: 50})).then(function (payload) {
+                    this.instanceRows = normalizeList(payload);
+                    return payload;
+                }.bind(this));
+            },
             autoClaimSpecifiedUserTasks: function (instance) {
                 var tasks = normalizeList(instance && (instance.createdTasks || instance.tasks));
                 if (tasks.length === 0) {
@@ -1506,6 +1671,9 @@
                 }.bind(this));
             },
             queryInstances: function () {
+                if (this.isTestAdmin) {
+                    return this.queryAdminInstances();
+                }
                 return this.sendRequest("查询实例", "GET", API_PATHS.startedInstances + toQuery({
                     starterUserId: this.currentUserId,
                     pageNo: 1,
@@ -1515,28 +1683,259 @@
                     return payload;
                 }.bind(this));
             },
+            markSelectedInstanceRead: function (instanceId) {
+                return this.sendRequest("记录已阅", "POST", API_PATHS.markRead(instanceId), {});
+            },
+            recordSelectedInstanceRead: function (instanceId) {
+                if (!hasText(instanceId)) {
+                    return Promise.resolve(null);
+                }
+                return this.markSelectedInstanceRead(instanceId).catch(function () {
+                    return null;
+                });
+            },
             selectInstance: function (row) {
                 var instanceId = extractInstanceId(row);
                 if (!instanceId) {
-                    return;
+                    return Promise.resolve();
                 }
                 return this.loadSelectedInstanceDetail(instanceId);
             },
             loadSelectedInstanceDetail: function (instanceId) {
+                this.readRecordRows = [];
+                this.historyTaskRows = [];
+                this.commentRows = [];
+                this.callbackLogRows = [];
+                this.auditTraceRows = [];
+                this.instanceVariableValues = {};
                 return this.sendRequest("查询实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
                     var detail = payload || {};
                     var activeTasks = normalizeList(detail.activeTasks);
-                    if (activeTasks.length > 0 || asArray(detail.currentNodeCodes).length === 0) {
-                        this.selectedInstanceDetail = detail;
-                        return detail;
-                    }
-                    return this.sendRequest("查询当前活动任务", "GET", API_PATHS.activeTasks(instanceId))
-                        .then(function (tasksPayload) {
-                            this.selectedInstanceDetail = Object.assign({}, detail, {
-                                activeTasks: normalizeList(tasksPayload)
+                    var detailJob = (activeTasks.length > 0 || asArray(detail.currentNodeCodes).length === 0)
+                        ? Promise.resolve(detail)
+                        : this.sendRequest("查询当前活动任务", "GET", API_PATHS.activeTasks(instanceId))
+                            .then(function (tasksPayload) {
+                                return Object.assign({}, detail, {
+                                    activeTasks: normalizeList(tasksPayload)
+                                });
                             });
-                            return this.selectedInstanceDetail;
-                        }.bind(this));
+                    return detailJob.then(function (enrichedDetail) {
+                        this.selectedInstanceDetail = enrichedDetail;
+                        this.historyTaskRows = normalizeList(enrichedDetail && enrichedDetail.historyTasks);
+                        this.commentRows = normalizeList(enrichedDetail && enrichedDetail.comments);
+                        var variables = this.extractInstanceVariables(enrichedDetail);
+                        this.recordSelectedInstanceRead(instanceId);
+                        if (enrichedDetail && enrichedDetail.definitionId) {
+                            return this.selectDefinition({definitionId: enrichedDetail.definitionId}).then(function () {
+                                this.initializeInstanceVariableValues(this.selectedInstanceFields, variables);
+                                return enrichedDetail;
+                            }.bind(this));
+                        }
+                        this.initializeInstanceVariableValues(this.selectedInstanceFields, variables);
+                        return enrichedDetail;
+                    }.bind(this));
+                }.bind(this));
+            },
+            selectedInstanceId: function () {
+                return extractInstanceId(this.selectedInstanceDetail);
+            },
+            requireSelectedInstanceId: function (label) {
+                var instanceId = this.selectedInstanceId();
+                if (!instanceId) {
+                    this.setOperationState("error", label + "失败", "请先选择流程实例");
+                    return "";
+                }
+                return instanceId;
+            },
+            instanceQueryConfig: function (queryType) {
+                var configs = {
+                    historyTasks: {title: "历史任务", label: "查询历史任务"},
+                    comments: {title: "审批意见", label: "查询审批意见"},
+                    callbackLogs: {title: "回调日志", label: "查询回调日志", adminOnly: true},
+                    readRecords: {title: "已阅记录", label: "查询已阅记录"},
+                    auditTrace: {title: "审计追溯", label: "查询审计追溯", adminOnly: true}
+                };
+                return configs[queryType] || null;
+            },
+            openInstanceQueryDialog: function (queryType) {
+                var config = this.instanceQueryConfig(queryType);
+                if (!config) {
+                    this.setOperationState("error", "查询失败", "未知查询类型：" + queryType);
+                    return Promise.resolve([]);
+                }
+                var instanceId = this.requireSelectedInstanceId(config.label);
+                if (!instanceId) {
+                    return Promise.resolve([]);
+                }
+                if (config.adminOnly && !this.isTestAdmin) {
+                    this.setOperationState("error", config.label + "失败", "仅测试管理员可以" + config.label);
+                    return Promise.resolve([]);
+                }
+                if (queryType === "readRecords" && !this.canQuerySelectedInstanceReadRecords) {
+                    this.setOperationState("error", "查询已阅记录失败", "请先选择流程实例");
+                    return Promise.resolve([]);
+                }
+                this.instanceQueryDialog = {
+                    open: true,
+                    queryType: queryType,
+                    title: config.title,
+                    rows: [],
+                    pageNo: 1,
+                    pageSize: Math.max(1, Number(this.instanceQueryDialog.pageSize) || 20),
+                    total: 0,
+                    loading: false
+                };
+                return this.queryInstanceDialogPage();
+            },
+            closeInstanceQueryDialog: function () {
+                this.instanceQueryDialog.open = false;
+            },
+            changeInstanceQueryPage: function (delta) {
+                var current = Math.max(1, Number(this.instanceQueryDialog.pageNo) || 1);
+                var next = Math.max(1, Math.min(this.queryDialogTotalPages, current + delta));
+                if (next === current) {
+                    return Promise.resolve([]);
+                }
+                this.instanceQueryDialog.pageNo = next;
+                return this.queryInstanceDialogPage();
+            },
+            queryInstanceDialogPage: function () {
+                var dialog = this.instanceQueryDialog;
+                var config = this.instanceQueryConfig(dialog.queryType);
+                if (!dialog.open || !config) {
+                    return Promise.resolve([]);
+                }
+                var instanceId = this.requireSelectedInstanceId(config.label);
+                if (!instanceId) {
+                    return Promise.resolve([]);
+                }
+                dialog.pageNo = Math.max(1, Number(dialog.pageNo) || 1);
+                dialog.pageSize = Math.min(100, Math.max(1, Number(dialog.pageSize) || 20));
+                dialog.loading = true;
+                var path = this.buildInstanceQueryPath(dialog.queryType, instanceId, dialog.pageNo, dialog.pageSize);
+                return this.sendRequest(config.label, "GET", path).then(function (payload) {
+                    var rows = normalizeList(payload);
+                    this.instanceQueryDialog.rows = rows;
+                    this.instanceQueryDialog.total = extractTotalCount(payload, rows.length);
+                    this.instanceQueryDialog.loading = false;
+                    this.syncInstanceQueryRows(dialog.queryType, rows);
+                    return payload;
+                }.bind(this)).catch(function (error) {
+                    this.instanceQueryDialog.rows = [];
+                    this.instanceQueryDialog.total = 0;
+                    this.instanceQueryDialog.loading = false;
+                    throw error;
+                }.bind(this));
+            },
+            buildInstanceQueryPath: function (queryType, instanceId, pageNo, pageSize) {
+                var paging = {pageNo: pageNo, pageSize: pageSize};
+                if (queryType === "historyTasks") {
+                    return this.isTestAdmin ? API_PATHS.adminHistoryTasks + toQuery(Object.assign({instanceId: instanceId}, paging)) : API_PATHS.historyTasks(instanceId) + toQuery(paging);
+                }
+                if (queryType === "comments") {
+                    return API_PATHS.comments(instanceId) + toQuery(paging);
+                }
+                if (queryType === "callbackLogs") {
+                    return API_PATHS.callbackLogs + toQuery(Object.assign({instanceId: instanceId}, paging));
+                }
+                if (queryType === "readRecords") {
+                    return API_PATHS.readRecords(instanceId) + toQuery(paging);
+                }
+                return API_PATHS.auditLogs + toQuery(Object.assign({instanceId: instanceId}, paging));
+            },
+            syncInstanceQueryRows: function (queryType, rows) {
+                if (queryType === "historyTasks") {
+                    this.historyTaskRows = rows;
+                } else if (queryType === "comments") {
+                    this.commentRows = rows;
+                } else if (queryType === "callbackLogs") {
+                    this.callbackLogRows = rows;
+                } else if (queryType === "readRecords") {
+                    this.readRecordRows = rows;
+                } else if (queryType === "auditTrace") {
+                    this.auditTraceRows = rows;
+                }
+            },
+            queryInstanceHistoryTasks: function () {
+                return this.openInstanceQueryDialog("historyTasks");
+            },
+            queryInstanceComments: function () {
+                return this.openInstanceQueryDialog("comments");
+            },
+            queryInstanceCallbackLogs: function () {
+                return this.openInstanceQueryDialog("callbackLogs");
+            },
+            queryInstanceAuditTrace: function () {
+                return this.openInstanceQueryDialog("auditTrace");
+            },
+            queryInstanceReadRecords: function () {
+                return this.openInstanceQueryDialog("readRecords");
+            },
+            updateSelectedInstanceVariables: function () {
+                var instanceId = this.requireSelectedInstanceId("更新表单字段");
+                if (!instanceId) {
+                    return Promise.resolve(null);
+                }
+                var body = {
+                    operationId: this.createOperationId("update_variables"),
+                    instanceId: instanceId,
+                    operatorUserId: this.currentUserId,
+                    variables: this.buildVariablesFromFields(this.selectedInstanceFields, this.instanceVariableValues, true)
+                };
+                return this.sendRequest("更新表单字段", "PUT", API_PATHS.updateVariables, body).then(function (payload) {
+                    return this.selectInstance({instanceId: extractInstanceId(payload) || instanceId});
+                }.bind(this)).then(function (payload) {
+                    if (this.instanceQueryDialog.open && this.instanceQueryDialog.queryType === "auditTrace") {
+                        this.queryInstanceDialogPage().catch(function () {});
+                    }
+                    return payload;
+                }.bind(this));
+            },
+            withdrawSelectedInstance: function () {
+                var instanceId = this.requireSelectedInstanceId("撤回实例");
+                if (!instanceId) {
+                    return Promise.resolve(null);
+                }
+                if (!this.canWithdrawSelectedInstance) {
+                    this.setOperationState("error", "撤回实例失败", "只有当前节点的上一办理人可以撤回");
+                    return Promise.resolve(null);
+                }
+                return this.sendRequest("查询活动任务", "GET", API_PATHS.activeTasks(instanceId)).then(function (payload) {
+                    return this.submitStandaloneTaskAction("撤回实例", API_PATHS.taskWithdraw, normalizeList(payload)[0], {});
+                }.bind(this));
+            },
+            terminateSelectedInstance: function () {
+                var instanceId = this.requireSelectedInstanceId("终止流程");
+                if (!instanceId) {
+                    return Promise.resolve(null);
+                }
+                return this.sendRequest("终止流程", "POST", API_PATHS.terminateInstance, {
+                    operationId: this.createOperationId("terminate_instance"),
+                    instanceId: instanceId,
+                    operatorUserId: this.currentUserId,
+                    comment: this.instanceOperationComment
+                }).then(function () {
+                    return this.selectInstance({instanceId: instanceId});
+                }.bind(this)).then(function () {
+                    return this.queryInstances();
+                }.bind(this));
+            },
+            deleteSelectedInstance: function () {
+                var instanceId = this.requireSelectedInstanceId("删除流程实例");
+                if (!instanceId) {
+                    return Promise.resolve(null);
+                }
+                if (!window.confirm("确认删除流程实例 " + instanceId + "？")) {
+                    return Promise.resolve(null);
+                }
+                return this.sendRequest("删除流程实例", "DELETE", API_PATHS.deleteInstance, {
+                    operationId: this.createOperationId("delete_instance"),
+                    instanceId: instanceId,
+                    operatorUserId: this.currentUserId
+                }).then(function () {
+                    this.selectedInstanceDetail = null;
+                    this.instanceVariableValues = {};
+                    return this.queryInstances();
                 }.bind(this));
             },
             queryTodoTasks: function () {
@@ -1545,23 +1944,102 @@
                     pageNo: 1,
                     pageSize: 50
                 })).then(function (payload) {
+                    this.todoReminderStatusByTaskId = {};
                     this.todoRows = this.focusCurrentStartedTodos(normalizeList(payload));
-                    return payload;
+                    return this.recordTodoRowsRead(this.todoRows).then(function () {
+                        return this.enrichTodoTimeoutReminders(this.todoRows);
+                    }.bind(this)).then(function () {
+                        return payload;
+                    });
                 }.bind(this));
             },
+            recordTodoRowsRead: function (rows) {
+                var seen = {};
+                var instanceIds = normalizeList(rows).map(function (row) {
+                    return row && row.instanceId;
+                }).filter(function (instanceId) {
+                    if (!hasText(instanceId) || seen[instanceId]) {
+                        return false;
+                    }
+                    seen[instanceId] = true;
+                    return true;
+                });
+                return Promise.all(instanceIds.map(function (instanceId) {
+                    return this.recordSelectedInstanceRead(instanceId);
+                }, this));
+            },
             focusCurrentStartedTodos: function (rows) {
-                var normalized = rows.slice();
+                var normalized = this.sortTodoRows(rows.slice());
                 if (hasText(this.lastStartedInstanceId)) {
                     var focused = normalized.filter(function (row) {
                         return row.instanceId === this.lastStartedInstanceId;
                     }, this);
                     if (focused.length > 0) {
-                        return focused;
+                        return this.sortTodoRows(focused);
                     }
                 }
-                return normalized.sort(function (left, right) {
+                return normalized;
+            },
+            sortTodoRows: function (rows) {
+                return rows.sort(function (left, right) {
+                    var leftPriority = todoTimeoutPriority(left);
+                    var rightPriority = todoTimeoutPriority(right);
+                    if (leftPriority !== rightPriority) {
+                        return leftPriority - rightPriority;
+                    }
                     return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
                 });
+            },
+            enrichTodoTimeoutReminders: function (rows) {
+                var tasks = rows.filter(function (task) {
+                    return hasText(task.dueAt) && hasText(extractTaskId(task));
+                });
+                if (tasks.length === 0) {
+                    return Promise.resolve(rows);
+                }
+                return Promise.all(tasks.map(function (task) {
+                    return this.queryTaskTimeoutReminder(task).then(function (payload) {
+                        this.rememberTaskReminderStatus(task, normalizeList(payload));
+                        return payload;
+                    }.bind(this)).catch(function (error) {
+                        this.todoReminderStatusByTaskId[extractTaskId(task)] = {
+                            label: "提醒失败",
+                            className: "failed",
+                            errorMessage: error.message
+                        };
+                        return null;
+                    }.bind(this));
+                }, this)).then(function () {
+                    return rows;
+                });
+            },
+            queryTaskTimeoutReminder: function (task) {
+                var taskId = extractTaskId(task);
+                if (!taskId) {
+                    return Promise.resolve([]);
+                }
+                return this.sendRequest("查询超时提醒", "GET", API_PATHS.reminders + toQuery({
+                    taskId: taskId,
+                    reminderType: "TIMEOUT",
+                    pageNo: 1,
+                    pageSize: 5
+                }));
+            },
+            rememberTaskReminderStatus: function (task, reminders) {
+                var taskId = extractTaskId(task);
+                if (!taskId || reminders.length === 0) {
+                    return;
+                }
+                var latest = reminders.slice().sort(function (left, right) {
+                    return String(right.sentAt || right.createdAt || "").localeCompare(String(left.sentAt || left.createdAt || ""));
+                })[0];
+                var failed = latest.reminderStatus === "FAILED";
+                this.todoReminderStatusByTaskId[taskId] = {
+                    label: failed ? "提醒失败" : "已提醒",
+                    className: failed ? "failed" : "reminded",
+                    reminderStatus: latest.reminderStatus || "",
+                    errorMessage: latest.errorMessage || ""
+                };
             },
             queryCompletedTasks: function () {
                 return this.sendRequest("查询已办", "GET", API_PATHS.completedTasks + toQuery({
@@ -1584,9 +2062,11 @@
                     directSendContext: {allowed: false},
                     rejectTargetNodeCode: "",
                     transferUserId: "",
+                    delegateUserId: "",
                     addSignUserIds: []
                 };
                 if (hasText(row.instanceId)) {
+                    this.recordSelectedInstanceRead(row.instanceId);
                     this.loadTaskDialogContext(row).catch(function () {});
                 }
             },
@@ -1601,6 +2081,7 @@
                 if (!hasText(instanceId)) {
                     return;
                 }
+                this.recordSelectedInstanceRead(instanceId);
                 this.sendRequest("查询已办实例详情", "GET", API_PATHS.instanceDetail(instanceId)).then(function (payload) {
                     this.completedDialog.currentNodeCodes = asArray(payload.currentNodeCodes);
                 }.bind(this));
@@ -1853,6 +2334,18 @@
                     addSignUserIds: this.taskDialog.addSignUserIds
                 }).catch(function () {});
             },
+            delegateCurrentTask: function () {
+                if (!hasText(this.taskDialog.delegateUserId)) {
+                    this.setOperationState("error", "委托代办失败", "请选择代办人");
+                    return;
+                }
+                this.submitTaskAction("委托代办", API_PATHS.delegateTask, {
+                    targetUserId: this.taskDialog.delegateUserId
+                }).catch(function () {});
+            },
+            remindCurrentTask: function () {
+                this.submitTaskAction("手动催办", API_PATHS.taskRemind, {}).catch(function () {});
+            },
             runTaskActionAfterSaving: function (label, path, extra) {
                 return this.savePendingTaskAttachmentReplacements().then(function () {
                     return this.submitTaskAction(label, path, extra);
@@ -1957,6 +2450,35 @@
                     throw error;
                 }.bind(this));
             },
+            submitStandaloneTaskAction: function (label, pathBuilder, task, extra) {
+                var taskId = extractTaskId(task);
+                if (!taskId) {
+                    this.setOperationState("error", label + "失败", "未找到可操作的活动任务");
+                    return Promise.resolve(null);
+                }
+                var path = typeof pathBuilder === "function" ? pathBuilder(taskId) : pathBuilder;
+                var body = Object.assign({
+                    operationId: this.createOperationId(label),
+                    taskId: taskId,
+                    expectedTaskVersion: extractTaskVersion(task),
+                    operatorUserId: this.currentUserId,
+                    comment: this.instanceOperationComment
+                }, extra || {});
+                return this.sendRequest(label, "POST", path, body).then(function (payload) {
+                    return Promise.all([
+                        this.queryTodoTasks(),
+                        this.queryCompletedTasks(),
+                        this.queryInstances()
+                    ]).then(function () {
+                        if (this.selectedInstanceId()) {
+                            return this.selectInstance({instanceId: this.selectedInstanceId()}).then(function () {
+                                return payload;
+                            });
+                        }
+                        return payload;
+                    }.bind(this));
+                }.bind(this));
+            },
             refreshAfterTaskAction: function (instanceId) {
                 return Promise.all([
                     this.queryTodoTasks(),
@@ -1970,13 +2492,21 @@
                     return results;
                 }.bind(this));
             },
+            appendRequestQuery: function (url, params) {
+                var query = toQuery(params);
+                if (!query) {
+                    return url;
+                }
+                return url + (url.indexOf("?") >= 0 ? "&" : "?") + query.substring(1);
+            },
             sendRequest: function (label, method, path, body) {
+                var methodName = String(method || "GET").toUpperCase();
                 var url = this.apiBaseUrl + path;
                 var operationId = body && body.operationId;
                 this.setOperationState("loading", label + "中", path);
                 this.addOperationLog(label, path, "loading", operationId, "请求发送中");
                 var options = {
-                    method: method,
+                    method: methodName,
                     headers: {
                         "Accept": "application/json",
                         "X-Flow-User-Id": this.currentUserId,
@@ -1986,9 +2516,12 @@
                 if (operationId) {
                     options.headers["Idempotency-Key"] = operationId;
                 }
-                if (method !== "GET" && method !== "HEAD") {
+                if (body && (methodName === "GET" || methodName === "HEAD")) {
+                    url = this.appendRequestQuery(url, body);
+                } else if (methodName !== "GET" && methodName !== "HEAD") {
                     options.headers["Content-Type"] = "application/json";
-                    options.body = JSON.stringify(body || {});
+                    body = body || {};
+                    options.body = JSON.stringify(body);
                 }
                 return fetch(url, options).then(function (response) {
                     return response.text().then(function (text) {
@@ -2222,6 +2755,72 @@
                     applyListenerRuleEditor(this.selectedNode);
                 }
             },
+            syncSelectedNodeTimeoutConfig: function () {
+                if (this.selectedNode) {
+                    this.syncNodeTimeoutConfig(this.selectedNode);
+                }
+            },
+            syncNodeTimeoutConfig: function (node) {
+                var duration = Number(node.timeoutDurationMinutes || 0);
+                var maxCount = Number(node.reminderMaxCount || 0);
+                node.timeoutConfigError = "";
+                if (node.reminderEnabled && !node.timeoutEnabled) {
+                    node.timeoutConfigError = "启用提醒前必须启用超时";
+                    return false;
+                }
+                if (node.timeoutEnabled && (!Number.isFinite(duration) || duration < 0)) {
+                    node.timeoutConfigError = "超时时长必须为非负数";
+                    return false;
+                }
+                if (node.timeoutEnabled && node.timeoutAction === "JUMP" && !hasText(node.timeoutTargetNodeCode)) {
+                    node.timeoutConfigError = "超时动作选择 JUMP 时必须选择目标节点";
+                    return false;
+                }
+                if (node.reminderEnabled && (!Number.isFinite(maxCount) || maxCount < 0)) {
+                    node.timeoutConfigError = "最大提醒次数不得为负数";
+                    return false;
+                }
+                if (node.timeoutEnabled) {
+                    var timeoutConfig = {
+                        enabled: true,
+                        durationMinutes: duration,
+                        action: node.timeoutAction || "REMIND"
+                    };
+                    if (hasText(node.timeoutSeverity)) {
+                        timeoutConfig.severity = node.timeoutSeverity;
+                    }
+                    if (node.timeoutAction === "JUMP") {
+                        timeoutConfig.targetNodeCode = node.timeoutTargetNodeCode;
+                    }
+                    node.timeoutConfig = JSON.stringify(timeoutConfig);
+                } else {
+                    node.timeoutConfig = "";
+                }
+                if (node.reminderEnabled) {
+                    var reminderConfig = {
+                        enabled: true,
+                        maxCount: maxCount
+                    };
+                    if (hasText(node.reminderMessageTemplate)) {
+                        reminderConfig.messageTemplate = node.reminderMessageTemplate;
+                    }
+                    node.reminderConfig = JSON.stringify(reminderConfig);
+                } else {
+                    node.reminderConfig = "";
+                }
+                return true;
+            },
+            validateNodeTimeoutConfig: function (node) {
+                if (!node || node.nodeType !== "USER_TASK") {
+                    return "";
+                }
+                return this.syncNodeTimeoutConfig(node) ? "" : node.timeoutConfigError;
+            },
+            timeoutReminderTargetNodes: function (node) {
+                return this.definitionDraft.nodes.filter(function (candidate) {
+                    return this.isUserTaskNode(candidate) && candidate.nodeCode !== node.nodeCode;
+                }, this);
+            },
             pruneListenerRejectTarget: function (node, removedNodeCode) {
                 var editor = readListenerRuleEditor(node.listenerConfig);
                 if (editor.listenerConfigError
@@ -2301,6 +2900,165 @@
                     y2: Number(target.positionY || 0) + 29
                 };
             },
+            formFieldCode: function (field) {
+                return field && (field.fieldCode || field.code || field.name || field.fieldName || "field");
+            },
+            formFieldLabel: function (field) {
+                return field && (field.fieldName || field.label || field.fieldCode || field.code || "字段");
+            },
+            formFieldInputType: function (field) {
+                var controlType = String((field && (field.controlType || field.inputType || field.fieldType)) || "").toLowerCase();
+                if (controlType === "textarea" || controlType === "multi_line") {
+                    return "textarea";
+                }
+                if (["number", "date", "datetime-local", "checkbox"].indexOf(controlType) >= 0) {
+                    return controlType;
+                }
+                return "text";
+            },
+            isTextareaField: function (field) {
+                var controlType = String((field && (field.controlType || field.inputType || field.fieldType)) || "").toLowerCase();
+                return controlType === "textarea" || controlType === "multi_line";
+            },
+            initializeInstanceFieldValues: function (fields, sourceValues) {
+                var values = {};
+                var source = sourceValues || {};
+                normalizeList(fields).forEach(function (field) {
+                    var code = this.formFieldCode(field);
+                    if (Object.prototype.hasOwnProperty.call(source, code)) {
+                        values[code] = source[code];
+                    } else if (Object.prototype.hasOwnProperty.call(field, "defaultValue")) {
+                        values[code] = field.defaultValue;
+                    } else {
+                        values[code] = this.formFieldInputType(field) === "checkbox" ? false : "";
+                    }
+                }, this);
+                this.instanceFieldValues = values;
+                this.startFieldErrors = {};
+            },
+            initializeInstanceVariableValues: function (fields, sourceValues) {
+                var values = {};
+                var source = sourceValues || {};
+                normalizeList(fields).forEach(function (field) {
+                    var code = this.formFieldCode(field);
+                    values[code] = Object.prototype.hasOwnProperty.call(source, code) ? source[code] : "";
+                }, this);
+                this.instanceVariableValues = values;
+            },
+            isStartFieldRequired: function (field) {
+                return !!field;
+            },
+            startFormFieldError: function (field) {
+                var code = this.formFieldCode(field);
+                return this.startFieldErrors[code] || "";
+            },
+            clearStartFormFieldError: function (field) {
+                var code = this.formFieldCode(field);
+                if (this.startFieldErrors[code]) {
+                    var errors = Object.assign({}, this.startFieldErrors);
+                    delete errors[code];
+                    this.startFieldErrors = errors;
+                }
+            },
+            validateStartFormFields: function () {
+                var fields = normalizeList(this.instanceDefinitionFields);
+                var errors = {};
+                var missingLabels = [];
+                if (fields.length === 0) {
+                    throw new Error("请先为流程定义配置表单字段");
+                }
+                fields.forEach(function (field) {
+                    var code = this.formFieldCode(field);
+                    var value = this.instanceFieldValues ? this.instanceFieldValues[code] : undefined;
+                    if (!this.isStartFieldValueFilled(field, value)) {
+                        errors[code] = "必填";
+                        missingLabels.push(this.formFieldLabel(field));
+                    }
+                }, this);
+                this.startFieldErrors = errors;
+                if (missingLabels.length > 0) {
+                    throw new Error("请填写必填表单字段：" + missingLabels.join("、"));
+                }
+                return true;
+            },
+            isStartFieldValueFilled: function (field, value) {
+                if (this.formFieldInputType(field) === "checkbox") {
+                    return value === true;
+                }
+                return hasText(value);
+            },
+            buildVariablesFromFields: function (fields, values, includeBlank) {
+                var variables = {};
+                var source = values || {};
+                normalizeList(fields).forEach(function (field) {
+                    var code = this.formFieldCode(field);
+                    var value = source[code];
+                    if (!includeBlank && !hasText(value)) {
+                        return;
+                    }
+                    variables[code] = this.coerceFormFieldValue(field, value);
+                }, this);
+                return variables;
+            },
+            coerceFormFieldValue: function (field, value) {
+                var inputType = this.formFieldInputType(field);
+                if (inputType === "number") {
+                    return hasText(value) ? Number(value) : null;
+                }
+                if (inputType === "checkbox") {
+                    return value === true;
+                }
+                return value;
+            },
+            extractInstanceVariables: function (detail) {
+                var source = detail || {};
+                if (isJsonObject(source.variables)) {
+                    return source.variables;
+                }
+                if (isJsonObject(source.variablesJson)) {
+                    return source.variablesJson;
+                }
+                if (hasText(source.variablesJson)) {
+                    try {
+                        return JSON.parse(source.variablesJson);
+                    } catch (ignore) {
+                        return {};
+                    }
+                }
+                return {};
+            },
+            applyInstanceFormFields: function () {
+                this.initializeInstanceFieldValues(this.instanceDefinitionFields, this.instanceFieldValues);
+            },
+            buildInstanceVariableRows: function () {
+                this.initializeInstanceVariableValues(this.selectedInstanceFields, this.extractInstanceVariables(this.selectedInstanceDetail));
+                return this.instanceVariableRows;
+            },
+            isOwnTodoTask: function (row) {
+                return !!row && !hasText(row.delegateFromUserId)
+                        && (!hasText(row.assigneeUserId) || row.assigneeUserId === this.currentUserId);
+            },
+            todoScopeLabel: function (task) {
+                if (task && hasText(task.delegateFromUserId)) {
+                    return "委托代办";
+                }
+                if (task && hasText(task.assigneeUserId) && task.assigneeUserId === this.currentUserId) {
+                    return "自己的任务";
+                }
+                return "候选任务";
+            },
+            taskSourceLabel: function (task) {
+                return this.todoScopeLabel(task);
+            },
+            formatJsonSummary: function (value) {
+                if (value === null || typeof value === "undefined" || value === "") {
+                    return "-";
+                }
+                if (typeof value === "string") {
+                    return value;
+                }
+                return JSON.stringify(value).slice(0, 180);
+            },
             attachmentRowKey: function (item) {
                 return item.localId || item.configId || item.attachmentTemplateId || item.attachmentCode;
             },
@@ -2325,6 +3083,53 @@
                     return "-";
                 }
                 return String(value).replace("T", " ").slice(0, 19);
+            },
+            formatDurationMillis: function (milliseconds) {
+                var minutes = Math.max(1, Math.ceil(milliseconds / 60000));
+                if (minutes < 60) {
+                    return "剩余" + minutes + "分钟";
+                }
+                var hours = Math.ceil(minutes / 60);
+                return "剩余" + hours + "小时";
+            },
+            taskTimeoutState: function (task) {
+                var dueAt = parseDateTimeValue(task && task.dueAt);
+                if (!dueAt) {
+                    return "";
+                }
+                var diff = dueAt.getTime() - Date.now();
+                if (diff <= 0) {
+                    return "overdue";
+                }
+                return diff <= 30 * 60 * 1000 ? "soon" : "due";
+            },
+            taskTimeoutBadge: function (task) {
+                var dueAt = parseDateTimeValue(task && task.dueAt);
+                var parts = [];
+                if (dueAt) {
+                    var diff = dueAt.getTime() - Date.now();
+                    if (diff <= 0) {
+                        parts.push("已超时");
+                    } else if (diff <= 30 * 60 * 1000) {
+                        parts.push("即将超时");
+                    } else {
+                        parts.push(this.formatDurationMillis(diff));
+                    }
+                }
+                var reminder = this.todoReminderStatusByTaskId[extractTaskId(task)];
+                if (reminder && reminder.label) {
+                    parts.push(reminder.label);
+                }
+                return parts.join(" / ");
+            },
+            taskTimeoutBadgeClass: function (task) {
+                var reminder = this.todoReminderStatusByTaskId[extractTaskId(task)] || {};
+                return {
+                    overdue: this.taskTimeoutState(task) === "overdue",
+                    soon: this.taskTimeoutState(task) === "soon",
+                    reminded: reminder.className === "reminded",
+                    failed: reminder.className === "failed"
+                };
             },
             isUserTaskNode: function (node) {
                 return node && node.nodeType === "USER_TASK";
