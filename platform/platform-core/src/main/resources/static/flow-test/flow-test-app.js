@@ -2103,7 +2103,7 @@
                     this.todoReminderStatusByTaskId = {};
                     this.todoRows = this.focusCurrentStartedTodos(normalizeList(payload));
                     return this.recordTodoRowsRead(this.todoRows).then(function () {
-                        return this.enrichTodoTimeoutReminders(this.todoRows);
+                        return this.enrichTodoReminders(this.todoRows);
                     }.bind(this)).then(function () {
                         return payload;
                     });
@@ -2161,15 +2161,15 @@
                     return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
                 });
             },
-            enrichTodoTimeoutReminders: function (rows) {
+            enrichTodoReminders: function (rows) {
                 var tasks = rows.filter(function (task) {
-                    return hasText(task.dueAt) && hasText(extractTaskId(task));
+                    return hasText(extractTaskId(task));
                 });
                 if (tasks.length === 0) {
                     return Promise.resolve(rows);
                 }
                 return Promise.all(tasks.map(function (task) {
-                    return this.queryTaskTimeoutReminder(task).then(function (payload) {
+                    return this.queryTaskReminders(task).then(function (payload) {
                         this.rememberTaskReminderStatus(task, normalizeList(payload));
                         return payload;
                     }.bind(this)).catch(function (error) {
@@ -2184,33 +2184,58 @@
                     return rows;
                 });
             },
-            queryTaskTimeoutReminder: function (task) {
+            queryTaskReminders: function (task) {
                 var taskId = extractTaskId(task);
                 if (!taskId) {
                     return Promise.resolve([]);
                 }
-                return this.sendRequest("查询超时提醒", "GET", API_PATHS.reminders + toQuery({
+                return this.sendRequest("查询任务提醒", "GET", API_PATHS.reminders + toQuery({
                     taskId: taskId,
-                    reminderType: "TIMEOUT",
                     pageNo: 1,
-                    pageSize: 5
+                    pageSize: 10
                 }));
             },
             rememberTaskReminderStatus: function (task, reminders) {
                 var taskId = extractTaskId(task);
-                if (!taskId || reminders.length === 0) {
+                var available = normalizeList(reminders).filter(function (reminder) {
+                    return !!reminder;
+                });
+                if (!taskId || available.length === 0) {
                     return;
                 }
-                var latest = reminders.slice().sort(function (left, right) {
+                var latest = available.slice().sort(function (left, right) {
                     return String(right.sentAt || right.createdAt || "").localeCompare(String(left.sentAt || left.createdAt || ""));
                 })[0];
-                var failed = latest.reminderStatus === "FAILED";
+                var labels = [];
+                var failed = false;
+                available.forEach(function (reminder) {
+                    var label = this.reminderBadgeLabel(reminder);
+                    if (hasText(label) && labels.indexOf(label) < 0) {
+                        labels.push(label);
+                    }
+                    if (reminder.reminderStatus === "FAILED") {
+                        failed = true;
+                    }
+                }, this);
                 this.todoReminderStatusByTaskId[taskId] = {
-                    label: failed ? "提醒失败" : "已提醒",
+                    label: labels.join(" / "),
                     className: failed ? "failed" : "reminded",
                     reminderStatus: latest.reminderStatus || "",
                     errorMessage: latest.errorMessage || ""
                 };
+            },
+            reminderBadgeLabel: function (reminder) {
+                var failed = reminder && reminder.reminderStatus === "FAILED";
+                if (reminder && reminder.reminderType === "MANUAL") {
+                    return failed ? "手动催办失败" : "手动催办";
+                }
+                if (reminder && reminder.reminderType === "TIMEOUT") {
+                    return failed ? "超时催办失败" : "超时催办";
+                }
+                if (reminder && reminder.reminderType === "AUTO") {
+                    return failed ? "自动提醒失败" : "自动提醒";
+                }
+                return failed ? "提醒失败" : "已提醒";
             },
             queryCompletedTasks: function () {
                 return this.sendRequest("查询已办", "GET", API_PATHS.completedTasks + toQuery({
@@ -2391,6 +2416,7 @@
                     operatorUserId: this.currentUserId
                 };
                 return this.sendRequest("手动催办", "POST", API_PATHS.taskRemind(taskId), body).then(function (payload) {
+                    this.rememberTaskReminderStatus(task, [payload]);
                     var refresh = hasText(instanceId)
                         ? this.loadSelectedInstanceDetail(instanceId)
                         : Promise.resolve(null);
@@ -2524,9 +2550,6 @@
                 this.submitTaskAction("委托代办", API_PATHS.delegateTask, {
                     targetUserId: this.taskDialog.delegateUserId
                 }).catch(function () {});
-            },
-            remindCurrentTask: function () {
-                this.submitTaskAction("手动催办", API_PATHS.taskRemind, {}).catch(function () {});
             },
             runTaskActionAfterSaving: function (label, path, extra) {
                 return this.savePendingTaskAttachmentReplacements().then(function () {
