@@ -425,6 +425,10 @@ tbody tr:hover {
     margin-top: 14px;
 }
 
+.timeout-scan-card {
+    margin-top: 14px;
+}
+
 .active-task-list {
     display: grid;
     gap: 10px;

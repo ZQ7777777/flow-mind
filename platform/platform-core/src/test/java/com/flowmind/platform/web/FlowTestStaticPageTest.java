@@ -89,6 +89,22 @@ class FlowTestStaticPageTest {
     }
 
     @Test
+    void todoListShouldKeepPagedQueryRecordsAfterStartingInstance() throws IOException {
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        String todoQuery = substringBetween(script,
+                "queryTodoTasks: function () {",
+                "setTodoScope: function (scope) {");
+
+        assertThat(todoQuery)
+                .contains("this.todoRows = this.sortTodoRows(normalizeList(payload));")
+                .doesNotContain("focusCurrentStartedTodos");
+        assertThat(script)
+                .doesNotContain("lastStartedInstanceId")
+                .doesNotContain("focusCurrentStartedTodos");
+    }
+
+    @Test
     void instanceDetailShouldKeepFormReadonlyAndOnlyExposeTerminateAndDeleteOperations() throws IOException {
         String html = loadResource("/static/flow-test/index.html");
         String script = loadResource("/static/flow-test/flow-test-app.js");
@@ -530,8 +546,8 @@ class FlowTestStaticPageTest {
                 .contains("buildInstanceVariableRows")
                 .contains("attachments: this.buildInstanceAttachments()")
                 .contains("startSubmitting")
-                .contains("lastStartedInstanceId")
-                .contains("focusCurrentStartedTodos")
+                .doesNotContain("lastStartedInstanceId")
+                .doesNotContain("focusCurrentStartedTodos")
                 .contains("enrichTodoReminders")
                 .contains("taskTimeoutBadge: function (task)")
                 .contains("queryTaskReminders")

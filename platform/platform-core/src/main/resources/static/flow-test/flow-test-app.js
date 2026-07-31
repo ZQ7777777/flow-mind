@@ -1,4 +1,4 @@
-﻿(function () {
+﻿﻿(function () {
     "use strict";
 
     var API_PATHS = {
@@ -694,7 +694,6 @@
                 todoReminderStatusByTaskId: {},
                 completedRows: [],
                 startSubmitting: false,
-                lastStartedInstanceId: "",
                 taskDialog: {
                     open: false,
                     task: {},
@@ -1595,7 +1594,6 @@
                 try {
                     var startBody = this.buildStartSubmitBody();
                     this.sendRequest("启动流程", "POST", API_PATHS.startAndSubmit, startBody).then(function (instance) {
-                        this.lastStartedInstanceId = extractInstanceId(instance) || "";
                         return this.autoClaimSpecifiedUserTasks(instance).then(function (claimedCount) {
                             return Promise.all([
                                 this.queryInstances(),
@@ -2101,7 +2099,7 @@
                     pageSize: 50
                 })).then(function (payload) {
                     this.todoReminderStatusByTaskId = {};
-                    this.todoRows = this.focusCurrentStartedTodos(normalizeList(payload));
+                    this.todoRows = this.sortTodoRows(normalizeList(payload));
                     return this.recordTodoRowsRead(this.todoRows).then(function () {
                         return this.enrichTodoReminders(this.todoRows);
                     }.bind(this)).then(function () {
@@ -2138,18 +2136,6 @@
                 return Promise.all(instanceIds.map(function (instanceId) {
                     return this.recordSelectedInstanceRead(instanceId);
                 }, this));
-            },
-            focusCurrentStartedTodos: function (rows) {
-                var normalized = this.sortTodoRows(rows.slice());
-                if (hasText(this.lastStartedInstanceId)) {
-                    var focused = normalized.filter(function (row) {
-                        return row.instanceId === this.lastStartedInstanceId;
-                    }, this);
-                    if (focused.length > 0) {
-                        return this.sortTodoRows(focused);
-                    }
-                }
-                return normalized;
             },
             sortTodoRows: function (rows) {
                 return rows.sort(function (left, right) {
@@ -3404,7 +3390,6 @@
 
     app.mount("#app");
 }());
-
 
 
 
