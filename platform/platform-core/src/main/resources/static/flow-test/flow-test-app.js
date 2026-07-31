@@ -1178,10 +1178,13 @@
                         var copy = Object.assign({}, node);
                         if (copy.nodeType === "USER_TASK") {
                             this.buildUserApproverRule(copy);
+                            this.syncNodeTimeoutConfig(copy);
                         } else {
                             copy.approverRuleType = null;
                             copy.approverRuleConfig = null;
                             copy.multiInstanceMode = "SINGLE";
+                            copy.timeoutConfig = null;
+                            copy.reminderConfig = null;
                         }
                         delete copy.localId;
                         delete copy.selectedApproverIds;
@@ -1324,7 +1327,7 @@
                             errors.push(node.nodeName + "：启用驳回时必须至少选择一个允许驳回节点");
                         }
                     }
-                });
+                }, this);
                 this.definitionDraft.nodes.forEach(function (node) {
                     var paired;
                     if (!this.isParallelGatewayNode(node)) {
@@ -1785,6 +1788,11 @@
                     total: 0,
                     loading: false
                 };
+                if (queryType === "readRecords") {
+                    return this.recordSelectedInstanceRead(instanceId).then(function () {
+                        return this.queryInstanceDialogPage();
+                    }.bind(this));
+                }
                 return this.queryInstanceDialogPage();
             },
             closeInstanceQueryDialog: function () {
@@ -3188,3 +3196,17 @@
 
     app.mount("#app");
 }());
+
+
+
+
+
+
+
+
+
+
+
+
+
+
