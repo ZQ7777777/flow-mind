@@ -21,6 +21,7 @@ interface SessionHandle {
 
 export interface PiCallbacks {
   onEvent(type: string, data: unknown): void;
+  onError(code: string, message: string): void;
   onRequirement(requirement: BusinessRequirement, missingItems: string[], ambiguities: string[]): Promise<void>;
 }
 
@@ -129,7 +130,12 @@ export class PiAdapterService implements OnModuleDestroy {
       if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
         callbacks.onEvent("assistant.delta", { delta: event.assistantMessageEvent.delta });
       } else if (event.type === "message_end") {
-        callbacks.onEvent("assistant.completed", toConversationMessage(event.message));
+        const errorMessage = event.message?.errorMessage;
+        if (event.message?.stopReason === "error" || errorMessage) {
+          callbacks.onError("AGENT_MODEL_ERROR", errorMessage || "The model did not complete its response");
+        } else {
+          callbacks.onEvent("assistant.completed", toConversationMessage(event.message));
+        }
       } else if (event.type === "agent_start") {
         callbacks.onEvent("agent.started", {});
       } else if (event.type === "agent_end") {

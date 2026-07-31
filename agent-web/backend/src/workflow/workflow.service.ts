@@ -90,6 +90,7 @@ export class WorkflowService {
       .then(async () => {
         const current = this.ownedSession(sessionId, user);
         if (current.state !== "COLLECTING") return;
+        this.clearSessionError(sessionId);
         await this.pi.prompt(sessionId, content.trim(), this.callbacks(sessionId));
       })
       .catch((error) => {
@@ -447,6 +448,10 @@ export class WorkflowService {
   private callbacks(sessionId: string): PiCallbacks {
     return {
       onEvent: (type, data) => this.events.publish(sessionId, { type, data }),
+      onError: (code, message) => {
+        this.setSessionError(sessionId, code, message);
+        this.events.publish(sessionId, { type: "error", data: { code, message } });
+      },
       onRequirement: (requirement, missingItems, ambiguities) =>
         this.saveAgentRequirement(sessionId, requirement, missingItems, ambiguities),
     };
@@ -488,6 +493,12 @@ export class WorkflowService {
     this.database.db.prepare(`
       UPDATE agent_session SET last_error_code = ?, last_error_message = ?, updated_at = ? WHERE id = ?
     `).run(code, message, new Date().toISOString(), sessionId);
+  }
+
+  private clearSessionError(sessionId: string): void {
+    this.database.db.prepare(`
+      UPDATE agent_session SET last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ?
+    `).run(new Date().toISOString(), sessionId);
   }
 
   private async publishSnapshot(sessionId: string, user: MockUser): Promise<void> {

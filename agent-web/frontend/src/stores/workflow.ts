@@ -55,18 +55,19 @@ export const useWorkflowStore = defineStore("workflow", () => {
   async function createSession(targetRoot?: string): Promise<void> {
     if (!currentUser.value) return;
     await run(async () => {
-      snapshot.value = await apiRequest<WorkflowSnapshot>("/api/agent/sessions", currentUser.value, {
+      const createdSnapshot = await apiRequest<WorkflowSnapshot>("/api/agent/sessions", currentUser.value, {
         method: "POST",
         body: JSON.stringify({ targetRoot: targetRoot?.trim() || undefined }),
       });
-      localStorage.setItem(sessionStorageKey(), snapshot.value.sessionId);
+      applySnapshot(createdSnapshot);
+      localStorage.setItem(sessionStorageKey(), createdSnapshot.sessionId);
       connect();
     });
   }
 
   async function refresh(sessionId = snapshot.value?.sessionId): Promise<void> {
     if (!currentUser.value || !sessionId) return;
-    snapshot.value = await apiRequest<WorkflowSnapshot>(`/api/agent/sessions/${sessionId}`, currentUser.value);
+    applySnapshot(await apiRequest<WorkflowSnapshot>(`/api/agent/sessions/${sessionId}`, currentUser.value));
   }
 
   async function sendMessage(content: string): Promise<void> {
@@ -176,7 +177,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
 
   function handleEvent(message: SseMessage): void {
     if (message.event === "workflow.snapshot") {
-      snapshot.value = message.data as WorkflowSnapshot;
+      applySnapshot(message.data as WorkflowSnapshot);
       streamingText.value = "";
     } else if (message.event === "assistant.delta") {
       streamingText.value += (message.data as { delta: string }).delta;
@@ -194,6 +195,11 @@ export const useWorkflowStore = defineStore("workflow", () => {
     reconnectTimer = window.setTimeout(() => {
       if (snapshot.value) connect();
     }, 1500);
+  }
+
+  function applySnapshot(nextSnapshot: WorkflowSnapshot): void {
+    snapshot.value = nextSnapshot;
+    error.value = nextSnapshot.lastError?.message || "";
   }
 
   function disconnect(): void {
