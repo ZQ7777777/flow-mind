@@ -1,4 +1,4 @@
-﻿﻿(function () {
+﻿(function () {
     "use strict";
 
     var API_PATHS = {
@@ -79,6 +79,8 @@
             return "/api/platform/instances/" + encodeURIComponent(instanceId) + "/read";
         }
     };
+
+    var BACKEND_DEFAULT_PAGE_SIZE = 5;
 
     var FLOW_TEST_USERS = [
         {userId: "u_sales_01", userName: "业务员", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", roleCodes: ["sales"]},
@@ -673,6 +675,10 @@
                 instanceVariableValues: {},
                 instanceAttachments: [],
                 instanceRows: [],
+                instancePageNo: 1,
+                instancePageSize: BACKEND_DEFAULT_PAGE_SIZE,
+                instanceTotal: 0,
+                instanceLoading: false,
                 selectedInstanceDetail: null,
                 readRecordRows: [],
                 historyTaskRows: [],
@@ -693,6 +699,10 @@
                 todoScope: "own",
                 todoReminderStatusByTaskId: {},
                 completedRows: [],
+                completedPageNo: 1,
+                completedPageSize: BACKEND_DEFAULT_PAGE_SIZE,
+                completedTotal: 0,
+                completedLoading: false,
                 startSubmitting: false,
                 taskDialog: {
                     open: false,
@@ -800,6 +810,9 @@
             canAdminOperateSelectedInstance: function () {
                 return this.isTestAdmin && !!extractInstanceId(this.selectedInstanceDetail);
             },
+            instanceHasMore: function () {
+                return this.instanceRows.length < this.instanceTotal;
+            },
             selectedGraphNodes: function () {
                 var detail = this.selectedDefinitionDetail || {};
                 return (detail.nodes || []).map(normalizeNode);
@@ -875,6 +888,11 @@
             queryDialogTotalPages: function () {
                 var pageSize = Math.max(1, Number(this.instanceQueryDialog.pageSize) || 20);
                 var total = Math.max(0, Number(this.instanceQueryDialog.total) || 0);
+                return Math.max(1, Math.ceil(total / pageSize));
+            },
+            completedTotalPages: function () {
+                var pageSize = Math.max(1, Number(this.completedPageSize) || BACKEND_DEFAULT_PAGE_SIZE);
+                var total = Math.max(0, Number(this.completedTotal) || 0);
                 return Math.max(1, Math.ceil(total / pageSize));
             },
             filteredTodoRows: function () {
@@ -1753,10 +1771,7 @@
                     this.setOperationState("error", "查询全部实例失败", "仅测试管理员可以查询全部实例");
                     return Promise.resolve([]);
                 }
-                return this.sendRequest("查询全部实例", "GET", API_PATHS.adminInstances + toQuery({pageNo: 1, pageSize: 50})).then(function (payload) {
-                    this.instanceRows = normalizeList(payload);
-                    return payload;
-                }.bind(this));
+                return this.loadInstancePage(1, false);
             },
             autoClaimSpecifiedUserTasks: function (instance) {
                 var tasks = normalizeList(instance && (instance.createdTasks || instance.tasks));
@@ -1821,17 +1836,72 @@
                 }.bind(this));
             },
             queryInstances: function () {
-                if (this.isTestAdmin) {
-                    return this.queryAdminInstances();
+                return this.loadInstancePage(1, false);
+            },
+            loadInstancePage: function (pageNo, append) {
+                if (this.instanceLoading) {
+                    return Promise.resolve([]);
                 }
-                return this.sendRequest("查询实例", "GET", API_PATHS.startedInstances + toQuery({
-                    starterUserId: this.currentUserId,
-                    pageNo: 1,
-                    pageSize: 50
-                })).then(function (payload) {
-                    this.instanceRows = normalizeList(payload);
+                var nextPageNo = Math.max(1, Number(pageNo) || 1);
+                this.instanceLoading = true;
+                return this.sendRequest(this.isTestAdmin ? "查询全部实例" : "查询实例", "GET",
+                    this.buildInstanceListPath(nextPageNo)).then(function (payload) {
+                    var rows = normalizeList(payload);
+                    this.instanceRows = append ? this.mergeInstanceRows(this.instanceRows, rows) : rows;
+                    this.instancePageNo = nextPageNo;
+                    this.instanceTotal = extractTotalCount(payload, this.instanceRows.length);
+                    this.instanceLoading = false;
                     return payload;
+                }.bind(this)).catch(function (error) {
+                    this.instanceLoading = false;
+                    throw error;
                 }.bind(this));
+            },
+            buildInstanceListPath: function (pageNo) {
+                var paging = {
+                    pageNo: pageNo,
+                    pageSize: this.instancePageSize
+                };
+                if (this.isTestAdmin) {
+                    return API_PATHS.adminInstances + toQuery(paging);
+                }
+                return API_PATHS.startedInstances + toQuery(Object.assign({
+                    starterUserId: this.currentUserId
+                }, paging));
+            },
+            canLoadMoreInstances: function () {
+                return !this.instanceLoading && this.instanceRows.length < this.instanceTotal;
+            },
+            loadMoreInstances: function () {
+                if (!this.canLoadMoreInstances()) {
+                    return Promise.resolve([]);
+                }
+                return this.loadInstancePage(this.instancePageNo + 1, true);
+            },
+            handleInstanceListScroll: function (event) {
+                var target = event && event.target;
+                if (!target) {
+                    return;
+                }
+                var distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+                if (distanceToBottom <= 24) {
+                    this.loadMoreInstances().catch(function () {});
+                }
+            },
+            mergeInstanceRows: function (existingRows, nextRows) {
+                var seen = {};
+                var merged = [];
+                normalizeList(existingRows).concat(normalizeList(nextRows)).forEach(function (row) {
+                    var key = extractInstanceId(row);
+                    if (hasText(key)) {
+                        if (seen[key]) {
+                            return;
+                        }
+                        seen[key] = true;
+                    }
+                    merged.push(row);
+                });
+                return merged;
             },
             markSelectedInstanceRead: function (instanceId) {
                 return this.sendRequest("记录已阅", "POST", API_PATHS.markRead(instanceId), {});
@@ -2224,14 +2294,32 @@
                 return failed ? "提醒失败" : "已提醒";
             },
             queryCompletedTasks: function () {
+                this.completedPageNo = Math.max(1, Number(this.completedPageNo) || 1);
+                this.completedPageSize = Math.min(100, Math.max(1, Number(this.completedPageSize) || BACKEND_DEFAULT_PAGE_SIZE));
+                this.completedLoading = true;
                 return this.sendRequest("查询已办", "GET", API_PATHS.completedTasks + toQuery({
                     userId: this.currentUserId,
-                    pageNo: 1,
-                    pageSize: 50
+                    pageNo: this.completedPageNo,
+                    pageSize: this.completedPageSize
                 })).then(function (payload) {
-                    this.completedRows = normalizeList(payload);
+                    var rows = normalizeList(payload);
+                    this.completedRows = rows;
+                    this.completedTotal = extractTotalCount(payload, rows.length);
+                    this.completedLoading = false;
                     return payload;
+                }.bind(this)).catch(function (error) {
+                    this.completedLoading = false;
+                    throw error;
                 }.bind(this));
+            },
+            changeCompletedPage: function (delta) {
+                var current = Math.max(1, Number(this.completedPageNo) || 1);
+                var next = Math.max(1, Math.min(this.completedTotalPages, current + delta));
+                if (next === current && delta !== 0) {
+                    return Promise.resolve([]);
+                }
+                this.completedPageNo = next;
+                return this.queryCompletedTasks();
             },
             openTodoTaskDialog: function (row) {
                 this.taskDialog = {
@@ -3390,10 +3478,5 @@
 
     app.mount("#app");
 }());
-
-
-
-
-
 
 

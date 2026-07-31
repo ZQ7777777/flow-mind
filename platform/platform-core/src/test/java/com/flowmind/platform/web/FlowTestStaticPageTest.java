@@ -105,6 +105,113 @@ class FlowTestStaticPageTest {
     }
 
     @Test
+    void instanceAndCompletedListsShouldUseBackendDefaultPageSize() throws IOException {
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        String adminInstanceQuery = substringBetween(script,
+                "queryAdminInstances: function () {",
+                "autoClaimSpecifiedUserTasks: function (instance) {");
+        String startedInstanceQuery = substringBetween(script,
+                "queryInstances: function () {",
+                "markSelectedInstanceRead: function (instanceId) {");
+        String completedTaskQuery = substringBetween(script,
+                "queryCompletedTasks: function () {",
+                "openTodoTaskDialog: function (row) {");
+
+        assertThat(script)
+                .contains("var BACKEND_DEFAULT_PAGE_SIZE = 5;");
+        assertThat(adminInstanceQuery)
+                .contains("pageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .doesNotContain("pageSize: 50");
+        assertThat(startedInstanceQuery)
+                .contains("pageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .doesNotContain("pageSize: 50");
+        assertThat(completedTaskQuery)
+                .contains("pageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .doesNotContain("pageSize: 50");
+    }
+
+    @Test
+    void instanceListShouldAppendNextPageWhenScrolled() throws IOException {
+        String html = loadResource("/static/flow-test/index.html");
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+        String css = loadResource("/static/flow-test/flow-test-app.css");
+
+        String instanceList = substringBetween(html,
+                "<h3>实例列表</h3>",
+                "<section v-if=\"selectedInstanceDetail\"");
+        String queryInstances = substringBetween(script,
+                "queryInstances: function () {",
+                "markSelectedInstanceRead: function (instanceId) {");
+        String loadInstancePage = substringBetween(script,
+                "loadInstancePage: function (pageNo, append) {",
+                "buildInstanceListPath: function (pageNo) {");
+
+        assertThat(instanceList)
+                .contains("class=\"table-wrap instance-list-wrap\"")
+                .contains("@scroll.passive=\"handleInstanceListScroll\"")
+                .contains("v-if=\"instanceLoading\"")
+                .contains("{{ instanceRows.length }} / {{ instanceTotal }}");
+        assertThat(script)
+                .contains("instancePageNo: 1")
+                .contains("instancePageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .contains("instanceTotal: 0")
+                .contains("instanceLoading: false")
+                .contains("canLoadMoreInstances: function ()")
+                .contains("loadMoreInstances: function ()")
+                .contains("handleInstanceListScroll: function (event)")
+                .contains("mergeInstanceRows: function (existingRows, nextRows)");
+        assertThat(queryInstances)
+                .contains("return this.loadInstancePage(1, false);");
+        assertThat(loadInstancePage)
+                .contains("pageSize: this.instancePageSize")
+                .contains("this.instanceRows = append ? this.mergeInstanceRows(this.instanceRows, rows) : rows;")
+                .contains("this.instanceTotal = extractTotalCount(payload, this.instanceRows.length);")
+                .contains("this.instanceLoading = false;");
+        assertThat(css)
+                .contains(".instance-list-wrap")
+                .contains("--instance-list-visible-rows: 5;")
+                .contains("max-height: calc(44px + (var(--instance-list-visible-rows) * 72px) + 36px);");
+    }
+
+    @Test
+    void completedListShouldExposePageControls() throws IOException {
+        String html = loadResource("/static/flow-test/index.html");
+        String script = loadResource("/static/flow-test/flow-test-app.js");
+
+        String completedPanel = substringBetween(html,
+                "<section v-show=\"activeView === 'completed'\"",
+                "<section class=\"operation-log\">");
+        String completedQuery = substringBetween(script,
+                "queryCompletedTasks: function () {",
+                "changeCompletedPage: function (delta) {");
+
+        assertThat(completedPanel)
+                .contains("class=\"query-dialog-footer completed-pagination\"")
+                .contains(":disabled=\"completedPageNo <= 1 || completedLoading\"")
+                .contains("@click=\"changeCompletedPage(-1)\"")
+                .contains("v-model.number=\"completedPageNo\"")
+                .contains("@change=\"queryCompletedTasks\"")
+                .contains("{{ completedTotalPages }}")
+                .contains("{{ completedTotal }}")
+                .contains("v-model.number=\"completedPageSize\"")
+                .contains("@click=\"changeCompletedPage(1)\"");
+        assertThat(script)
+                .contains("completedPageNo: 1")
+                .contains("completedPageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .contains("completedTotal: 0")
+                .contains("completedLoading: false")
+                .contains("completedTotalPages: function ()")
+                .contains("changeCompletedPage: function (delta)");
+        assertThat(completedQuery)
+                .contains("pageNo: this.completedPageNo")
+                .contains("pageSize: this.completedPageSize")
+                .contains("this.completedRows = rows;")
+                .contains("this.completedTotal = extractTotalCount(payload, rows.length);")
+                .contains("this.completedLoading = false;");
+    }
+
+    @Test
     void instanceDetailShouldKeepFormReadonlyAndOnlyExposeTerminateAndDeleteOperations() throws IOException {
         String html = loadResource("/static/flow-test/index.html");
         String script = loadResource("/static/flow-test/flow-test-app.js");
