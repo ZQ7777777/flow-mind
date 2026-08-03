@@ -114,20 +114,29 @@ class FlowTestStaticPageTest {
         String startedInstanceQuery = substringBetween(script,
                 "queryInstances: function () {",
                 "markSelectedInstanceRead: function (instanceId) {");
+        String buildInstanceListPath = substringBetween(script,
+                "buildInstanceListPath: function (pageNo) {",
+                "canLoadMoreInstances: function () {");
         String completedTaskQuery = substringBetween(script,
                 "queryCompletedTasks: function () {",
                 "openTodoTaskDialog: function (row) {");
 
         assertThat(script)
-                .contains("var BACKEND_DEFAULT_PAGE_SIZE = 5;");
+                .contains("var BACKEND_DEFAULT_PAGE_SIZE = 5;")
+                .contains("instancePageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .contains("completedPageSize: BACKEND_DEFAULT_PAGE_SIZE");
         assertThat(adminInstanceQuery)
-                .contains("pageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .contains("return this.loadInstancePage(1, false);")
                 .doesNotContain("pageSize: 50");
         assertThat(startedInstanceQuery)
-                .contains("pageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .contains("return this.loadInstancePage(1, false);")
+                .doesNotContain("pageSize: 50");
+        assertThat(buildInstanceListPath)
+                .contains("pageSize: this.instancePageSize")
                 .doesNotContain("pageSize: 50");
         assertThat(completedTaskQuery)
-                .contains("pageSize: BACKEND_DEFAULT_PAGE_SIZE")
+                .contains("this.completedPageSize = Math.min(100, Math.max(1, Number(this.completedPageSize) || BACKEND_DEFAULT_PAGE_SIZE));")
+                .contains("pageSize: this.completedPageSize")
                 .doesNotContain("pageSize: 50");
     }
 
@@ -146,6 +155,9 @@ class FlowTestStaticPageTest {
         String loadInstancePage = substringBetween(script,
                 "loadInstancePage: function (pageNo, append) {",
                 "buildInstanceListPath: function (pageNo) {");
+        String buildInstanceListPath = substringBetween(script,
+                "buildInstanceListPath: function (pageNo) {",
+                "canLoadMoreInstances: function () {");
 
         assertThat(instanceList)
                 .contains("class=\"table-wrap instance-list-wrap\"")
@@ -164,14 +176,14 @@ class FlowTestStaticPageTest {
         assertThat(queryInstances)
                 .contains("return this.loadInstancePage(1, false);");
         assertThat(loadInstancePage)
-                .contains("pageSize: this.instancePageSize")
                 .contains("this.instanceRows = append ? this.mergeInstanceRows(this.instanceRows, rows) : rows;")
                 .contains("this.instanceTotal = extractTotalCount(payload, this.instanceRows.length);")
                 .contains("this.instanceLoading = false;");
+        assertThat(buildInstanceListPath)
+                .contains("pageSize: this.instancePageSize");
         assertThat(css)
                 .contains(".instance-list-wrap")
-                .contains("--instance-list-visible-rows: 5;")
-                .contains("max-height: calc(44px + (var(--instance-list-visible-rows) * 72px) + 36px);");
+                .contains("max-height: 400px;");
     }
 
     @Test

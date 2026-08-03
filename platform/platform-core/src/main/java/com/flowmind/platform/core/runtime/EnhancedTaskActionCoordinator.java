@@ -3,6 +3,7 @@ package com.flowmind.platform.core.runtime;
 import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
 import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
+import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
@@ -51,6 +52,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -139,27 +141,131 @@ public class EnhancedTaskActionCoordinator {
                 requireText(request.getTargetNodeCode(), "targetNodeCode");
                 requireUserTask(context.definition, request.getTargetNodeCode());
                 assertRejectRule(context.definition, context.task.getNodeCode(), request.getTargetNodeCode());
+                ParallelRejectContext currentParallel = resolveCurrentParallelContext(context);
+                ParallelTargetContext targetParallel = resolveTargetParallelContext(context.definition,
+                        request.getTargetNodeCode());
+                if (currentParallel != null) {
+                    return rejectFromParallel(context, currentParallel, targetParallel, request);
+                }
+                if (targetParallel != null) {
+                    return rejectIntoParallel(context, targetParallel, request);
+                }
                 ProcessTaskGroupEntity countersignGroup = definitionCountersignGroup(context);
                 if (countersignGroup != null) {
                     return rejectCountersign(context, countersignGroup, request);
                 }
                 requireSerial(context.task);
-                RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(context.instance, context.definition,
-                        request.getTargetNodeCode(), null, null);
-                complete(context.task, request);
-                Map<String, Object> metadata = metadata(context, request.getTargetNodeCode());
-                ProcessHistoryTaskEntity history = archive(context, ActionTypeEnum.REJECT, request, metadata);
-                RuntimeAdvanceResult advance = nodeAdvancer.advanceToNode(context.instance, context.definition,
-                        request.getTargetNodeCode(), null, null, preparation);
-                metadata.put("createdTaskIds", taskIds(advance.getCreatedTasks()));
-                history.setExtraJson(RuntimeJsonCodec.toJson(metadata));
-                if (historyRepository.updateExtraJson(history.getId(), history.getExtraJson()) != 1) {
-                    throw state(RuntimeErrorCodes.HISTORY_ARCHIVE_INVALID, "reject history relation cannot be persisted");
-                }
-                return result(context, request, ActionTypeEnum.REJECT, Collections.singletonList(history),
-                        advance.getCreatedTasks(), Collections.<TaskDTO>emptyList(), WorkflowEventTypeEnum.PROCESS_REJECTED);
+                return rejectSerial(context, request);
             }
         });
+    }
+
+    private TaskActionResult rejectSerial(EnhancedActionContext context, RejectTaskRequest request) {
+        RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(context.instance, context.definition,
+                request.getTargetNodeCode(), null, null);
+        return rejectToEffectiveTarget(context, request, request.getTargetNodeCode(), null, null, preparation,
+                rejectMetadata(context, request.getTargetNodeCode(), request.getTargetNodeCode(), "SERIAL"));
+    }
+
+    private TaskActionResult rejectFromParallel(EnhancedActionContext context,
+                                                ParallelRejectContext currentParallel,
+                                                ParallelTargetContext targetParallel,
+                                                RejectTaskRequest request) {
+        if (targetParallel != null
+                && currentParallel.parallelGroup.getNodeCode().equals(targetParallel.splitNodeCode)
+                && currentParallel.parallelGroup.getJoinNodeCode().equals(targetParallel.joinNodeCode)
+                && currentParallel.branchKey.equals(targetParallel.branchKey)) {
+            return rejectInsideParallelBranch(context, currentParallel, request);
+        }
+        return rejectExitParallel(context, currentParallel, targetParallel, request);
+    }
+
+    private TaskActionResult rejectInsideParallelBranch(EnhancedActionContext context,
+                                                       ParallelRejectContext currentParallel,
+                                                       RejectTaskRequest request) {
+        RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(context.instance, context.definition,
+                request.getTargetNodeCode(), currentParallel.parallelGroup.getId(), currentParallel.branchKey);
+        Map<String, Object> metadata = rejectMetadata(context, request.getTargetNodeCode(),
+                request.getTargetNodeCode(), "BRANCH");
+        metadata.put("parallelGroupId", currentParallel.parallelGroup.getId());
+        metadata.put("branchKey", currentParallel.branchKey);
+        complete(context.task, request);
+        List<ProcessHistoryTaskEntity> archived = new ArrayList<ProcessHistoryTaskEntity>();
+        ProcessHistoryTaskEntity rejected = archive(context, ActionTypeEnum.REJECT, request, metadata);
+        archived.add(rejected);
+        CancelSummary canceled = cancelInnerGroupSiblings(context, currentParallel, request);
+        archived.addAll(canceled.histories);
+        metadata.put("canceledTaskIds", canceled.taskIds);
+        metadata.put("canceledGroupIds", canceled.groupIds);
+        RuntimeAdvanceResult advance = nodeAdvancer.advanceToNode(context.instance, context.definition,
+                request.getTargetNodeCode(), currentParallel.parallelGroup.getId(), currentParallel.branchKey,
+                preparation);
+        metadata.put("createdTaskIds", taskIds(advance.getCreatedTasks()));
+        updateHistoryMetadata(rejected, metadata, "parallel branch reject history relation cannot be persisted");
+        return result(context, request, ActionTypeEnum.REJECT, archived, advance.getCreatedTasks(),
+                Collections.<TaskDTO>emptyList(), WorkflowEventTypeEnum.PROCESS_REJECTED);
+    }
+
+    private TaskActionResult rejectExitParallel(EnhancedActionContext context,
+                                                ParallelRejectContext currentParallel,
+                                                ParallelTargetContext targetParallel,
+                                                RejectTaskRequest request) {
+        String effectiveTargetNodeCode = targetParallel == null ? request.getTargetNodeCode()
+                : targetParallel.splitNodeCode;
+        RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(context.instance, context.definition,
+                effectiveTargetNodeCode, null, null);
+        Map<String, Object> metadata = rejectMetadata(context, request.getTargetNodeCode(),
+                effectiveTargetNodeCode, targetParallel == null ? "EXIT_PARALLEL" : "EXIT_ENTER_PARALLEL");
+        metadata.put("parallelGroupId", currentParallel.parallelGroup.getId());
+        metadata.put("branchKey", currentParallel.branchKey);
+        if (targetParallel != null) {
+            metadata.put("targetParallelJoinNodeCode", targetParallel.joinNodeCode);
+            metadata.put("targetParallelBranchKey", targetParallel.branchKey);
+        }
+        complete(context.task, request);
+        List<ProcessHistoryTaskEntity> archived = new ArrayList<ProcessHistoryTaskEntity>();
+        ProcessHistoryTaskEntity rejected = archive(context, ActionTypeEnum.REJECT, request, metadata);
+        archived.add(rejected);
+        CancelSummary canceled = cancelParallelContext(context, currentParallel, request);
+        archived.addAll(canceled.histories);
+        metadata.put("canceledTaskIds", canceled.taskIds);
+        metadata.put("canceledGroupIds", canceled.groupIds);
+        RuntimeAdvanceResult advance = nodeAdvancer.advanceToNode(context.instance, context.definition,
+                effectiveTargetNodeCode, null, null, preparation);
+        metadata.put("createdTaskIds", taskIds(advance.getCreatedTasks()));
+        updateHistoryMetadata(rejected, metadata, "parallel exit reject history relation cannot be persisted");
+        return result(context, request, ActionTypeEnum.REJECT, archived, advance.getCreatedTasks(),
+                Collections.<TaskDTO>emptyList(), WorkflowEventTypeEnum.PROCESS_REJECTED);
+    }
+
+    private TaskActionResult rejectIntoParallel(EnhancedActionContext context,
+                                                ParallelTargetContext targetParallel,
+                                                RejectTaskRequest request) {
+        RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(context.instance, context.definition,
+                targetParallel.splitNodeCode, null, null);
+        Map<String, Object> metadata = rejectMetadata(context, request.getTargetNodeCode(),
+                targetParallel.splitNodeCode, "ENTER_PARALLEL");
+        metadata.put("targetParallelJoinNodeCode", targetParallel.joinNodeCode);
+        metadata.put("targetParallelBranchKey", targetParallel.branchKey);
+        return rejectToEffectiveTarget(context, request, targetParallel.splitNodeCode, null, null, preparation,
+                metadata);
+    }
+
+    private TaskActionResult rejectToEffectiveTarget(EnhancedActionContext context,
+                                                     RejectTaskRequest request,
+                                                     String effectiveTargetNodeCode,
+                                                     String taskGroupId,
+                                                     String branchKey,
+                                                     RuntimeAdvancePreparation preparation,
+                                                     Map<String, Object> metadata) {
+        complete(context.task, request);
+        ProcessHistoryTaskEntity history = archive(context, ActionTypeEnum.REJECT, request, metadata);
+        RuntimeAdvanceResult advance = nodeAdvancer.advanceToNode(context.instance, context.definition,
+                effectiveTargetNodeCode, taskGroupId, branchKey, preparation);
+        metadata.put("createdTaskIds", taskIds(advance.getCreatedTasks()));
+        updateHistoryMetadata(history, metadata, "reject history relation cannot be persisted");
+        return result(context, request, ActionTypeEnum.REJECT, Collections.singletonList(history),
+                advance.getCreatedTasks(), Collections.<TaskDTO>emptyList(), WorkflowEventTypeEnum.PROCESS_REJECTED);
     }
 
     private TaskActionResult rejectCountersign(EnhancedActionContext context,
@@ -609,6 +715,88 @@ public class EnhancedTaskActionCoordinator {
         }
     }
 
+    private CancelSummary cancelInnerGroupSiblings(EnhancedActionContext context,
+                                                   ParallelRejectContext currentParallel,
+                                                   RejectTaskRequest request) {
+        CancelSummary summary = new CancelSummary();
+        if (currentParallel.innerGroup == null) {
+            return summary;
+        }
+        if (taskGroupRepository.cancel(currentParallel.innerGroup.getId(),
+                currentParallel.innerGroup.getLockVersion().longValue()) != 1) {
+            throw state(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED,
+                    "inner task group was modified while rejecting");
+        }
+        summary.groupIds.add(currentParallel.innerGroup.getId());
+        for (ProcessActiveTaskEntity sibling : activeTaskRepository.findOpenByTaskGroupId(
+                currentParallel.innerGroup.getId(), context.task.getId())) {
+            cancelOpenTask(context, sibling, request, summary, "parallel branch inner task canceled by reject");
+        }
+        return summary;
+    }
+
+    private CancelSummary cancelParallelContext(EnhancedActionContext context,
+                                                ParallelRejectContext currentParallel,
+                                                RejectTaskRequest request) {
+        CancelSummary summary = new CancelSummary();
+        if (taskGroupRepository.cancel(currentParallel.parallelGroup.getId(),
+                currentParallel.parallelGroup.getLockVersion().longValue()) != 1) {
+            throw state(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED,
+                    "parallel task group was modified while rejecting");
+        }
+        summary.groupIds.add(currentParallel.parallelGroup.getId());
+        for (ProcessTaskGroupEntity child : taskGroupRepository.findActiveChildren(currentParallel.parallelGroup.getId())) {
+            if (taskGroupRepository.cancel(child.getId(), child.getLockVersion().longValue()) != 1) {
+                throw state(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED,
+                        "parallel child task group was modified while rejecting");
+            }
+            summary.groupIds.add(child.getId());
+        }
+        for (ProcessActiveTaskEntity task : activeTaskRepository.findOpenByParallelContext(
+                currentParallel.parallelGroup.getId(), context.task.getId())) {
+            cancelOpenTask(context, task, request, summary, "parallel sibling task canceled by reject");
+        }
+        return summary;
+    }
+
+    private void cancelOpenTask(EnhancedActionContext context,
+                                ProcessActiveTaskEntity task,
+                                RejectTaskRequest request,
+                                CancelSummary summary,
+                                String reason) {
+        if (activeTaskRepository.cancel(task.getId(), task.getLockVersion().longValue()) != 1) {
+            throw state(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
+                    "parallel sibling task was modified while rejecting");
+        }
+        EnhancedActionContext cancelContext = new EnhancedActionContext(context.instance, task,
+                context.definition, context.operator);
+        Map<String, Object> cancelMetadata = metadata(cancelContext, request.getTargetNodeCode());
+        cancelMetadata.put("rejectTaskId", context.task.getId());
+        cancelMetadata.put("cancelReason", reason);
+        summary.histories.add(archive(cancelContext, ActionTypeEnum.CANCEL, request, cancelMetadata));
+        summary.taskIds.add(task.getId());
+    }
+
+    private void updateHistoryMetadata(ProcessHistoryTaskEntity history,
+                                       Map<String, Object> metadata,
+                                       String message) {
+        history.setExtraJson(RuntimeJsonCodec.toJson(metadata));
+        if (historyRepository.updateExtraJson(history.getId(), history.getExtraJson()) != 1) {
+            throw state(RuntimeErrorCodes.HISTORY_ARCHIVE_INVALID, message);
+        }
+    }
+
+    private Map<String, Object> rejectMetadata(EnhancedActionContext context,
+                                               String requestedTargetNodeCode,
+                                               String effectiveTargetNodeCode,
+                                               String mode) {
+        Map<String, Object> metadata = metadata(context, effectiveTargetNodeCode);
+        metadata.put("requestedTargetNodeCode", requestedTargetNodeCode);
+        metadata.put("effectiveTargetNodeCode", effectiveTargetNodeCode);
+        metadata.put("parallelRejectMode", mode);
+        return metadata;
+    }
+
     private ProcessHistoryTaskEntity findStarterHistory(EnhancedActionContext context) {
         for (ProcessHistoryTaskEntity history : historyRepository.findLatestByInstanceAndActions(context.instance.getId(),
                 ActionTypeEnum.SEND.name())) {
@@ -783,6 +971,96 @@ public class EnhancedTaskActionCoordinator {
                 && ADD_SIGN_PURPOSE.equals(readObject(group.getBranchStateJson()).get("purpose"));
     }
 
+    private ParallelRejectContext resolveCurrentParallelContext(EnhancedActionContext context) {
+        if (isBlank(context.task.getTaskGroupId())) {
+            if (!isBlank(context.task.getBranchKey())) {
+                throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                        "parallel branch task is missing its task group");
+            }
+            return null;
+        }
+        ProcessTaskGroupEntity group = taskGroupRepository.findById(context.task.getTaskGroupId());
+        if (group == null) {
+            throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                    "task group was not found for parallel reject");
+        }
+        if (TaskGroupTypeEnum.PARALLEL_GATEWAY.name().equals(group.getGroupType())) {
+            return parallelContext(group, null, context.task.getBranchKey());
+        }
+        if (!isBlank(group.getParentGroupId())) {
+            ProcessTaskGroupEntity parent = taskGroupRepository.findById(group.getParentGroupId());
+            if (parent == null || !TaskGroupTypeEnum.PARALLEL_GATEWAY.name().equals(parent.getGroupType())) {
+                throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                        "parent parallel task group was not found");
+            }
+            String branchKey = isBlank(context.task.getBranchKey()) ? group.getParentBranchKey()
+                    : context.task.getBranchKey();
+            return parallelContext(parent, group, branchKey);
+        }
+        return null;
+    }
+
+    private ParallelRejectContext parallelContext(ProcessTaskGroupEntity parallelGroup,
+                                                  ProcessTaskGroupEntity innerGroup,
+                                                  String branchKey) {
+        if (!"ACTIVE".equals(parallelGroup.getGroupStatus()) || parallelGroup.getLockVersion() == null
+                || isBlank(parallelGroup.getNodeCode()) || isBlank(parallelGroup.getJoinNodeCode())
+                || isBlank(branchKey)) {
+            throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                    "parallel reject context is invalid");
+        }
+        return new ParallelRejectContext(parallelGroup, innerGroup, branchKey);
+    }
+
+    private ParallelTargetContext resolveTargetParallelContext(ProcessDefinitionDetailDTO definition,
+                                                               String targetNodeCode) {
+        DefinitionGraphIndex graph = DefinitionGraphIndex.from(definition);
+        for (ProcessNodeDTO node : graph.getNodes()) {
+            if (!NodeTypeEnum.PARALLEL_SPLIT_GATEWAY.equals(node.getNodeType())
+                    || isBlank(node.getNodeCode()) || isBlank(node.getPairedGatewayCode())) {
+                continue;
+            }
+            for (ProcessEdgeDTO edge : graph.getOutgoingEdges(node.getNodeCode())) {
+                if (isBlank(edge.getEdgeCode()) || isBlank(edge.getTargetNodeCode())) {
+                    continue;
+                }
+                if (pathContainsTargetBeforeJoin(graph, edge.getTargetNodeCode(),
+                        node.getPairedGatewayCode(), targetNodeCode)) {
+                    return new ParallelTargetContext(node.getNodeCode(), node.getPairedGatewayCode(),
+                            edge.getEdgeCode(), targetNodeCode);
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean pathContainsTargetBeforeJoin(DefinitionGraphIndex graph,
+                                                 String startNodeCode,
+                                                 String joinNodeCode,
+                                                 String targetNodeCode) {
+        ArrayDeque<String> queue = new ArrayDeque<String>();
+        Set<String> visited = new LinkedHashSet<String>();
+        queue.add(startNodeCode);
+        while (!queue.isEmpty()) {
+            String nodeCode = queue.removeFirst();
+            if (isBlank(nodeCode) || !visited.add(nodeCode)) {
+                continue;
+            }
+            if (targetNodeCode.equals(nodeCode)) {
+                return true;
+            }
+            if (joinNodeCode.equals(nodeCode)) {
+                continue;
+            }
+            for (ProcessEdgeDTO edge : graph.getOutgoingEdges(nodeCode)) {
+                if (!isBlank(edge.getTargetNodeCode())) {
+                    queue.add(edge.getTargetNodeCode());
+                }
+            }
+        }
+        return false;
+    }
+
     private ProcessTaskGroupEntity definitionCountersignGroup(EnhancedActionContext context) {
         if (isBlank(context.task.getTaskGroupId())) {
             return null;
@@ -879,6 +1157,39 @@ public class EnhancedTaskActionCoordinator {
     private static RuntimeStateException state(String code, String message) { return new RuntimeStateException(code, message); }
 
     private interface ActionWork { TaskActionResult run(EnhancedActionContext context); }
+    private static final class ParallelRejectContext {
+        private final ProcessTaskGroupEntity parallelGroup;
+        private final ProcessTaskGroupEntity innerGroup;
+        private final String branchKey;
+        private ParallelRejectContext(ProcessTaskGroupEntity parallelGroup,
+                                      ProcessTaskGroupEntity innerGroup,
+                                      String branchKey) {
+            this.parallelGroup = parallelGroup;
+            this.innerGroup = innerGroup;
+            this.branchKey = branchKey;
+        }
+    }
+    private static final class ParallelTargetContext {
+        private final String splitNodeCode;
+        private final String joinNodeCode;
+        private final String branchKey;
+        @SuppressWarnings("unused")
+        private final String requestedTargetNodeCode;
+        private ParallelTargetContext(String splitNodeCode,
+                                      String joinNodeCode,
+                                      String branchKey,
+                                      String requestedTargetNodeCode) {
+            this.splitNodeCode = splitNodeCode;
+            this.joinNodeCode = joinNodeCode;
+            this.branchKey = branchKey;
+            this.requestedTargetNodeCode = requestedTargetNodeCode;
+        }
+    }
+    private static final class CancelSummary {
+        private final List<ProcessHistoryTaskEntity> histories = new ArrayList<ProcessHistoryTaskEntity>();
+        private final List<String> taskIds = new ArrayList<String>();
+        private final List<String> groupIds = new ArrayList<String>();
+    }
     private static final class EnhancedActionContext {
         private final ProcessInstanceEntity instance; private final ProcessActiveTaskEntity task;
         private final ProcessDefinitionDetailDTO definition; private final UserContext operator;

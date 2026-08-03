@@ -3,6 +3,7 @@ package com.flowmind.platform.core.runtime;
 import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
 import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
+import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.UserContext;
@@ -89,6 +90,182 @@ class EnhancedTaskActionCoordinatorTest {
         verify(fixture.tasks).complete("task-1", 3L);
         verify(fixture.histories).updateExtraJson(eq("reject-history"), any(String.class));
         verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"), eq(null), eq(null), eq(null));
+    }
+
+    @Test
+    void parallelBranchRejectKeepsParallelContextWhenTargetIsInSameBranch() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("parallel-1");
+        fixture.task.setBranchKey("branch-a");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-parallel-branch-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("apply");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                gatewayNode("split", NodeTypeEnum.PARALLEL_SPLIT_GATEWAY, "join"),
+                gatewayNode("join", NodeTypeEnum.PARALLEL_JOIN_GATEWAY, "split"),
+                userNode("apply", null),
+                userNode("review", null),
+                userNode("other", null),
+                userNode("manager",
+                        "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"apply\"]}}}")));
+        fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("branch-a", "split", "apply"),
+                edge("apply-review", "apply", "review"),
+                edge("review-manager", "review", "manager"),
+                edge("manager-join", "manager", "join"),
+                edge("branch-b", "split", "other"),
+                edge("other-join", "other", "join")));
+        ProcessTaskGroupEntity parallel = parallelGroup("parallel-1");
+        when(fixture.groups.findById("parallel-1")).thenReturn(parallel);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("apply"),
+                eq("parallel-1"), eq("branch-a"), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertNotNull(result);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("apply"),
+                eq("parallel-1"), eq("branch-a"), eq(null));
+        verify(fixture.groups, never()).cancel(any(String.class), any(Long.class));
+        verify(fixture.tasks, never()).findOpenByParallelContext(any(String.class), any(String.class));
+    }
+
+    @Test
+    void parallelRejectExitsAndCancelsWholeParallelContextWhenTargetIsOutside() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("parallel-1");
+        fixture.task.setBranchKey("branch-a");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-parallel-exit-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("starter");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                userNode("starter", null),
+                gatewayNode("split", NodeTypeEnum.PARALLEL_SPLIT_GATEWAY, "join"),
+                gatewayNode("join", NodeTypeEnum.PARALLEL_JOIN_GATEWAY, "split"),
+                userNode("manager",
+                        "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"starter\"]}}}"),
+                userNode("other", null)));
+        fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("branch-a", "split", "manager"),
+                edge("manager-join", "manager", "join"),
+                edge("branch-b", "split", "other"),
+                edge("other-join", "other", "join")));
+        ProcessTaskGroupEntity parallel = parallelGroup("parallel-1");
+        ProcessTaskGroupEntity child = new ProcessTaskGroupEntity();
+        child.setId("child-1");
+        child.setParentGroupId("parallel-1");
+        child.setGroupType("COUNTERSIGN");
+        child.setGroupStatus("ACTIVE");
+        child.setLockVersion(Long.valueOf(5));
+        ProcessActiveTaskEntity sibling = task();
+        sibling.setId("task-2");
+        sibling.setTaskGroupId("child-1");
+        sibling.setBranchKey("branch-b");
+        sibling.setLockVersion(Long.valueOf(1));
+        when(fixture.groups.findById("parallel-1")).thenReturn(parallel);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("parallel-1", 2L)).thenReturn(1);
+        when(fixture.groups.findActiveChildren("parallel-1"))
+                .thenReturn(java.util.Collections.singletonList(child));
+        when(fixture.groups.cancel("child-1", 5L)).thenReturn(1);
+        when(fixture.tasks.findOpenByParallelContext("parallel-1", "task-1"))
+                .thenReturn(java.util.Collections.singletonList(sibling));
+        when(fixture.tasks.cancel("task-2", 1L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"),
+                history("cancel-history", "user-b", "other", ActionTypeEnum.CANCEL.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("starter"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertEquals(2, result.getArchivedTasks().size());
+        verify(fixture.groups).cancel("parallel-1", 2L);
+        verify(fixture.groups).cancel("child-1", 5L);
+        verify(fixture.tasks).cancel("task-2", 1L);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("starter"),
+                eq(null), eq(null), eq(null));
+    }
+
+    @Test
+    void parallelRejectToAnotherBranchReentersParallelGatewayAfterCancelingGroup() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("parallel-1");
+        fixture.task.setBranchKey("branch-a");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-parallel-cross-branch-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("other");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                gatewayNode("split", NodeTypeEnum.PARALLEL_SPLIT_GATEWAY, "join"),
+                gatewayNode("join", NodeTypeEnum.PARALLEL_JOIN_GATEWAY, "split"),
+                userNode("manager",
+                        "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"other\"]}}}"),
+                userNode("other", null)));
+        fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("branch-a", "split", "manager"),
+                edge("manager-join", "manager", "join"),
+                edge("branch-b", "split", "other"),
+                edge("other-join", "other", "join")));
+        ProcessTaskGroupEntity parallel = parallelGroup("parallel-1");
+        when(fixture.groups.findById("parallel-1")).thenReturn(parallel);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("parallel-1", 2L)).thenReturn(1);
+        when(fixture.groups.findActiveChildren("parallel-1"))
+                .thenReturn(java.util.Collections.<ProcessTaskGroupEntity>emptyList());
+        when(fixture.tasks.findOpenByParallelContext("parallel-1", "task-1"))
+                .thenReturn(java.util.Collections.<ProcessActiveTaskEntity>emptyList());
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertNotNull(result);
+        verify(fixture.groups).cancel("parallel-1", 2L);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
+                eq(null), eq(null), eq(null));
+        verify(fixture.advancer, never()).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("other"),
+                any(String.class), any(String.class), any(RuntimeAdvancePreparation.class));
+    }
+
+    @Test
+    void serialRejectIntoParallelStartsWholeParallelGateway() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-enter-parallel-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("parallel-review");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                userNode("manager",
+                        "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"parallel-review\"]}}}"),
+                gatewayNode("split", NodeTypeEnum.PARALLEL_SPLIT_GATEWAY, "join"),
+                gatewayNode("join", NodeTypeEnum.PARALLEL_JOIN_GATEWAY, "split"),
+                userNode("parallel-review", null),
+                userNode("parallel-finance", null)));
+        fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("branch-a", "split", "parallel-review"),
+                edge("review-join", "parallel-review", "join"),
+                edge("branch-b", "split", "parallel-finance"),
+                edge("finance-join", "parallel-finance", "join")));
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertNotNull(result);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
+                eq(null), eq(null), eq(null));
+        verify(fixture.advancer, never()).advanceToNode(eq(fixture.instance), eq(fixture.definition),
+                eq("parallel-review"), any(String.class), any(String.class), any(RuntimeAdvancePreparation.class));
     }
 
     @Test
@@ -615,6 +792,35 @@ class EnhancedTaskActionCoordinatorTest {
         node.setApproverRuleType(approverRuleType);
         node.setListenerConfig(listenerConfig);
         return node;
+    }
+
+    private ProcessNodeDTO gatewayNode(String code, NodeTypeEnum type, String pairedGatewayCode) {
+        ProcessNodeDTO node = new ProcessNodeDTO();
+        node.setNodeCode(code);
+        node.setNodeType(type);
+        node.setPairedGatewayCode(pairedGatewayCode);
+        return node;
+    }
+
+    private ProcessEdgeDTO edge(String code, String source, String target) {
+        ProcessEdgeDTO edge = new ProcessEdgeDTO();
+        edge.setEdgeCode(code);
+        edge.setSourceNodeCode(source);
+        edge.setTargetNodeCode(target);
+        return edge;
+    }
+
+    private ProcessTaskGroupEntity parallelGroup(String id) {
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId(id);
+        group.setInstanceId("instance-1");
+        group.setNodeCode("split");
+        group.setJoinNodeCode("join");
+        group.setGroupType("PARALLEL_GATEWAY");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{}");
+        return group;
     }
 
     private ProcessHistoryTaskEntity history(String id, String assignee, String nodeCode, String action, String extraJson) {
