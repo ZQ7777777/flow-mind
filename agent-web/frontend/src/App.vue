@@ -45,6 +45,15 @@ async function action(operation: () => Promise<void>, success: string): Promise<
     ElMessage.success(success);
   } catch { /* store exposes error */ }
 }
+
+async function resetCurrentSession(): Promise<void> {
+  message.value = "";
+  activeTab.value = "requirement";
+  try {
+    await store.resetSession();
+    ElMessage.success("当前会话已重置，可重新收集需求并创建流程");
+  } catch { /* store exposes error */ }
+}
 </script>
 
 <template>
@@ -106,6 +115,16 @@ async function action(operation: () => Promise<void>, success: string): Promise<
         <el-tag :type="store.state === 'PROCESS_ACTIVE' ? 'success' : processing ? 'warning' : 'info'" effect="dark">
           {{ store.state }}
         </el-tag>
+        <el-popconfirm
+          title="将清空当前需求与对话，并开始新的 Pi 会话；已创建的平台流程不会被删除。"
+          confirm-button-text="确认重置"
+          cancel-button-text="取消"
+          @confirm="resetCurrentSession"
+        >
+          <template #reference>
+            <el-button type="danger" plain size="small" :disabled="store.busy || processing">重置当前会话</el-button>
+          </template>
+        </el-popconfirm>
       </section>
 
       <el-alert v-if="store.error" class="global-error" type="error" :title="store.error" show-icon @close="store.error = ''" />

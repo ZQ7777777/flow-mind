@@ -90,28 +90,32 @@ function nodeClass(type: string): string {
     </div>
 
     <div class="preview-table">
-      <h3>表单字段</h3>
-      <el-table :data="preview.formFields" size="small">
-        <el-table-column prop="fieldCode" label="编码" />
-        <el-table-column prop="fieldName" label="名称" />
-        <el-table-column prop="fieldType" label="类型" />
-        <el-table-column prop="controlType" label="控件" />
-        <el-table-column prop="required" label="必填">
-          <template #default="{ row }">{{ row.required ? "是" : "否" }}</template>
-        </el-table-column>
-      </el-table>
+      <h3>表单字段（{{ preview.formFields.length }}）</h3>
+      <div class="preview-table-scroll" tabindex="0" aria-label="全部表单字段">
+        <el-table :data="preview.formFields" size="small">
+          <el-table-column prop="fieldCode" label="编码" />
+          <el-table-column prop="fieldName" label="名称" />
+          <el-table-column prop="fieldType" label="类型" />
+          <el-table-column prop="controlType" label="控件" />
+          <el-table-column prop="required" label="必填">
+            <template #default="{ row }">{{ row.required ? "是" : "否" }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
     </div>
     <div class="preview-table">
       <h3>附件模板</h3>
-      <el-table :data="preview.attachmentTemplates" size="small">
-        <el-table-column prop="attachmentCode" label="编码" />
-        <el-table-column prop="attachmentName" label="名称" />
-        <el-table-column prop="templateVersion" label="版本" />
-        <el-table-column prop="allowedExtensions" label="格式" />
-        <el-table-column prop="required" label="必填">
-          <template #default="{ row }">{{ row.required ? "是" : "否" }}</template>
-        </el-table-column>
-      </el-table>
+      <div class="preview-table-scroll">
+        <el-table :data="preview.attachmentTemplates" size="small">
+          <el-table-column prop="attachmentCode" label="编码" />
+          <el-table-column prop="attachmentName" label="名称" />
+          <el-table-column prop="templateVersion" label="版本" />
+          <el-table-column prop="allowedExtensions" label="格式" />
+          <el-table-column prop="required" label="必填">
+            <template #default="{ row }">{{ row.required ? "是" : "否" }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
     </div>
   </div>
 </template>

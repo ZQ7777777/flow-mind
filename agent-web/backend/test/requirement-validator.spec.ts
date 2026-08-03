@@ -26,4 +26,44 @@ describe("validateRequirement", () => {
     expect(result.structurallyValid).toBe(false);
     expect(result.schemaErrors.length).toBeGreaterThan(0);
   });
+
+  it("rejects the non-canonical keys that an agent must not submit", () => {
+    const input = {
+      businessCode: "DEPOSIT_APPLY_001",
+      businessName: "入金申请",
+      systemCode: "FINANCE_SYS_001",
+      processTarget: "完成入金申请",
+      roles: [],
+      formFields: [],
+      attachments: [],
+      nodes: [],
+      edges: [],
+      approvalRules: {},
+      multiPersonMode: {},
+      businessRules: [],
+    };
+    const result = validateRequirement(input);
+
+    expect(result.structurallyValid).toBe(false);
+    expect(result.schemaErrors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ params: expect.objectContaining({ missingProperty: "schemaVersion" }) }),
+      expect.objectContaining({ params: expect.objectContaining({ missingProperty: "goal" }) }),
+      expect.objectContaining({ params: expect.objectContaining({ missingProperty: "participants" }) }),
+      expect.objectContaining({ params: expect.objectContaining({ additionalProperty: "processTarget" }) }),
+    ]));
+  });
+
+  it("reports runtime policies that cannot be applied to a user task", () => {
+    const input = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    const manager = input.nodes.find((node) => node.nodeCode === "manager_approve")!;
+    manager.listenerConfig = {
+      taskActionRules: { reject: { enabled: true, targetNodeCodes: ["end"] } },
+    };
+
+    const result = validateRequirement(input);
+
+    expect(result.structurallyValid).toBe(true);
+    expect(result.readyForReview).toBe(false);
+    expect(result.ambiguities).not.toHaveLength(0);
+  });
 });

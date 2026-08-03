@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { MockUser, WorkflowSnapshot } from "@flowmind/agent-contracts";
@@ -116,6 +116,23 @@ describe("M0-M2 workflow", () => {
     );
     snapshot = await waitForState(snapshot.sessionId, "REQUIREMENT_REVIEW");
     expect(snapshot.requirement?.requirement.formFields).toHaveLength(3);
+    expect(snapshot.requirement?.requirement.systemCode).toBe("FINANCE_SYS_001");
+    expect(snapshot.requirement?.requirement.nodes.find((node) => node.nodeCode === "apply")?.timeoutConfig)
+      .toMatchObject({ enabled: true, durationMinutes: 1440, action: "REMIND", severity: "MEDIUM" });
+
+    const editedRequirement = structuredClone(snapshot.requirement!.requirement);
+    editedRequirement.systemCode = "";
+    for (const node of editedRequirement.nodes.filter((item) => item.nodeType === "USER_TASK")) {
+      delete node.listenerConfig;
+      delete node.timeoutConfig;
+      delete node.reminderConfig;
+    }
+    await workflow.updateRequirement(snapshot.sessionId, user, snapshot.rowVersion, editedRequirement);
+    snapshot = await workflow.getSnapshot(snapshot.sessionId, user);
+    const normalizedApplyNode = snapshot.requirement!.requirement.nodes.find((node) => node.nodeCode === "apply");
+    expect(snapshot.requirement?.requirement.systemCode).toBe("FINANCE_SYS_001");
+    expect(normalizedApplyNode?.listenerConfig).toBeDefined();
+    expect(normalizedApplyNode?.reminderConfig).toMatchObject({ enabled: true, maxCount: 2 });
 
     await workflow.confirmRequirement(
       snapshot.sessionId,
@@ -150,8 +167,42 @@ describe("M0-M2 workflow", () => {
       "POST /api/platform/definitions/publish",
       "POST /api/platform/definitions/activate",
     ]));
-    expect(calls.find((call) => call.method === "PUT")?.body.operationId).toMatch(/^op_save_/);
+    const graphSave = calls.find((call) => call.method === "PUT");
+    expect(graphSave?.body.operationId).toMatch(/^op_save_/);
+    const applyNode = graphSave?.body.nodes.find((node: any) => node.nodeCode === "apply");
+    expect(JSON.parse(applyNode.listenerConfig)).toEqual({
+      taskActionRules: {
+        directSend: { enabled: true, targetMode: "REJECT_SOURCE" },
+        reject: { enabled: true, targetNodeCodes: ["apply"] },
+      },
+    });
+    expect(JSON.parse(applyNode.timeoutConfig)).toEqual({
+      action: "REMIND", durationMinutes: 1440, enabled: true, severity: "MEDIUM",
+    });
+    expect(JSON.parse(applyNode.reminderConfig)).toEqual({
+      enabled: true, maxCount: 2, messageTemplate: "您有代办，请及时处理。",
+    });
     expect(calls.every((call) => call.headers.get("X-Flow-User-Id") === "user_sales")).toBe(true);
+  });
+
+  it("resets an active workflow into a fresh Pi conversation", async () => {
+    const created = await workflow.createSession(user);
+    const before = database.getSession(created.sessionId)!;
+    const previousSessionFile = before.pi_session_file!;
+    database.db.prepare("UPDATE agent_session SET state = 'PROCESS_ACTIVE' WHERE id = ?").run(created.sessionId);
+
+    const reset = await workflow.resetSession(created.sessionId, user, created.rowVersion);
+    const after = database.getSession(created.sessionId)!;
+
+    expect(reset.state).toBe("COLLECTING");
+    expect(reset.messages).toEqual([]);
+    expect(reset.requirement).toBeUndefined();
+    expect(reset.processPreview).toBeUndefined();
+    expect(after.pi_session_id).not.toBe(before.pi_session_id);
+    expect(after.pi_session_file).not.toBe(previousSessionFile);
+    expect(existsSync(previousSessionFile)).toBe(false);
+    await workflow.queueMessage(reset.sessionId, user, reset.rowVersion, "重新开始收集需求");
+    await waitFor(async () => existsSync(after.pi_session_file!));
   });
 
   async function waitForState(sessionId: string, state: string): Promise<WorkflowSnapshot> {

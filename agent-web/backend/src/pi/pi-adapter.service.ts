@@ -1,9 +1,11 @@
 import { Inject, Injectable, OnModuleDestroy } from "@nestjs/common";
-import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import {
   ENTRY_APPLICATION_REQUIREMENT,
+  businessRequirementSchema,
   type BusinessRequirement,
   type ConversationMessage,
 } from "@flowmind/agent-contracts";
@@ -74,6 +76,20 @@ export class PiAdapterService implements OnModuleDestroy {
     return this.handles.get(agentSessionId)?.messages() || [];
   }
 
+  /** Dispose the active agent and start a fresh Pi conversation for this workflow session. */
+  async resetSession(agentSessionId: string, callbacks: PiCallbacks): Promise<{ piSessionId: string; sessionFile?: string }> {
+    const row = this.database.getSession(agentSessionId);
+    this.handles.get(agentSessionId)?.dispose();
+    this.handles.delete(agentSessionId);
+    this.deletePersistedSessionFile(row?.pi_session_file || undefined);
+
+    const handle = this.config.fakePi
+      ? this.createFakeHandle(agentSessionId, undefined, callbacks, true)
+      : await this.createRealHandle(agentSessionId, undefined, callbacks);
+    this.handles.set(agentSessionId, handle);
+    return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
+  }
+
   private async createRealHandle(agentSessionId: string, sessionFile: string | undefined, callbacks: PiCallbacks): Promise<SessionHandle> {
     const pi: any = await import("@earendil-works/pi-coding-agent");
     const runtime = await this.getModelRuntime();
@@ -103,7 +119,10 @@ export class PiAdapterService implements OnModuleDestroy {
       label: "Submit requirement snapshot",
       description: "Submit the complete structured business requirement for human review.",
       parameters: Type.Object({
-        requirement: Type.Any(),
+        // Keep the tool contract aligned with the AJV schema that persists the
+        // requirement.  Type.Any() made the model infer a shape at submission
+        // time, which easily diverged from BusinessRequirement 1.0.
+        requirement: Type.Unsafe<BusinessRequirement>(businessRequirementSchema),
         missingItems: Type.Array(Type.String()),
         ambiguities: Type.Array(Type.String()),
         readyForReview: Type.Boolean(),
@@ -155,8 +174,17 @@ export class PiAdapterService implements OnModuleDestroy {
     };
   }
 
-  private createFakeHandle(agentSessionId: string, existingFile: string | undefined, callbacks: PiCallbacks): SessionHandle {
-    const sessionFile = existingFile || join(this.database.dataDir, "pi-sessions", `${agentSessionId}.fake.jsonl`);
+  private createFakeHandle(
+    agentSessionId: string,
+    existingFile: string | undefined,
+    callbacks: PiCallbacks,
+    fresh = false,
+  ): SessionHandle {
+    const sessionFile = existingFile || join(
+      this.database.dataDir,
+      "pi-sessions",
+      fresh ? `${agentSessionId}.${randomUUID()}.fake.jsonl` : `${agentSessionId}.fake.jsonl`,
+    );
     const messages: ConversationMessage[] = [];
     if (existsSync(sessionFile)) {
       for (const line of readFileSync(sessionFile, "utf8").split(/\r?\n/).filter(Boolean)) {
@@ -168,7 +196,7 @@ export class PiAdapterService implements OnModuleDestroy {
       appendFileSync(sessionFile, `${JSON.stringify(message)}\n`, "utf8");
     };
     return {
-      sessionId: `pi_fake_${agentSessionId}`,
+      sessionId: fresh ? `pi_fake_${randomUUID()}` : `pi_fake_${agentSessionId}`,
       sessionFile,
       prompt: async (text: string) => {
         const userMessage: ConversationMessage = { id: `msg_${Date.now()}_u`, role: "user", content: text, createdAt: new Date().toISOString() };
@@ -203,6 +231,15 @@ export class PiAdapterService implements OnModuleDestroy {
 
   onModuleDestroy(): void {
     for (const handle of this.handles.values()) handle.dispose();
+  }
+
+  private deletePersistedSessionFile(sessionFile: string | undefined): void {
+    if (!sessionFile) return;
+    const sessionDir = resolve(this.database.dataDir, "pi-sessions");
+    const candidate = resolve(sessionFile);
+    const pathFromSessionDir = relative(sessionDir, candidate);
+    if (!pathFromSessionDir || pathFromSessionDir.startsWith("..") || isAbsolute(pathFromSessionDir)) return;
+    if (existsSync(candidate)) rmSync(candidate, { force: true });
   }
 }
 

@@ -67,9 +67,46 @@ export interface ProcessNodeRequirement {
     config: Record<string, unknown>;
   };
   multiInstanceMode?: "SINGLE" | "OR_SIGN" | "COUNTERSIGN";
+  /** Runtime task-action configuration persisted to the platform as listenerConfig JSON. */
+  listenerConfig?: Record<string, unknown>;
+  /** Runtime timeout configuration persisted to the platform as timeoutConfig JSON. */
+  timeoutConfig?: Record<string, unknown>;
+  /** Runtime reminder configuration persisted to the platform as reminderConfig JSON. */
+  reminderConfig?: Record<string, unknown>;
   positionX: number;
   positionY: number;
   sortOrder: number;
+}
+
+export const DEFAULT_SYSTEM_CODE = "FINANCE_SYS_001";
+
+/**
+ * Creates independent default runtime-policy objects for a user task.  A factory
+ * is used so editing one node in the UI cannot mutate the defaults of another.
+ */
+export function createDefaultUserTaskConfigs(): Pick<
+  ProcessNodeRequirement,
+  "listenerConfig" | "timeoutConfig" | "reminderConfig"
+> {
+  return {
+    listenerConfig: {
+      taskActionRules: {
+        reject: { enabled: true, targetNodeCodes: ["apply"] },
+        directSend: { enabled: true, targetMode: "REJECT_SOURCE" },
+      },
+    },
+    timeoutConfig: {
+      enabled: true,
+      durationMinutes: 1440,
+      action: "REMIND",
+      severity: "MEDIUM",
+    },
+    reminderConfig: {
+      enabled: true,
+      maxCount: 2,
+      messageTemplate: "您有代办，请及时处理。",
+    },
+  };
 }
 
 export interface ProcessEdgeRequirement {
@@ -267,6 +304,9 @@ export const businessRequirementSchema = {
             },
           },
           multiInstanceMode: { enum: ["SINGLE", "OR_SIGN", "COUNTERSIGN"] },
+          listenerConfig: { type: "object" },
+          timeoutConfig: { type: "object" },
+          reminderConfig: { type: "object" },
           positionX: { type: "number" },
           positionY: { type: "number" },
           sortOrder: { type: "integer" },
@@ -309,7 +349,7 @@ export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
   schemaVersion: "1.0",
   businessCode: "entry_application",
   businessName: "入金申请",
-  systemCode: "newoa-demo",
+  systemCode: DEFAULT_SYSTEM_CODE,
   goal: "业务员提交入金申请，由部门经理审批并由财务确认后完成。",
   participants: [
     { roleCode: "sales", roleName: "业务员", responsibility: "提交入金申请" },
@@ -337,9 +377,9 @@ export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
   ],
   nodes: [
     { nodeCode: "start", nodeName: "开始", nodeType: "START", positionX: 80, positionY: 120, sortOrder: 1 },
-    { nodeCode: "apply", nodeName: "申请", nodeType: "USER_TASK", approverRule: { type: "STARTER", config: {} }, multiInstanceMode: "SINGLE", positionX: 260, positionY: 120, sortOrder: 2 },
-    { nodeCode: "manager_approve", nodeName: "部门经理审批", nodeType: "USER_TASK", approverRule: { type: "ROLE_IN_DEPARTMENT", config: { roleCode: "department_manager", departmentFrom: "starter" } }, multiInstanceMode: "SINGLE", positionX: 460, positionY: 120, sortOrder: 3 },
-    { nodeCode: "finance_confirm", nodeName: "财务确认", nodeType: "USER_TASK", approverRule: { type: "ROLE", config: { roleCode: "finance" } }, multiInstanceMode: "SINGLE", positionX: 680, positionY: 120, sortOrder: 4 },
+    { nodeCode: "apply", nodeName: "申请", nodeType: "USER_TASK", approverRule: { type: "STARTER", config: {} }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs(), positionX: 260, positionY: 120, sortOrder: 2 },
+    { nodeCode: "manager_approve", nodeName: "部门经理审批", nodeType: "USER_TASK", approverRule: { type: "ROLE_IN_DEPARTMENT", config: { roleCode: "department_manager", departmentFrom: "starter" } }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs(), positionX: 460, positionY: 120, sortOrder: 3 },
+    { nodeCode: "finance_confirm", nodeName: "财务确认", nodeType: "USER_TASK", approverRule: { type: "ROLE", config: { roleCode: "finance" } }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs(), positionX: 680, positionY: 120, sortOrder: 4 },
     { nodeCode: "end", nodeName: "结束", nodeType: "END", positionX: 880, positionY: 120, sortOrder: 5 },
   ],
   edges: [

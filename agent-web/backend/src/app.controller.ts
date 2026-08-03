@@ -145,6 +145,20 @@ export class AppController {
     );
   }
 
+  @Post("/api/agent/sessions/:sessionId/reset")
+  resetSession(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+  ) {
+    return this.workflow.resetSession(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+    );
+  }
+
   @Get("/api/agent/sessions/:sessionId/process-preview")
   getProcessPreview(
     @Param("sessionId") sessionId: string,

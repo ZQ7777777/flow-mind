@@ -116,6 +116,21 @@ export const useWorkflowStore = defineStore("workflow", () => {
     await command(`/api/agent/sessions/${snapshot.value.sessionId}/requirement/reopen`, false);
   }
 
+  async function resetSession(): Promise<void> {
+    if (!snapshot.value || !currentUser.value) return;
+    await run(async () => {
+      disconnect();
+      const resetSnapshot = await apiRequest<WorkflowSnapshot>(
+        `/api/agent/sessions/${snapshot.value!.sessionId}/reset`,
+        currentUser.value!,
+        { method: "POST", rowVersion: snapshot.value!.rowVersion, body: JSON.stringify({}) },
+      );
+      streamingText.value = "";
+      applySnapshot(resetSnapshot);
+      connect();
+    });
+  }
+
   async function confirmProcess(): Promise<void> {
     if (!snapshot.value?.processPreview || !snapshot.value.requirement || !currentUser.value) return;
     await run(async () => {
@@ -245,6 +260,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     saveRequirement,
     confirmRequirement,
     reopenRequirement,
+    resetSession,
     confirmProcess,
     retryProcess,
     disconnect,

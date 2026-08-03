@@ -91,10 +91,11 @@ button, input, textarea { font: inherit; }
 .composer { padding: 14px; border-top: 1px solid var(--line); }
 .composer-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 9px; color: var(--muted); font-size: 11px; }
 
-.review-panel { overflow: auto; }
-.review-panel > .el-tabs { height: 100%; }
+.review-panel { display: flex; flex-direction: column; overflow: hidden; }
+.review-panel > .el-tabs { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .review-panel .el-tabs__header { margin: 0; padding: 0 18px; position: sticky; top: 0; z-index: 4; background: #fff; }
-.review-panel .el-tabs__content { padding: 0; }
+.review-panel .el-tabs__content { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
+.review-panel .el-tab-pane { height: 100%; overflow: auto; }
 .review-empty { min-height: 500px; display: grid; place-content: center; text-align: center; color: var(--muted); padding: 50px; }
 .review-empty h3 { color: var(--ink); margin: 22px 0 7px; }
 .empty-orbit { width: 74px; height: 74px; margin: auto; border: 1px solid #b8c6ed; border-radius: 50%; box-shadow: inset 0 0 0 16px #f3f6ff; }
@@ -112,6 +113,8 @@ button, input, textarea { font: inherit; }
 .edit-row.four { grid-template-columns: repeat(4, 1fr) auto; }
 .edit-row.compact { margin-top: 8px; }
 .card-row { background: #f8f9fb; border-left: 3px solid #c9d5f7; padding: 12px; margin-bottom: 10px; }
+.form-fields-scroll { max-height: 430px; overflow: auto; padding-right: 6px; }
+.node-runtime-config { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
 
 .status-tags { display: flex; gap: 8px; }
 .graph-scroll { overflow: auto; margin: 18px 0; border: 1px solid var(--line); background-color: #f8fafe; background-image: radial-gradient(#d6ddec 1px, transparent 1px); background-size: 18px 18px; }
@@ -130,6 +133,8 @@ button, input, textarea { font: inherit; }
 .issue { display: flex; gap: 9px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .issue small { color: var(--muted); }
 .preview-table { margin-top: 24px; }
+.preview-table-scroll { max-height: 360px; overflow: auto; border: 1px solid var(--line); }
+.preview-table-scroll .el-table { min-width: 620px; }
 
 .action-bar {
   position: fixed; z-index: 10; left: 0; right: 0; bottom: 0; min-height: 84px;

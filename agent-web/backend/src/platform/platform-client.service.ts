@@ -84,6 +84,12 @@ export class PlatformClientService {
         approverRuleType: node.approverRule?.type,
         approverRuleConfig: node.approverRule ? stableJson(node.approverRule.config) : null,
         multiInstanceMode: node.nodeType === "USER_TASK" ? node.multiInstanceMode || "SINGLE" : "SINGLE",
+        listenerConfig: node.nodeType === "USER_TASK" && node.listenerConfig
+          ? stableJson(node.listenerConfig) : null,
+        timeoutConfig: node.nodeType === "USER_TASK" && node.timeoutConfig
+          ? stableJson(node.timeoutConfig) : null,
+        reminderConfig: node.nodeType === "USER_TASK" && node.reminderConfig
+          ? stableJson(node.reminderConfig) : null,
         positionX: node.positionX,
         positionY: node.positionY,
         sortOrder: node.sortOrder,

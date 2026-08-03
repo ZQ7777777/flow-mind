@@ -2,6 +2,8 @@ import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, normalize, resolve } from "node:path";
 import {
+  DEFAULT_SYSTEM_CODE,
+  createDefaultUserTaskConfigs,
   type BusinessRequirement,
   type MockUser,
   type ProcessPreview,
@@ -59,7 +61,7 @@ export class WorkflowService {
   async getSnapshot(sessionId: string, user: MockUser): Promise<WorkflowSnapshot> {
     const session = this.ownedSession(sessionId, user);
     const requirement = toRequirementRevision(session);
-    const process = this.database.getProcessBySession(sessionId);
+    const process = hasProcessPreview(session.state) ? this.database.getProcessBySession(sessionId) : undefined;
     const preview = process ? toProcessPreview(process) : undefined;
     const messages = await this.pi.getMessages(sessionId, this.callbacks(sessionId));
     return {
@@ -124,7 +126,8 @@ export class WorkflowService {
     const session = this.ownedSession(sessionId, user);
     this.expectVersion(session, rowVersion);
     this.expectState(session, ["REQUIREMENT_REVIEW"]);
-    const validation = validateRequirement(requirement);
+    const normalizedRequirement = applyRequirementDefaults(requirement);
+    const validation = validateRequirement(normalizedRequirement);
     if (!validation.structurallyValid) {
       throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_REQUIREMENT_SCHEMA_INVALID", "requirement schema is invalid", sessionId, {
         errors: validation.schemaErrors,
@@ -140,7 +143,7 @@ export class WorkflowService {
         last_error_code = NULL, last_error_message = NULL, updated_at = ?
       WHERE id = ? AND row_version = ?
     `).run(
-      revision, JSON.stringify(requirement), JSON.stringify(validation.missingItems),
+      revision, JSON.stringify(normalizedRequirement), JSON.stringify(validation.missingItems),
       JSON.stringify(validation.ambiguities), validation.readyForReview ? 1 : 0, now, sessionId, rowVersion,
     );
     this.publishSnapshot(sessionId, user);
@@ -206,6 +209,41 @@ export class WorkflowService {
         last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ? AND row_version = ?
     `).run(new Date().toISOString(), sessionId, rowVersion);
     await this.publishSnapshot(sessionId, user);
+    return this.getSnapshot(sessionId, user);
+  }
+
+  async resetSession(sessionId: string, user: MockUser, rowVersion: number): Promise<WorkflowSnapshot> {
+    const session = this.ownedSession(sessionId, user);
+    this.expectVersion(session, rowVersion);
+    this.expectState(session, resettableStates);
+
+    const previous = this.commandChains.get(sessionId) || Promise.resolve();
+    const reset = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const current = this.ownedSession(sessionId, user);
+        this.expectState(current, resettableStates);
+        const piSession = await this.pi.resetSession(sessionId, this.callbacks(sessionId));
+        const now = new Date().toISOString();
+        this.database.db.prepare(`
+          UPDATE agent_session SET
+            state = 'COLLECTING', row_version = row_version + 1,
+            requirement_json = NULL, requirement_missing_items_json = '[]',
+            requirement_ambiguities_json = '[]', requirement_ready_for_review = 0,
+            requirement_source = NULL, requirement_confirmed_at = NULL,
+            requirement_confirm_key = NULL, requirement_confirm_hash = NULL,
+            requirement_confirm_result_json = NULL,
+            pi_session_id = ?, pi_session_file = ?,
+            last_error_code = NULL, last_error_message = NULL, updated_at = ?
+          WHERE id = ?
+        `).run(piSession.piSessionId, piSession.sessionFile || null, now, sessionId);
+        await this.publishSnapshot(sessionId, user);
+      })
+      .finally(() => {
+        if (this.commandChains.get(sessionId) === reset) this.commandChains.delete(sessionId);
+      });
+    this.commandChains.set(sessionId, reset);
+    await reset;
     return this.getSnapshot(sessionId, user);
   }
 
@@ -308,8 +346,11 @@ export class WorkflowService {
   ): Promise<void> {
     const session = this.database.getSession(sessionId);
     if (!session || session.state !== "COLLECTING") return;
-    const validation = validateRequirement(requirement);
-    if (!validation.structurallyValid) throw new Error("Agent submitted a structurally invalid requirement");
+    const normalizedRequirement = applyRequirementDefaults(requirement);
+    const validation = validateRequirement(normalizedRequirement);
+    if (!validation.structurallyValid) {
+      throw new Error(`Agent submitted a structurally invalid requirement: ${formatSchemaErrors(validation.schemaErrors)}`);
+    }
     const mergedMissing = [...new Set([...missingItems, ...validation.missingItems])];
     const mergedAmbiguities = [...new Set([...ambiguities, ...validation.ambiguities])];
     if (!validation.readyForReview || mergedMissing.length || mergedAmbiguities.length) {
@@ -323,7 +364,7 @@ export class WorkflowService {
         requirement_ready_for_review = 1, requirement_source = 'AGENT',
         last_error_code = NULL, last_error_message = NULL, updated_at = ?
       WHERE id = ? AND state = 'COLLECTING'
-    `).run(JSON.stringify(requirement), now, sessionId);
+    `).run(JSON.stringify(normalizedRequirement), now, sessionId);
     this.events.publish(sessionId, { type: "requirement.ready", data: { revision: session.requirement_revision + 1 } });
     this.events.publish(sessionId, { type: "workflow.state_changed", data: { state: "REQUIREMENT_REVIEW" } });
   }
@@ -506,6 +547,16 @@ export class WorkflowService {
   }
 }
 
+function formatSchemaErrors(errors: Array<{ instancePath?: string; message?: string; params?: Record<string, unknown> }>): string {
+  return errors.slice(0, 12).map((error) => {
+    const missingProperty = typeof error.params?.missingProperty === "string"
+      ? `/${error.params.missingProperty}`
+      : "";
+    const path = `${error.instancePath || "requirement"}${missingProperty}`;
+    return `${path}: ${error.message || "schema validation failed"}`;
+  }).join("; ") || "schema validation failed";
+}
+
 function normalizeOptionalTarget(targetRoot?: string): string | undefined {
   if (!targetRoot?.trim()) return undefined;
   const value = targetRoot.trim();
@@ -531,6 +582,34 @@ function toRequirementRevision(session: SessionRow): RequirementRevision | undef
   };
 }
 
+/**
+ * Applies product defaults at both submission boundaries.  The prompt asks the
+ * model to emit these values, while this guard also covers older sessions and
+ * manual edits that omit optional node policies.
+ */
+function applyRequirementDefaults(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const requirement = { ...(input as Record<string, unknown>) };
+  if (typeof requirement.systemCode !== "string" || !requirement.systemCode.trim()) {
+    requirement.systemCode = DEFAULT_SYSTEM_CODE;
+  } else {
+    requirement.systemCode = requirement.systemCode.trim();
+  }
+  if (Array.isArray(requirement.nodes)) {
+    requirement.nodes = requirement.nodes.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+      const node = { ...(value as Record<string, unknown>) };
+      if (node.nodeType !== "USER_TASK") return node;
+      const defaults = createDefaultUserTaskConfigs();
+      if (!("listenerConfig" in node)) node.listenerConfig = defaults.listenerConfig;
+      if (!("timeoutConfig" in node)) node.timeoutConfig = defaults.timeoutConfig;
+      if (!("reminderConfig" in node)) node.reminderConfig = defaults.reminderConfig;
+      return node;
+    });
+  }
+  return requirement;
+}
+
 function toProcessPreview(process: ProcessRow): ProcessPreview | undefined {
   if (!process.platform_definition_id || !process.platform_snapshot_json) return undefined;
   const snapshot = parseJson<Record<string, any>>(process.platform_snapshot_json, {});
@@ -550,6 +629,19 @@ function toProcessPreview(process: ProcessRow): ProcessPreview | undefined {
   };
 }
 
+const resettableStates: WorkflowState[] = [
+  "COLLECTING",
+  "REQUIREMENT_REVIEW",
+  "PROCESS_PROVISION_FAILED",
+  "PROCESS_REVIEW",
+  "PROCESS_ACTIVATION_FAILED",
+  "PROCESS_ACTIVE",
+];
+
+function hasProcessPreview(state: WorkflowState): boolean {
+  return ["PROCESS_REVIEW", "PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE"].includes(state);
+}
+
 function allowedActions(state: WorkflowState, validationPassed: boolean): string[] {
   const mapping: Record<WorkflowState, string[]> = {
     COLLECTING: ["SEND_MESSAGE"],
@@ -561,7 +653,7 @@ function allowedActions(state: WorkflowState, validationPassed: boolean): string
     PROCESS_ACTIVATION_FAILED: ["RETRY_PROCESS"],
     PROCESS_ACTIVE: [],
   };
-  return mapping[state];
+  return resettableStates.includes(state) ? [...mapping[state], "RESET_SESSION"] : mapping[state];
 }
 
 function parseJson<T>(value: string | null, fallback: T): T {

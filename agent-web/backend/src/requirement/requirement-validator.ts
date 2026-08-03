@@ -99,6 +99,9 @@ function validateNode(
   if (node.nodeType === "USER_TASK") {
     if (!node.approverRule) missing.add(`用户任务 ${node.nodeName} 的审批人规则`);
     if (!node.multiInstanceMode) missing.add(`用户任务 ${node.nodeName} 的多人模式`);
+    validateRuntimeTaskPolicies(node, nodeByCode, ambiguities);
+  } else if (node.listenerConfig !== undefined || node.timeoutConfig !== undefined || node.reminderConfig !== undefined) {
+    ambiguities.add(`节点 ${node.nodeName} 的运行时配置仅支持 USER_TASK`);
   }
   if (node.nodeType.startsWith("PARALLEL_")) {
     if (!node.pairedGatewayCode) {
@@ -107,6 +110,46 @@ function validateNode(
       ambiguities.add(`并行网关 ${node.nodeName} 的配对节点不存在`);
     }
   }
+}
+
+function validateRuntimeTaskPolicies(
+  node: ProcessNodeRequirement,
+  nodeByCode: Map<string, ProcessNodeRequirement>,
+  ambiguities: Set<string>,
+): void {
+  const rules = record(node.listenerConfig?.taskActionRules);
+  const reject = record(rules?.reject);
+  if (reject?.enabled === true) {
+    if (!Array.isArray(reject.targetNodeCodes) || reject.targetNodeCodes.length === 0) {
+      ambiguities.add(`节点 ${node.nodeName} 启用驳回时必须配置目标节点`);
+    } else {
+      for (const targetNodeCode of reject.targetNodeCodes) {
+        const target = typeof targetNodeCode === "string" ? nodeByCode.get(targetNodeCode) : undefined;
+        if (!target || target.nodeType !== "USER_TASK") {
+          ambiguities.add(`节点 ${node.nodeName} 的驳回目标必须是已存在的用户任务`);
+        }
+      }
+    }
+  }
+  const directSend = record(rules?.directSend);
+  if (directSend?.enabled === true && directSend.targetMode !== "REJECT_SOURCE") {
+    ambiguities.add(`节点 ${node.nodeName} 的直送目标模式仅支持 REJECT_SOURCE`);
+  }
+  const timeout = node.timeoutConfig;
+  if (timeout?.enabled === true
+    && (!Number.isInteger(timeout.durationMinutes) || Number(timeout.durationMinutes) < 0)) {
+    ambiguities.add(`节点 ${node.nodeName} 的超时时长必须是非负整数分钟`);
+  }
+  const reminder = node.reminderConfig;
+  if (reminder?.maxCount !== undefined
+    && (!Number.isInteger(reminder.maxCount) || Number(reminder.maxCount) < 0)) {
+    ambiguities.add(`节点 ${node.nodeName} 的提醒次数必须是非负整数`);
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
 }
 
 function validateReachability(

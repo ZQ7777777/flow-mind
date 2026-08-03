@@ -56,4 +56,28 @@ describe("workflow SSE lifecycle", () => {
     expect(mocks.streamEvents).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
   });
+
+  it("resets the current session and reconnects using the cleared snapshot", async () => {
+    mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path === "/api/agent/mock-users") return [user];
+      if (path === "/api/agent/sessions") return snapshot;
+      if (path === "/api/agent/sessions/ags_1/reset") {
+        return { ...snapshot, rowVersion: 1, messages: [], requirement: undefined, processPreview: undefined };
+      }
+      return snapshot;
+    });
+    const store = useWorkflowStore();
+    await store.initialize();
+    await store.createSession();
+    await store.resetSession();
+
+    expect(mocks.apiRequest).toHaveBeenCalledWith(
+      "/api/agent/sessions/ags_1/reset",
+      user,
+      expect.objectContaining({ method: "POST", rowVersion: 0 }),
+    );
+    expect(store.snapshot?.rowVersion).toBe(1);
+    expect(store.snapshot?.messages).toEqual([]);
+  });
 });

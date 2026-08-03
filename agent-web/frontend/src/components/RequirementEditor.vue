@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { reactive, watch } from "vue";
-import type { BusinessRequirement, RequirementRevision } from "@flowmind/agent-contracts";
+import {
+  createDefaultUserTaskConfigs,
+  type BusinessRequirement,
+  type RequirementRevision,
+} from "@flowmind/agent-contracts";
 
 const props = defineProps<{ revision: RequirementRevision; disabled?: boolean }>();
 const emit = defineEmits<{ save: [requirement: BusinessRequirement] }>();
@@ -57,6 +61,7 @@ function addNode(): void {
     nodeType: "USER_TASK",
     approverRule: { type: "ROLE", config: {} },
     multiInstanceMode: "SINGLE",
+    ...createDefaultUserTaskConfigs(),
     positionX: 120 + draft.nodes.length * 180,
     positionY: 120,
     sortOrder: draft.nodes.length + 1,
@@ -141,28 +146,30 @@ function parseRecord(text: string): Record<string, unknown> {
     </section>
 
     <section class="editor-section">
-      <div class="section-title"><h3>表单字段</h3><el-button size="small" :disabled="disabled" @click="addField">添加字段</el-button></div>
-      <div v-for="(field, index) in draft.formFields" :key="index" class="card-row">
-        <div class="edit-row four">
-          <el-input v-model="field.fieldCode" placeholder="字段编码" :disabled="disabled" />
-          <el-input v-model="field.fieldName" placeholder="字段名称" :disabled="disabled" />
-          <el-select v-model="field.fieldType" :disabled="disabled">
-            <el-option v-for="type in ['string','number','date','boolean','select']" :key="type" :value="type" />
-          </el-select>
-          <el-select v-model="field.controlType" :disabled="disabled">
-            <el-option v-for="type in ['input','textarea','number','datePicker','checkbox','select']" :key="type" :value="type" />
-          </el-select>
-        </div>
-        <div class="edit-row four compact">
-          <el-checkbox v-model="field.required" :disabled="disabled">必填</el-checkbox>
-          <el-input v-model="field.defaultValue" placeholder="默认值" :disabled="disabled" />
-          <el-input
-            :model-value="jsonText(field.validation)"
-            placeholder="校验 JSON"
-            :disabled="disabled"
-            @change="field.validation = parseRecord($event)"
-          />
-          <el-button link type="danger" :disabled="disabled" @click="draft.formFields.splice(index, 1)">删除</el-button>
+      <div class="section-title"><h3>表单字段（{{ draft.formFields.length }}）</h3><el-button size="small" :disabled="disabled" @click="addField">添加字段</el-button></div>
+      <div class="form-fields-scroll" tabindex="0" aria-label="全部表单字段">
+        <div v-for="(field, index) in draft.formFields" :key="index" class="card-row">
+          <div class="edit-row four">
+            <el-input v-model="field.fieldCode" placeholder="字段编码" :disabled="disabled" />
+            <el-input v-model="field.fieldName" placeholder="字段名称" :disabled="disabled" />
+            <el-select v-model="field.fieldType" :disabled="disabled">
+              <el-option v-for="type in ['string','number','date','boolean','select']" :key="type" :value="type" />
+            </el-select>
+            <el-select v-model="field.controlType" :disabled="disabled">
+              <el-option v-for="type in ['input','textarea','number','datePicker','checkbox','select']" :key="type" :value="type" />
+            </el-select>
+          </div>
+          <div class="edit-row four compact">
+            <el-checkbox v-model="field.required" :disabled="disabled">必填</el-checkbox>
+            <el-input v-model="field.defaultValue" placeholder="默认值" :disabled="disabled" />
+            <el-input
+              :model-value="jsonText(field.validation)"
+              placeholder="校验 JSON"
+              :disabled="disabled"
+              @change="field.validation = parseRecord($event)"
+            />
+            <el-button link type="danger" :disabled="disabled" @click="draft.formFields.splice(index, 1)">删除</el-button>
+          </div>
         </div>
       </div>
     </section>
@@ -222,6 +229,32 @@ function parseRecord(text: string): Record<string, unknown> {
           </el-select>
           <el-input v-model="node.pairedGatewayCode" placeholder="配对网关" :disabled="disabled" />
           <el-button link type="danger" :disabled="disabled" @click="draft.nodes.splice(index, 1)">删除</el-button>
+        </div>
+        <div v-if="node.nodeType === 'USER_TASK'" class="node-runtime-config">
+          <el-input
+            :model-value="jsonText(node.listenerConfig || {})"
+            type="textarea"
+            :rows="3"
+            placeholder="listenerConfig JSON"
+            :disabled="disabled"
+            @change="node.listenerConfig = parseRecord($event)"
+          />
+          <el-input
+            :model-value="jsonText(node.timeoutConfig || {})"
+            type="textarea"
+            :rows="3"
+            placeholder="timeoutConfig JSON"
+            :disabled="disabled"
+            @change="node.timeoutConfig = parseRecord($event)"
+          />
+          <el-input
+            :model-value="jsonText(node.reminderConfig || {})"
+            type="textarea"
+            :rows="3"
+            placeholder="reminderConfig JSON"
+            :disabled="disabled"
+            @change="node.reminderConfig = parseRecord($event)"
+          />
         </div>
       </div>
     </section>
