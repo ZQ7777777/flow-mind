@@ -1,0 +1,25 @@
+{
+  "name": "flow-mind-agent-web",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "npm run build -w @flowmind/agent-contracts && npm run build -w @flowmind/agent-frontend && npm run build -w @flowmind/agent-backend",
+    "dev": "npm run dev -w @flowmind/agent-backend",
+    "dev:backend": "npm run dev -w @flowmind/agent-backend",
+    "dev:frontend": "npm run dev -w @flowmind/agent-frontend",
+    "test": "npm run build -w @flowmind/agent-contracts && npm run test -w @flowmind/agent-backend && npm run test -w @flowmind/agent-frontend",
+    "test:e2e": "playwright test",
+    "typecheck": "npm run build -w @flowmind/agent-contracts && npm run typecheck -w @flowmind/agent-backend && npm run typecheck -w @flowmind/agent-frontend"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.0"
+  }
+}
