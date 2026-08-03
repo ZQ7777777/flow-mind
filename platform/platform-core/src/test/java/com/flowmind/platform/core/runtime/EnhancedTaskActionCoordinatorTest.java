@@ -374,6 +374,54 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void orSignRejectCancelsGroupAndOpenSiblingsBeforeRecreatingTarget() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("group-1");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-or-sign-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        ProcessNodeDTO manager = userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
+        manager.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
+        fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("OR_SIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{}");
+        ProcessActiveTaskEntity sibling = task();
+        sibling.setId("task-2");
+        sibling.setTaskGroupId("group-1");
+        sibling.setLockVersion(Long.valueOf(1));
+        when(fixture.groups.findById("group-1")).thenReturn(group);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("group-1", 2L)).thenReturn(1);
+        when(fixture.tasks.findOpenByTaskGroupId("group-1"))
+                .thenReturn(java.util.Collections.singletonList(sibling));
+        when(fixture.tasks.cancel("task-2", 1L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("rejected", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"),
+                history("canceled", "user-a", "manager", ActionTypeEnum.CANCEL.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("rejected"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertEquals(2, result.getArchivedTasks().size());
+        verify(fixture.groups).cancel("group-1", 2L);
+        verify(fixture.tasks).cancel("task-2", 1L);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null));
+    }
+
+    @Test
     void countersignRejectInsideParallelBranchIsRejectedBeforeTaskMutation() {
         Fixture fixture = fixture(ActionTypeEnum.REJECT);
         fixture.task.setTaskGroupId("group-1");

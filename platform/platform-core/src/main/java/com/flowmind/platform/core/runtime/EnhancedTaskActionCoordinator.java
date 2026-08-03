@@ -149,12 +149,12 @@ public class EnhancedTaskActionCoordinator {
                 if (currentParallel != null) {
                     return rejectFromParallel(context, currentParallel, targetParallel, request);
                 }
+                ProcessTaskGroupEntity rejectGroup = definitionRejectGroup(context);
+                if (rejectGroup != null) {
+                    return rejectGroupedMultiInstance(context, rejectGroup, targetParallel, request);
+                }
                 if (targetParallel != null) {
                     return rejectIntoParallel(context, targetParallel, request);
-                }
-                ProcessTaskGroupEntity countersignGroup = definitionCountersignGroup(context);
-                if (countersignGroup != null) {
-                    return rejectCountersign(context, countersignGroup, request);
                 }
                 requireSerial(context.task);
                 return rejectSerial(context, request);
@@ -270,26 +270,36 @@ public class EnhancedTaskActionCoordinator {
                 advance.getCreatedTasks(), Collections.<TaskDTO>emptyList(), WorkflowEventTypeEnum.PROCESS_REJECTED);
     }
 
-    private TaskActionResult rejectCountersign(EnhancedActionContext context,
-                                               ProcessTaskGroupEntity group,
-                                               RejectTaskRequest request) {
+    private TaskActionResult rejectGroupedMultiInstance(EnhancedActionContext context,
+                                                        ProcessTaskGroupEntity group,
+                                                        ParallelTargetContext targetParallel,
+                                                        RejectTaskRequest request) {
         if (!isBlank(group.getParentGroupId()) || !isBlank(group.getParentBranchKey())
                 || !isBlank(context.task.getBranchKey())) {
             throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
-                    "countersign reject does not support an outer parallel branch");
+                    "grouped reject does not support an outer parallel branch");
         }
         if (!"ACTIVE".equals(group.getGroupStatus()) || group.getLockVersion() == null) {
             throw state(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED,
-                    "countersign task group is no longer active");
+                    "task group is no longer active");
         }
+        String effectiveTargetNodeCode = targetParallel == null ? request.getTargetNodeCode()
+                : targetParallel.splitNodeCode;
         RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(context.instance, context.definition,
-                request.getTargetNodeCode(), null, null);
+                effectiveTargetNodeCode, null, null);
         complete(context.task, request);
-        Map<String, Object> rejectMetadata = metadata(context, request.getTargetNodeCode());
+        Map<String, Object> rejectMetadata = rejectMetadata(context, request.getTargetNodeCode(),
+                effectiveTargetNodeCode, targetParallel == null ? "GROUP" : "GROUP_ENTER_PARALLEL");
+        rejectMetadata.put("groupId", group.getId());
+        rejectMetadata.put("groupType", group.getGroupType());
+        if (targetParallel != null) {
+            rejectMetadata.put("targetParallelJoinNodeCode", targetParallel.joinNodeCode);
+            rejectMetadata.put("targetParallelBranchKey", targetParallel.branchKey);
+        }
         ProcessHistoryTaskEntity rejected = archive(context, ActionTypeEnum.REJECT, request, rejectMetadata);
         if (taskGroupRepository.cancel(group.getId(), group.getLockVersion().longValue()) != 1) {
             throw state(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED,
-                    "countersign task group was modified while rejecting");
+                    "task group was modified while rejecting");
         }
 
         List<ProcessHistoryTaskEntity> archived = new ArrayList<ProcessHistoryTaskEntity>();
@@ -297,23 +307,20 @@ public class EnhancedTaskActionCoordinator {
         for (ProcessActiveTaskEntity sibling : activeTaskRepository.findOpenByTaskGroupId(group.getId())) {
             if (activeTaskRepository.cancel(sibling.getId(), sibling.getLockVersion().longValue()) != 1) {
                 throw state(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
-                        "a countersign sibling task was modified while rejecting");
+                        "a grouped sibling task was modified while rejecting");
             }
             EnhancedActionContext siblingContext = new EnhancedActionContext(context.instance, sibling,
                     context.definition, context.operator);
             Map<String, Object> cancelMetadata = metadata(siblingContext, request.getTargetNodeCode());
-            cancelMetadata.put("countersignRejectTaskId", context.task.getId());
+            cancelMetadata.put("groupRejectTaskId", context.task.getId());
+            cancelMetadata.put("groupRejectType", group.getGroupType());
             archived.add(archive(siblingContext, ActionTypeEnum.CANCEL, request, cancelMetadata));
         }
 
         RuntimeAdvanceResult advance = nodeAdvancer.advanceToNode(context.instance, context.definition,
-                request.getTargetNodeCode(), null, null, preparation);
+                effectiveTargetNodeCode, null, null, preparation);
         rejectMetadata.put("createdTaskIds", taskIds(advance.getCreatedTasks()));
-        rejected.setExtraJson(RuntimeJsonCodec.toJson(rejectMetadata));
-        if (historyRepository.updateExtraJson(rejected.getId(), rejected.getExtraJson()) != 1) {
-            throw state(RuntimeErrorCodes.HISTORY_ARCHIVE_INVALID,
-                    "countersign reject history relation cannot be persisted");
-        }
+        updateHistoryMetadata(rejected, rejectMetadata, "grouped reject history relation cannot be persisted");
         return result(context, request, ActionTypeEnum.REJECT, archived, advance.getCreatedTasks(),
                 Collections.<TaskDTO>emptyList(), WorkflowEventTypeEnum.PROCESS_REJECTED);
     }
@@ -1078,16 +1085,19 @@ public class EnhancedTaskActionCoordinator {
         return false;
     }
 
-    private ProcessTaskGroupEntity definitionCountersignGroup(EnhancedActionContext context) {
+    private ProcessTaskGroupEntity definitionRejectGroup(EnhancedActionContext context) {
         if (isBlank(context.task.getTaskGroupId())) {
             return null;
         }
         ProcessTaskGroupEntity group = taskGroupRepository.findById(context.task.getTaskGroupId());
         ProcessNodeDTO node = requireUserTask(context.definition, context.task.getNodeCode());
+        boolean countersign = group != null && TaskGroupTypeEnum.COUNTERSIGN.name().equals(group.getGroupType())
+                && MultiInstanceModeEnum.COUNTERSIGN.equals(node.getMultiInstanceMode());
+        boolean orSign = group != null && TaskGroupTypeEnum.OR_SIGN.name().equals(group.getGroupType())
+                && MultiInstanceModeEnum.OR_SIGN.equals(node.getMultiInstanceMode());
         if (group == null
-                || !TaskGroupTypeEnum.COUNTERSIGN.name().equals(group.getGroupType())
+                || (!countersign && !orSign)
                 || isAddSignGroup(group)
-                || !MultiInstanceModeEnum.COUNTERSIGN.equals(node.getMultiInstanceMode())
                 || !context.instance.getId().equals(group.getInstanceId())
                 || !context.task.getNodeCode().equals(group.getNodeCode())) {
             throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
