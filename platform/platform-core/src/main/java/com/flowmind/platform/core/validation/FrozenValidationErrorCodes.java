@@ -58,6 +58,9 @@ public final class FrozenValidationErrorCodes {
     /** listenerConfig 根配置、监听器或 taskActionRules 不符合发布冻结要求。 */
     public static final String MODEL_TASK_ACTION_RULE_INVALID =
             "FLOW_FROZEN_MODEL_TASK_ACTION_RULE_INVALID";
+    /** timeoutConfig/reminderConfig 不符合发布冻结要求。 */
+    public static final String MODEL_TIMEOUT_CONFIGURATION_INVALID =
+            "FLOW_FROZEN_MODEL_TIMEOUT_CONFIGURATION_INVALID";
     /** 排他网关的出线数量或条件配置不符合要求。 */
     public static final String MODEL_EXCLUSIVE_GATEWAY_TOPOLOGY_INVALID =
             "FLOW_FROZEN_MODEL_EXCLUSIVE_GATEWAY_TOPOLOGY_INVALID";

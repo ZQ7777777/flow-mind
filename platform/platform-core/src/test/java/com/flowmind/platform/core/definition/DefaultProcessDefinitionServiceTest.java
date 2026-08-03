@@ -219,6 +219,10 @@ class DefaultProcessDefinitionServiceTest {
         request.getNodes().get(1).setListenerConfig("{\"taskActionRules\":{\"reject\":{\"enabled\":true,"
                 + "\"targetNodeCodes\":[\"review\"]},\"directSend\":{\"enabled\":true,"
                 + "\"targetMode\":\"REJECT_SOURCE\"}}}");
+        request.getNodes().get(1).setTimeoutConfig("{\"enabled\":true,\"durationMinutes\":15,"
+                + "\"action\":\"ALERT\",\"severity\":\"HIGH\"}");
+        request.getNodes().get(1).setReminderConfig("{\"enabled\":true,\"maxCount\":2,"
+                + "\"messageTemplate\":\"任务已超时，请尽快处理\"}");
         request.getEdges().get(0).setConditionExpression("amount > 0");
 
         saveGraph(created.getId(), request);
@@ -226,6 +230,8 @@ class DefaultProcessDefinitionServiceTest {
 
         assertEquals(MultiInstanceModeEnum.COUNTERSIGN, detail.getNodes().get(1).getMultiInstanceMode());
         assertEquals(request.getNodes().get(1).getListenerConfig(), detail.getNodes().get(1).getListenerConfig());
+        assertEquals(request.getNodes().get(1).getTimeoutConfig(), detail.getNodes().get(1).getTimeoutConfig());
+        assertEquals(request.getNodes().get(1).getReminderConfig(), detail.getNodes().get(1).getReminderConfig());
         assertEquals("amount > 0", detail.getEdges().get(0).getConditionExpression());
     }
 

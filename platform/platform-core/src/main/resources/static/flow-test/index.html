@@ -1,4 +1,4 @@
-﻿<!doctype html>
+﻿﻿<!doctype html>
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
@@ -297,7 +297,7 @@
                             <h3>实例列表</h3>
                             <button type="button" @click="queryInstances">刷新</button>
                         </div>
-                        <div class="table-wrap">
+                        <div class="table-wrap instance-list-wrap" @scroll.passive="handleInstanceListScroll">
                             <table>
                                 <thead>
                                 <tr>
@@ -310,7 +310,7 @@
                                 </tr>
                                 </thead>
                                 <tbody>
-                                <tr v-if="instanceRows.length === 0">
+                                <tr v-if="instanceRows.length === 0 && !instanceLoading">
                                     <td colspan="6" class="empty-cell">暂无实例</td>
                                 </tr>
                                 <tr v-for="row in instanceRows" :key="row.instanceId || row.id" @click="selectInstance(row)">
@@ -335,6 +335,16 @@
                                         </div>
                                     </td>
                                     <td>{{ row.instanceStatus || '-' }}</td>
+                                </tr>
+                                <tr v-if="instanceLoading">
+                                    <td colspan="6" class="instance-list-status">加载中...</td>
+                                </tr>
+                                <tr v-else-if="instanceRows.length > 0">
+                                    <td colspan="6" class="instance-list-status">
+                                        {{ instanceRows.length }} / {{ instanceTotal }}
+                                        <span v-if="instanceHasMore">继续下滑加载</span>
+                                        <span v-else>已加载全部</span>
+                                    </td>
                                 </tr>
                                 </tbody>
                             </table>
@@ -495,7 +505,7 @@
                         </tr>
                         </thead>
                         <tbody>
-                        <tr v-if="completedRows.length === 0">
+                        <tr v-if="completedRows.length === 0 && !completedLoading">
                             <td colspan="7" class="empty-cell">暂无已办</td>
                         </tr>
                         <tr v-for="row in completedRows" :key="row.historyTaskId || row.id">
@@ -507,8 +517,19 @@
                             <td>{{ row.completedAt || row.finishedAt || '-' }}</td>
                             <td><button type="button" @click="openCompletedTaskDialog(row)">查看详情</button></td>
                         </tr>
+                        <tr v-if="completedLoading">
+                            <td colspan="7" class="empty-cell">加载中...</td>
+                        </tr>
                         </tbody>
                     </table>
+                </div>
+                <div class="query-dialog-footer completed-pagination">
+                    <button type="button" :disabled="completedPageNo <= 1 || completedLoading" @click="changeCompletedPage(-1)">上一页</button>
+                    <label class="query-page-size">页码 <input v-model.number="completedPageNo" type="number" min="1" :max="completedTotalPages" @change="queryCompletedTasks"></label>
+                    <span>第 {{ completedPageNo }} / {{ completedTotalPages }} 页，共 {{ completedTotal }} 条</span>
+                    <label class="query-page-size">每页 <input v-model.number="completedPageSize" type="number" min="1" max="100" @change="completedPageNo = 1; queryCompletedTasks()"></label>
+                    <button type="button" :disabled="completedPageNo >= completedTotalPages || completedLoading" @click="changeCompletedPage(1)">下一页</button>
+                    <button type="button" :disabled="completedLoading" @click="queryCompletedTasks">刷新</button>
                 </div>
             </section>
 
@@ -1177,4 +1198,3 @@
 <script src="flow-test-app.js"></script>
 </body>
 </html>
-

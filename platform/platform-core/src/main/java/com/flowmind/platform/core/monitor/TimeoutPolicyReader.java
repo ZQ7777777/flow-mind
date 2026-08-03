@@ -57,10 +57,8 @@ public class TimeoutPolicyReader {
         }
         Object action = config.get("action");
         if (action != null) {
-            String value = String.valueOf(action).trim().toUpperCase(Locale.ROOT);
-            if (!TimeoutPolicy.ACTION_ALERT.equals(value) && !TimeoutPolicy.ACTION_REMIND.equals(value)
-                    && !TimeoutPolicy.ACTION_JUMP.equals(value) && !TimeoutPolicy.ACTION_TERMINATE.equals(value)
-                    && !TimeoutPolicy.ACTION_FORCE_COMPLETE.equals(value)) {
+            String value = normalizeAction(action);
+            if (!isSupportedAction(value)) {
                 throw new RuntimeValidationException(RuntimeErrorCodes.NODE_CONFIG_INVALID,
                         "unknown timeout action");
             }
@@ -76,6 +74,28 @@ public class TimeoutPolicyReader {
                     "timeout action JUMP requires targetNodeCode");
         }
         return policy;
+    }
+
+    public String normalizeAction(Object action) {
+        String value = String.valueOf(action).trim().toUpperCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        if ("WARNING".equals(value) || "WARN".equals(value)) {
+            return TimeoutPolicy.ACTION_ALERT;
+        }
+        if ("FORCE_COMPETE".equals(value) || "FROCE_COMPETE".equals(value)
+                || "FORCE_COMPELETE".equals(value) || "FORCE_COMPLETED".equals(value)) {
+            return TimeoutPolicy.ACTION_FORCE_COMPLETE;
+        }
+        return value;
+    }
+
+    public boolean isSupportedAction(String value) {
+        return TimeoutPolicy.ACTION_ALERT.equals(value)
+                || TimeoutPolicy.ACTION_REMIND.equals(value)
+                || TimeoutPolicy.ACTION_JUMP.equals(value)
+                || TimeoutPolicy.ACTION_TERMINATE.equals(value)
+                || TimeoutPolicy.ACTION_FORCE_COMPLETE.equals(value);
     }
 
     private Integer integerValue(Object value, String fieldName) {

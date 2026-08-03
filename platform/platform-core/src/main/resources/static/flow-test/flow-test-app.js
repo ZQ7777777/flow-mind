@@ -80,6 +80,8 @@
         }
     };
 
+    var BACKEND_DEFAULT_PAGE_SIZE = 5;
+
     var FLOW_TEST_USERS = [
         {userId: "u_sales_01", userName: "业务员", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", roleCodes: ["sales"]},
         {userId: "u_group_leader_01", userName: "组长", role: "TEST_OPERATOR", deptId: "dept_sales", departmentId: "dept_sales", deptName: "销售部", roleCodes: ["group"]},
@@ -383,7 +385,7 @@
             timeoutEnabled: timeout.enabled === true,
             timeoutDurationMinutes: timeout.durationMinutes === undefined || timeout.durationMinutes === null
                 ? 0 : Number(timeout.durationMinutes),
-            timeoutAction: timeout.action || "REMIND",
+            timeoutAction: normalizeTimeoutAction(timeout.action),
             timeoutSeverity: timeout.severity || "MEDIUM",
             timeoutTargetNodeCode: timeout.targetNodeCode || "",
             reminderEnabled: reminder.enabled === true,
@@ -392,6 +394,18 @@
             reminderMessageTemplate: reminder.messageTemplate || "任务已超时，请尽快处理",
             timeoutConfigError: timeoutParsed.error || reminderParsed.error
         };
+    }
+
+    function normalizeTimeoutAction(value) {
+        var action = hasText(value) ? String(value).trim().toUpperCase().replace(/[\s-]+/g, "_") : "REMIND";
+        if (action === "WARNING" || action === "WARN") {
+            return "ALERT";
+        }
+        if (action === "FORCE_COMPETE" || action === "FROCE_COMPETE" || action === "FORCE_COMPELETE"
+                || action === "FORCE_COMPLETED") {
+            return "FORCE_COMPLETE";
+        }
+        return action;
     }
 
     function applyTimeoutReminderEditor(node) {
@@ -673,6 +687,10 @@
                 instanceVariableValues: {},
                 instanceAttachments: [],
                 instanceRows: [],
+                instancePageNo: 1,
+                instancePageSize: BACKEND_DEFAULT_PAGE_SIZE,
+                instanceTotal: 0,
+                instanceLoading: false,
                 selectedInstanceDetail: null,
                 readRecordRows: [],
                 historyTaskRows: [],
@@ -693,14 +711,18 @@
                 todoScope: "own",
                 todoReminderStatusByTaskId: {},
                 completedRows: [],
+                completedPageNo: 1,
+                completedPageSize: BACKEND_DEFAULT_PAGE_SIZE,
+                completedTotal: 0,
+                completedLoading: false,
                 startSubmitting: false,
-                lastStartedInstanceId: "",
                 taskDialog: {
                     open: false,
                     task: {},
                     variablesText: "{}",
                     comment: "",
                     attachments: [],
+                    historyTasks: [],
                     starterTask: false,
                     directSendContext: {allowed: false},
                     rejectTargetNodeCode: "",
@@ -801,6 +823,9 @@
             canAdminOperateSelectedInstance: function () {
                 return this.isTestAdmin && !!extractInstanceId(this.selectedInstanceDetail);
             },
+            instanceHasMore: function () {
+                return this.instanceRows.length < this.instanceTotal;
+            },
             selectedGraphNodes: function () {
                 var detail = this.selectedDefinitionDetail || {};
                 return (detail.nodes || []).map(normalizeNode);
@@ -876,6 +901,11 @@
             queryDialogTotalPages: function () {
                 var pageSize = Math.max(1, Number(this.instanceQueryDialog.pageSize) || 20);
                 var total = Math.max(0, Number(this.instanceQueryDialog.total) || 0);
+                return Math.max(1, Math.ceil(total / pageSize));
+            },
+            completedTotalPages: function () {
+                var pageSize = Math.max(1, Number(this.completedPageSize) || BACKEND_DEFAULT_PAGE_SIZE);
+                var total = Math.max(0, Number(this.completedTotal) || 0);
                 return Math.max(1, Math.ceil(total / pageSize));
             },
             filteredTodoRows: function () {
@@ -1595,7 +1625,6 @@
                 try {
                     var startBody = this.buildStartSubmitBody();
                     this.sendRequest("启动流程", "POST", API_PATHS.startAndSubmit, startBody).then(function (instance) {
-                        this.lastStartedInstanceId = extractInstanceId(instance) || "";
                         return this.autoClaimSpecifiedUserTasks(instance).then(function (claimedCount) {
                             return Promise.all([
                                 this.queryInstances(),
@@ -1755,10 +1784,7 @@
                     this.setOperationState("error", "查询全部实例失败", "仅测试管理员可以查询全部实例");
                     return Promise.resolve([]);
                 }
-                return this.sendRequest("查询全部实例", "GET", API_PATHS.adminInstances + toQuery({pageNo: 1, pageSize: 50})).then(function (payload) {
-                    this.instanceRows = normalizeList(payload);
-                    return payload;
-                }.bind(this));
+                return this.loadInstancePage(1, false);
             },
             autoClaimSpecifiedUserTasks: function (instance) {
                 var tasks = normalizeList(instance && (instance.createdTasks || instance.tasks));
@@ -1823,17 +1849,72 @@
                 }.bind(this));
             },
             queryInstances: function () {
-                if (this.isTestAdmin) {
-                    return this.queryAdminInstances();
+                return this.loadInstancePage(1, false);
+            },
+            loadInstancePage: function (pageNo, append) {
+                if (this.instanceLoading) {
+                    return Promise.resolve([]);
                 }
-                return this.sendRequest("查询实例", "GET", API_PATHS.startedInstances + toQuery({
-                    starterUserId: this.currentUserId,
-                    pageNo: 1,
-                    pageSize: 50
-                })).then(function (payload) {
-                    this.instanceRows = normalizeList(payload);
+                var nextPageNo = Math.max(1, Number(pageNo) || 1);
+                this.instanceLoading = true;
+                return this.sendRequest(this.isTestAdmin ? "查询全部实例" : "查询实例", "GET",
+                    this.buildInstanceListPath(nextPageNo)).then(function (payload) {
+                    var rows = normalizeList(payload);
+                    this.instanceRows = append ? this.mergeInstanceRows(this.instanceRows, rows) : rows;
+                    this.instancePageNo = nextPageNo;
+                    this.instanceTotal = extractTotalCount(payload, this.instanceRows.length);
+                    this.instanceLoading = false;
                     return payload;
+                }.bind(this)).catch(function (error) {
+                    this.instanceLoading = false;
+                    throw error;
                 }.bind(this));
+            },
+            buildInstanceListPath: function (pageNo) {
+                var paging = {
+                    pageNo: pageNo,
+                    pageSize: this.instancePageSize
+                };
+                if (this.isTestAdmin) {
+                    return API_PATHS.adminInstances + toQuery(paging);
+                }
+                return API_PATHS.startedInstances + toQuery(Object.assign({
+                    starterUserId: this.currentUserId
+                }, paging));
+            },
+            canLoadMoreInstances: function () {
+                return !this.instanceLoading && this.instanceRows.length < this.instanceTotal;
+            },
+            loadMoreInstances: function () {
+                if (!this.canLoadMoreInstances()) {
+                    return Promise.resolve([]);
+                }
+                return this.loadInstancePage(this.instancePageNo + 1, true);
+            },
+            handleInstanceListScroll: function (event) {
+                var target = event && event.target;
+                if (!target) {
+                    return;
+                }
+                var distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+                if (distanceToBottom <= 24) {
+                    this.loadMoreInstances().catch(function () {});
+                }
+            },
+            mergeInstanceRows: function (existingRows, nextRows) {
+                var seen = {};
+                var merged = [];
+                normalizeList(existingRows).concat(normalizeList(nextRows)).forEach(function (row) {
+                    var key = extractInstanceId(row);
+                    if (hasText(key)) {
+                        if (seen[key]) {
+                            return;
+                        }
+                        seen[key] = true;
+                    }
+                    merged.push(row);
+                });
+                return merged;
             },
             markSelectedInstanceRead: function (instanceId) {
                 return this.sendRequest("记录已阅", "POST", API_PATHS.markRead(instanceId), {});
@@ -2101,7 +2182,7 @@
                     pageSize: 50
                 })).then(function (payload) {
                     this.todoReminderStatusByTaskId = {};
-                    this.todoRows = this.focusCurrentStartedTodos(normalizeList(payload));
+                    this.todoRows = this.sortTodoRows(normalizeList(payload));
                     return this.recordTodoRowsRead(this.todoRows).then(function () {
                         return this.enrichTodoReminders(this.todoRows);
                     }.bind(this)).then(function () {
@@ -2138,18 +2219,6 @@
                 return Promise.all(instanceIds.map(function (instanceId) {
                     return this.recordSelectedInstanceRead(instanceId);
                 }, this));
-            },
-            focusCurrentStartedTodos: function (rows) {
-                var normalized = this.sortTodoRows(rows.slice());
-                if (hasText(this.lastStartedInstanceId)) {
-                    var focused = normalized.filter(function (row) {
-                        return row.instanceId === this.lastStartedInstanceId;
-                    }, this);
-                    if (focused.length > 0) {
-                        return this.sortTodoRows(focused);
-                    }
-                }
-                return normalized;
             },
             sortTodoRows: function (rows) {
                 return rows.sort(function (left, right) {
@@ -2238,14 +2307,32 @@
                 return failed ? "提醒失败" : "已提醒";
             },
             queryCompletedTasks: function () {
+                this.completedPageNo = Math.max(1, Number(this.completedPageNo) || 1);
+                this.completedPageSize = Math.min(100, Math.max(1, Number(this.completedPageSize) || BACKEND_DEFAULT_PAGE_SIZE));
+                this.completedLoading = true;
                 return this.sendRequest("查询已办", "GET", API_PATHS.completedTasks + toQuery({
                     userId: this.currentUserId,
-                    pageNo: 1,
-                    pageSize: 50
+                    pageNo: this.completedPageNo,
+                    pageSize: this.completedPageSize
                 })).then(function (payload) {
-                    this.completedRows = normalizeList(payload);
+                    var rows = normalizeList(payload);
+                    this.completedRows = rows;
+                    this.completedTotal = extractTotalCount(payload, rows.length);
+                    this.completedLoading = false;
                     return payload;
+                }.bind(this)).catch(function (error) {
+                    this.completedLoading = false;
+                    throw error;
                 }.bind(this));
+            },
+            changeCompletedPage: function (delta) {
+                var current = Math.max(1, Number(this.completedPageNo) || 1);
+                var next = Math.max(1, Math.min(this.completedTotalPages, current + delta));
+                if (next === current && delta !== 0) {
+                    return Promise.resolve([]);
+                }
+                this.completedPageNo = next;
+                return this.queryCompletedTasks();
             },
             openTodoTaskDialog: function (row) {
                 this.taskDialog = {
@@ -2254,6 +2341,7 @@
                     variablesText: "{}",
                     comment: "",
                     attachments: [],
+                    historyTasks: [],
                     starterTask: false,
                     directSendContext: {allowed: false},
                     rejectTargetNodeCode: "",
@@ -2313,6 +2401,7 @@
                     this.taskDialog.attachments = normalizeList(results[1]).map(function (attachment) {
                         return Object.assign({}, attachment, {pendingReplacement: null});
                     });
+                    this.taskDialog.historyTasks = normalizeList(instance.historyTasks);
                     this.taskDialog.directSendContext = results[3] || {allowed: false};
                     this.selectedDefinitionId = definition.definitionId || definitionId || "";
                     this.selectedDefinitionDetail = definition;
@@ -2528,6 +2617,14 @@
                 }
             },
             rejectCurrentTask: function () {
+                if (!this.isRejectTargetPassedByInstance(this.taskDialog.rejectTargetNodeCode)) {
+                    this.setOperationState("error", "驳回失败", "未通过该节点，请重新选择");
+                    return;
+                }
+                if (!this.isRejectTargetCurrentlyReachable(this.taskDialog.rejectTargetNodeCode)) {
+                    this.setOperationState("error", "驳回失败", "驳回目标节点当前条件不可达，请重新选择");
+                    return;
+                }
                 this.submitTaskAction("驳回", API_PATHS.taskReject, {
                     targetNodeCode: this.taskDialog.rejectTargetNodeCode
                 }).catch(function () {});
@@ -2704,6 +2801,7 @@
                     this.sendRequest("刷新实例附件", "GET", this.attachmentQueryPath(instanceId))
                 ]).then(function (results) {
                     this.selectedInstanceDetail = results[3];
+                    this.historyTaskRows = normalizeList(results[3] && results[3].historyTasks);
                     this.taskDialog.attachments = normalizeList(results[4]);
                     return results;
                 }.bind(this));
@@ -2907,6 +3005,8 @@
             taskRejectTargetNodes: function () {
                 var task = this.taskDialog.task || {};
                 var detailDefinitionId = extractDefinitionId(this.selectedDefinitionDetail);
+                var passedNodeCodes = this.passedRejectHistoryNodeCodes();
+                var reachableNodeCodes = this.currentReachableRejectNodeCodes();
                 if (hasText(task.definitionId) && task.definitionId !== detailDefinitionId) {
                     return [];
                 }
@@ -2925,8 +3025,223 @@
                         return node.nodeCode === targetNodeCode && this.isUserTaskNode(node);
                     }, this);
                 }, this).filter(function (node, index, nodes) {
-                    return node && nodes.indexOf(node) === index;
+                    return node && nodes.indexOf(node) === index
+                        && passedNodeCodes[node.nodeCode] && reachableNodeCodes[node.nodeCode];
                 });
+            },
+            passedRejectHistoryNodeCodes: function () {
+                var task = this.taskDialog.task || {};
+                var taskInstanceId = task.instanceId;
+                var rows = [];
+                if (this.taskDialog.open) {
+                    rows = rows.concat(normalizeList(this.taskDialog.historyTasks));
+                }
+                if (hasText(taskInstanceId) && this.selectedInstanceId() === taskInstanceId) {
+                    rows = rows.concat(normalizeList(this.historyTaskRows));
+                    rows = rows.concat(normalizeList(this.selectedInstanceDetail && this.selectedInstanceDetail.historyTasks));
+                }
+                return rows.reduce(function (codes, history) {
+                    if (history && hasText(history.nodeCode)) {
+                        codes[history.nodeCode] = true;
+                    }
+                    return codes;
+                }, {});
+            },
+            isRejectTargetPassedByInstance: function (nodeCode) {
+                return !!this.passedRejectHistoryNodeCodes()[nodeCode];
+            },
+            currentReachableRejectNodeCodes: function () {
+                var nodes = this.selectedGraphNodes;
+                var edges = this.selectedGraphEdges.slice().sort(function (left, right) {
+                    var order = Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+                    if (order !== 0) {
+                        return order;
+                    }
+                    return String(left.edgeCode || "").localeCompare(String(right.edgeCode || ""));
+                });
+                var nodesByCode = {};
+                var outgoingBySource = {};
+                var startNodes = [];
+                var reachable = {};
+                var variables = {};
+                nodes.forEach(function (node) {
+                    if (!node || !hasText(node.nodeCode)) {
+                        return;
+                    }
+                    nodesByCode[node.nodeCode] = node;
+                    if (node.nodeType === "START") {
+                        startNodes.push(node);
+                    }
+                });
+                edges.forEach(function (edge) {
+                    if (!edge || !hasText(edge.sourceNodeCode) || !hasText(edge.targetNodeCode)) {
+                        return;
+                    }
+                    if (!outgoingBySource[edge.sourceNodeCode]) {
+                        outgoingBySource[edge.sourceNodeCode] = [];
+                    }
+                    outgoingBySource[edge.sourceNodeCode].push(edge);
+                });
+                if (startNodes.length === 0) {
+                    nodes.forEach(function (node) {
+                        if (this.isUserTaskNode(node) && hasText(node.nodeCode)) {
+                            reachable[node.nodeCode] = true;
+                        }
+                    }, this);
+                    return reachable;
+                }
+                try {
+                    variables = parseJsonObject(this.taskDialog.variablesText, {});
+                } catch (ignore) {
+                    return reachable;
+                }
+                startNodes.forEach(function (node) {
+                    this.collectReachableRejectTargetNodes(node.nodeCode, nodesByCode,
+                        outgoingBySource, variables, {}, reachable);
+                }, this);
+                return reachable;
+            },
+            collectReachableRejectTargetNodes: function (nodeCode, nodesByCode, outgoingBySource,
+                                                       variables, visited, reachable) {
+                var node;
+                var outgoing;
+                var selectedEdge;
+                var nextVisited;
+                if (!hasText(nodeCode) || visited[nodeCode]) {
+                    return;
+                }
+                node = nodesByCode[nodeCode];
+                if (!node) {
+                    return;
+                }
+                nextVisited = Object.assign({}, visited);
+                nextVisited[nodeCode] = true;
+                if (this.isUserTaskNode(node)) {
+                    reachable[node.nodeCode] = true;
+                }
+                if (node.nodeType === "END") {
+                    return;
+                }
+                outgoing = outgoingBySource[node.nodeCode] || [];
+                if (node.nodeType === "EXCLUSIVE_GATEWAY") {
+                    selectedEdge = this.selectCurrentExclusiveEdge(node, outgoing, variables);
+                    if (selectedEdge) {
+                        this.collectReachableRejectTargetNodes(selectedEdge.targetNodeCode, nodesByCode,
+                            outgoingBySource, variables, nextVisited, reachable);
+                    }
+                    return;
+                }
+                if (node.nodeType === "PARALLEL_JOIN_GATEWAY" && outgoing.length !== 1) {
+                    return;
+                }
+                outgoing.forEach(function (edge) {
+                    this.collectReachableRejectTargetNodes(edge.targetNodeCode, nodesByCode,
+                        outgoingBySource, variables, Object.assign({}, nextVisited), reachable);
+                }, this);
+            },
+            selectCurrentExclusiveEdge: function (node, outgoing, variables) {
+                var defaultEdge = null;
+                var selectedEdge = null;
+                var invalidExpression = false;
+                outgoing.forEach(function (edge) {
+                    var matched;
+                    if (Boolean(edge.defaultEdge)) {
+                        if (!defaultEdge) {
+                            defaultEdge = edge;
+                        }
+                        return;
+                    }
+                    if (selectedEdge || invalidExpression || !hasText(edge.conditionExpression)) {
+                        invalidExpression = invalidExpression || !hasText(edge.conditionExpression);
+                        return;
+                    }
+                    matched = this.evaluateCurrentConditionExpression(edge.conditionExpression, variables);
+                    if (matched === null) {
+                        invalidExpression = true;
+                        return;
+                    }
+                    if (matched) {
+                        selectedEdge = edge;
+                    }
+                }, this);
+                if (invalidExpression) {
+                    return null;
+                }
+                return selectedEdge || defaultEdge;
+            },
+            evaluateCurrentConditionExpression: function (expression, variables) {
+                var match = String(expression || "").match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*$/);
+                var variableName;
+                var operator;
+                var expectedLiteral;
+                var actual;
+                var expectedNumber;
+                if (!match || expression.indexOf("&&") >= 0 || expression.indexOf("||") >= 0
+                        || expression.indexOf("(") >= 0 || expression.indexOf(")") >= 0) {
+                    return null;
+                }
+                variableName = match[1];
+                operator = match[2];
+                expectedLiteral = match[3].trim();
+                if (!variables || !Object.prototype.hasOwnProperty.call(variables, variableName)) {
+                    return null;
+                }
+                actual = variables[variableName];
+                if (typeof actual === "number") {
+                    if (!/^-?\d+(\.\d+)?$/.test(expectedLiteral)) {
+                        return null;
+                    }
+                    expectedNumber = Number(expectedLiteral);
+                    if (operator === ">") {
+                        return actual > expectedNumber;
+                    }
+                    if (operator === ">=") {
+                        return actual >= expectedNumber;
+                    }
+                    if (operator === "<") {
+                        return actual < expectedNumber;
+                    }
+                    if (operator === "<=") {
+                        return actual <= expectedNumber;
+                    }
+                    if (operator === "==") {
+                        return actual === expectedNumber;
+                    }
+                    if (operator === "!=") {
+                        return actual !== expectedNumber;
+                    }
+                    return null;
+                }
+                if (typeof actual === "boolean") {
+                    if (expectedLiteral !== "true" && expectedLiteral !== "false") {
+                        return null;
+                    }
+                    if (operator === "==") {
+                        return actual === (expectedLiteral === "true");
+                    }
+                    if (operator === "!=") {
+                        return actual !== (expectedLiteral === "true");
+                    }
+                    return null;
+                }
+                if (typeof actual === "string") {
+                    if (expectedLiteral.length < 2 || expectedLiteral.charAt(0) !== "\""
+                            || expectedLiteral.charAt(expectedLiteral.length - 1) !== "\"") {
+                        return null;
+                    }
+                    expectedLiteral = expectedLiteral.substring(1, expectedLiteral.length - 1);
+                    if (operator === "==") {
+                        return actual === expectedLiteral;
+                    }
+                    if (operator === "!=") {
+                        return actual !== expectedLiteral;
+                    }
+                    return null;
+                }
+                return null;
+            },
+            isRejectTargetCurrentlyReachable: function (nodeCode) {
+                return !!this.currentReachableRejectNodeCodes()[nodeCode];
             },
             syncSelectedNodeListenerRules: function () {
                 if (this.selectedNode) {
@@ -2988,7 +3303,8 @@
                     node.timeoutConfigError = "超时时长必须为非负数";
                     return false;
                 }
-                if (node.timeoutEnabled && node.timeoutAction === "JUMP" && !hasText(node.timeoutTargetNodeCode)) {
+                var normalizedAction = normalizeTimeoutAction(node.timeoutAction);
+                if (node.timeoutEnabled && normalizedAction === "JUMP" && !hasText(node.timeoutTargetNodeCode)) {
                     node.timeoutConfigError = "超时动作选择 JUMP 时必须选择目标节点";
                     return false;
                 }
@@ -2997,10 +3313,17 @@
                     return false;
                 }
                 if (node.timeoutEnabled) {
+                    var timeoutAction = normalizedAction;
+                    var supportedActions = ["REMIND", "ALERT", "JUMP", "TERMINATE", "FORCE_COMPLETE"];
+                    if (supportedActions.indexOf(timeoutAction) < 0) {
+                        node.timeoutConfigError = "超时动作不支持：" + node.timeoutAction;
+                        return false;
+                    }
+                    node.timeoutAction = timeoutAction;
                     var timeoutConfig = {
                         enabled: true,
                         durationMinutes: duration,
-                        action: node.timeoutAction || "REMIND"
+                        action: timeoutAction
                     };
                     if (hasText(node.timeoutSeverity)) {
                         timeoutConfig.severity = node.timeoutSeverity;
@@ -3404,11 +3727,5 @@
 
     app.mount("#app");
 }());
-
-
-
-
-
-
 
 

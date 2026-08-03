@@ -50,4 +50,16 @@ class TimeoutPolicyReaderTest {
 
         assertEquals(RuntimeErrorCodes.NODE_CONFIG_INVALID, error.getErrorCode());
     }
+
+    @Test
+    void normalizesFrontendTimeoutActionAliases() {
+        TimeoutPolicyReader reader = new TimeoutPolicyReader();
+        ProcessNodeDTO warning = new ProcessNodeDTO();
+        warning.setTimeoutConfig("{\"enabled\":true,\"durationMinutes\":5,\"action\":\"WARNING\"}");
+        ProcessNodeDTO forceCompete = new ProcessNodeDTO();
+        forceCompete.setTimeoutConfig("{\"enabled\":true,\"durationMinutes\":5,\"action\":\"froce_compete\"}");
+
+        assertEquals(TimeoutPolicy.ACTION_ALERT, reader.read(warning).getAction());
+        assertEquals(TimeoutPolicy.ACTION_FORCE_COMPLETE, reader.read(forceCompete).getAction());
+    }
 }

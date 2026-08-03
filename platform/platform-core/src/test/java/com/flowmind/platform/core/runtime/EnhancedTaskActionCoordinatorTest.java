@@ -3,6 +3,7 @@ package com.flowmind.platform.core.runtime;
 import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
 import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
+import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.UserContext;
@@ -70,6 +71,27 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void rejectRejectsTargetThatWasNotPassedByInstanceBeforeCompletingTask() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-reject-unpassed",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}"),
+                userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("manager-history", "user-a", "manager", ActionTypeEnum.APPROVE.name(), null)));
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.reject(request));
+
+        assertEquals(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, error.getErrorCode());
+        assertEquals("未通过该节点，请重新选择", error.getMessage());
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+        verify(fixture.historyWriter, never()).archive(any(HistoryArchiveCommand.class));
+    }
+
+    @Test
     void rejectCompletesSourceArchivesRelationAndCreatesTargetTasks() {
         Fixture fixture = fixture(ActionTypeEnum.REJECT);
         RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-reject-success", fixture.task, fixture.operator);
@@ -78,6 +100,9 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}"),
                 userNode("finance", null)));
         ProcessHistoryTaskEntity archived = history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}");
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
         when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
         when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(archived);
         when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
@@ -92,6 +117,217 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void parallelBranchRejectKeepsParallelContextWhenTargetIsInSameBranch() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("parallel-1");
+        fixture.task.setBranchKey("branch-a");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-parallel-branch-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("apply");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                gatewayNode("split", NodeTypeEnum.PARALLEL_SPLIT_GATEWAY, "join"),
+                gatewayNode("join", NodeTypeEnum.PARALLEL_JOIN_GATEWAY, "split"),
+                userNode("apply", null),
+                userNode("review", null),
+                userNode("other", null),
+                userNode("manager",
+                        "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"apply\"]}}}")));
+        fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("branch-a", "split", "apply"),
+                edge("apply-review", "apply", "review"),
+                edge("review-manager", "review", "manager"),
+                edge("manager-join", "manager", "join"),
+                edge("branch-b", "split", "other"),
+                edge("other-join", "other", "join")));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("apply-history", "apply-user", "apply", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "apply");
+        ProcessTaskGroupEntity parallel = parallelGroup("parallel-1");
+        when(fixture.groups.findById("parallel-1")).thenReturn(parallel);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("apply"),
+                eq("parallel-1"), eq("branch-a"), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertNotNull(result);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("apply"),
+                eq("parallel-1"), eq("branch-a"), eq(null));
+        verify(fixture.groups, never()).cancel(any(String.class), any(Long.class));
+        verify(fixture.tasks, never()).findOpenByParallelContext(any(String.class), any(String.class));
+    }
+
+    @Test
+    void parallelRejectExitsAndCancelsWholeParallelContextWhenTargetIsOutside() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("parallel-1");
+        fixture.task.setBranchKey("branch-a");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-parallel-exit-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("starter");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                userNode("starter", null),
+                gatewayNode("split", NodeTypeEnum.PARALLEL_SPLIT_GATEWAY, "join"),
+                gatewayNode("join", NodeTypeEnum.PARALLEL_JOIN_GATEWAY, "split"),
+                userNode("manager",
+                        "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"starter\"]}}}"),
+                userNode("other", null)));
+        fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("branch-a", "split", "manager"),
+                edge("manager-join", "manager", "join"),
+                edge("branch-b", "split", "other"),
+                edge("other-join", "other", "join")));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("starter-history", "starter-user", "starter", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "starter");
+        ProcessTaskGroupEntity parallel = parallelGroup("parallel-1");
+        ProcessTaskGroupEntity child = new ProcessTaskGroupEntity();
+        child.setId("child-1");
+        child.setParentGroupId("parallel-1");
+        child.setGroupType("COUNTERSIGN");
+        child.setGroupStatus("ACTIVE");
+        child.setLockVersion(Long.valueOf(5));
+        ProcessActiveTaskEntity sibling = task();
+        sibling.setId("task-2");
+        sibling.setTaskGroupId("child-1");
+        sibling.setBranchKey("branch-b");
+        sibling.setLockVersion(Long.valueOf(1));
+        when(fixture.groups.findById("parallel-1")).thenReturn(parallel);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("parallel-1", 2L)).thenReturn(1);
+        when(fixture.groups.findActiveChildren("parallel-1"))
+                .thenReturn(java.util.Collections.singletonList(child));
+        when(fixture.groups.cancel("child-1", 5L)).thenReturn(1);
+        when(fixture.tasks.findOpenByParallelContext("parallel-1", "task-1"))
+                .thenReturn(java.util.Collections.singletonList(sibling));
+        when(fixture.tasks.cancel("task-2", 1L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"),
+                history("cancel-history", "user-b", "other", ActionTypeEnum.CANCEL.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("starter"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertEquals(2, result.getArchivedTasks().size());
+        verify(fixture.groups).cancel("parallel-1", 2L);
+        verify(fixture.groups).cancel("child-1", 5L);
+        verify(fixture.tasks).cancel("task-2", 1L);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("starter"),
+                eq(null), eq(null), eq(null));
+    }
+
+    @Test
+    void parallelRejectToAnotherBranchReentersParallelGatewayAfterCancelingGroup() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("parallel-1");
+        fixture.task.setBranchKey("branch-a");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-parallel-cross-branch-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("other");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                gatewayNode("split", NodeTypeEnum.PARALLEL_SPLIT_GATEWAY, "join"),
+                gatewayNode("join", NodeTypeEnum.PARALLEL_JOIN_GATEWAY, "split"),
+                userNode("manager",
+                        "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"other\"]}}}"),
+                userNode("other", null)));
+        fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("branch-a", "split", "manager"),
+                edge("manager-join", "manager", "join"),
+                edge("branch-b", "split", "other"),
+                edge("other-join", "other", "join")));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("other-history", "other-user", "other", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "other");
+        ProcessTaskGroupEntity parallel = parallelGroup("parallel-1");
+        when(fixture.groups.findById("parallel-1")).thenReturn(parallel);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("parallel-1", 2L)).thenReturn(1);
+        when(fixture.groups.findActiveChildren("parallel-1"))
+                .thenReturn(java.util.Collections.<ProcessTaskGroupEntity>emptyList());
+        when(fixture.tasks.findOpenByParallelContext("parallel-1", "task-1"))
+                .thenReturn(java.util.Collections.<ProcessActiveTaskEntity>emptyList());
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertNotNull(result);
+        verify(fixture.groups).cancel("parallel-1", 2L);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
+                eq(null), eq(null), eq(null));
+        verify(fixture.advancer, never()).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("other"),
+                any(String.class), any(String.class), any(RuntimeAdvancePreparation.class));
+    }
+
+    @Test
+    void serialRejectIntoParallelStartsWholeParallelGateway() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-enter-parallel-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("parallel-review");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                userNode("manager",
+                        "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"parallel-review\"]}}}"),
+                gatewayNode("split", NodeTypeEnum.PARALLEL_SPLIT_GATEWAY, "join"),
+                gatewayNode("join", NodeTypeEnum.PARALLEL_JOIN_GATEWAY, "split"),
+                userNode("parallel-review", null),
+                userNode("parallel-finance", null)));
+        fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("branch-a", "split", "parallel-review"),
+                edge("review-join", "parallel-review", "join"),
+                edge("branch-b", "split", "parallel-finance"),
+                edge("finance-join", "parallel-finance", "join")));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("parallel-review-history", "review-user", "parallel-review",
+                        ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "parallel-review");
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertNotNull(result);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
+                eq(null), eq(null), eq(null));
+        verify(fixture.advancer, never()).advanceToNode(eq(fixture.instance), eq(fixture.definition),
+                eq("parallel-review"), any(String.class), any(String.class), any(RuntimeAdvancePreparation.class));
+    }
+
+    @Test
+    void rejectRejectsPassedTargetThatCurrentConditionsCannotReachBeforeCompletingTask() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-reject-unreachable",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}"),
+                userNode("finance", null), userNode("legal", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "legal");
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.reject(request));
+
+        assertEquals(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, error.getErrorCode());
+        assertEquals("驳回目标节点当前条件不可达，请重新选择", error.getMessage());
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+        verify(fixture.historyWriter, never()).archive(any(HistoryArchiveCommand.class));
+    }
+
+    @Test
     void countersignRejectCancelsGroupAndOpenSiblingsBeforeRecreatingTarget() {
         Fixture fixture = fixture(ActionTypeEnum.REJECT);
         fixture.task.setTaskGroupId("group-1");
@@ -102,6 +338,9 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
         ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
         group.setId("group-1");
         group.setInstanceId("instance-1");
@@ -135,6 +374,54 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void orSignRejectCancelsGroupAndOpenSiblingsBeforeRecreatingTarget() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        fixture.task.setTaskGroupId("group-1");
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-or-sign-reject",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        ProcessNodeDTO manager = userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
+        manager.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
+        fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("OR_SIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{}");
+        ProcessActiveTaskEntity sibling = task();
+        sibling.setId("task-2");
+        sibling.setTaskGroupId("group-1");
+        sibling.setLockVersion(Long.valueOf(1));
+        when(fixture.groups.findById("group-1")).thenReturn(group);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("group-1", 2L)).thenReturn(1);
+        when(fixture.tasks.findOpenByTaskGroupId("group-1"))
+                .thenReturn(java.util.Collections.singletonList(sibling));
+        when(fixture.tasks.cancel("task-2", 1L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("rejected", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"),
+                history("canceled", "user-a", "manager", ActionTypeEnum.CANCEL.name(), "{}"));
+        when(fixture.histories.updateExtraJson(eq("rejected"), any(String.class))).thenReturn(1);
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.reject(request);
+
+        assertEquals(2, result.getArchivedTasks().size());
+        verify(fixture.groups).cancel("group-1", 2L);
+        verify(fixture.tasks).cancel("task-2", 1L);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null));
+    }
+
+    @Test
     void countersignRejectInsideParallelBranchIsRejectedBeforeTaskMutation() {
         Fixture fixture = fixture(ActionTypeEnum.REJECT);
         fixture.task.setTaskGroupId("group-1");
@@ -146,6 +433,9 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
         ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
         group.setId("group-1");
         group.setInstanceId("instance-1");
@@ -176,6 +466,9 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
         ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
         group.setId("group-1");
         group.setInstanceId("instance-1");
@@ -568,6 +861,11 @@ class EnhancedTaskActionCoordinatorTest {
         return request;
     }
 
+    private void allowReachable(Fixture fixture, String nodeCode) {
+        when(fixture.advancer.reachableUserTaskNodeCodes(fixture.instance, fixture.definition))
+                .thenReturn(new java.util.LinkedHashSet<String>(java.util.Collections.singletonList(nodeCode)));
+    }
+
     private Fixture fixture(ActionTypeEnum action) {
         ProcessInstanceRepository instances = mock(ProcessInstanceRepository.class);
         ActiveTaskRepository tasks = mock(ActiveTaskRepository.class);
@@ -615,6 +913,35 @@ class EnhancedTaskActionCoordinatorTest {
         node.setApproverRuleType(approverRuleType);
         node.setListenerConfig(listenerConfig);
         return node;
+    }
+
+    private ProcessNodeDTO gatewayNode(String code, NodeTypeEnum type, String pairedGatewayCode) {
+        ProcessNodeDTO node = new ProcessNodeDTO();
+        node.setNodeCode(code);
+        node.setNodeType(type);
+        node.setPairedGatewayCode(pairedGatewayCode);
+        return node;
+    }
+
+    private ProcessEdgeDTO edge(String code, String source, String target) {
+        ProcessEdgeDTO edge = new ProcessEdgeDTO();
+        edge.setEdgeCode(code);
+        edge.setSourceNodeCode(source);
+        edge.setTargetNodeCode(target);
+        return edge;
+    }
+
+    private ProcessTaskGroupEntity parallelGroup(String id) {
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId(id);
+        group.setInstanceId("instance-1");
+        group.setNodeCode("split");
+        group.setJoinNodeCode("join");
+        group.setGroupType("PARALLEL_GATEWAY");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{}");
+        return group;
     }
 
     private ProcessHistoryTaskEntity history(String id, String assignee, String nodeCode, String action, String extraJson) {

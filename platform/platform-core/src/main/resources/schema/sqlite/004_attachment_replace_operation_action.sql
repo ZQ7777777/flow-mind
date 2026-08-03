@@ -58,8 +58,18 @@ CREATE TABLE process_audit_log_attachment_replace (
 
 INSERT INTO process_audit_log_attachment_replace
     (id, instance_id, operation_id, target_type, target_id, action_type, operator_id, detail_json, created_at)
-SELECT id, instance_id, operation_id, target_type, target_id, action_type, operator_id, detail_json, created_at
-FROM process_audit_log;
+SELECT audit_log.id,
+       CASE WHEN process_instance.id IS NULL THEN NULL ELSE audit_log.instance_id END,
+       audit_log.operation_id,
+       audit_log.target_type,
+       audit_log.target_id,
+       audit_log.action_type,
+       audit_log.operator_id,
+       audit_log.detail_json,
+       audit_log.created_at
+FROM process_audit_log audit_log
+LEFT JOIN process_instance
+    ON process_instance.id = audit_log.instance_id;
 
 DROP TABLE process_audit_log;
 

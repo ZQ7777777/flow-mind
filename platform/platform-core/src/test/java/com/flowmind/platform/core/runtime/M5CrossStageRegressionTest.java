@@ -93,7 +93,7 @@ class M5CrossStageRegressionTest {
         firstConnection = DriverManager.getConnection("jdbc:sqlite::memory:");
         SchemaTestSupport.executeSchema(firstConnection);
         WorkflowFixture fixture = fixture(firstConnection, user("reviewer", "Reviewer"));
-        fixture.seed();
+        fixture.seedWithApplyHistory();
 
         fixture.coordinator.transfer(transfer("transfer-1", "review-task", 0L,
                 "reviewer", "receiver"));
@@ -378,6 +378,14 @@ class M5CrossStageRegressionTest {
         }
 
         private void seed() {
+            seed(false);
+        }
+
+        private void seedWithApplyHistory() {
+            seed(true);
+        }
+
+        private void seed(boolean includeApplyHistory) {
             jdbc.update("INSERT INTO process_definition "
                             + "(id, process_code, process_name, system_code, version, created_by) "
                             + "VALUES (?, ?, ?, ?, ?, ?)",
@@ -400,6 +408,15 @@ class M5CrossStageRegressionTest {
                             + "instance_status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     "instance-m5", "definition-m5", "m5-flow", "M5 Flow", 1, "M5 acceptance",
                     "starter", "Starter", "[\"review\"]", "{}", "RUNNING", LocalDateTime.now().toString());
+            if (includeApplyHistory) {
+                jdbc.update("INSERT INTO process_history_task "
+                                + "(id, instance_id, operation_id, active_task_id, node_code, assignee_user_id, "
+                                + "assignee_user_name, handle_type, action_type, comment_text, variables_snapshot, "
+                                + "started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "history-apply", "instance-m5", "start-1", "apply-task", "apply", "starter",
+                        "Starter", "NORMAL", ActionTypeEnum.SEND.name(), "submitted", "{}",
+                        LocalDateTime.now().minusMinutes(2).toString(), LocalDateTime.now().minusMinutes(1).toString());
+            }
             jdbc.update("INSERT INTO process_active_task "
                             + "(id, instance_id, definition_id, node_code, assignee_user_id, assignee_user_name, "
                             + "task_status, lock_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

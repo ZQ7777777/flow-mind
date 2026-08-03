@@ -131,6 +131,18 @@ public class ActiveTaskRepository {
                 RuntimeRowMappers.ACTIVE_TASK, taskGroupId, emptyToNull(excludedTaskId), emptyToNull(excludedTaskId));
     }
 
+    /** Read open tasks directly under a parallel group or under its child approval groups. */
+    public List<ProcessActiveTaskEntity> findOpenByParallelContext(String parallelGroupId, String excludedTaskId) {
+        return jdbcTemplate.query("SELECT t.* FROM process_active_task t "
+                        + "LEFT JOIN process_task_group g ON g.id = t.task_group_id "
+                        + "WHERE (t.task_group_id = ? OR g.parent_group_id = ?) "
+                        + "AND (? IS NULL OR t.id <> ?) "
+                        + "AND t.task_status IN ('ACTIVE', 'CLAIMED') "
+                        + "ORDER BY t.created_at ASC, t.id ASC",
+                RuntimeRowMappers.ACTIVE_TASK, parallelGroupId, parallelGroupId,
+                emptyToNull(excludedTaskId), emptyToNull(excludedTaskId));
+    }
+
     /** 按到期时间读取超时的开放任务。 */
     public List<ProcessActiveTaskEntity> findTimeoutOpenTasks(java.time.LocalDateTime scanAt, int limit) {
         if (scanAt == null || limit <= 0) {

@@ -324,6 +324,28 @@ tbody tr:hover {
     max-height: 310px;
 }
 
+.instance-list-wrap {
+    max-height: 400px;
+}
+
+.instance-list-wrap thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--panel);
+}
+
+.instance-list-status {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    background: #f8fafc;
+}
+
+.completed-pagination {
+    margin-top: 10px;
+}
+
 .table-actions {
     display: flex;
     flex-wrap: wrap;
@@ -422,6 +444,10 @@ tbody tr:hover {
 }
 
 .instance-detail-card {
+    margin-top: 14px;
+}
+
+.timeout-scan-card {
     margin-top: 14px;
 }
 
