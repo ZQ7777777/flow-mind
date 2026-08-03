@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -267,6 +268,30 @@ class RuntimeNodeAdvancerTest {
                         userTask("default-task")), edges(highAmount, defaultEdge)), "route", null, null);
 
         assertEquals("high-task", result.getCreatedTasks().get(0).getNodeCode());
+    }
+
+    @Test
+    void reachableUserTaskNodeCodesFollowsCurrentExclusiveGatewayBranchAndContinuesPastUserTasks() {
+        RuntimeNodeAdvancer productionAdvancer = new RuntimeNodeAdvancer(activeTaskRepository,
+                taskGroupRepository, instanceRepository, requestValidator, approverResolver,
+                new SimpleConditionExpressionEvaluator(), approverResolveRequestFactory);
+        ProcessInstanceEntity runtimeInstance = instance();
+        runtimeInstance.setVariablesJson("{\"amount\":120000}");
+        ProcessEdgeDTO highAmount = conditionalEdge("high-amount", "route", "high-task", "amount > 100000");
+        ProcessEdgeDTO defaultEdge = edge("default", "route", "default-task");
+        defaultEdge.setDefaultEdge(Boolean.TRUE);
+
+        java.util.Set<String> reachable = productionAdvancer.reachableUserTaskNodeCodes(runtimeInstance, definition(
+                nodes(node("start", NodeTypeEnum.START), userTask("apply"),
+                        node("route", NodeTypeEnum.EXCLUSIVE_GATEWAY), userTask("high-task"),
+                        userTask("default-task"), node("end", NodeTypeEnum.END)),
+                edges(edge("start-apply", "start", "apply"), edge("apply-route", "apply", "route"),
+                        highAmount, defaultEdge, edge("high-end", "high-task", "end"),
+                        edge("default-end", "default-task", "end"))));
+
+        assertTrue(reachable.contains("apply"));
+        assertTrue(reachable.contains("high-task"));
+        assertFalse(reachable.contains("default-task"));
     }
 
     @Test

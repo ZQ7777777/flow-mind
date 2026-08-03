@@ -722,6 +722,7 @@
                     variablesText: "{}",
                     comment: "",
                     attachments: [],
+                    historyTasks: [],
                     starterTask: false,
                     directSendContext: {allowed: false},
                     rejectTargetNodeCode: "",
@@ -2340,6 +2341,7 @@
                     variablesText: "{}",
                     comment: "",
                     attachments: [],
+                    historyTasks: [],
                     starterTask: false,
                     directSendContext: {allowed: false},
                     rejectTargetNodeCode: "",
@@ -2399,6 +2401,7 @@
                     this.taskDialog.attachments = normalizeList(results[1]).map(function (attachment) {
                         return Object.assign({}, attachment, {pendingReplacement: null});
                     });
+                    this.taskDialog.historyTasks = normalizeList(instance.historyTasks);
                     this.taskDialog.directSendContext = results[3] || {allowed: false};
                     this.selectedDefinitionId = definition.definitionId || definitionId || "";
                     this.selectedDefinitionDetail = definition;
@@ -2614,6 +2617,14 @@
                 }
             },
             rejectCurrentTask: function () {
+                if (!this.isRejectTargetPassedByInstance(this.taskDialog.rejectTargetNodeCode)) {
+                    this.setOperationState("error", "驳回失败", "未通过该节点，请重新选择");
+                    return;
+                }
+                if (!this.isRejectTargetCurrentlyReachable(this.taskDialog.rejectTargetNodeCode)) {
+                    this.setOperationState("error", "驳回失败", "驳回目标节点当前条件不可达，请重新选择");
+                    return;
+                }
                 this.submitTaskAction("驳回", API_PATHS.taskReject, {
                     targetNodeCode: this.taskDialog.rejectTargetNodeCode
                 }).catch(function () {});
@@ -2790,6 +2801,7 @@
                     this.sendRequest("刷新实例附件", "GET", this.attachmentQueryPath(instanceId))
                 ]).then(function (results) {
                     this.selectedInstanceDetail = results[3];
+                    this.historyTaskRows = normalizeList(results[3] && results[3].historyTasks);
                     this.taskDialog.attachments = normalizeList(results[4]);
                     return results;
                 }.bind(this));
@@ -2993,6 +3005,8 @@
             taskRejectTargetNodes: function () {
                 var task = this.taskDialog.task || {};
                 var detailDefinitionId = extractDefinitionId(this.selectedDefinitionDetail);
+                var passedNodeCodes = this.passedRejectHistoryNodeCodes();
+                var reachableNodeCodes = this.currentReachableRejectNodeCodes();
                 if (hasText(task.definitionId) && task.definitionId !== detailDefinitionId) {
                     return [];
                 }
@@ -3011,8 +3025,223 @@
                         return node.nodeCode === targetNodeCode && this.isUserTaskNode(node);
                     }, this);
                 }, this).filter(function (node, index, nodes) {
-                    return node && nodes.indexOf(node) === index;
+                    return node && nodes.indexOf(node) === index
+                        && passedNodeCodes[node.nodeCode] && reachableNodeCodes[node.nodeCode];
                 });
+            },
+            passedRejectHistoryNodeCodes: function () {
+                var task = this.taskDialog.task || {};
+                var taskInstanceId = task.instanceId;
+                var rows = [];
+                if (this.taskDialog.open) {
+                    rows = rows.concat(normalizeList(this.taskDialog.historyTasks));
+                }
+                if (hasText(taskInstanceId) && this.selectedInstanceId() === taskInstanceId) {
+                    rows = rows.concat(normalizeList(this.historyTaskRows));
+                    rows = rows.concat(normalizeList(this.selectedInstanceDetail && this.selectedInstanceDetail.historyTasks));
+                }
+                return rows.reduce(function (codes, history) {
+                    if (history && hasText(history.nodeCode)) {
+                        codes[history.nodeCode] = true;
+                    }
+                    return codes;
+                }, {});
+            },
+            isRejectTargetPassedByInstance: function (nodeCode) {
+                return !!this.passedRejectHistoryNodeCodes()[nodeCode];
+            },
+            currentReachableRejectNodeCodes: function () {
+                var nodes = this.selectedGraphNodes;
+                var edges = this.selectedGraphEdges.slice().sort(function (left, right) {
+                    var order = Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+                    if (order !== 0) {
+                        return order;
+                    }
+                    return String(left.edgeCode || "").localeCompare(String(right.edgeCode || ""));
+                });
+                var nodesByCode = {};
+                var outgoingBySource = {};
+                var startNodes = [];
+                var reachable = {};
+                var variables = {};
+                nodes.forEach(function (node) {
+                    if (!node || !hasText(node.nodeCode)) {
+                        return;
+                    }
+                    nodesByCode[node.nodeCode] = node;
+                    if (node.nodeType === "START") {
+                        startNodes.push(node);
+                    }
+                });
+                edges.forEach(function (edge) {
+                    if (!edge || !hasText(edge.sourceNodeCode) || !hasText(edge.targetNodeCode)) {
+                        return;
+                    }
+                    if (!outgoingBySource[edge.sourceNodeCode]) {
+                        outgoingBySource[edge.sourceNodeCode] = [];
+                    }
+                    outgoingBySource[edge.sourceNodeCode].push(edge);
+                });
+                if (startNodes.length === 0) {
+                    nodes.forEach(function (node) {
+                        if (this.isUserTaskNode(node) && hasText(node.nodeCode)) {
+                            reachable[node.nodeCode] = true;
+                        }
+                    }, this);
+                    return reachable;
+                }
+                try {
+                    variables = parseJsonObject(this.taskDialog.variablesText, {});
+                } catch (ignore) {
+                    return reachable;
+                }
+                startNodes.forEach(function (node) {
+                    this.collectReachableRejectTargetNodes(node.nodeCode, nodesByCode,
+                        outgoingBySource, variables, {}, reachable);
+                }, this);
+                return reachable;
+            },
+            collectReachableRejectTargetNodes: function (nodeCode, nodesByCode, outgoingBySource,
+                                                       variables, visited, reachable) {
+                var node;
+                var outgoing;
+                var selectedEdge;
+                var nextVisited;
+                if (!hasText(nodeCode) || visited[nodeCode]) {
+                    return;
+                }
+                node = nodesByCode[nodeCode];
+                if (!node) {
+                    return;
+                }
+                nextVisited = Object.assign({}, visited);
+                nextVisited[nodeCode] = true;
+                if (this.isUserTaskNode(node)) {
+                    reachable[node.nodeCode] = true;
+                }
+                if (node.nodeType === "END") {
+                    return;
+                }
+                outgoing = outgoingBySource[node.nodeCode] || [];
+                if (node.nodeType === "EXCLUSIVE_GATEWAY") {
+                    selectedEdge = this.selectCurrentExclusiveEdge(node, outgoing, variables);
+                    if (selectedEdge) {
+                        this.collectReachableRejectTargetNodes(selectedEdge.targetNodeCode, nodesByCode,
+                            outgoingBySource, variables, nextVisited, reachable);
+                    }
+                    return;
+                }
+                if (node.nodeType === "PARALLEL_JOIN_GATEWAY" && outgoing.length !== 1) {
+                    return;
+                }
+                outgoing.forEach(function (edge) {
+                    this.collectReachableRejectTargetNodes(edge.targetNodeCode, nodesByCode,
+                        outgoingBySource, variables, Object.assign({}, nextVisited), reachable);
+                }, this);
+            },
+            selectCurrentExclusiveEdge: function (node, outgoing, variables) {
+                var defaultEdge = null;
+                var selectedEdge = null;
+                var invalidExpression = false;
+                outgoing.forEach(function (edge) {
+                    var matched;
+                    if (Boolean(edge.defaultEdge)) {
+                        if (!defaultEdge) {
+                            defaultEdge = edge;
+                        }
+                        return;
+                    }
+                    if (selectedEdge || invalidExpression || !hasText(edge.conditionExpression)) {
+                        invalidExpression = invalidExpression || !hasText(edge.conditionExpression);
+                        return;
+                    }
+                    matched = this.evaluateCurrentConditionExpression(edge.conditionExpression, variables);
+                    if (matched === null) {
+                        invalidExpression = true;
+                        return;
+                    }
+                    if (matched) {
+                        selectedEdge = edge;
+                    }
+                }, this);
+                if (invalidExpression) {
+                    return null;
+                }
+                return selectedEdge || defaultEdge;
+            },
+            evaluateCurrentConditionExpression: function (expression, variables) {
+                var match = String(expression || "").match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*$/);
+                var variableName;
+                var operator;
+                var expectedLiteral;
+                var actual;
+                var expectedNumber;
+                if (!match || expression.indexOf("&&") >= 0 || expression.indexOf("||") >= 0
+                        || expression.indexOf("(") >= 0 || expression.indexOf(")") >= 0) {
+                    return null;
+                }
+                variableName = match[1];
+                operator = match[2];
+                expectedLiteral = match[3].trim();
+                if (!variables || !Object.prototype.hasOwnProperty.call(variables, variableName)) {
+                    return null;
+                }
+                actual = variables[variableName];
+                if (typeof actual === "number") {
+                    if (!/^-?\d+(\.\d+)?$/.test(expectedLiteral)) {
+                        return null;
+                    }
+                    expectedNumber = Number(expectedLiteral);
+                    if (operator === ">") {
+                        return actual > expectedNumber;
+                    }
+                    if (operator === ">=") {
+                        return actual >= expectedNumber;
+                    }
+                    if (operator === "<") {
+                        return actual < expectedNumber;
+                    }
+                    if (operator === "<=") {
+                        return actual <= expectedNumber;
+                    }
+                    if (operator === "==") {
+                        return actual === expectedNumber;
+                    }
+                    if (operator === "!=") {
+                        return actual !== expectedNumber;
+                    }
+                    return null;
+                }
+                if (typeof actual === "boolean") {
+                    if (expectedLiteral !== "true" && expectedLiteral !== "false") {
+                        return null;
+                    }
+                    if (operator === "==") {
+                        return actual === (expectedLiteral === "true");
+                    }
+                    if (operator === "!=") {
+                        return actual !== (expectedLiteral === "true");
+                    }
+                    return null;
+                }
+                if (typeof actual === "string") {
+                    if (expectedLiteral.length < 2 || expectedLiteral.charAt(0) !== "\""
+                            || expectedLiteral.charAt(expectedLiteral.length - 1) !== "\"") {
+                        return null;
+                    }
+                    expectedLiteral = expectedLiteral.substring(1, expectedLiteral.length - 1);
+                    if (operator === "==") {
+                        return actual === expectedLiteral;
+                    }
+                    if (operator === "!=") {
+                        return actual !== expectedLiteral;
+                    }
+                    return null;
+                }
+                return null;
+            },
+            isRejectTargetCurrentlyReachable: function (nodeCode) {
+                return !!this.currentReachableRejectNodeCodes()[nodeCode];
             },
             syncSelectedNodeListenerRules: function () {
                 if (this.selectedNode) {
