@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS process_active_task (
     assignee_user_id TEXT,
     assignee_user_name TEXT,
     delegate_from_user_id TEXT,
+    delegate_from_user_name TEXT,
     task_status TEXT NOT NULL DEFAULT 'ACTIVE'
         CHECK (task_status IN ('ACTIVE', 'CLAIMED', 'COMPLETED', 'CANCELED')),
     task_group_id TEXT,
