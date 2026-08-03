@@ -139,6 +139,8 @@ public class EnhancedTaskActionCoordinator {
                 requireText(request.getTargetNodeCode(), "targetNodeCode");
                 requireUserTask(context.definition, request.getTargetNodeCode());
                 assertRejectRule(context.definition, context.task.getNodeCode(), request.getTargetNodeCode());
+                assertRejectTargetPassedByInstance(context, request.getTargetNodeCode());
+                assertRejectTargetReachableByCurrentConditions(context, request.getTargetNodeCode());
                 ProcessTaskGroupEntity countersignGroup = definitionCountersignGroup(context);
                 if (countersignGroup != null) {
                     return rejectCountersign(context, countersignGroup, request);
@@ -648,6 +650,21 @@ public class EnhancedTaskActionCoordinator {
         TaskActionRules rules = actionRules(definition, sourceNodeCode);
         if (!rules.isRejectEnabled() || !rules.getRejectTargetNodeCodes().contains(targetNodeCode)) {
             throw validation(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, "reject target is not allowed");
+        }
+    }
+
+    private void assertRejectTargetPassedByInstance(EnhancedActionContext context, String targetNodeCode) {
+        for (ProcessHistoryTaskEntity history : historyRepository.findByInstanceId(context.instance.getId())) {
+            if (targetNodeCode.equals(history.getNodeCode())) {
+                return;
+            }
+        }
+        throw validation(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, "未通过该节点，请重新选择");
+    }
+
+    private void assertRejectTargetReachableByCurrentConditions(EnhancedActionContext context, String targetNodeCode) {
+        if (!nodeAdvancer.reachableUserTaskNodeCodes(context.instance, context.definition).contains(targetNodeCode)) {
+            throw validation(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, "驳回目标节点当前条件不可达，请重新选择");
         }
     }
 

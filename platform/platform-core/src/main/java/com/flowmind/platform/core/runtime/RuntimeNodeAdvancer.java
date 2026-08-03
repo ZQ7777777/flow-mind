@@ -134,6 +134,32 @@ public class RuntimeNodeAdvancer {
     }
 
     /**
+     * Calculates user-task nodes reachable from the process start under the
+     * current instance variables.  Exclusive gateways are re-evaluated with the
+     * same condition logic used by runtime advancement.
+     */
+    public Set<String> reachableUserTaskNodeCodes(ProcessInstanceEntity instance,
+                                                  ProcessDefinitionDetailDTO definition) {
+        assertReachabilityInput(instance, definition);
+        DefinitionGraphIndex graph = DefinitionGraphIndex.from(definition);
+        Set<String> reachable = new LinkedHashSet<String>();
+        List<ProcessNodeDTO> startNodes = graph.getStartNodes();
+        if (startNodes.isEmpty()) {
+            for (ProcessNodeDTO node : graph.getNodes()) {
+                if (NodeTypeEnum.USER_TASK.equals(node.getNodeType()) && hasText(node.getNodeCode())) {
+                    reachable.add(node.getNodeCode());
+                }
+            }
+            return reachable;
+        }
+        for (ProcessNodeDTO start : startNodes) {
+            collectReachableUserTasks(instance, definition, graph, start.getNodeCode(),
+                    new LinkedHashSet<String>(), reachable);
+        }
+        return reachable;
+    }
+
+    /**
      * Persists a previously prepared advancement.  This overload is used by
      * task actions after their task CAS has succeeded.
      */
@@ -512,6 +538,84 @@ public class RuntimeNodeAdvancer {
         candidatesByNodeCode.put(node.getNodeCode(), candidateUserIds);
     }
 
+    private void collectReachableUserTasks(ProcessInstanceEntity instance,
+                                           ProcessDefinitionDetailDTO definition,
+                                           DefinitionGraphIndex graph,
+                                           String nodeCode,
+                                           Set<String> path,
+                                           Set<String> reachable) {
+        if (!hasText(nodeCode)) {
+            throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID, "reachable route target is missing");
+        }
+        if (path.size() > maxAutomaticSteps(graph) || !path.add(nodeCode)) {
+            throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
+                    "reachable route contains a cycle: " + nodeCode);
+        }
+        ProcessNodeDTO node = graph.getNodesByCode().get(nodeCode);
+        if (node == null) {
+            throw state(RuntimeErrorCodes.NODE_NOT_FOUND, "target node does not exist: " + nodeCode);
+        }
+        if (node.getNodeType() == null) {
+            throw state(RuntimeErrorCodes.DEFINITION_INVALID,
+                    "target node type is missing: " + nodeCode);
+        }
+        try {
+            switch (node.getNodeType()) {
+                case START:
+                    collectReachableOutgoing(instance, definition, graph, node, path, reachable);
+                    return;
+                case USER_TASK:
+                    reachable.add(node.getNodeCode());
+                    collectReachableOutgoing(instance, definition, graph, node, path, reachable);
+                    return;
+                case EXCLUSIVE_GATEWAY:
+                    ProcessEdgeDTO selected = selectExclusiveEdge(node, graph, instance);
+                    collectReachableUserTasks(instance, definition, graph, selected.getTargetNodeCode(),
+                            path, reachable);
+                    return;
+                case PARALLEL_SPLIT_GATEWAY:
+                    assertParallelPair(node, graph);
+                    List<ProcessEdgeDTO> outgoing = graph.getOutgoingEdges(node.getNodeCode());
+                    if (outgoing.size() < 2) {
+                        throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
+                                "parallel split requires at least two outgoing edges: " + node.getNodeCode());
+                    }
+                    for (ProcessEdgeDTO edge : outgoing) {
+                        if (!hasText(edge.getEdgeCode()) || hasText(edge.getConditionExpression())) {
+                            throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
+                                    "parallel split has an invalid outgoing edge: " + node.getNodeCode());
+                        }
+                        collectReachableUserTasks(instance, definition, graph, edge.getTargetNodeCode(),
+                                new LinkedHashSet<String>(path), reachable);
+                    }
+                    return;
+                case PARALLEL_JOIN_GATEWAY:
+                    assertParallelPair(node, graph);
+                    collectReachableUserTasks(instance, definition, graph,
+                            requireSingleOutgoing(node, graph).getTargetNodeCode(), path, reachable);
+                    return;
+                case END:
+                    return;
+                default:
+                    throw state(RuntimeErrorCodes.GATEWAY_CONFIG_INVALID,
+                            "unsupported reachable route node type: " + nodeCode);
+            }
+        } finally {
+            path.remove(nodeCode);
+        }
+    }
+
+    private void collectReachableOutgoing(ProcessInstanceEntity instance,
+                                          ProcessDefinitionDetailDTO definition,
+                                          DefinitionGraphIndex graph,
+                                          ProcessNodeDTO node,
+                                          Set<String> path,
+                                          Set<String> reachable) {
+        for (ProcessEdgeDTO edge : graph.getOutgoingEdges(node.getNodeCode())) {
+            collectReachableUserTasks(instance, definition, graph, edge.getTargetNodeCode(), path, reachable);
+        }
+    }
+
     private ProcessTaskGroupEntity markParallelBranchArrived(ProcessInstanceEntity instance,
                                                               ProcessNodeDTO joinNode,
                                                               String taskGroupId,
@@ -672,6 +776,18 @@ public class RuntimeNodeAdvancer {
         if (hasText(taskGroupId) != hasText(branchKey)) {
             throw new RuntimeValidationException(RuntimeErrorCodes.PARALLEL_JOIN_CONFLICT,
                     "taskGroupId and branchKey must be provided together");
+        }
+    }
+
+    private void assertReachabilityInput(ProcessInstanceEntity instance,
+                                         ProcessDefinitionDetailDTO definition) {
+        if (instance == null || !hasText(instance.getId()) || !hasText(instance.getDefinitionId())) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION,
+                    "running instance and definitionId are required");
+        }
+        if (definition == null || !instance.getDefinitionId().equals(definition.getId())) {
+            throw new RuntimeStateException(RuntimeErrorCodes.DEFINITION_INVALID,
+                    "runtime definition does not match instance definitionId");
         }
     }
 

@@ -70,6 +70,27 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void rejectRejectsTargetThatWasNotPassedByInstanceBeforeCompletingTask() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-reject-unpassed",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}"),
+                userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("manager-history", "user-a", "manager", ActionTypeEnum.APPROVE.name(), null)));
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.reject(request));
+
+        assertEquals(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, error.getErrorCode());
+        assertEquals("未通过该节点，请重新选择", error.getMessage());
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+        verify(fixture.historyWriter, never()).archive(any(HistoryArchiveCommand.class));
+    }
+
+    @Test
     void rejectCompletesSourceArchivesRelationAndCreatesTargetTasks() {
         Fixture fixture = fixture(ActionTypeEnum.REJECT);
         RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-reject-success", fixture.task, fixture.operator);
@@ -78,6 +99,9 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}"),
                 userNode("finance", null)));
         ProcessHistoryTaskEntity archived = history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}");
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
         when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
         when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(archived);
         when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
@@ -92,6 +116,28 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void rejectRejectsPassedTargetThatCurrentConditionsCannotReachBeforeCompletingTask() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-reject-unreachable",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("finance");
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
+                "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}"),
+                userNode("finance", null), userNode("legal", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "legal");
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.reject(request));
+
+        assertEquals(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, error.getErrorCode());
+        assertEquals("驳回目标节点当前条件不可达，请重新选择", error.getMessage());
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+        verify(fixture.historyWriter, never()).archive(any(HistoryArchiveCommand.class));
+    }
+
+    @Test
     void countersignRejectCancelsGroupAndOpenSiblingsBeforeRecreatingTarget() {
         Fixture fixture = fixture(ActionTypeEnum.REJECT);
         fixture.task.setTaskGroupId("group-1");
@@ -102,6 +148,9 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
         ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
         group.setId("group-1");
         group.setInstanceId("instance-1");
@@ -146,6 +195,9 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
         ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
         group.setId("group-1");
         group.setInstanceId("instance-1");
@@ -176,6 +228,9 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "finance");
         ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
         group.setId("group-1");
         group.setInstanceId("instance-1");
@@ -566,6 +621,11 @@ class EnhancedTaskActionCoordinatorTest {
         request.setExpectedTaskVersion(task.getLockVersion());
         request.setOperatorUserId(operator.getUserId());
         return request;
+    }
+
+    private void allowReachable(Fixture fixture, String nodeCode) {
+        when(fixture.advancer.reachableUserTaskNodeCodes(fixture.instance, fixture.definition))
+                .thenReturn(new java.util.LinkedHashSet<String>(java.util.Collections.singletonList(nodeCode)));
     }
 
     private Fixture fixture(ActionTypeEnum action) {
