@@ -1,13 +1,12 @@
 [CmdletBinding()]
 param(
-    [string]$PiModel = "openai/gpt-5.6-terra",
     [switch]$SkipPlatform,
     [switch]$WhatIf
 )
 
 $ErrorActionPreference = "Stop"
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
-$agentWebRoot = Join-Path $repositoryRoot "agent-web"
+$agentWebRoot = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = Split-Path -Parent $agentWebRoot
 
 function Get-ListeningProcessId([int]$Port) {
     $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
@@ -28,13 +27,6 @@ function Start-ServiceWindow([string]$Name, [string]$WorkingDirectory, [string]$
 
 if (-not (Test-Path (Join-Path $agentWebRoot "package.json"))) {
     throw "Cannot find agent-web/package.json below $repositoryRoot."
-}
-
-# PI_MODEL is consumed by the NestJS process. The API key is deliberately read
-# only from the caller's environment and is never written to a file or output.
-$env:PI_MODEL = $PiModel
-if ($PiModel.StartsWith("openai/") -and -not $env:OPENAI_API_KEY) {
-    Write-Warning "OPENAI_API_KEY is not set in this PowerShell session. Pi may use ~/.pi/agent/auth.json instead; otherwise /health/ready will fail."
 }
 
 $services = @(

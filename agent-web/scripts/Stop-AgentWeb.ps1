@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Stops only the three local development ports documented by Agent Web.
 $ports = 8080, 3100, 5173
 $listeners = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
     Where-Object { $_.LocalPort -in $ports } |

@@ -31,16 +31,16 @@ npm run dev:frontend
 
 ## Windows 一键启动与停止
 
-仓库根目录的 PowerShell 脚本会分别打开流程平台、Agent 后端和前端的终端窗口；已占用
+`scripts` 子目录中的 PowerShell 脚本会分别打开流程平台、Agent 后端和前端的终端窗口；已占用
 `8080`、`3100` 或 `5173` 的服务会被保留，不会被脚本自动结束。
 
-真实对话需要先在**执行启动脚本的同一个 PowerShell 窗口**设置模型与凭据。不要把 API Key
-写入 `.env`、脚本或提交到仓库：当前工程直接读取进程环境变量。
+真实对话的配置会从 `agent-web/.env` 自动读取。先复制 `.env.example` 为 `.env`，并仅在 `.env`
+中填写 API Key；`.env` 不应提交到仓库。
 
 ```powershell
-cd E:\resume_project\flow-mind
-$env:PI_MODEL = "openai/gpt-5.6-terra"
-$env:OPENAI_API_KEY = "your-api-key"
+cd E:\resume_project\flow-mind\agent-web
+Copy-Item .env.example .env
+# 编辑 .env，将 OPENAI_API_KEY= 替换为你的 OpenAI API Key
 .\scripts\Start-AgentWeb.ps1
 ```
 
