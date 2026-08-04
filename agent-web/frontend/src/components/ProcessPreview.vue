@@ -1,32 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
 import type { ProcessPreview } from "@flowmind/agent-contracts";
+import ProcessGraphDesigner from "./ProcessGraphDesigner.vue";
 
-const props = defineProps<{ preview: ProcessPreview }>();
-const nodes = computed(() => props.preview.nodes.map((node) => ({
-  ...node,
-  nodeCode: String(node.nodeCode),
-  nodeName: String(node.nodeName),
-  nodeType: String(node.nodeType),
-  x: Number(node.positionX || 80),
-  y: Number(node.positionY || 120),
-})));
-const byCode = computed(() => new Map(nodes.value.map((node) => [node.nodeCode, node])));
-const edges = computed(() => props.preview.edges.map((edge) => ({
-  edgeCode: String(edge.edgeCode),
-  conditionExpression: edge.conditionExpression ? String(edge.conditionExpression) : "",
-  source: byCode.value.get(String(edge.sourceNodeCode)),
-  target: byCode.value.get(String(edge.targetNodeCode)),
-})).filter((edge) => edge.source && edge.target));
-const width = computed(() => Math.max(960, ...nodes.value.map((node) => node.x + 150)));
-const height = computed(() => Math.max(280, ...nodes.value.map((node) => node.y + 120)));
-
-function nodeClass(type: string): string {
-  if (type === "START") return "start";
-  if (type === "END") return "end";
-  if (type.includes("GATEWAY")) return "gateway";
-  return "task";
-}
+defineProps<{ preview: ProcessPreview }>();
 </script>
 
 <template>
@@ -44,34 +20,7 @@ function nodeClass(type: string): string {
       </div>
     </div>
 
-    <div class="graph-scroll">
-      <svg class="process-graph" :viewBox="`0 0 ${width} ${height}`" role="img" aria-label="流程节点与连线预览">
-        <defs>
-          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L9,3 z" />
-          </marker>
-        </defs>
-        <g v-for="edge in edges" :key="String(edge.edgeCode)">
-          <line
-            :x1="edge.source!.x + 58"
-            :y1="edge.source!.y + 30"
-            :x2="edge.target!.x - 8"
-            :y2="edge.target!.y + 30"
-            marker-end="url(#arrow)"
-          />
-          <text
-            v-if="edge.conditionExpression"
-            :x="(edge.source!.x + edge.target!.x) / 2"
-            :y="edge.source!.y + 18"
-          >{{ edge.conditionExpression }}</text>
-        </g>
-        <g v-for="node in nodes" :key="node.nodeCode" :class="['graph-node', nodeClass(node.nodeType)]">
-          <rect :x="node.x" :y="node.y" width="120" height="60" rx="14" />
-          <text :x="node.x + 60" :y="node.y + 27">{{ node.nodeName }}</text>
-          <text class="node-type" :x="node.x + 60" :y="node.y + 45">{{ node.nodeType }}</text>
-        </g>
-      </svg>
-    </div>
+    <ProcessGraphDesigner title="平台流程图" :nodes="preview.nodes" :edges="preview.edges" />
 
     <el-alert
       v-if="!preview.validation.valid"

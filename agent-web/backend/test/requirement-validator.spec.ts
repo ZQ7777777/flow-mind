@@ -66,4 +66,16 @@ describe("validateRequirement", () => {
     expect(result.readyForReview).toBe(false);
     expect(result.ambiguities).not.toHaveLength(0);
   });
+
+  it("reports user task approver configs that platform cannot resolve", () => {
+    const input = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    const finance = input.nodes.find((node) => node.nodeCode === "finance_confirm")!;
+    finance.approverRule = { type: "ROLE", config: {} };
+
+    const result = validateRequirement(input);
+
+    expect(result.structurallyValid).toBe(true);
+    expect(result.readyForReview).toBe(false);
+    expect(result.ambiguities.join(" ")).toContain("roleCode");
+  });
 });

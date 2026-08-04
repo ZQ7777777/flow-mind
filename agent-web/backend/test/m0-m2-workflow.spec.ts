@@ -16,6 +16,13 @@ const user: MockUser = {
   departmentName: "Sales Department",
 };
 
+function taskActionRules(node: { listenerConfig?: Record<string, unknown> } | undefined): Record<string, unknown> {
+  const rules = node?.listenerConfig?.taskActionRules;
+  return rules && typeof rules === "object" && !Array.isArray(rules)
+    ? rules as Record<string, unknown>
+    : {};
+}
+
 describe("M0-M2 workflow", () => {
   let root: string;
   let database: DatabaseService;
@@ -130,8 +137,22 @@ describe("M0-M2 workflow", () => {
     await workflow.updateRequirement(snapshot.sessionId, user, snapshot.rowVersion, editedRequirement);
     snapshot = await workflow.getSnapshot(snapshot.sessionId, user);
     const normalizedApplyNode = snapshot.requirement!.requirement.nodes.find((node) => node.nodeCode === "apply");
+    const normalizedManagerNode = snapshot.requirement!.requirement.nodes.find((node) => node.nodeCode === "manager_approve");
+    const normalizedFinanceNode = snapshot.requirement!.requirement.nodes.find((node) => node.nodeCode === "finance_confirm");
     expect(snapshot.requirement?.requirement.systemCode).toBe("FINANCE_SYS_001");
-    expect(normalizedApplyNode?.listenerConfig).toBeDefined();
+    expect(normalizedApplyNode?.listenerConfig).toEqual({
+      taskActionRules: {
+        directSend: { enabled: true, targetMode: "REJECT_SOURCE" },
+      },
+    });
+    expect(taskActionRules(normalizedManagerNode).reject).toEqual({
+      enabled: true,
+      targetNodeCodes: ["apply", "manager_approve", "finance_confirm"],
+    });
+    expect(taskActionRules(normalizedFinanceNode).reject).toEqual({
+      enabled: true,
+      targetNodeCodes: ["apply", "manager_approve", "finance_confirm"],
+    });
     expect(normalizedApplyNode?.reminderConfig).toMatchObject({ enabled: true, maxCount: 2 });
 
     await workflow.confirmRequirement(
@@ -170,11 +191,20 @@ describe("M0-M2 workflow", () => {
     const graphSave = calls.find((call) => call.method === "PUT");
     expect(graphSave?.body.operationId).toMatch(/^op_save_/);
     const applyNode = graphSave?.body.nodes.find((node: any) => node.nodeCode === "apply");
+    const managerNode = graphSave?.body.nodes.find((node: any) => node.nodeCode === "manager_approve");
+    const financeNode = graphSave?.body.nodes.find((node: any) => node.nodeCode === "finance_confirm");
     expect(JSON.parse(applyNode.listenerConfig)).toEqual({
       taskActionRules: {
         directSend: { enabled: true, targetMode: "REJECT_SOURCE" },
-        reject: { enabled: true, targetNodeCodes: ["apply"] },
       },
+    });
+    expect(JSON.parse(managerNode.listenerConfig).taskActionRules.reject).toEqual({
+      enabled: true,
+      targetNodeCodes: ["apply", "manager_approve", "finance_confirm"],
+    });
+    expect(JSON.parse(financeNode.listenerConfig).taskActionRules.reject).toEqual({
+      enabled: true,
+      targetNodeCodes: ["apply", "manager_approve", "finance_confirm"],
     });
     expect(JSON.parse(applyNode.timeoutConfig)).toEqual({
       action: "REMIND", durationMinutes: 1440, enabled: true, severity: "MEDIUM",

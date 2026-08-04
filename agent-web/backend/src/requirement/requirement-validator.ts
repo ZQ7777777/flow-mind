@@ -98,6 +98,7 @@ function validateNode(
 ): void {
   if (node.nodeType === "USER_TASK") {
     if (!node.approverRule) missing.add(`用户任务 ${node.nodeName} 的审批人规则`);
+    if (node.approverRule) validateApproverRuleConfig(node, ambiguities);
     if (!node.multiInstanceMode) missing.add(`用户任务 ${node.nodeName} 的多人模式`);
     validateRuntimeTaskPolicies(node, nodeByCode, ambiguities);
   } else if (node.listenerConfig !== undefined || node.timeoutConfig !== undefined || node.reminderConfig !== undefined) {
@@ -109,6 +110,36 @@ function validateNode(
     } else if (!nodeByCode.has(node.pairedGatewayCode)) {
       ambiguities.add(`并行网关 ${node.nodeName} 的配对节点不存在`);
     }
+  }
+}
+
+function validateApproverRuleConfig(
+  node: ProcessNodeRequirement,
+  ambiguities: Set<string>,
+): void {
+  const config = record(node.approverRule?.config) || {};
+  const ruleType = node.approverRule?.type;
+  if (ruleType === "USER") {
+    const userIds = Array.isArray(config.userIds) ? config.userIds : [];
+    if (!userIds.some(hasTextValue)) {
+      ambiguities.add(`节点 ${node.nodeName} 的 USER 审批规则必须配置 userIds`);
+    }
+    return;
+  }
+  if (ruleType === "DEPARTMENT" && !hasTextValue(config.departmentId)) {
+    ambiguities.add(`节点 ${node.nodeName} 的 DEPARTMENT 审批规则必须配置 departmentId`);
+    return;
+  }
+  if (ruleType === "ROLE" && !hasTextValue(config.roleCode)) {
+    ambiguities.add(`节点 ${node.nodeName} 的 ROLE 审批规则必须配置 roleCode`);
+    return;
+  }
+  if (ruleType === "ROLE_IN_DEPARTMENT" && !hasTextValue(config.roleCode)) {
+    ambiguities.add(`节点 ${node.nodeName} 的 ROLE_IN_DEPARTMENT 审批规则必须配置 roleCode`);
+    return;
+  }
+  if (ruleType === "APPROVER_EXPRESSION" && !hasTextValue(config.expression)) {
+    ambiguities.add(`节点 ${node.nodeName} 的 APPROVER_EXPRESSION 审批规则必须配置 expression`);
   }
 }
 
@@ -150,6 +181,10 @@ function validateRuntimeTaskPolicies(
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : undefined;
+}
+
+function hasTextValue(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function validateReachability(

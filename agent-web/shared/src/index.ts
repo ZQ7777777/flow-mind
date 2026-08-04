@@ -87,6 +87,11 @@ export interface ProcessNodeRequirement {
 
 export const DEFAULT_SYSTEM_CODE = "FINANCE_SYS_001";
 
+export interface UserTaskRuntimeDefaultOptions {
+  rejectEnabled?: boolean;
+  rejectTargetNodeCodes?: string[];
+}
+
 /**
  * Creates independent default runtime-policy objects for a user task.  A factory
  * is used so editing one node in the UI cannot mutate the defaults of another.
@@ -94,13 +99,25 @@ export const DEFAULT_SYSTEM_CODE = "FINANCE_SYS_001";
 export function createDefaultUserTaskConfigs(): Pick<
   ProcessNodeRequirement,
   "listenerConfig" | "timeoutConfig" | "reminderConfig"
-> {
+>;
+export function createDefaultUserTaskConfigs(options: UserTaskRuntimeDefaultOptions): Pick<
+  ProcessNodeRequirement,
+  "listenerConfig" | "timeoutConfig" | "reminderConfig"
+>;
+export function createDefaultUserTaskConfigs(
+  options: UserTaskRuntimeDefaultOptions = {},
+): Pick<ProcessNodeRequirement, "listenerConfig" | "timeoutConfig" | "reminderConfig"> {
+  const rejectEnabled = options.rejectEnabled ?? true;
+  const rejectTargetNodeCodes = options.rejectTargetNodeCodes?.length ? options.rejectTargetNodeCodes : ["apply"];
+  const taskActionRules: Record<string, unknown> = {
+    directSend: { enabled: true, targetMode: "REJECT_SOURCE" },
+  };
+  if (rejectEnabled) {
+    taskActionRules.reject = { enabled: true, targetNodeCodes: rejectTargetNodeCodes };
+  }
   return {
     listenerConfig: {
-      taskActionRules: {
-        reject: { enabled: true, targetNodeCodes: ["apply"] },
-        directSend: { enabled: true, targetMode: "REJECT_SOURCE" },
-      },
+      taskActionRules,
     },
     timeoutConfig: {
       enabled: true,
@@ -356,6 +373,8 @@ export const businessRequirementSchema = {
   },
 } as const;
 
+const ENTRY_APPLICATION_USER_TASK_CODES = ["apply", "manager_approve", "finance_confirm"];
+
 export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
   schemaVersion: "1.0",
   businessCode: "entry_application",
@@ -388,9 +407,9 @@ export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
   ],
   nodes: [
     { nodeCode: "start", nodeName: "开始", nodeType: "START", positionX: 80, positionY: 120, sortOrder: 1 },
-    { nodeCode: "apply", nodeName: "申请", nodeType: "USER_TASK", approverRule: { type: "STARTER", config: {} }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs(), positionX: 260, positionY: 120, sortOrder: 2 },
-    { nodeCode: "manager_approve", nodeName: "部门经理审批", nodeType: "USER_TASK", approverRule: { type: "ROLE_IN_DEPARTMENT", config: { roleCode: "department_manager", departmentFrom: "starter" } }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs(), positionX: 460, positionY: 120, sortOrder: 3 },
-    { nodeCode: "finance_confirm", nodeName: "财务确认", nodeType: "USER_TASK", approverRule: { type: "ROLE", config: { roleCode: "finance" } }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs(), positionX: 680, positionY: 120, sortOrder: 4 },
+    { nodeCode: "apply", nodeName: "申请", nodeType: "USER_TASK", approverRule: { type: "STARTER", config: {} }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs({ rejectEnabled: false, rejectTargetNodeCodes: ENTRY_APPLICATION_USER_TASK_CODES }), positionX: 260, positionY: 120, sortOrder: 2 },
+    { nodeCode: "manager_approve", nodeName: "部门经理审批", nodeType: "USER_TASK", approverRule: { type: "ROLE_IN_DEPARTMENT", config: { roleCode: "department_manager", departmentFrom: "starter" } }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs({ rejectTargetNodeCodes: ENTRY_APPLICATION_USER_TASK_CODES }), positionX: 460, positionY: 120, sortOrder: 3 },
+    { nodeCode: "finance_confirm", nodeName: "财务确认", nodeType: "USER_TASK", approverRule: { type: "ROLE", config: { roleCode: "finance" } }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs({ rejectTargetNodeCodes: ENTRY_APPLICATION_USER_TASK_CODES }), positionX: 680, positionY: 120, sortOrder: 4 },
     { nodeCode: "end", nodeName: "结束", nodeType: "END", positionX: 880, positionY: 120, sortOrder: 5 },
   ],
   edges: [

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { reactive, watch } from "vue";
 import {
-  createDefaultUserTaskConfigs,
   type BusinessRequirement,
   type RequirementRevision,
 } from "@flowmind/agent-contracts";
+import ProcessGraphDesigner from "./ProcessGraphDesigner.vue";
 
 const props = defineProps<{ revision: RequirementRevision; disabled?: boolean }>();
 const emit = defineEmits<{ save: [requirement: BusinessRequirement] }>();
@@ -54,32 +54,26 @@ function addAttachment(): void {
   });
 }
 
-function addNode(): void {
-  draft.nodes.push({
-    nodeCode: "",
-    nodeName: "",
-    nodeType: "USER_TASK",
-    approverRule: { type: "ROLE", config: {} },
-    multiInstanceMode: "SINGLE",
-    ...createDefaultUserTaskConfigs(),
-    positionX: 120 + draft.nodes.length * 180,
-    positionY: 120,
-    sortOrder: draft.nodes.length + 1,
-  });
-}
-
-function addEdge(): void {
-  draft.edges.push({
-    edgeCode: "",
-    sourceNodeCode: "",
-    targetNodeCode: "",
-    defaultEdge: false,
-    sortOrder: draft.edges.length + 1,
-  });
-}
-
 function addRule(): void {
   draft.businessRules.push({ ruleCode: "", description: "" });
+}
+
+function replaceNodes(nodes: unknown[]): void {
+  const previousNodeCodes = draft.nodes.map((node) => node.nodeCode).filter(Boolean);
+  const nextNodes = clone(nodes) as BusinessRequirement["nodes"];
+  const nextNodeCodes = nextNodes.map((node) => node.nodeCode).filter(Boolean);
+  const removedNodeCodes = previousNodeCodes.filter((nodeCode) => !nextNodeCodes.includes(nodeCode));
+  const addedNodeCodes = nextNodeCodes.filter((nodeCode) => !previousNodeCodes.includes(nodeCode));
+  if (draft.nodes.length === nextNodes.length && removedNodeCodes.length === 1 && addedNodeCodes.length === 1) {
+    replaceAttachmentNodeCode(removedNodeCodes[0], addedNodeCodes[0]);
+  } else {
+    for (const removedNodeCode of removedNodeCodes) removeAttachmentNodeCode(removedNodeCode);
+  }
+  draft.nodes = nextNodes;
+}
+
+function replaceEdges(edges: unknown[]): void {
+  draft.edges = clone(edges) as BusinessRequirement["edges"];
 }
 
 function toCsv(values: string[]): string {
@@ -96,6 +90,23 @@ function jsonText(value: Record<string, unknown>): string {
 
 function parseRecord(text: string): Record<string, unknown> {
   try { return JSON.parse(text || "{}"); } catch { return {}; }
+}
+
+function replaceAttachmentNodeCode(oldNodeCode: string, newNodeCode: string): void {
+  for (const attachment of draft.attachments) {
+    attachment.applicableNodeCodes = uniqueValues(attachment.applicableNodeCodes.map((nodeCode) =>
+      nodeCode === oldNodeCode ? newNodeCode : nodeCode));
+  }
+}
+
+function removeAttachmentNodeCode(removedNodeCode: string): void {
+  for (const attachment of draft.attachments) {
+    attachment.applicableNodeCodes = attachment.applicableNodeCodes.filter((nodeCode) => nodeCode !== removedNodeCode);
+  }
+}
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 </script>
 
@@ -143,6 +154,17 @@ function parseRecord(text: string): Record<string, unknown> {
         <el-input v-model="item.responsibility" placeholder="职责" :disabled="disabled" />
         <el-button link type="danger" :disabled="disabled" @click="draft.participants.splice(index, 1)">删除</el-button>
       </div>
+    </section>
+
+    <section class="editor-section graph-editor-section">
+      <ProcessGraphDesigner
+        title="需求流程图"
+        :nodes="draft.nodes"
+        :edges="draft.edges"
+        :editable="!disabled"
+        @update:nodes="replaceNodes"
+        @update:edges="replaceEdges"
+      />
     </section>
 
     <section class="editor-section">
@@ -200,74 +222,6 @@ function parseRecord(text: string): Record<string, unknown> {
           />
           <el-button link type="danger" :disabled="disabled" @click="draft.attachments.splice(index, 1)">删除</el-button>
         </div>
-      </div>
-    </section>
-
-    <section class="editor-section">
-      <div class="section-title"><h3>流程节点</h3><el-button size="small" :disabled="disabled" @click="addNode">添加节点</el-button></div>
-      <div v-for="(node, index) in draft.nodes" :key="index" class="card-row">
-        <div class="edit-row four">
-          <el-input v-model="node.nodeCode" placeholder="节点编码" :disabled="disabled" />
-          <el-input v-model="node.nodeName" placeholder="节点名称" :disabled="disabled" />
-          <el-select v-model="node.nodeType" :disabled="disabled">
-            <el-option v-for="type in ['START','USER_TASK','EXCLUSIVE_GATEWAY','PARALLEL_SPLIT_GATEWAY','PARALLEL_JOIN_GATEWAY','END']" :key="type" :value="type" />
-          </el-select>
-          <el-select v-if="node.approverRule" v-model="node.approverRule.type" :disabled="disabled">
-            <el-option v-for="type in ['USER','STARTER','DEPARTMENT','ROLE','ROLE_IN_DEPARTMENT','APPROVER_EXPRESSION']" :key="type" :value="type" />
-          </el-select>
-        </div>
-        <div class="edit-row four compact">
-          <el-input
-            v-if="node.approverRule"
-            :model-value="jsonText(node.approverRule.config)"
-            placeholder="审批配置 JSON"
-            :disabled="disabled"
-            @change="node.approverRule!.config = parseRecord($event)"
-          />
-          <el-select v-if="node.nodeType === 'USER_TASK'" v-model="node.multiInstanceMode" :disabled="disabled">
-            <el-option v-for="type in ['SINGLE','OR_SIGN','COUNTERSIGN']" :key="type" :value="type" />
-          </el-select>
-          <el-input v-model="node.pairedGatewayCode" placeholder="配对网关" :disabled="disabled" />
-          <el-button link type="danger" :disabled="disabled" @click="draft.nodes.splice(index, 1)">删除</el-button>
-        </div>
-        <div v-if="node.nodeType === 'USER_TASK'" class="node-runtime-config">
-          <el-input
-            :model-value="jsonText(node.listenerConfig || {})"
-            type="textarea"
-            :rows="3"
-            placeholder="listenerConfig JSON"
-            :disabled="disabled"
-            @change="node.listenerConfig = parseRecord($event)"
-          />
-          <el-input
-            :model-value="jsonText(node.timeoutConfig || {})"
-            type="textarea"
-            :rows="3"
-            placeholder="timeoutConfig JSON"
-            :disabled="disabled"
-            @change="node.timeoutConfig = parseRecord($event)"
-          />
-          <el-input
-            :model-value="jsonText(node.reminderConfig || {})"
-            type="textarea"
-            :rows="3"
-            placeholder="reminderConfig JSON"
-            :disabled="disabled"
-            @change="node.reminderConfig = parseRecord($event)"
-          />
-        </div>
-      </div>
-    </section>
-
-    <section class="editor-section">
-      <div class="section-title"><h3>流程连线</h3><el-button size="small" :disabled="disabled" @click="addEdge">添加连线</el-button></div>
-      <div v-for="(edge, index) in draft.edges" :key="index" class="edit-row four">
-        <el-input v-model="edge.edgeCode" placeholder="连线编码" :disabled="disabled" />
-        <el-input v-model="edge.sourceNodeCode" placeholder="来源节点" :disabled="disabled" />
-        <el-input v-model="edge.targetNodeCode" placeholder="目标节点" :disabled="disabled" />
-        <el-input v-model="edge.conditionExpression" placeholder="条件表达式" :disabled="disabled" />
-        <el-checkbox v-model="edge.defaultEdge" :disabled="disabled">默认线</el-checkbox>
-        <el-button link type="danger" :disabled="disabled" @click="draft.edges.splice(index, 1)">删除</el-button>
       </div>
     </section>
 

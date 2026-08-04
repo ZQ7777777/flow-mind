@@ -604,11 +604,21 @@ function applyRequirementDefaults(input: unknown): unknown {
     requirement.systemCode = requirement.systemCode.trim();
   }
   if (Array.isArray(requirement.nodes)) {
+    const userTaskNodeCodes = requirement.nodes
+      .filter((value) => value && typeof value === "object" && !Array.isArray(value)
+        && (value as Record<string, unknown>).nodeType === "USER_TASK")
+      .map((value) => String((value as Record<string, unknown>).nodeCode || ""))
+      .filter(Boolean);
+    const firstUserTaskNodeCode = userTaskNodeCodes[0];
     requirement.nodes = requirement.nodes.map((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) return value;
       const node = { ...(value as Record<string, unknown>) };
       if (node.nodeType !== "USER_TASK") return node;
-      const defaults = createDefaultUserTaskConfigs();
+      const nodeCode = String(node.nodeCode || "");
+      const defaults = createDefaultUserTaskConfigs({
+        rejectEnabled: Boolean(nodeCode && nodeCode !== firstUserTaskNodeCode),
+        rejectTargetNodeCodes: userTaskNodeCodes,
+      });
       if (!("listenerConfig" in node)) node.listenerConfig = defaults.listenerConfig;
       if (!("timeoutConfig" in node)) node.timeoutConfig = defaults.timeoutConfig;
       if (!("reminderConfig" in node)) node.reminderConfig = defaults.reminderConfig;
