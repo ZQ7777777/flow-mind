@@ -17,6 +17,7 @@ import { PiAdapterService, type PiCallbacks } from "../pi/pi-adapter.service.js"
 import { validateRequirement } from "../requirement/requirement-validator.js";
 import { EventBusService } from "./event-bus.service.js";
 import { PlatformClientService } from "../platform/platform-client.service.js";
+import { toSummary } from "../generation/generation.service.js";
 
 @Injectable()
 export class WorkflowService {
@@ -63,6 +64,7 @@ export class WorkflowService {
     const requirement = toRequirementRevision(session);
     const process = hasProcessPreview(session.state) ? this.database.getProcessBySession(sessionId) : undefined;
     const preview = process ? toProcessPreview(process) : undefined;
+    const generation = this.database.getLatestGenerationBySession(sessionId);
     const messages = await this.pi.getMessages(sessionId, this.callbacks(sessionId));
     return {
       sessionId,
@@ -74,6 +76,7 @@ export class WorkflowService {
       messages,
       requirement,
       processPreview: preview,
+      activeGeneration: generation && generation.status !== "CANCELLED" ? toSummary(generation) : undefined,
       lastError: session.last_error_code
         ? { code: session.last_error_code, message: session.last_error_message || "" }
         : undefined,
@@ -111,6 +114,7 @@ export class WorkflowService {
     this.expectState(session, [
       "REQUIREMENT_REVIEW", "PROCESS_PROVISIONING", "PROCESS_PROVISION_FAILED",
       "PROCESS_REVIEW", "PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE",
+      "CODE_GENERATING", "CODE_REVIEW", "CODE_PIPELINE_FAILED",
     ]);
     const revision = toRequirementRevision(session);
     if (!revision) throw new AgentError(HttpStatus.NOT_FOUND, "AGENT_REQUIREMENT_NOT_FOUND", "requirement not found", sessionId);
@@ -237,6 +241,10 @@ export class WorkflowService {
             last_error_code = NULL, last_error_message = NULL, updated_at = ?
           WHERE id = ?
         `).run(piSession.piSessionId, piSession.sessionFile || null, now, sessionId);
+        this.database.db.prepare(`
+          UPDATE agent_code_generation SET status = 'SUPERSEDED', updated_at = ?
+          WHERE session_id = ? AND status IN ('REVIEW', 'FAILED')
+        `).run(now, sessionId);
         await this.publishSnapshot(sessionId, user);
       })
       .finally(() => {
@@ -636,10 +644,12 @@ const resettableStates: WorkflowState[] = [
   "PROCESS_REVIEW",
   "PROCESS_ACTIVATION_FAILED",
   "PROCESS_ACTIVE",
+  "CODE_REVIEW",
+  "CODE_PIPELINE_FAILED",
 ];
 
 function hasProcessPreview(state: WorkflowState): boolean {
-  return ["PROCESS_REVIEW", "PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE"].includes(state);
+  return ["PROCESS_REVIEW", "PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE", "CODE_GENERATING", "CODE_REVIEW", "CODE_PIPELINE_FAILED"].includes(state);
 }
 
 function allowedActions(state: WorkflowState, validationPassed: boolean): string[] {
@@ -652,7 +662,11 @@ function allowedActions(state: WorkflowState, validationPassed: boolean): string
     PROCESS_ACTIVATING: [],
     PROCESS_ACTIVATION_FAILED: ["RETRY_PROCESS"],
     PROCESS_ACTIVE: [],
+    CODE_GENERATING: ["CANCEL_GENERATION"],
+    CODE_REVIEW: ["EDIT_GENERATED_FILE", "REGENERATE"],
+    CODE_PIPELINE_FAILED: ["REGENERATE"],
   };
+  if (state === "PROCESS_ACTIVE") mapping.PROCESS_ACTIVE = ["START_GENERATION"];
   return resettableStates.includes(state) ? [...mapping[state], "RESET_SESSION"] : mapping[state];
 }
 

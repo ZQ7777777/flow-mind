@@ -80,4 +80,37 @@ describe("workflow SSE lifecycle", () => {
     expect(store.snapshot?.rowVersion).toBe(1);
     expect(store.snapshot?.messages).toEqual([]);
   });
+
+  it("starts M3 with a late-bound target and loads generated content plus diff", async () => {
+    const active: WorkflowSnapshot = { ...snapshot, state: "PROCESS_ACTIVE", rowVersion: 4, allowedActions: ["START_GENERATION"] };
+    const review: WorkflowSnapshot = {
+      ...active,
+      state: "CODE_REVIEW",
+      rowVersion: 6,
+      activeGeneration: {
+        generationId: "acg_1", status: "REVIEW", generationRevision: 1,
+        targetRoot: "E:\\workspace\\business-base", contractVersion: "1.0",
+        manifest: { generationId: "acg_1", targetRoot: "E:\\workspace\\business-base", contractVersion: "1.0", revision: 1, files: [] },
+        createdAt: "2026-08-03T00:00:00Z", updatedAt: "2026-08-03T00:00:00Z",
+      },
+      allowedActions: ["EDIT_GENERATED_FILE", "REGENERATE"],
+    };
+    let current = active;
+    mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
+    mocks.apiRequest.mockImplementation(async (path: string, _user?: MockUser, options?: { method?: string; body?: string }) => {
+      if (path === "/api/agent/mock-users") return [user];
+      if (path === "/api/agent/sessions") return active;
+      if (path.endsWith("/code-generations")) { expect(JSON.parse(options!.body!)).toEqual({ targetRoot: "E:\\workspace\\business-base" }); current = review; return { accepted: true }; }
+      if (path.endsWith("/files/frontend/src/router/generated-routes.ts")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/router/generated-routes.ts", content: "route", sha256: "abc" };
+      if (path.endsWith("/diff/frontend/src/router/generated-routes.ts")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/router/generated-routes.ts", changeType: "MODIFY", stagedSha256: "abc", stale: false, originalContent: "", stagedContent: "route", unifiedDiff: "+route" };
+      return current;
+    });
+    const store = useWorkflowStore();
+    await store.initialize(); await store.createSession();
+    await store.startGeneration("E:\\workspace\\business-base");
+    expect(store.state).toBe("CODE_REVIEW");
+    await store.loadGeneratedFile("frontend/src/router/generated-routes.ts");
+    expect(store.generatedFile?.content).toBe("route");
+    expect(store.generatedDiff?.unifiedDiff).toBe("+route");
+  });
 });

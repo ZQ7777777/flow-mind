@@ -10,6 +10,8 @@ export interface AgentConfig {
   thinkingLevel: string;
   fakePi: boolean;
   platformTimeoutMs: number;
+  allowedTargetRoots: string[];
+  compactionModel: string;
   mockUsers: MockUser[];
 }
 
@@ -24,6 +26,12 @@ export function loadConfig(): AgentConfig {
     thinkingLevel: process.env.PI_THINKING_LEVEL || "medium",
     fakePi: process.env.NODE_ENV === "test" || process.env.AGENT_FAKE_PI === "true",
     platformTimeoutMs: Number(process.env.FLOW_PLATFORM_TIMEOUT_MS || 15000),
+    allowedTargetRoots: (process.env.AGENT_ALLOWED_TARGET_ROOTS || "")
+      .split(process.platform === "win32" ? ";" : ":")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => resolve(value)),
+    compactionModel: process.env.PI_COMPACTION_MODEL || process.env.PI_MODEL || "",
     mockUsers: [
       {
         userId: "user_sales",

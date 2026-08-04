@@ -15,6 +15,7 @@ import type { Response } from "express";
 import { IdentityService } from "./identity/identity.service.js";
 import { WorkflowService } from "./workflow/workflow.service.js";
 import { EventBusService } from "./workflow/event-bus.service.js";
+import { GenerationService } from "./generation/generation.service.js";
 
 @Controller()
 export class AppController {
@@ -22,6 +23,7 @@ export class AppController {
     @Inject(IdentityService) private readonly identity: IdentityService,
     @Inject(WorkflowService) private readonly workflow: WorkflowService,
     @Inject(EventBusService) private readonly events: EventBusService,
+    @Inject(GenerationService) private readonly generation: GenerationService,
   ) {}
 
   @Get("/api/agent/mock-users")
@@ -203,11 +205,111 @@ export class AppController {
       idempotencyKey,
     );
   }
+
+  @Post("/api/agent/sessions/:sessionId/code-generations")
+  @HttpCode(202)
+  startGeneration(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: { targetRoot?: string },
+  ) {
+    return this.generation.start(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+      idempotencyKey,
+      body?.targetRoot,
+    );
+  }
+
+  @Get("/api/agent/sessions/:sessionId/code-generations/:generationId")
+  getGeneration(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.generation.get(sessionId, generationId, this.identity.resolve(userId, userName));
+  }
+
+  @Get("/api/agent/sessions/:sessionId/code-generations/:generationId/files/*path")
+  getGeneratedFile(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Param("path") path: string | string[],
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.generation.readFile(sessionId, generationId, splatPath(path), this.identity.resolve(userId, userName));
+  }
+
+  @Put("/api/agent/sessions/:sessionId/code-generations/:generationId/files/*path")
+  updateGeneratedFile(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Param("path") path: string | string[],
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Body() body: { content: string; generationRevision: number },
+  ) {
+    return this.generation.editFile(
+      sessionId, generationId, splatPath(path), body?.content, body?.generationRevision,
+      this.identity.resolve(userId, userName),
+    );
+  }
+
+  @Get("/api/agent/sessions/:sessionId/code-generations/:generationId/diff/*path")
+  getGeneratedDiff(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Param("path") path: string | string[],
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.generation.readDiff(sessionId, generationId, splatPath(path), this.identity.resolve(userId, userName));
+  }
+
+  @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/cancel")
+  cancelGeneration(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+  ) {
+    return this.generation.cancel(
+      sessionId, generationId, this.identity.resolve(userId, userName), parseVersion(ifMatch),
+    );
+  }
+
+  @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/regenerate")
+  @HttpCode(202)
+  regenerate(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: { generationRevision: number },
+  ) {
+    return this.generation.regenerate(
+      sessionId, generationId, this.identity.resolve(userId, userName), parseVersion(ifMatch),
+      body?.generationRevision, idempotencyKey,
+    );
+  }
 }
 
 function parseVersion(value?: string): number {
   const normalized = value?.replace(/^W\//, "").replace(/"/g, "");
   return normalized && /^\d+$/.test(normalized) ? Number(normalized) : Number.NaN;
+}
+
+function splatPath(value: string | string[]): string {
+  return Array.isArray(value) ? value.join("/") : value;
 }
 
 function writeEvent(response: Response, event: string, data: unknown): void {

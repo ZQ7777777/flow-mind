@@ -1,7 +1,6 @@
-# Flow Mind Agent Web（M0-M2）
+# Flow Mind Agent Web（M0-M3）
 
-本工程实现从自然语言需求采集到流程定义发布激活的开发期工作台，范围截止
-`doc/agent-web-tech-design.md` 16.4 第 7 步。
+本工程实现从自然语言需求采集、流程定义发布激活，到受限暂存区中的入金申请代码与测试生成和人工代码预览。
 
 ## 环境
 
@@ -9,7 +8,17 @@
 - 可访问的 Flow Mind 流程平台独立服务
 - 真实对话模式需要 `PI_MODEL=provider/model` 和对应 Provider 服务端凭据
 
-复制 `.env.example` 中的配置到进程环境。`targetRoot` 在 M0-M2 可以留空。
+复制 `.env.example` 中的配置到进程环境。`targetRoot` 在 M0-M2 可以留空，M3 启动生成时可补填，
+但必须位于 `AGENT_ALLOWED_TARGET_ROOTS` 下并通过 `.flowmind/generation-target.json` 预检。
+
+## M3 目标工程前置条件
+
+目标③工程必须提供契约声明的构建文件、真实 SHA-256、可信用户访问器和
+`frontend/src/router/generated-routes.ts`。缺少任一前置件时会拒绝生成；Agent 不会替目标工程补造基础底座。
+
+M3 只生成 `entry_application` 的发起 Controller、Service、DTO、Vue 录入页、API、路由注册项及对应测试。
+产物保存在 `AGENT_DATA_DIR/staging/{sessionId}/{generationId}`，可在代码树中编辑和查看 diff，
+不会写入真实目标工程。编译、Reviewer、自动修复和最终写入属于后续阶段。
 
 ## 开发
 

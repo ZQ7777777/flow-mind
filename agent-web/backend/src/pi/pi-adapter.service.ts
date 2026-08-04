@@ -12,6 +12,8 @@ import {
 import { loadConfig } from "../config.js";
 import { DatabaseService } from "../persistence/database.service.js";
 import { REQUIREMENT_SYSTEM_PROMPT } from "./requirement-prompt.js";
+import { createFakeEntryApplicationFiles } from "./fake-generation-files.js";
+import { calculateCompactionSettings, createFlowMindCompactionExtension } from "./flowmind-compaction.js";
 
 interface SessionHandle {
   sessionId: string;
@@ -19,6 +21,7 @@ interface SessionHandle {
   prompt(text: string): Promise<void>;
   messages(): ConversationMessage[];
   dispose(): void;
+  abort?(): void;
 }
 
 export interface PiCallbacks {
@@ -27,10 +30,23 @@ export interface PiCallbacks {
   onRequirement(requirement: BusinessRequirement, missingItems: string[], ambiguities: string[]): Promise<void>;
 }
 
+export interface GenerationPiCallbacks {
+  requirement: BusinessRequirement;
+  onEvent(type: string, data: unknown): void;
+  onError(code: string, message: string): void;
+  readReference(path: string): string;
+  readStaged(path: string): string;
+  listStaged(): string[];
+  writeStaged(path: string, content: string): void;
+  deleteStaged(path: string): void;
+  reportComplete(files: string[]): void;
+}
+
 @Injectable()
 export class PiAdapterService implements OnModuleDestroy {
   private readonly config = loadConfig();
   private readonly handles = new Map<string, SessionHandle>();
+  private readonly generationHandles = new Map<string, SessionHandle>();
   private modelRuntime: any;
 
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
@@ -90,6 +106,30 @@ export class PiAdapterService implements OnModuleDestroy {
     return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
   }
 
+  async runGeneration(
+    generationId: string,
+    stagingDir: string,
+    prompt: string,
+    callbacks: GenerationPiCallbacks,
+  ): Promise<{ piSessionId: string; sessionFile?: string }> {
+    if (this.generationHandles.has(generationId)) throw new Error("generation Pi session is already active");
+    const handle = this.config.fakePi
+      ? this.createFakeGenerationHandle(generationId, callbacks)
+      : await this.createRealGenerationHandle(generationId, stagingDir, callbacks);
+    this.generationHandles.set(generationId, handle);
+    try {
+      await handle.prompt(prompt);
+      return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
+    } finally {
+      handle.dispose();
+      this.generationHandles.delete(generationId);
+    }
+  }
+
+  cancelGeneration(generationId: string): void {
+    this.generationHandles.get(generationId)?.abort?.();
+  }
+
   private async createRealHandle(agentSessionId: string, sessionFile: string | undefined, callbacks: PiCallbacks): Promise<SessionHandle> {
     const pi: any = await import("@earendil-works/pi-coding-agent");
     const runtime = await this.getModelRuntime();
@@ -106,12 +146,22 @@ export class PiAdapterService implements OnModuleDestroy {
     const sessionManager = sessionFile
       ? pi.SessionManager.open(sessionFile, sessionDir)
       : pi.SessionManager.create(cwd, sessionDir);
+    const compaction = calculateCompactionSettings(Number(model.contextWindow || 128000));
+    const settingsManager = pi.SettingsManager.inMemory({ compaction: { enabled: true, ...compaction } });
+    let activePiSessionId = agentSessionId;
     const loader = new pi.DefaultResourceLoader({
       cwd,
       agentDir,
+      settingsManager,
       systemPromptOverride: () => REQUIREMENT_SYSTEM_PROMPT,
       additionalExtensionPaths: [],
-      extensionFactories: [],
+      extensionFactories: [createFlowMindCompactionExtension({
+        database: this.database,
+        piSessionId: () => activePiSessionId,
+        modelName: this.config.compactionModel,
+        context: () => this.compactionContext(agentSessionId),
+        onEvent: callbacks.onEvent,
+      })],
     });
     await loader.reload();
     const submitTool = pi.defineTool({
@@ -140,6 +190,7 @@ export class PiAdapterService implements OnModuleDestroy {
       modelRuntime: runtime,
       thinkingLevel: this.config.thinkingLevel,
       sessionManager,
+      settingsManager,
       resourceLoader: loader,
       noTools: "builtin",
       customTools: [submitTool],
@@ -221,6 +272,113 @@ export class PiAdapterService implements OnModuleDestroy {
     };
   }
 
+  private async createRealGenerationHandle(
+    generationId: string,
+    stagingDir: string,
+    callbacks: GenerationPiCallbacks,
+  ): Promise<SessionHandle> {
+    const pi: any = await import("@earendil-works/pi-coding-agent");
+    const runtime = await this.getModelRuntime();
+    const [provider, ...modelParts] = this.config.piModel.split("/");
+    const model = runtime.getModel(provider, modelParts.join("/"));
+    if (!model) throw new Error(`PI model not found: ${this.config.piModel}`);
+    const sessionDir = join(this.database.dataDir, "pi-sessions");
+    const cwd = join(this.database.dataDir, "controlled-cwd", generationId);
+    const agentDir = join(this.database.dataDir, "controlled-pi-agent");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(stagingDir, { recursive: true });
+    const compaction = calculateCompactionSettings(Number(model.contextWindow || 128000));
+    const settingsManager = pi.SettingsManager.inMemory({ compaction: { enabled: true, ...compaction } });
+    let activePiSessionId = generationId;
+    const generation = this.database.getGeneration(generationId);
+    const loader = new pi.DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      systemPromptOverride: () => "You are a constrained Flow Mind code generator. Follow the user prompt and use only registered staging tools.",
+      additionalExtensionPaths: [],
+      extensionFactories: [createFlowMindCompactionExtension({
+        database: this.database,
+        piSessionId: () => activePiSessionId,
+        modelName: this.config.compactionModel,
+        context: () => this.compactionContext(generation?.session_id || generationId, generationId),
+        onEvent: callbacks.onEvent,
+      })],
+    });
+    await loader.reload();
+    const textResult = (text: string) => ({ content: [{ type: "text", text }], details: {} });
+    const pathParameters = Type.Object({ path: Type.String({ minLength: 1 }) });
+    const tools = [
+      pi.defineTool({ name: "read_generation_contract_file", label: "Read generation contract reference", description: "Read one target reference allowed by generation-target.json.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readReference(params.path)) }),
+      pi.defineTool({ name: "read_staged_file", label: "Read staged file", description: "Read one file in this generation staging area.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readStaged(params.path)) }),
+      pi.defineTool({ name: "list_staged_files", label: "List staged files", description: "List files staged by this generation.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listStaged())) }),
+      pi.defineTool({ name: "write_staged_file", label: "Write staged file", description: "Write UTF-8 content to an allowed staged path.", parameters: Type.Object({ path: Type.String(), content: Type.String() }), execute: async (_id: string, params: any) => { callbacks.writeStaged(params.path, params.content); return textResult("staged"); } }),
+      pi.defineTool({ name: "delete_staged_file", label: "Delete staged file", description: "Delete an unconfirmed staged file.", parameters: pathParameters, execute: async (_id: string, params: any) => { callbacks.deleteStaged(params.path); return textResult("deleted"); } }),
+      pi.defineTool({ name: "report_generation_complete", label: "Report generation complete", description: "Report the exact complete staged file set.", parameters: Type.Object({ files: Type.Array(Type.String()) }), execute: async (_id: string, params: any) => { callbacks.reportComplete(params.files); return textResult("generation accepted for human review"); } }),
+    ];
+    const created = await pi.createAgentSession({
+      cwd, agentDir, model, modelRuntime: runtime, thinkingLevel: this.config.thinkingLevel,
+      sessionManager: pi.SessionManager.create(cwd, sessionDir), settingsManager, resourceLoader: loader,
+      noTools: "builtin", customTools: tools,
+    });
+    const session = created.session;
+    activePiSessionId = session.sessionId;
+    activePiSessionId = session.sessionId;
+    session.subscribe((event: any) => mapGenerationEvent(event, callbacks));
+    return {
+      sessionId: session.sessionId,
+      sessionFile: session.sessionFile,
+      prompt: (text) => session.prompt(text),
+      messages: () => [],
+      abort: () => session.abort(),
+      dispose: () => session.dispose(),
+    };
+  }
+
+  private createFakeGenerationHandle(generationId: string, callbacks: GenerationPiCallbacks): SessionHandle {
+    const sessionFile = join(this.database.dataDir, "pi-sessions", `${generationId}.fake.jsonl`);
+    let cancelled = false;
+    return {
+      sessionId: `pi_fake_${generationId}`,
+      sessionFile,
+      prompt: async () => {
+        callbacks.onEvent("agent.started", { purpose: "GENERATOR" });
+        for (const [path, content] of Object.entries(createFakeEntryApplicationFiles(callbacks.requirement))) {
+          if (cancelled) throw new Error("generation cancelled");
+          callbacks.writeStaged(path, content);
+          callbacks.onEvent("generation.file_changed", { generationId, relativePath: path });
+          await Promise.resolve();
+        }
+        callbacks.reportComplete(callbacks.listStaged());
+        appendFileSync(sessionFile, `${JSON.stringify({ type: "generation_complete", files: callbacks.listStaged() })}\n`, "utf8");
+        callbacks.onEvent("agent.completed", { purpose: "GENERATOR" });
+      },
+      messages: () => [],
+      abort: () => { cancelled = true; },
+      dispose: () => undefined,
+    };
+  }
+
+  private compactionContext(agentSessionId: string, generationId?: string): string {
+    const session = this.database.getSession(agentSessionId);
+    const process = this.database.getProcessBySession(agentSessionId);
+    const generation = generationId ? this.database.getGeneration(generationId) : this.database.getLatestGenerationBySession(agentSessionId);
+    return JSON.stringify({
+      workflowState: session?.state || "UNKNOWN",
+      requirementRevision: session?.requirement_revision || 0,
+      requirement: session?.requirement_json ? JSON.parse(session.requirement_json) : null,
+      platformDefinitionId: process?.platform_definition_id || null,
+      processStatus: process?.status || null,
+      processSnapshot: process?.platform_snapshot_json ? JSON.parse(process.platform_snapshot_json) : null,
+      generationId: generation?.id || null,
+      generationRevision: generation?.generation_revision || 0,
+      generatedFiles: generation?.artifact_manifest_json ? JSON.parse(generation.artifact_manifest_json).files || [] : [],
+      constraints: ["Java 8", "Spring Boot 2.7.18", "Vue 3", "startAndSubmit only", "fixed entry_application boundary"],
+      qualityState: "M4_NOT_STARTED",
+      nextStep: generation?.status === "REVIEW" ? "human code review" : "continue the current workflow stage",
+    });
+  }
+
   private async getModelRuntime(): Promise<any> {
     if (!this.modelRuntime) {
       const pi: any = await import("@earendil-works/pi-coding-agent");
@@ -231,6 +389,7 @@ export class PiAdapterService implements OnModuleDestroy {
 
   onModuleDestroy(): void {
     for (const handle of this.handles.values()) handle.dispose();
+    for (const handle of this.generationHandles.values()) handle.dispose();
   }
 
   private deletePersistedSessionFile(sessionFile: string | undefined): void {
@@ -241,6 +400,17 @@ export class PiAdapterService implements OnModuleDestroy {
     if (!pathFromSessionDir || pathFromSessionDir.startsWith("..") || isAbsolute(pathFromSessionDir)) return;
     if (existsSync(candidate)) rmSync(candidate, { force: true });
   }
+}
+
+function mapGenerationEvent(event: any, callbacks: GenerationPiCallbacks): void {
+  if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+    callbacks.onEvent("assistant.delta", { delta: event.assistantMessageEvent.delta, purpose: "GENERATOR" });
+  } else if (event.type === "message_end" && (event.message?.stopReason === "error" || event.message?.errorMessage)) {
+    callbacks.onError("AGENT_MODEL_ERROR", event.message.errorMessage || "generator model failed");
+  } else if (event.type === "agent_start") callbacks.onEvent("agent.started", { purpose: "GENERATOR" });
+  else if (event.type === "agent_end") callbacks.onEvent("agent.completed", { purpose: "GENERATOR" });
+  else if (event.type === "tool_execution_start") callbacks.onEvent("tool.started", { toolName: event.toolName, purpose: "GENERATOR" });
+  else if (event.type === "tool_execution_end") callbacks.onEvent("tool.completed", { toolName: event.toolName, isError: event.isError, purpose: "GENERATOR" });
 }
 
 function toConversationMessage(message: any): ConversationMessage {

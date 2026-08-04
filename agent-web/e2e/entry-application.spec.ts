@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { resolve } from "node:path";
 
 test("入金申请从对话走到发布激活", async ({ page }) => {
   await page.goto("/");
@@ -25,5 +26,9 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
 
   await page.getByRole("button", { name: "确认流程并激活" }).click();
   await expect(page.getByText("PROCESS_ACTIVE", { exact: true })).toBeVisible({ timeout: 10000 });
-  await expect(page.getByRole("button", { name: /M0–M2 已完成/ })).toBeVisible();
+  await page.getByPlaceholder("③ business-base 绝对路径").fill(resolve(".e2e-target", "business-base"));
+  await page.getByRole("button", { name: "生成入金申请代码" }).click();
+  await expect(page.getByText("CODE_REVIEW", { exact: true })).toBeVisible({ timeout: 10000 });
+  await page.getByRole("tab", { name: "代码预览" }).click();
+  await expect(page.getByText("generated-routes.ts", { exact: true })).toBeVisible();
 });

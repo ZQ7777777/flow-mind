@@ -1,29 +1,36 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import RequirementEditor from "./components/RequirementEditor.vue";
 import ProcessPreview from "./components/ProcessPreview.vue";
+import CodeGenerationPanel from "./components/CodeGenerationPanel.vue";
 import { useWorkflowStore } from "./stores/workflow";
 
 const store = useWorkflowStore();
 const targetRoot = ref("");
 const message = ref("");
 const activeTab = ref("requirement");
+const generationTargetRoot = ref("");
 
 const steps = [
   { state: "COLLECTING", title: "采集需求" },
   { state: "REQUIREMENT_REVIEW", title: "确认需求" },
   { state: "PROCESS_REVIEW", title: "预览流程" },
   { state: "PROCESS_ACTIVE", title: "发布激活" },
+  { state: "CODE_REVIEW", title: "生成代码" },
 ];
 const stepIndex = computed(() => {
   const state = store.state;
   if (state === "COLLECTING") return 0;
   if (state === "REQUIREMENT_REVIEW") return 1;
   if (["PROCESS_PROVISIONING", "PROCESS_PROVISION_FAILED", "PROCESS_REVIEW"].includes(state || "")) return 2;
-  return 3;
+  if (["PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE"].includes(state || "")) return 3;
+  return 4;
 });
-const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING"].includes(store.state || ""));
+const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING", "CODE_GENERATING"].includes(store.state || ""));
+
+watch(() => store.snapshot?.targetRoot, (value) => { if (value) generationTargetRoot.value = value; }, { immediate: true });
+watch(() => store.state, (value) => { if (["CODE_GENERATING", "CODE_REVIEW", "CODE_PIPELINE_FAILED"].includes(value || "")) activeTab.value = "code"; });
 
 onMounted(() => void store.initialize());
 onBeforeUnmount(() => store.disconnect());
@@ -62,7 +69,7 @@ async function resetCurrentSession(): Promise<void> {
       <div class="brand">
         <div class="brand-mark">FM</div>
         <div>
-          <span class="eyebrow">FLOW MIND</span>
+        <span class="eyebrow">FLOW MIND</span>
           <h1>流程生成工作台</h1>
         </div>
       </div>
@@ -86,14 +93,14 @@ async function resetCurrentSession(): Promise<void> {
 
     <main v-if="!store.snapshot" class="welcome">
       <div class="welcome-copy">
-        <span class="eyebrow">AGENT WEB · M0–M2</span>
+        <span class="eyebrow">AGENT WEB · M0–M3</span>
         <h2>从一句业务想法，<br />到可发布的流程定义。</h2>
-        <p>通过对话补齐业务角色、字段、材料和审批规则；确认后自动落地流程草稿，并在人工门禁后发布激活。</p>
+        <p>通过对话补齐业务规则、发布流程定义，并在受控目标工程中生成可预览的业务代码与测试。</p>
       </div>
       <div class="create-card">
         <div class="card-index">01</div>
         <h3>新建 Agent 会话</h3>
-        <p>目标工程在 M3 代码生成前才强制校验，本阶段可留空。</p>
+        <p>目标工程可暂时留空；流程激活后启动 M3 生成时必须通过目标契约校验。</p>
         <el-input v-model="targetRoot" placeholder="目标工程绝对路径（可选）" />
         <el-button type="primary" size="large" :loading="store.busy" @click="createSession">
           开始采集需求
@@ -196,6 +203,17 @@ async function resetCurrentSession(): Promise<void> {
             <el-tab-pane label="流程预览" name="process" :disabled="!store.snapshot.processPreview">
               <ProcessPreview v-if="store.snapshot.processPreview" :preview="store.snapshot.processPreview" />
             </el-tab-pane>
+            <el-tab-pane label="代码预览" name="code" :disabled="!store.snapshot.activeGeneration">
+              <CodeGenerationPanel
+                v-if="store.snapshot.activeGeneration?.manifest"
+                :generation="store.snapshot.activeGeneration"
+              />
+              <div v-else class="review-empty">
+                <div class="empty-orbit"></div>
+                <h3>{{ store.state === 'CODE_GENERATING' ? 'Generator 正在生成代码和测试' : '尚无可预览代码' }}</h3>
+                <p>生成结果只写入 Agent 暂存区，不会修改真实目标工程。</p>
+              </div>
+            </el-tab-pane>
           </el-tabs>
         </section>
       </div>
@@ -207,7 +225,10 @@ async function resetCurrentSession(): Promise<void> {
           <p v-else-if="store.state === 'REQUIREMENT_REVIEW'">检查并保存需求，然后完成人工门禁一。</p>
           <p v-else-if="store.state === 'PROCESS_REVIEW'">检查流程图、字段、附件和校验结果，然后完成人工门禁二。</p>
           <p v-else-if="processing">Agent 正在和流程平台协作，请稍候。</p>
-          <p v-else-if="store.state === 'PROCESS_ACTIVE'">流程已经发布并激活，M0–M2 验收完成。</p>
+          <p v-else-if="store.state === 'PROCESS_ACTIVE'">流程已激活；绑定并校验③工程后可启动入金申请代码生成。</p>
+          <p v-else-if="store.state === 'CODE_GENERATING'">Generator 正在受限暂存区生成固定范围的代码和测试。</p>
+          <p v-else-if="store.state === 'CODE_REVIEW'">检查全部文件、编辑内容并查看与目标基线的 diff。</p>
+          <p v-else-if="store.state === 'CODE_PIPELINE_FAILED'">生成失败，可在修复目标前置条件后重新生成。</p>
           <p v-else>上一步失败，可使用原幂等操作号安全重试。</p>
         </div>
         <div class="primary-actions">
@@ -233,9 +254,18 @@ async function resetCurrentSession(): Promise<void> {
             :loading="store.busy"
             @click="action(store.retryProcess, '已按失败步骤重新执行')"
           >重试失败步骤</el-button>
-          <el-button v-else-if="store.state === 'PROCESS_ACTIVE'" type="success" disabled>✓ M0–M2 已完成</el-button>
+          <template v-else-if="store.state === 'PROCESS_ACTIVE'">
+            <el-input v-model="generationTargetRoot" class="target-root-input" placeholder="③ business-base 绝对路径" />
+            <el-button type="success" :loading="store.busy" @click="action(() => store.startGeneration(generationTargetRoot), 'M3 代码生成已启动')">生成入金申请代码</el-button>
+          </template>
+          <el-button v-else-if="store.state === 'CODE_GENERATING'" type="danger" plain :loading="store.busy" @click="action(store.cancelGeneration, '已取消生成')">取消生成</el-button>
+          <el-button v-else-if="['CODE_REVIEW','CODE_PIPELINE_FAILED'].includes(store.state || '')" type="primary" :loading="store.busy" @click="action(store.regenerate, '已启动全新生成任务')">重新生成</el-button>
         </div>
       </footer>
     </main>
   </div>
 </template>
+
+<style scoped>
+.target-root-input { width: min(460px, 42vw); }
+</style>

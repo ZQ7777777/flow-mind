@@ -15,6 +15,7 @@ agent-web/.npm-cache/
 agent-web/.env
 data/agent-web/
 agent-web/.e2e-data/
+agent-web/.e2e-target/
 agent-web/playwright-report/
 agent-web/test-results/
 /.e2e-data/

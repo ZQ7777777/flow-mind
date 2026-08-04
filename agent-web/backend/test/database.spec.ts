@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { DatabaseService } from "../src/persistence/database.service.js";
 
 describe("agent database", () => {
@@ -27,7 +28,7 @@ describe("agent database", () => {
     const versions = database!.db
       .prepare("SELECT version FROM agent_schema_migration ORDER BY version")
       .all() as Array<{ version: number }>;
-    expect(versions.map(({ version }) => version)).toEqual([1]);
+    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4]);
     expect(database!.db.pragma("journal_mode", { simple: true })).toBe("wal");
     expect(database!.db.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(database!.db.pragma("busy_timeout", { simple: true })).toBe(5000);
@@ -47,5 +48,68 @@ describe("agent database", () => {
     expect(recovered?.state).toBe("PROCESS_PROVISION_FAILED");
     expect(recovered?.row_version).toBe(5);
     expect(recovered?.last_error_code).toBe("AGENT_INTERRUPTED");
+  });
+
+  it("repairs an early M3 database that already recorded migration 2", () => {
+    database!.onModuleDestroy();
+    database = undefined;
+    rmSync(root, { recursive: true, force: true });
+    mkdirSync(root, { recursive: true });
+
+    const legacy = new Database(join(root, "agent.db"));
+    legacy.exec(`
+      CREATE TABLE agent_schema_migration (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      INSERT INTO agent_schema_migration VALUES (1, '2026-08-01'), (2, '2026-08-02');
+      CREATE TABLE agent_session (
+        id TEXT PRIMARY KEY, state TEXT NOT NULL, row_version INTEGER NOT NULL,
+        last_error_code TEXT, last_error_message TEXT, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE agent_code_generation (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, business_code TEXT NOT NULL,
+        created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        status TEXT NOT NULL, pi_session_id TEXT, pi_session_file TEXT,
+        last_error_code TEXT, last_error_message TEXT,
+        request_key TEXT, request_hash TEXT, request_result_json TEXT,
+        generator_pi_session_id TEXT, generator_pi_session_file TEXT
+      );
+      CREATE TABLE agent_compaction_stat (
+        id TEXT PRIMARY KEY, workflow_session_id TEXT NOT NULL,
+        pi_session_id TEXT NOT NULL, pi_session_kind TEXT NOT NULL,
+        entry_id TEXT, reason TEXT NOT NULL, before_tokens INTEGER,
+        summary_tokens INTEGER, duration_ms INTEGER, status TEXT NOT NULL,
+        error_code TEXT, created_at TEXT NOT NULL
+      );
+      INSERT INTO agent_compaction_stat VALUES (
+        'acs_legacy', 'ags_legacy', 'pi_legacy', 'GENERATOR', NULL,
+        'threshold', 12345, 800, 50, 'SUCCESS', NULL, '2026-08-02'
+      );
+      INSERT INTO agent_code_generation (
+        id, session_id, business_code, created_by, created_at, updated_at, status,
+        request_key, request_hash, request_result_json,
+        generator_pi_session_id, generator_pi_session_file
+      ) VALUES (
+        'gen_legacy', 'ags_legacy', 'entry_application', 'user_sales',
+        '2026-08-02', '2026-08-02', 'REVIEW', 'legacy-key', 'legacy-hash', '{}',
+        'pi_legacy', 'legacy.jsonl'
+      );
+    `);
+    legacy.close();
+
+    database = new DatabaseService();
+    const columns = database.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
+    expect(columns.map(({ name }) => name)).toContain("start_key");
+    expect(database.db.prepare(`
+      SELECT start_key, start_hash, pi_session_id, pi_session_file
+      FROM agent_code_generation WHERE id = 'gen_legacy'
+    `).get()).toEqual({
+      start_key: "legacy-key",
+      start_hash: "legacy-hash",
+      pi_session_id: "pi_legacy",
+      pi_session_file: "legacy.jsonl",
+    });
+    const versions = database.db.prepare("SELECT version FROM agent_schema_migration ORDER BY version").all() as Array<{ version: number }>;
+    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4]);
+    expect(database.db.prepare("SELECT tokens_before, summary_tokens FROM agent_compaction_stat WHERE id = 'acs_legacy'").get())
+      .toEqual({ tokens_before: 12345, summary_tokens: 800 });
   });
 });

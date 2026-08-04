@@ -63,6 +63,41 @@ export interface ProcessRow {
   updated_at: string;
 }
 
+export interface GenerationRow {
+  id: string;
+  session_id: string;
+  process_definition_record_id: string;
+  requirement_revision: number;
+  requirement_snapshot_json: string;
+  process_snapshot_json: string;
+  business_code: string;
+  business_name: string;
+  status: string;
+  target_root: string;
+  target_contract_version: string;
+  target_contract_json: string;
+  staging_dir: string;
+  backup_dir: string | null;
+  artifact_manifest_json: string;
+  pi_session_id: string | null;
+  pi_session_file: string | null;
+  generation_revision: number;
+  start_key: string | null;
+  start_hash: string | null;
+  start_result_json: string | null;
+  superseded_by: string | null;
+  created_by: string;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  write_confirm_key: string | null;
+  write_confirm_hash: string | null;
+  written_at: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
   readonly db: Database.Database;
@@ -194,6 +229,145 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(1);
       });
     }
+    if (!applied.has(2)) {
+      this.transaction(() => {
+        const columns = this.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
+        const names = new Set(columns.map(({ name }) => name));
+        const additions: Array<[string, string]> = [
+          ["process_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"],
+          ["target_contract_json", "TEXT NOT NULL DEFAULT '{}'"],
+          ["start_key", "TEXT"],
+          ["start_hash", "TEXT"],
+          ["start_result_json", "TEXT"],
+          ["superseded_by", "TEXT"],
+        ];
+        for (const [name, definition] of additions) {
+          if (!names.has(name)) this.db.exec(`ALTER TABLE agent_code_generation ADD COLUMN ${name} ${definition}`);
+        }
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_agent_generation_owner_created
+            ON agent_code_generation(created_by, created_at);
+          CREATE INDEX IF NOT EXISTS idx_agent_generation_business
+            ON agent_code_generation(business_code, created_at);
+          CREATE INDEX IF NOT EXISTS idx_agent_generation_session
+            ON agent_code_generation(session_id, created_at);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_generation_start_key
+            ON agent_code_generation(session_id, start_key) WHERE start_key IS NOT NULL;
+          CREATE TABLE IF NOT EXISTS agent_compaction_stat (
+            id TEXT PRIMARY KEY,
+            pi_session_id TEXT NOT NULL,
+            entry_id TEXT,
+            reason TEXT NOT NULL,
+            tokens_before INTEGER NOT NULL,
+            summary_tokens INTEGER,
+            duration_ms INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            error_code TEXT,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_compaction_session_created
+            ON agent_compaction_stat(pi_session_id, created_at);
+        `);
+        this.recordMigration(2);
+      });
+    }
+    if (!applied.has(3)) {
+      this.transaction(() => {
+        const columns = this.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
+        const names = new Set(columns.map(({ name }) => name));
+        const additions: Array<[string, string]> = [
+          ["process_snapshot_json", "TEXT NOT NULL DEFAULT '{}'"],
+          ["target_contract_json", "TEXT NOT NULL DEFAULT '{}'"],
+          ["start_key", "TEXT"],
+          ["start_hash", "TEXT"],
+          ["start_result_json", "TEXT"],
+          ["superseded_by", "TEXT"],
+        ];
+        for (const [name, definition] of additions) {
+          if (!names.has(name)) this.db.exec(`ALTER TABLE agent_code_generation ADD COLUMN ${name} ${definition}`);
+        }
+
+        // Early M3 builds used request_* and generator_pi_session_* for the same data.
+        if (names.has("request_key")) {
+          this.db.exec("UPDATE agent_code_generation SET start_key = request_key WHERE start_key IS NULL");
+        }
+        if (names.has("request_hash")) {
+          this.db.exec("UPDATE agent_code_generation SET start_hash = request_hash WHERE start_hash IS NULL");
+        }
+        if (names.has("request_result_json")) {
+          this.db.exec("UPDATE agent_code_generation SET start_result_json = request_result_json WHERE start_result_json IS NULL");
+        }
+        if (names.has("generator_pi_session_id")) {
+          this.db.exec("UPDATE agent_code_generation SET pi_session_id = generator_pi_session_id WHERE pi_session_id IS NULL");
+        }
+        if (names.has("generator_pi_session_file")) {
+          this.db.exec("UPDATE agent_code_generation SET pi_session_file = generator_pi_session_file WHERE pi_session_file IS NULL");
+        }
+
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_agent_generation_owner_created
+            ON agent_code_generation(created_by, created_at);
+          CREATE INDEX IF NOT EXISTS idx_agent_generation_business
+            ON agent_code_generation(business_code, created_at);
+          CREATE INDEX IF NOT EXISTS idx_agent_generation_session
+            ON agent_code_generation(session_id, created_at);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_generation_start_key
+            ON agent_code_generation(session_id, start_key) WHERE start_key IS NOT NULL;
+          CREATE TABLE IF NOT EXISTS agent_compaction_stat (
+            id TEXT PRIMARY KEY,
+            pi_session_id TEXT NOT NULL,
+            entry_id TEXT,
+            reason TEXT NOT NULL,
+            tokens_before INTEGER NOT NULL,
+            summary_tokens INTEGER,
+            duration_ms INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            error_code TEXT,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_compaction_session_created
+            ON agent_compaction_stat(pi_session_id, created_at);
+        `);
+        this.recordMigration(3);
+      });
+    }
+    if (!applied.has(4)) {
+      this.transaction(() => {
+        const compactionColumns = this.db.prepare("PRAGMA table_info(agent_compaction_stat)").all() as Array<{ name: string }>;
+        const compactionNames = new Set(compactionColumns.map(({ name }) => name));
+        const tokensBeforeSource = compactionNames.has("tokens_before")
+          ? "tokens_before"
+          : compactionNames.has("before_tokens") ? "before_tokens" : "NULL";
+
+        this.db.exec("DROP INDEX IF EXISTS idx_agent_compaction_session_created");
+        this.db.exec("ALTER TABLE agent_compaction_stat RENAME TO agent_compaction_stat_legacy");
+        this.db.exec(`
+          CREATE TABLE agent_compaction_stat (
+            id TEXT PRIMARY KEY,
+            pi_session_id TEXT NOT NULL,
+            entry_id TEXT,
+            reason TEXT NOT NULL,
+            tokens_before INTEGER NOT NULL,
+            summary_tokens INTEGER,
+            duration_ms INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            error_code TEXT,
+            created_at TEXT NOT NULL
+          );
+          INSERT INTO agent_compaction_stat (
+            id, pi_session_id, entry_id, reason, tokens_before, summary_tokens,
+            duration_ms, status, error_code, created_at
+          )
+          SELECT id, pi_session_id, entry_id, reason, COALESCE(${tokensBeforeSource}, 0),
+            summary_tokens, COALESCE(duration_ms, 0), status, error_code, created_at
+          FROM agent_compaction_stat_legacy;
+          DROP TABLE agent_compaction_stat_legacy;
+          CREATE INDEX idx_agent_compaction_session_created
+            ON agent_compaction_stat(pi_session_id, created_at);
+        `);
+        this.recordMigration(4);
+      });
+    }
   }
 
   private recordMigration(version: number): void {
@@ -216,6 +390,16 @@ export class DatabaseService implements OnModuleDestroy {
     ).get(sessionId) as ProcessRow | undefined;
   }
 
+  getGeneration(id: string): GenerationRow | undefined {
+    return this.db.prepare("SELECT * FROM agent_code_generation WHERE id = ?").get(id) as GenerationRow | undefined;
+  }
+
+  getLatestGenerationBySession(sessionId: string): GenerationRow | undefined {
+    return this.db.prepare(
+      "SELECT * FROM agent_code_generation WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+    ).get(sessionId) as GenerationRow | undefined;
+  }
+
   recoverInterruptedStates(): void {
     const now = new Date().toISOString();
     this.db.prepare(`
@@ -229,6 +413,18 @@ export class DatabaseService implements OnModuleDestroy {
       last_error_message = 'Agent server restarted during an in-progress operation; retry is required.',
       updated_at = ?
       WHERE state IN ('PROCESS_PROVISIONING', 'PROCESS_ACTIVATING')
+    `).run(now);
+    this.db.prepare(`
+      UPDATE agent_code_generation SET status = 'FAILED',
+        last_error_code = 'AGENT_INTERRUPTED',
+        last_error_message = 'Agent server restarted during code generation.', updated_at = ?
+      WHERE status = 'GENERATING'
+    `).run(now);
+    this.db.prepare(`
+      UPDATE agent_session SET state = 'CODE_PIPELINE_FAILED', row_version = row_version + 1,
+        last_error_code = 'AGENT_INTERRUPTED',
+        last_error_message = 'Agent server restarted during code generation.', updated_at = ?
+      WHERE state = 'CODE_GENERATING'
     `).run(now);
   }
 

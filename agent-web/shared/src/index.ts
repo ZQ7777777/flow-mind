@@ -7,6 +7,9 @@ export const WORKFLOW_STATES = [
   "PROCESS_ACTIVATING",
   "PROCESS_ACTIVATION_FAILED",
   "PROCESS_ACTIVE",
+  "CODE_GENERATING",
+  "CODE_REVIEW",
+  "CODE_PIPELINE_FAILED",
 ] as const;
 
 export type WorkflowState = (typeof WORKFLOW_STATES)[number];
@@ -194,9 +197,13 @@ export interface WorkflowSnapshot {
   messages: ConversationMessage[];
   requirement?: RequirementRevision;
   processPreview?: ProcessPreview;
+  activeGeneration?: CodeGenerationSummary;
   lastError?: { code: string; message: string };
   allowedActions: string[];
 }
+
+export * from "./generation.js";
+import type { CodeGenerationSummary } from "./generation.js";
 
 export interface AgentErrorBody {
   code: string;

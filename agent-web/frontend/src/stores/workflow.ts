@@ -5,6 +5,9 @@ import type {
   MockUser,
   RequirementRevision,
   WorkflowSnapshot,
+  GeneratedFileContent,
+  GeneratedFileDiff,
+  ArtifactManifest,
 } from "@flowmind/agent-contracts";
 import { ApiError, apiRequest, streamEvents, type SseMessage } from "../api";
 
@@ -16,6 +19,8 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const error = ref("");
   const streamingText = ref("");
   const connected = ref(false);
+  const generatedFile = ref<GeneratedFileContent>();
+  const generatedDiff = ref<GeneratedFileDiff>();
   let streamAbort: AbortController | undefined;
   let reconnectTimer: number | undefined;
 
@@ -152,6 +157,71 @@ export const useWorkflowStore = defineStore("workflow", () => {
     await command(`/api/agent/sessions/${snapshot.value.sessionId}/process/retry`, true);
   }
 
+  async function startGeneration(targetRoot?: string): Promise<void> {
+    if (!snapshot.value || !currentUser.value) return;
+    await run(async () => {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations`, currentUser.value, {
+        method: "POST",
+        rowVersion: snapshot.value!.rowVersion,
+        idempotencyKey: crypto.randomUUID(),
+        body: JSON.stringify({ targetRoot: targetRoot?.trim() || undefined }),
+      });
+      await refresh();
+    });
+  }
+
+  async function loadGeneratedFile(relativePath: string): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    const path = encodePath(relativePath);
+    const base = `/api/agent/sessions/${snapshot.value.sessionId}/code-generations/${generation.generationId}`;
+    await run(async () => {
+      const [file, diff] = await Promise.all([
+        apiRequest<GeneratedFileContent>(`${base}/files/${path}`, currentUser.value!),
+        apiRequest<GeneratedFileDiff>(`${base}/diff/${path}`, currentUser.value!),
+      ]);
+      generatedFile.value = file;
+      generatedDiff.value = diff;
+    }, false);
+  }
+
+  async function saveGeneratedFile(relativePath: string, content: string): Promise<ArtifactManifest | undefined> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    return runWithResult(async () => {
+      const manifest = await apiRequest<ArtifactManifest>(
+        `/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/files/${encodePath(relativePath)}`,
+        currentUser.value!,
+        { method: "PUT", body: JSON.stringify({ content, generationRevision: generation.generationRevision }) },
+      );
+      await refresh();
+      await loadGeneratedFile(relativePath);
+      return manifest;
+    });
+  }
+
+  async function cancelGeneration(): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    await command(`/api/agent/sessions/${snapshot.value.sessionId}/code-generations/${generation.generationId}/cancel`, false);
+  }
+
+  async function regenerate(): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    await run(async () => {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/regenerate`, currentUser.value!, {
+        method: "POST",
+        rowVersion: snapshot.value!.rowVersion,
+        idempotencyKey: crypto.randomUUID(),
+        body: JSON.stringify({ generationRevision: generation.generationRevision }),
+      });
+      generatedFile.value = undefined;
+      generatedDiff.value = undefined;
+      await refresh();
+    });
+  }
+
   async function command(path: string, idempotent: boolean): Promise<void> {
     if (!snapshot.value || !currentUser.value) return;
     await run(async () => {
@@ -196,7 +266,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
       streamingText.value = "";
     } else if (message.event === "assistant.delta") {
       streamingText.value += (message.data as { delta: string }).delta;
-    } else if (["assistant.completed", "requirement.ready", "workflow.state_changed", "process.validation_completed"].includes(message.event)) {
+    } else if (["assistant.completed", "requirement.ready", "workflow.state_changed", "process.validation_completed", "generation.stage_changed", "generation.file_changed"].includes(message.event)) {
       streamingText.value = "";
       void refresh();
     } else if (message.event === "error") {
@@ -238,6 +308,14 @@ export const useWorkflowStore = defineStore("workflow", () => {
     }
   }
 
+  async function runWithResult<T>(operation: () => Promise<T>): Promise<T> {
+    busy.value = true;
+    error.value = "";
+    try { return await operation(); }
+    catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); throw cause; }
+    finally { busy.value = false; }
+  }
+
   function sessionStorageKey(): string {
     return `flowmind.agent.session.${currentUser.value?.userId || "anonymous"}`;
   }
@@ -252,6 +330,8 @@ export const useWorkflowStore = defineStore("workflow", () => {
     error,
     streamingText,
     connected,
+    generatedFile,
+    generatedDiff,
     initialize,
     selectUser,
     createSession,
@@ -263,6 +343,15 @@ export const useWorkflowStore = defineStore("workflow", () => {
     resetSession,
     confirmProcess,
     retryProcess,
+    startGeneration,
+    loadGeneratedFile,
+    saveGeneratedFile,
+    cancelGeneration,
+    regenerate,
     disconnect,
   };
 });
+
+function encodePath(path: string): string {
+  return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+}

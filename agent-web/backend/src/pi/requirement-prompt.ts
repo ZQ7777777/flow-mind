@@ -10,7 +10,7 @@ The requirement argument is a strict BusinessRequirement 1.0 object. Submit no u
 \`\`\`json
 {
   "schemaVersion": "1.0",
-  "businessCode": "DEPOSIT_APPLY_001",
+  "businessCode": "entry_application",
   "businessName": "入金申请",
   "systemCode": "FINANCE_SYS_001",
   "goal": "完成入金申请的提交、部门审批与财务确认",

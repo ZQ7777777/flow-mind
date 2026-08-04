@@ -1,0 +1,56 @@
+{
+  "contractVersion": "1.0",
+  "projectId": "flowmind-business-base",
+  "backend": {
+    "rootDir": "backend",
+    "javaVersion": "8",
+    "springBootVersion": "2.7.18",
+    "basePackage": "com.flowmind.business",
+    "generatedSourceDir": "src/main/java/com/flowmind/business/generated",
+    "generatedTestDir": "src/test/java/com/flowmind/business/generated",
+    "starter": {
+      "groupId": "com.flowmind",
+      "artifactId": "platform-starter",
+      "version": "0.1.0-SNAPSHOT",
+      "allowedApi": "ProcessRuntimeService#startAndSubmit(StartProcessRequest)"
+    },
+    "trustedUserContext": {
+      "accessorType": "com.flowmind.business.security.CurrentBusinessUserProvider",
+      "accessorMethod": "currentUser",
+      "userIdProperty": "userId",
+      "departmentIdProperty": "departmentId"
+    },
+    "verificationProfile": "maven-java8"
+  },
+  "frontend": {
+    "rootDir": "frontend",
+    "framework": "vue3",
+    "generatedViewDir": "src/modules/generated",
+    "generatedApiDir": "src/api/generated",
+    "generatedTestDir": "src/modules/generated/__tests__",
+    "routeRegistry": "src/router/generated-routes.ts",
+    "verificationProfile": "vue3-npm"
+  },
+  "readableReferenceFiles": [
+    "backend/pom.xml",
+    "frontend/package.json",
+    "frontend/src/router/generated-routes.ts"
+  ],
+  "allowedOutputPatterns": [
+    "backend/src/main/java/com/flowmind/business/generated/**/*.java",
+    "backend/src/test/java/com/flowmind/business/generated/**/*.java",
+    "frontend/src/modules/generated/**/*",
+    "frontend/src/api/generated/**/*",
+    "frontend/src/router/generated-routes.ts"
+  ],
+  "protectedFiles": [
+    {
+      "path": "backend/pom.xml",
+      "sha256": "540eadd4fd82b7ba8d572203503a12efba3c0f10e6ea30f6ad78e7c521cf343d"
+    },
+    {
+      "path": "frontend/package.json",
+      "sha256": "df1345720219ff34bae6c6a4e4aff06f01c737cbba9e01feabbac646de1cc56c"
+    }
+  ]
+}

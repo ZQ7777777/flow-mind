@@ -1,0 +1,318 @@
+import { HttpStatus, Inject, Injectable } from "@nestjs/common";
+import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
+import type {
+  ArtifactManifest,
+  BusinessRequirement,
+  CodeGenerationSummary,
+  GeneratedFileContent,
+  GeneratedFileDiff,
+  MockUser,
+} from "@flowmind/agent-contracts";
+import { AgentError } from "../common/agent-error.js";
+import { DatabaseService, type GenerationRow, type SessionRow } from "../persistence/database.service.js";
+import { PiAdapterService, type GenerationPiCallbacks } from "../pi/pi-adapter.service.js";
+import { buildGenerationPrompt } from "../pi/generation-prompt.js";
+import { EventBusService } from "../workflow/event-bus.service.js";
+import { StagingService, generationContract, parseManifest } from "./staging.service.js";
+import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
+
+@Injectable()
+export class GenerationService {
+  constructor(
+    @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Inject(TargetContractService) private readonly targets: TargetContractService,
+    @Inject(StagingService) private readonly staging: StagingService,
+    @Inject(PiAdapterService) private readonly pi: PiAdapterService,
+    @Inject(EventBusService) private readonly events: EventBusService,
+  ) {}
+
+  start(
+    sessionId: string,
+    user: MockUser,
+    rowVersion: number,
+    idempotencyKey: string,
+    targetRootInput?: string,
+  ): { accepted: true; generationId: string; state: "CODE_GENERATING" } {
+    requireKey(idempotencyKey, sessionId);
+    const session = this.ownedSession(sessionId, user);
+    const requestedRoot = targetRootInput?.trim() || session.target_root || "";
+    const requestHash = digest({ targetRoot: requestedRoot });
+    const replay = this.database.db.prepare(
+      "SELECT * FROM agent_code_generation WHERE session_id = ? AND start_key = ?",
+    ).get(sessionId, idempotencyKey) as GenerationRow | undefined;
+    if (replay) {
+      if (replay.start_hash !== requestHash) throw idempotencyConflict(sessionId);
+      return JSON.parse(replay.start_result_json || "{}") as { accepted: true; generationId: string; state: "CODE_GENERATING" };
+    }
+    this.expectVersion(session, rowVersion);
+    if (session.state !== "PROCESS_ACTIVE") throw stateError(session);
+    const process = this.database.getProcessBySession(sessionId);
+    if (!process || process.status !== "ACTIVE" || !process.platform_snapshot_json) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_PROCESS_NOT_ACTIVE", "an activated process snapshot is required", sessionId);
+    }
+    const requirement = JSON.parse(process.requirement_snapshot_json) as BusinessRequirement;
+    assertEntryApplication(requirement, sessionId);
+    const target = this.targets.validate(requestedRoot, sessionId);
+    if (session.target_root && !samePath(session.target_root, target.targetRoot)) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_TARGET_ROOT_CONFLICT", "targetRoot cannot be switched after it is bound", sessionId);
+    }
+    return this.createGeneration(session, process.id, process.requirement_revision, requirement, JSON.parse(process.platform_snapshot_json), target, user, rowVersion, idempotencyKey, requestHash);
+  }
+
+  get(sessionId: string, generationId: string, user: MockUser): CodeGenerationSummary {
+    this.ownedSession(sessionId, user);
+    return toSummary(this.ownedGeneration(sessionId, generationId, user));
+  }
+
+  readFile(sessionId: string, generationId: string, path: string, user: MockUser): GeneratedFileContent {
+    const generation = this.reviewGeneration(sessionId, generationId, user);
+    return this.staging.read(generation, path);
+  }
+
+  readDiff(sessionId: string, generationId: string, path: string, user: MockUser): GeneratedFileDiff {
+    const generation = this.reviewGeneration(sessionId, generationId, user);
+    return this.staging.diff(generation, path);
+  }
+
+  editFile(
+    sessionId: string,
+    generationId: string,
+    path: string,
+    content: string,
+    generationRevision: number,
+    user: MockUser,
+  ): ArtifactManifest {
+    const generation = this.reviewGeneration(sessionId, generationId, user);
+    const manifest = this.staging.edit(generation, path, content, generationRevision);
+    this.events.publish(sessionId, { type: "generation.file_changed", data: { generationId, relativePath: path, generationRevision: manifest.revision, editedByUser: true } });
+    return manifest;
+  }
+
+  cancel(
+    sessionId: string,
+    generationId: string,
+    user: MockUser,
+    rowVersion: number,
+  ): { cancelled: true; state: "PROCESS_ACTIVE" } {
+    const session = this.ownedSession(sessionId, user);
+    this.expectVersion(session, rowVersion);
+    const generation = this.ownedGeneration(sessionId, generationId, user);
+    if (session.state !== "CODE_GENERATING" || generation.status !== "GENERATING") throw stateError(session);
+    this.pi.cancelGeneration(generationId);
+    const now = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database.db.prepare("UPDATE agent_code_generation SET status = 'CANCELLED', updated_at = ? WHERE id = ? AND status = 'GENERATING'").run(now, generationId);
+      this.database.db.prepare(`UPDATE agent_session SET state = 'PROCESS_ACTIVE', row_version = row_version + 1,
+        last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ? AND row_version = ?`).run(now, sessionId, rowVersion);
+    });
+    const result = { cancelled: true as const, state: "PROCESS_ACTIVE" as const };
+    this.events.publish(sessionId, { type: "workflow.state_changed", data: result });
+    return result;
+  }
+
+  regenerate(
+    sessionId: string,
+    generationId: string,
+    user: MockUser,
+    rowVersion: number,
+    generationRevision: number,
+    idempotencyKey: string,
+  ): { accepted: true; generationId: string; state: "CODE_GENERATING" } {
+    requireKey(idempotencyKey, sessionId);
+    const session = this.ownedSession(sessionId, user);
+    const requestHash = digest({ supersedes: generationId, generationRevision });
+    const replay = this.database.db.prepare(
+      "SELECT * FROM agent_code_generation WHERE session_id = ? AND start_key = ?",
+    ).get(sessionId, idempotencyKey) as GenerationRow | undefined;
+    if (replay) {
+      if (replay.start_hash !== requestHash) throw idempotencyConflict(sessionId);
+      return JSON.parse(replay.start_result_json || "{}") as { accepted: true; generationId: string; state: "CODE_GENERATING" };
+    }
+    this.expectVersion(session, rowVersion);
+    if (!["CODE_REVIEW", "CODE_PIPELINE_FAILED"].includes(session.state)) throw stateError(session);
+    const old = this.ownedGeneration(sessionId, generationId, user);
+    if (!["REVIEW", "FAILED"].includes(old.status) || old.generation_revision !== generationRevision) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_REVISION_CONFLICT", "generation cannot be regenerated from this revision", sessionId);
+    }
+    const target = this.targets.validate(old.target_root, sessionId);
+    const requirement = JSON.parse(old.requirement_snapshot_json) as BusinessRequirement;
+    const result = this.createGeneration(
+      session,
+      old.process_definition_record_id,
+      old.requirement_revision,
+      requirement,
+      JSON.parse(old.process_snapshot_json),
+      target,
+      user,
+      rowVersion,
+      idempotencyKey,
+      requestHash,
+      old.id,
+    );
+    return result;
+  }
+
+  private createGeneration(
+    session: SessionRow,
+    processId: string,
+    requirementRevision: number,
+    requirement: BusinessRequirement,
+    processSnapshot: Record<string, unknown>,
+    target: ValidatedGenerationTarget,
+    user: MockUser,
+    rowVersion: number,
+    idempotencyKey: string,
+    requestHash: string,
+    supersedes?: string,
+  ): { accepted: true; generationId: string; state: "CODE_GENERATING" } {
+    const generationId = `acg_${randomUUID()}`;
+    const stagingDir = join(this.database.dataDir, "staging", session.id, generationId);
+    this.staging.prepare(stagingDir);
+    const now = new Date().toISOString();
+    const result = { accepted: true as const, generationId, state: "CODE_GENERATING" as const };
+    this.database.transaction(() => {
+      if (supersedes) this.database.db.prepare("UPDATE agent_code_generation SET status = 'SUPERSEDED', superseded_by = ?, updated_at = ? WHERE id = ?").run(generationId, now, supersedes);
+      this.database.db.prepare(`
+        INSERT INTO agent_code_generation (
+          id, session_id, process_definition_record_id, requirement_revision, requirement_snapshot_json,
+          process_snapshot_json, business_code, business_name, status, target_root, target_contract_version,
+          target_contract_json, staging_dir, artifact_manifest_json, generation_revision,
+          start_key, start_hash, start_result_json, created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'GENERATING', ?, ?, ?, ?, '{}', 0, ?, ?, ?, ?, ?, ?)
+      `).run(
+        generationId, session.id, processId, requirementRevision, JSON.stringify(requirement), JSON.stringify(processSnapshot),
+        requirement.businessCode, requirement.businessName, target.targetRoot, target.contract.contractVersion,
+        JSON.stringify(target.contract), stagingDir, idempotencyKey, requestHash, JSON.stringify(result), user.userId, now, now,
+      );
+      const updated = this.database.db.prepare(`UPDATE agent_session SET target_root = ?, state = 'CODE_GENERATING', row_version = row_version + 1,
+        last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ? AND row_version = ?`)
+        .run(target.targetRoot, now, session.id, rowVersion);
+      if (updated.changes !== 1) throw new AgentError(HttpStatus.CONFLICT, "AGENT_ROW_VERSION_CONFLICT", "row version changed while starting generation", session.id);
+    });
+    this.events.publish(session.id, { type: "generation.stage_changed", data: result });
+    this.events.publish(session.id, { type: "workflow.state_changed", data: result });
+    setImmediate(() => void this.run(generationId));
+    return result;
+  }
+
+  private async run(generationId: string): Promise<void> {
+    let generation = this.database.getGeneration(generationId);
+    if (!generation || generation.status !== "GENERATING") return;
+    const contract = generationContract(generation);
+    const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
+    const target: ValidatedGenerationTarget = { targetRoot: generation.target_root, contract };
+    const callbacks: GenerationPiCallbacks = {
+      requirement,
+      onEvent: (type, data) => this.events.publish(generation!.session_id, { type, data }),
+      onError: (code, message) => this.fail(generationId, code, message),
+      readReference: (path) => this.targets.readReference(target, path, generation!.session_id),
+      readStaged: (path) => this.staging.read(this.requiredGenerating(generationId), path).content,
+      listStaged: () => this.staging.list(this.requiredGenerating(generationId)),
+      writeStaged: (path, content) => this.staging.writeDuringGeneration(this.requiredGenerating(generationId), path, content),
+      deleteStaged: (path) => this.staging.deleteDuringGeneration(this.requiredGenerating(generationId), path),
+      reportComplete: (files) => {
+        const current = this.requiredGenerating(generationId);
+        const manifest = this.staging.complete(current, contract, files);
+        this.events.publish(current.session_id, { type: "generation.stage_changed", data: { generationId, state: "CODE_REVIEW", manifest } });
+        this.events.publish(current.session_id, { type: "workflow.state_changed", data: { state: "CODE_REVIEW" } });
+      },
+    };
+    try {
+      const piSession = await this.pi.runGeneration(
+        generationId,
+        generation.staging_dir,
+        buildGenerationPrompt(requirement, JSON.parse(generation.process_snapshot_json), contract),
+        callbacks,
+      );
+      this.database.db.prepare("UPDATE agent_code_generation SET pi_session_id = ?, pi_session_file = ?, updated_at = ? WHERE id = ?")
+        .run(piSession.piSessionId, piSession.sessionFile || null, new Date().toISOString(), generationId);
+      generation = this.database.getGeneration(generationId);
+      if (generation?.status === "GENERATING") this.fail(generationId, "AGENT_GENERATION_INCOMPLETE", "generator ended without report_generation_complete");
+    } catch (error) {
+      const current = this.database.getGeneration(generationId);
+      if (current?.status === "GENERATING") this.fail(generationId, "AGENT_GENERATION_FAILED", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private fail(generationId: string, code: string, message: string): void {
+    const generation = this.database.getGeneration(generationId);
+    if (!generation || generation.status !== "GENERATING") return;
+    const now = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database.db.prepare("UPDATE agent_code_generation SET status = 'FAILED', last_error_code = ?, last_error_message = ?, updated_at = ? WHERE id = ? AND status = 'GENERATING'").run(code, message, now, generationId);
+      this.database.db.prepare(`UPDATE agent_session SET state = 'CODE_PIPELINE_FAILED', row_version = row_version + 1,
+        last_error_code = ?, last_error_message = ?, updated_at = ? WHERE id = ? AND state = 'CODE_GENERATING'`).run(code, message, now, generation.session_id);
+    });
+    this.events.publish(generation.session_id, { type: "error", data: { code, message, generationId } });
+    this.events.publish(generation.session_id, { type: "workflow.state_changed", data: { state: "CODE_PIPELINE_FAILED" } });
+  }
+
+  private requiredGenerating(id: string): GenerationRow {
+    const generation = this.database.getGeneration(id);
+    if (!generation || generation.status !== "GENERATING") throw new Error("generation is no longer writable");
+    return generation;
+  }
+
+  private reviewGeneration(sessionId: string, generationId: string, user: MockUser): GenerationRow {
+    const generation = this.ownedGeneration(sessionId, generationId, user);
+    if (generation.status !== "REVIEW") throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_STATE_CONFLICT", "generation is not ready for file review", sessionId);
+    return generation;
+  }
+
+  private ownedGeneration(sessionId: string, generationId: string, user: MockUser): GenerationRow {
+    const generation = this.database.getGeneration(generationId);
+    if (!generation || generation.session_id !== sessionId) throw new AgentError(HttpStatus.NOT_FOUND, "AGENT_GENERATION_NOT_FOUND", "generation was not found", sessionId);
+    if (generation.created_by !== user.userId) throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_GENERATION_FORBIDDEN", "generation belongs to another user", sessionId);
+    return generation;
+  }
+
+  private ownedSession(sessionId: string, user: MockUser): SessionRow {
+    const session = this.database.getSession(sessionId);
+    if (!session) throw new AgentError(HttpStatus.NOT_FOUND, "AGENT_SESSION_NOT_FOUND", "session not found", sessionId);
+    if (session.owner_user_id !== user.userId) throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_SESSION_FORBIDDEN", "session belongs to another user", sessionId);
+    return session;
+  }
+
+  private expectVersion(session: SessionRow, expected: number): void {
+    if (!Number.isInteger(expected) || session.row_version !== expected) throw new AgentError(HttpStatus.CONFLICT, "AGENT_ROW_VERSION_CONFLICT", "row version is stale", session.id, { expected: session.row_version });
+  }
+}
+
+export function toSummary(generation: GenerationRow): CodeGenerationSummary {
+  const manifest = parseManifest(generation);
+  return {
+    generationId: generation.id,
+    status: generation.status as CodeGenerationSummary["status"],
+    generationRevision: generation.generation_revision,
+    targetRoot: generation.target_root,
+    contractVersion: generation.target_contract_version,
+    manifest: manifest.files.length ? manifest : undefined,
+    lastError: generation.last_error_code ? { code: generation.last_error_code, message: generation.last_error_message || "" } : undefined,
+    createdAt: generation.created_at,
+    updatedAt: generation.updated_at,
+  };
+}
+
+function assertEntryApplication(requirement: BusinessRequirement, sessionId: string): void {
+  const normalizedBusinessCode = requirement.businessCode.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const supportedBusinessCode = ["entry_application", "deposit_apply_001"].includes(normalizedBusinessCode);
+  const apply = requirement.nodes.find((node) => node.nodeCode === "apply");
+  const outgoing = requirement.edges.filter((edge) => edge.sourceNodeCode === "apply");
+  const next = outgoing.length === 1 ? requirement.nodes.find((node) => node.nodeCode === outgoing[0].targetNodeCode) : undefined;
+  const receipt = requirement.attachments.find((item) => item.attachmentCode === "bankReceipt" && item.required && item.applicableNodeCodes.includes("apply"));
+  if (!supportedBusinessCode || requirement.businessName !== "入金申请"
+    || apply?.nodeType !== "USER_TASK" || apply.approverRule?.type !== "STARTER"
+    || !next || next.nodeType !== "USER_TASK" || !receipt) {
+    throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_GENERATION_BUSINESS_UNSUPPORTED", "M3 only supports the confirmed entry_application boundary", sessionId);
+  }
+}
+
+function samePath(left: string, right: string): boolean {
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+function requireKey(value: string, sessionId: string): void { if (!value?.trim()) throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required", sessionId); }
+function idempotencyConflict(sessionId: string): AgentError { return new AgentError(HttpStatus.CONFLICT, "AGENT_IDEMPOTENCY_CONFLICT", "idempotency key was reused with different content", sessionId); }
+function stateError(session: SessionRow): AgentError { return new AgentError(HttpStatus.CONFLICT, "AGENT_STATE_CONFLICT", "current state does not allow this operation", session.id, { currentState: session.state }); }
