@@ -1,6 +1,6 @@
 # Flow Mind Agent Web（M0-M3）
 
-本工程实现从自然语言需求采集、流程定义发布激活，到受限暂存区中的入金申请代码与测试生成和人工代码预览。
+本工程实现从自然语言需求采集、流程定义发布激活，到受限暂存区中的用户自定义流程发起代码、测试生成和人工代码预览。
 
 ## 环境
 
@@ -16,7 +16,8 @@
 目标③工程必须提供契约声明的构建文件、真实 SHA-256、可信用户访问器和
 `frontend/src/router/generated-routes.ts`。缺少任一前置件时会拒绝生成；Agent 不会替目标工程补造基础底座。
 
-M3 只生成 `entry_application` 的发起 Controller、Service、DTO、Vue 录入页、API、路由注册项及对应测试。
+M3 根据已确认的业务编码、表单字段和 `apply` 节点附件，生成对应的发起 Controller、Service、DTO、Vue 录入页、API、路由注册项及测试。
+生成代码只负责调用 `startAndSubmit()` 发起流程并完成 `apply`，不生成后续审批能力。
 产物保存在 `AGENT_DATA_DIR/staging/{sessionId}/{generationId}`，可在代码树中编辑和查看 diff，
 不会写入真实目标工程。编译、Reviewer、自动修复和最终写入属于后续阶段。
 
@@ -47,11 +48,15 @@ npm run dev:frontend
 中填写 API Key；`.env` 不应提交到仓库。
 
 ```powershell
-cd E:\resume_project\flow-mind\agent-web
+cd E:\0shixi\flow-mind\agent-web
 Copy-Item .env.example .env
 # 编辑 .env，将 OPENAI_API_KEY= 替换为你的 OpenAI API Key
 .\scripts\Start-AgentWeb.ps1
 ```
+
+启动脚本会先重新构建 `@flowmind/agent-contracts`，因此不需要手工更新 `shared/dist`。共享契约
+构建成功后，脚本会启动 Agent 后端并等待 `http://127.0.0.1:3100/health/live` 返回 `UP`，随后
+才启动前端，避免前端首次加载用户列表时后端尚未就绪。
 
 若流程平台已经单独启动，可跳过它：
 
@@ -73,6 +78,11 @@ Copy-Item .env.example .env
 
 不需要确认时可使用 `-Force`。启动完成后访问 `http://127.0.0.1:5173`；可通过
 `http://127.0.0.1:3100/health/ready` 检查模型认证是否成功。
+
+如果共享契约构建失败，脚本会在打开任何服务窗口前停止，请先根据当前窗口中的 npm 错误修复
+依赖或 TypeScript 编译问题。如果后端在 60 秒内未通过存活检查，前端不会启动；请查看 Agent
+后端 PowerShell 窗口中的启动异常。如果 3100 端口已被其他程序占用且存活检查不通过，先停止
+该冲突进程，再重新运行启动脚本。
 
 ## 确定性验收模式
 

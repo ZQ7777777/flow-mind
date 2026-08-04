@@ -34,6 +34,11 @@ describe("Agent API contract", () => {
   });
 
   it("enforces owner isolation, row versions and absence of a session list", async () => {
+    await request(app.getHttpServer())
+      .get("/api/agent/config")
+      .expect(200)
+      .expect({ defaultTargetRoot: root });
+
     const created = await request(app.getHttpServer())
       .post("/api/agent/sessions")
       .set("X-Agent-User-Id", "user_sales")

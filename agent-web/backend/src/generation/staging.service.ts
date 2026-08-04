@@ -14,13 +14,15 @@ import { dirname, resolve } from "node:path";
 import type {
   ArtifactFile,
   ArtifactManifest,
+  BusinessRequirement,
   GeneratedFileContent,
   GeneratedFileDiff,
   GenerationTargetContract,
 } from "@flowmind/agent-contracts";
 import { AgentError } from "../common/agent-error.js";
 import { DatabaseService, type GenerationRow } from "../persistence/database.service.js";
-import { ENTRY_APPLICATION_FILES, MAX_GENERATED_FILE_BYTES } from "./generation.constants.js";
+import { MAX_GENERATED_FILE_BYTES } from "./generation.constants.js";
+import { deriveGenerationSpec } from "./generation-spec.js";
 import { assertInside, assertNoLinkInExistingPath, normalizeRelativePath } from "./path-safety.js";
 import { sha256 } from "./target-contract.service.js";
 
@@ -65,9 +67,9 @@ export class StagingService {
     if (generation.status !== "GENERATING") throw stateError(generation);
     const actual = this.list(generation);
     const reported = [...new Set(reportedFiles.map((path) => this.allowedPath(generation, path)))].sort();
-    const expected = [...ENTRY_APPLICATION_FILES].sort();
+    const expected = expectedFiles(generation).sort();
     if (!sameFiles(actual, expected) || !sameFiles(reported, expected)) {
-      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_GENERATION_INCOMPLETE", "generated file set must exactly match the entry application boundary", generation.session_id, {
+      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_GENERATION_INCOMPLETE", "generated file set must exactly match the current business generation boundary", generation.session_id, {
         expected,
         actual,
         reported,
@@ -181,8 +183,8 @@ export class StagingService {
     if (!contract.allowedOutputPatterns.some((pattern) => minimatch(relativePath, pattern, { dot: false, nocase: process.platform === "win32" }))) {
       throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_GENERATION_PATH_FORBIDDEN", "path is outside allowedOutputPatterns", generation.session_id);
     }
-    if (!(ENTRY_APPLICATION_FILES as readonly string[]).includes(relativePath)) {
-      throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_GENERATION_PATH_FORBIDDEN", "path is outside the fixed entry application boundary", generation.session_id);
+    if (!expectedFiles(generation).includes(relativePath)) {
+      throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_GENERATION_PATH_FORBIDDEN", "path is outside the current business generation boundary", generation.session_id);
     }
     return relativePath;
   }
@@ -204,6 +206,11 @@ export function parseManifest(generation: GenerationRow): ArtifactManifest {
 
 export function generationContract(generation: GenerationRow): GenerationTargetContract {
   return JSON.parse(generation.target_contract_json) as GenerationTargetContract;
+}
+
+function expectedFiles(generation: GenerationRow): string[] {
+  const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
+  return deriveGenerationSpec(requirement, generationContract(generation)).files;
 }
 
 function readUtf8(path: string, sessionId?: string): string {

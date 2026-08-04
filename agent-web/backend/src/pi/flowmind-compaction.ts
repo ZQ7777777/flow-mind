@@ -1,6 +1,4 @@
-import { complete } from "@earendil-works/pi-ai/compat";
-import { uuidv7 } from "@earendil-works/pi-ai";
-import { convertToLlm, serializeConversation, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { DatabaseService } from "../persistence/database.service.js";
 
 export const COMPACTION_SECTIONS = [
@@ -17,6 +15,8 @@ export function calculateCompactionSettings(contextWindow: number): { reserveTok
   return {
     reserveTokens: Math.min(16384, Math.max(8192, Math.floor(contextWindow * 0.2))),
     keepRecentTokens: Math.min(12000, Math.max(4096, Math.floor(contextWindow * 0.15))),
+    // reserveTokens: 998000,
+    // keepRecentTokens:512,
   };
 }
 
@@ -44,6 +44,14 @@ export function createFlowMindCompactionExtension(options: {
     });
 
     pi.on("session_before_compact", async (event, ctx) => {
+      const [piAiCompat, piAi, piAgent] = await Promise.all([
+        import("@earendil-works/pi-ai/compat"),
+        import("@earendil-works/pi-ai"),
+        import("@earendil-works/pi-coding-agent"),
+      ]);
+      const { complete } = piAiCompat;
+      const { uuidv7 } = piAi;
+      const { convertToLlm, serializeConversation } = piAgent;
       const started = Date.now();
       const statId = `acs_${uuidv7()}`;
       const tokensBefore = event.preparation.tokensBefore;

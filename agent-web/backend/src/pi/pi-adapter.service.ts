@@ -8,11 +8,13 @@ import {
   businessRequirementSchema,
   type BusinessRequirement,
   type ConversationMessage,
+  type GenerationTargetContract,
 } from "@flowmind/agent-contracts";
+import type { GenerationSpec } from "../generation/generation-spec.js";
 import { loadConfig } from "../config.js";
 import { DatabaseService } from "../persistence/database.service.js";
 import { REQUIREMENT_SYSTEM_PROMPT } from "./requirement-prompt.js";
-import { createFakeEntryApplicationFiles } from "./fake-generation-files.js";
+import { createFakeGenerationFiles } from "./fake-generation-files.js";
 import { calculateCompactionSettings, createFlowMindCompactionExtension } from "./flowmind-compaction.js";
 
 interface SessionHandle {
@@ -32,6 +34,8 @@ export interface PiCallbacks {
 
 export interface GenerationPiCallbacks {
   requirement: BusinessRequirement;
+  contract: GenerationTargetContract;
+  spec: GenerationSpec;
   onEvent(type: string, data: unknown): void;
   onError(code: string, message: string): void;
   readReference(path: string): string;
@@ -343,7 +347,8 @@ export class PiAdapterService implements OnModuleDestroy {
       sessionFile,
       prompt: async () => {
         callbacks.onEvent("agent.started", { purpose: "GENERATOR" });
-        for (const [path, content] of Object.entries(createFakeEntryApplicationFiles(callbacks.requirement))) {
+        const existingRoutes = callbacks.readReference(callbacks.spec.paths.routeRegistry);
+        for (const [path, content] of Object.entries(createFakeGenerationFiles(callbacks.requirement, callbacks.spec, callbacks.contract, existingRoutes))) {
           if (cancelled) throw new Error("generation cancelled");
           callbacks.writeStaged(path, content);
           callbacks.onEvent("generation.file_changed", { generationId, relativePath: path });
@@ -373,7 +378,7 @@ export class PiAdapterService implements OnModuleDestroy {
       generationId: generation?.id || null,
       generationRevision: generation?.generation_revision || 0,
       generatedFiles: generation?.artifact_manifest_json ? JSON.parse(generation.artifact_manifest_json).files || [] : [],
-      constraints: ["Java 8", "Spring Boot 2.7.18", "Vue 3", "startAndSubmit only", "fixed entry_application boundary"],
+      constraints: ["Java 8", "Spring Boot 2.7.18", "Vue 3", "startAndSubmit only", "confirmed business generation boundary"],
       qualityState: "M4_NOT_STARTED",
       nextStep: generation?.status === "REVIEW" ? "human code review" : "continue the current workflow stage",
     });

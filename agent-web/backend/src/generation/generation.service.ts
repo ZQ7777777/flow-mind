@@ -14,6 +14,11 @@ import { DatabaseService, type GenerationRow, type SessionRow } from "../persist
 import { PiAdapterService, type GenerationPiCallbacks } from "../pi/pi-adapter.service.js";
 import { buildGenerationPrompt } from "../pi/generation-prompt.js";
 import { EventBusService } from "../workflow/event-bus.service.js";
+import {
+  deriveGenerationSpec,
+  GenerationRequirementError,
+  validateGenerationRequirement,
+} from "./generation-spec.js";
 import { StagingService, generationContract, parseManifest } from "./staging.service.js";
 import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
 
@@ -52,8 +57,18 @@ export class GenerationService {
       throw new AgentError(HttpStatus.CONFLICT, "AGENT_PROCESS_NOT_ACTIVE", "an activated process snapshot is required", sessionId);
     }
     const requirement = JSON.parse(process.requirement_snapshot_json) as BusinessRequirement;
-    assertEntryApplication(requirement, sessionId);
+    const issues = validateGenerationRequirement(requirement);
+    if (process.process_code !== requirement.businessCode) {
+      issues.push(`激活流程编码 ${process.process_code} 与确认需求编码 ${requirement.businessCode} 不一致`);
+    }
+    if (issues.length) throw invalidRequirement(sessionId, issues);
     const target = this.targets.validate(requestedRoot, sessionId);
+    try {
+      deriveGenerationSpec(requirement, target.contract);
+    } catch (error) {
+      if (error instanceof GenerationRequirementError) throw invalidRequirement(sessionId, error.issues);
+      throw error;
+    }
     if (session.target_root && !samePath(session.target_root, target.targetRoot)) {
       throw new AgentError(HttpStatus.CONFLICT, "AGENT_TARGET_ROOT_CONFLICT", "targetRoot cannot be switched after it is bound", sessionId);
     }
@@ -201,9 +216,12 @@ export class GenerationService {
     if (!generation || generation.status !== "GENERATING") return;
     const contract = generationContract(generation);
     const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
+    const spec = deriveGenerationSpec(requirement, contract);
     const target: ValidatedGenerationTarget = { targetRoot: generation.target_root, contract };
     const callbacks: GenerationPiCallbacks = {
       requirement,
+      contract,
+      spec,
       onEvent: (type, data) => this.events.publish(generation!.session_id, { type, data }),
       onError: (code, message) => this.fail(generationId, code, message),
       readReference: (path) => this.targets.readReference(target, path, generation!.session_id),
@@ -222,7 +240,7 @@ export class GenerationService {
       const piSession = await this.pi.runGeneration(
         generationId,
         generation.staging_dir,
-        buildGenerationPrompt(requirement, JSON.parse(generation.process_snapshot_json), contract),
+        buildGenerationPrompt(requirement, JSON.parse(generation.process_snapshot_json), contract, spec),
         callbacks,
       );
       this.database.db.prepare("UPDATE agent_code_generation SET pi_session_id = ?, pi_session_file = ?, updated_at = ? WHERE id = ?")
@@ -294,20 +312,6 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
   };
 }
 
-function assertEntryApplication(requirement: BusinessRequirement, sessionId: string): void {
-  const normalizedBusinessCode = requirement.businessCode.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  const supportedBusinessCode = ["entry_application", "deposit_apply_001"].includes(normalizedBusinessCode);
-  const apply = requirement.nodes.find((node) => node.nodeCode === "apply");
-  const outgoing = requirement.edges.filter((edge) => edge.sourceNodeCode === "apply");
-  const next = outgoing.length === 1 ? requirement.nodes.find((node) => node.nodeCode === outgoing[0].targetNodeCode) : undefined;
-  const receipt = requirement.attachments.find((item) => item.attachmentCode === "bankReceipt" && item.required && item.applicableNodeCodes.includes("apply"));
-  if (!supportedBusinessCode || requirement.businessName !== "入金申请"
-    || apply?.nodeType !== "USER_TASK" || apply.approverRule?.type !== "STARTER"
-    || !next || next.nodeType !== "USER_TASK" || !receipt) {
-    throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_GENERATION_BUSINESS_UNSUPPORTED", "M3 only supports the confirmed entry_application boundary", sessionId);
-  }
-}
-
 function samePath(left: string, right: string): boolean {
   return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
@@ -316,3 +320,12 @@ function digest(value: unknown): string { return createHash("sha256").update(JSO
 function requireKey(value: string, sessionId: string): void { if (!value?.trim()) throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required", sessionId); }
 function idempotencyConflict(sessionId: string): AgentError { return new AgentError(HttpStatus.CONFLICT, "AGENT_IDEMPOTENCY_CONFLICT", "idempotency key was reused with different content", sessionId); }
 function stateError(session: SessionRow): AgentError { return new AgentError(HttpStatus.CONFLICT, "AGENT_STATE_CONFLICT", "current state does not allow this operation", session.id, { currentState: session.state }); }
+function invalidRequirement(sessionId: string, issues: string[]): AgentError {
+  return new AgentError(
+    HttpStatus.BAD_REQUEST,
+    "AGENT_GENERATION_REQUIREMENT_INVALID",
+    "confirmed requirement cannot be safely generated",
+    sessionId,
+    { issues: [...new Set(issues)] },
+  );
+}

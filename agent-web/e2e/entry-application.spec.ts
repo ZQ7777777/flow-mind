@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 test("入金申请从对话走到发布激活", async ({ page }) => {
   await page.goto("/");
+  await expect(page.locator(".create-card input")).toHaveValue(resolve(".e2e-target", "business-base"));
   await expect(page.getByRole("heading", { name: "新建 Agent 会话" })).toBeVisible();
   await page.getByRole("button", { name: "开始采集需求" }).click();
   await expect(page.getByText("COLLECTING", { exact: true })).toBeVisible();
@@ -27,7 +28,7 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
   await page.getByRole("button", { name: "确认流程并激活" }).click();
   await expect(page.getByText("PROCESS_ACTIVE", { exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByPlaceholder("③ business-base 绝对路径").fill(resolve(".e2e-target", "business-base"));
-  await page.getByRole("button", { name: "生成入金申请代码" }).click();
+  await page.getByRole("button", { name: "生成代码" }).click();
   await expect(page.getByText("CODE_REVIEW", { exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByRole("tab", { name: "代码预览" }).click();
   await expect(page.getByText("generated-routes.ts", { exact: true })).toBeVisible();

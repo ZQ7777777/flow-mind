@@ -30,6 +30,7 @@ const stepIndex = computed(() => {
 const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING", "CODE_GENERATING"].includes(store.state || ""));
 
 watch(() => store.snapshot?.targetRoot, (value) => { if (value) generationTargetRoot.value = value; }, { immediate: true });
+watch(() => store.defaultTargetRoot, (value) => { if (value && !targetRoot.value) targetRoot.value = value; }, { immediate: true });
 watch(() => store.state, (value) => { if (["CODE_GENERATING", "CODE_REVIEW", "CODE_PIPELINE_FAILED"].includes(value || "")) activeTab.value = "code"; });
 
 onMounted(() => void store.initialize());
@@ -225,7 +226,7 @@ async function resetCurrentSession(): Promise<void> {
           <p v-else-if="store.state === 'REQUIREMENT_REVIEW'">检查并保存需求，然后完成人工门禁一。</p>
           <p v-else-if="store.state === 'PROCESS_REVIEW'">检查流程图、字段、附件和校验结果，然后完成人工门禁二。</p>
           <p v-else-if="processing">Agent 正在和流程平台协作，请稍候。</p>
-          <p v-else-if="store.state === 'PROCESS_ACTIVE'">流程已激活；绑定并校验③工程后可启动入金申请代码生成。</p>
+          <p v-else-if="store.state === 'PROCESS_ACTIVE'">流程已激活；绑定并校验③工程后可按确认需求生成业务发起代码。</p>
           <p v-else-if="store.state === 'CODE_GENERATING'">Generator 正在受限暂存区生成固定范围的代码和测试。</p>
           <p v-else-if="store.state === 'CODE_REVIEW'">检查全部文件、编辑内容并查看与目标基线的 diff。</p>
           <p v-else-if="store.state === 'CODE_PIPELINE_FAILED'">生成失败，可在修复目标前置条件后重新生成。</p>
@@ -256,7 +257,7 @@ async function resetCurrentSession(): Promise<void> {
           >重试失败步骤</el-button>
           <template v-else-if="store.state === 'PROCESS_ACTIVE'">
             <el-input v-model="generationTargetRoot" class="target-root-input" placeholder="③ business-base 绝对路径" />
-            <el-button type="success" :loading="store.busy" @click="action(() => store.startGeneration(generationTargetRoot), 'M3 代码生成已启动')">生成入金申请代码</el-button>
+            <el-button type="success" :loading="store.busy" @click="action(() => store.startGeneration(generationTargetRoot), 'M3 代码生成已启动')">生成业务发起代码</el-button>
           </template>
           <el-button v-else-if="store.state === 'CODE_GENERATING'" type="danger" plain :loading="store.busy" @click="action(store.cancelGeneration, '已取消生成')">取消生成</el-button>
           <el-button v-else-if="['CODE_REVIEW','CODE_PIPELINE_FAILED'].includes(store.state || '')" type="primary" :loading="store.busy" @click="action(store.regenerate, '已启动全新生成任务')">重新生成</el-button>

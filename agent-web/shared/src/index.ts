@@ -21,6 +21,10 @@ export interface MockUser {
   departmentName?: string;
 }
 
+export interface AgentPublicConfig {
+  defaultTargetRoot: string;
+}
+
 export interface Participant {
   roleCode: string;
   roleName: string;

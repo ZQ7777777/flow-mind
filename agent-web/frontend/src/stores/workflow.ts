@@ -1,6 +1,7 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import type {
+  AgentPublicConfig,
   BusinessRequirement,
   MockUser,
   RequirementRevision,
@@ -13,6 +14,7 @@ import { ApiError, apiRequest, streamEvents, type SseMessage } from "../api";
 
 export const useWorkflowStore = defineStore("workflow", () => {
   const users = ref<MockUser[]>([]);
+  const defaultTargetRoot = ref("");
   const currentUser = ref<MockUser>();
   const snapshot = ref<WorkflowSnapshot>();
   const busy = ref(false);
@@ -28,7 +30,12 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const allowedActions = computed(() => snapshot.value?.allowedActions || []);
 
   async function initialize(): Promise<void> {
-    users.value = await apiRequest<MockUser[]>("/api/agent/mock-users");
+    const [publicConfig, availableUsers] = await Promise.all([
+      apiRequest<AgentPublicConfig>("/api/agent/config"),
+      apiRequest<MockUser[]>("/api/agent/mock-users"),
+    ]);
+    defaultTargetRoot.value = publicConfig.defaultTargetRoot;
+    users.value = availableUsers;
     const storedUser = localStorage.getItem("flowmind.agent.user");
     currentUser.value = users.value.find((user) => user.userId === storedUser) || users.value[0];
     if (currentUser.value) localStorage.setItem("flowmind.agent.user", currentUser.value.userId);
@@ -322,6 +329,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
 
   return {
     users,
+    defaultTargetRoot,
     currentUser,
     snapshot,
     state,

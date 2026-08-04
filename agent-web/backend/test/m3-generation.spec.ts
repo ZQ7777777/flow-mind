@@ -1,17 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { ENTRY_APPLICATION_REQUIREMENT, type BusinessRequirement, type GenerationTargetContract } from "@flowmind/agent-contracts";
 import { DatabaseService } from "../src/persistence/database.service.js";
+import { AgentError } from "../src/common/agent-error.js";
 import { EventBusService } from "../src/workflow/event-bus.service.js";
 import { PiAdapterService } from "../src/pi/pi-adapter.service.js";
+import { deriveGenerationSpec } from "../src/generation/generation-spec.js";
 import { TargetContractService } from "../src/generation/target-contract.service.js";
 import { StagingService } from "../src/generation/staging.service.js";
 import { GenerationService } from "../src/generation/generation.service.js";
-import { ENTRY_APPLICATION_FILES } from "../src/generation/generation.constants.js";
 import { createGenerationTarget, seedActiveWorkflow } from "./generation-fixture.js";
 
-describe("M3 entry application generation", () => {
+describe("M3 user-defined business generation", () => {
   let parent: string;
   let database: DatabaseService;
   let generation: GenerationService;
@@ -38,31 +40,46 @@ describe("M3 entry application generation", () => {
     delete process.env.AGENT_ALLOWED_TARGET_ROOTS; delete process.env.AGENT_FAKE_PI;
   });
 
-  it("generates the exact code-and-test boundary, exposes diff, edits and supersedes", async () => {
+  it("derives files, fields and apply attachments from a confirmed custom process", async () => {
     const target = createGenerationTarget(parent);
-    seedActiveWorkflow(database, "session-m3", null);
-    const process = database.getProcessBySession("session-m3")!;
-    const requirement = JSON.parse(process.requirement_snapshot_json);
-    requirement.businessCode = "DEPOSIT_APPLY_001";
-    database.db.prepare("UPDATE agent_process_definition SET requirement_snapshot_json = ? WHERE id = ?")
-      .run(JSON.stringify(requirement), process.id);
+    const requirement = travelExpenseRequirement();
+    seedActiveWorkflow(database, "session-m3", null, "user_sales", requirement);
+    const spec = deriveGenerationSpec(requirement, readContract(target));
+
     const started = generation.start("session-m3", user, 0, "start-m3", target);
     const first = await waitForReview(started.generationId);
-    expect(first.manifest?.files.map((file) => file.relativePath).sort()).toEqual([...ENTRY_APPLICATION_FILES].sort());
+    expect(first.manifest?.files.map((file) => file.relativePath).sort()).toEqual([...spec.files].sort());
     expect(first.manifest?.files).toHaveLength(11);
     expect(first.generationRevision).toBe(1);
-    expect(database.getSession("session-m3")?.target_root?.toLowerCase()).toContain("flowmind-m3-");
-    const service = generation.readFile("session-m3", started.generationId, ENTRY_APPLICATION_FILES[1], user);
+    expect(spec.paths.service).toContain("travelexpense2026/TravelExpense2026Service.java");
+    expect(spec.paths.view).toContain("travel-expense-2026/TravelExpense2026Apply.vue");
+
+    const service = generation.readFile("session-m3", started.generationId, spec.paths.service, user);
     expect(service.content.match(/startAndSubmit\(/g)).toHaveLength(1);
+    expect(service.content).toContain('request.setProcessCode("travel_expense_2026")');
+    expect(service.content).toContain('variables.put("tripDays"');
+    expect(generation.readFile("session-m3", started.generationId, spec.paths.requestDto, user).content).toContain('@DecimalMin("1")');
+    expect(service.content).toContain('item.setAttachmentCode("receipts")');
+    expect(service.content).toContain('item.setAttachmentCode("itinerary")');
+    expect(service.content).not.toContain("financeProofFiles");
     expect(service.content).not.toMatch(/approve\(|submitTask\(|RestTemplate|Repository/);
     expect(() => generation.readFile("session-m3", started.generationId, "../pom.xml", user)).toThrow(/generation boundary/);
-    const routeDiff = generation.readDiff("session-m3", started.generationId, "frontend/src/router/generated-routes.ts", user);
-    expect(routeDiff.changeType).toBe("MODIFY");
-    expect(routeDiff.unifiedDiff).toContain("entry-application-apply");
 
-    const edited = generation.editFile("session-m3", started.generationId, ENTRY_APPLICATION_FILES[8], `${generation.readFile("session-m3", started.generationId, ENTRY_APPLICATION_FILES[8], user).content}\n// reviewed\n`, 1, user);
+    const view = generation.readFile("session-m3", started.generationId, spec.paths.view, user).content;
+    expect(view).toContain("出差天数");
+    expect(view).toContain("报销凭证");
+    expect(view).not.toContain("财务补充材料");
+    const routeDiff = generation.readDiff("session-m3", started.generationId, spec.paths.routeRegistry, user);
+    expect(routeDiff.changeType).toBe("MODIFY");
+    expect(routeDiff.stagedContent).toContain("existing-route");
+    expect(routeDiff.unifiedDiff).toContain("generated-travel-expense-2026-apply");
+
+    const edited = generation.editFile(
+      "session-m3", started.generationId, spec.paths.api,
+      `${generation.readFile("session-m3", started.generationId, spec.paths.api, user).content}\n// reviewed\n`, 1, user,
+    );
     expect(edited.revision).toBe(2);
-    expect(edited.files.find((file) => file.relativePath === ENTRY_APPLICATION_FILES[8])?.editedByUser).toBe(true);
+    expect(edited.files.find((file) => file.relativePath === spec.paths.api)?.editedByUser).toBe(true);
 
     const session = database.getSession("session-m3")!;
     const regenerated = generation.regenerate("session-m3", started.generationId, user, session.row_version, 2, "regen-m3");
@@ -72,10 +89,52 @@ describe("M3 entry application generation", () => {
     expect(existsSync(database.getGeneration(regenerated.generationId)!.staging_dir)).toBe(true);
   });
 
-  async function waitForReview(id: string) {
+  it("generates a different process without inventing attachments", async () => {
+    const target = createGenerationTarget(parent);
+    const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    requirement.businessCode = "leave-request";
+    requirement.businessName = "请假申请";
+    requirement.formFields = [
+      { fieldCode: "reason", fieldName: "请假原因", fieldType: "string", controlType: "textarea", required: true, validation: {}, sortOrder: 1 },
+      { fieldCode: "startDate", fieldName: "开始日期", fieldType: "date", controlType: "datePicker", required: true, validation: {}, sortOrder: 2 },
+    ];
+    requirement.attachments = [];
+    seedActiveWorkflow(database, "session-no-files", null, "user_sales", requirement);
+    const spec = deriveGenerationSpec(requirement, readContract(target));
+
+    const started = generation.start("session-no-files", user, 0, "start-no-files", target);
+    await waitForReview(started.generationId, "session-no-files");
+    const service = generation.readFile("session-no-files", started.generationId, spec.paths.service, user).content;
+    const view = generation.readFile("session-no-files", started.generationId, spec.paths.view, user).content;
+    expect(service).toContain('variables.put("reason"');
+    expect(service).not.toContain("bankReceipt");
+    expect(view).toContain("请假原因");
+    expect(view).not.toContain('type="file"');
+  });
+
+  it("rejects unsafe identifiers and an activated process-code mismatch", () => {
+    const target = createGenerationTarget(parent);
+    const invalid = travelExpenseRequirement();
+    invalid.formFields[0].fieldCode = "default";
+    seedActiveWorkflow(database, "session-invalid", null, "user_sales", invalid);
+    let invalidError: AgentError | undefined;
+    try { generation.start("session-invalid", user, 0, "invalid", target); } catch (error) { invalidError = error as AgentError; }
+    expect(invalidError?.getResponse()).toEqual(expect.objectContaining({
+      code: "AGENT_GENERATION_REQUIREMENT_INVALID",
+      details: expect.objectContaining({ issues: expect.arrayContaining([expect.stringContaining("保留字")]) }),
+    }));
+
+    const mismatch = travelExpenseRequirement();
+    seedActiveWorkflow(database, "session-mismatch", null, "user_sales", mismatch);
+    database.db.prepare("UPDATE agent_process_definition SET process_code = ? WHERE session_id = ?")
+      .run("another_process", "session-mismatch");
+    expect(() => generation.start("session-mismatch", user, 0, "mismatch", target)).toThrow(/safely generated/);
+  });
+
+  async function waitForReview(id: string, sessionId = "session-m3") {
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
-      const result = generation.get("session-m3", id, user);
+      const result = generation.get(sessionId, id, user);
       if (result.status === "REVIEW") return result;
       if (result.status === "FAILED") throw new Error(result.lastError?.message);
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -83,3 +142,27 @@ describe("M3 entry application generation", () => {
     throw new Error("timed out waiting for M3 generation");
   }
 });
+
+function travelExpenseRequirement(): BusinessRequirement {
+  const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+  requirement.businessCode = "travel_expense_2026";
+  requirement.businessName = "差旅报销";
+  requirement.goal = "员工提交差旅报销，由主管和财务依次处理。";
+  requirement.formFields = [
+    { fieldCode: "employeeName", fieldName: "员工姓名", fieldType: "string", controlType: "input", required: true, validation: {}, sortOrder: 1 },
+    { fieldCode: "tripDays", fieldName: "出差天数", fieldType: "number", controlType: "number", required: true, validation: { minimum: 1 }, sortOrder: 2 },
+    { fieldCode: "startDate", fieldName: "出发日期", fieldType: "date", controlType: "datePicker", required: true, validation: {}, sortOrder: 3 },
+    { fieldCode: "urgent", fieldName: "紧急", fieldType: "boolean", controlType: "checkbox", required: false, validation: {}, sortOrder: 4 },
+    { fieldCode: "expenseType", fieldName: "费用类型", fieldType: "select", controlType: "select", required: true, validation: {}, options: [{ label: "交通", value: "transport" }], sortOrder: 5 },
+  ];
+  requirement.attachments = [
+    { attachmentCode: "receipts", attachmentName: "报销凭证", allowedExtensions: ["pdf", "jpg"], maxSizeBytes: 5_000_000, required: true, minCount: 1, maxCount: 5, applicableNodeCodes: ["apply"], sortOrder: 1 },
+    { attachmentCode: "itinerary", attachmentName: "行程单", allowedExtensions: ["pdf"], maxSizeBytes: 2_000_000, required: false, minCount: 0, maxCount: 2, applicableNodeCodes: ["apply"], sortOrder: 2 },
+    { attachmentCode: "financeProof", attachmentName: "财务补充材料", allowedExtensions: ["pdf"], maxSizeBytes: 2_000_000, required: false, minCount: 0, maxCount: 1, applicableNodeCodes: ["finance_confirm"], sortOrder: 3 },
+  ];
+  return requirement;
+}
+
+function readContract(target: string): GenerationTargetContract {
+  return JSON.parse(readFileSync(join(target, ".flowmind", "generation-target.json"), "utf8")) as GenerationTargetContract;
+}

@@ -32,10 +32,18 @@ describe("workflow SSE lifecycle", () => {
     mocks.apiRequest.mockReset();
     mocks.streamEvents.mockReset();
     mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
       if (path === "/api/agent/mock-users") return [user];
       if (path === "/api/agent/sessions") return snapshot;
       return snapshot;
     });
+  });
+
+  it("loads the configured default target root for the UI", async () => {
+    const store = useWorkflowStore();
+    await store.initialize();
+
+    expect(store.defaultTargetRoot).toBe("E:\\workspace\\business-base");
   });
 
   it("reconnects a failed stream and cancels stale reconnects on disconnect", async () => {
@@ -60,6 +68,7 @@ describe("workflow SSE lifecycle", () => {
   it("resets the current session and reconnects using the cleared snapshot", async () => {
     mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
     mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
       if (path === "/api/agent/mock-users") return [user];
       if (path === "/api/agent/sessions") return snapshot;
       if (path === "/api/agent/sessions/ags_1/reset") {
@@ -98,6 +107,7 @@ describe("workflow SSE lifecycle", () => {
     let current = active;
     mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
     mocks.apiRequest.mockImplementation(async (path: string, _user?: MockUser, options?: { method?: string; body?: string }) => {
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
       if (path === "/api/agent/mock-users") return [user];
       if (path === "/api/agent/sessions") return active;
       if (path.endsWith("/code-generations")) { expect(JSON.parse(options!.body!)).toEqual({ targetRoot: "E:\\workspace\\business-base" }); current = review; return { accepted: true }; }

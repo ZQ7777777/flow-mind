@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import type { ArtifactFile, CodeGenerationSummary } from "@flowmind/agent-contracts";
 import { ElMessage } from "element-plus";
+import "monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css";
 import { useWorkflowStore } from "../stores/workflow";
 
 interface TreeNode { label: string; path?: string; children?: TreeNode[] }
@@ -31,7 +32,13 @@ async function select(node: TreeNode): Promise<void> {
 
 async function ensureEditors(): Promise<void> {
   if (editor || !editorHost.value || !diffHost.value) return;
-  monaco = await import("monaco-editor/esm/vs/editor/editor.api.js");
+  const [editorApi] = await Promise.all([
+    import("monaco-editor/esm/vs/editor/editor.api.js"),
+    import("monaco-editor/esm/vs/basic-languages/java/java.contribution.js"),
+    import("monaco-editor/esm/vs/language/typescript/monaco.contribution.js"),
+    import("monaco-editor/esm/vs/language/html/monaco.contribution.js"),
+  ]);
+  monaco = editorApi;
   editor = monaco.editor.create(editorHost.value, {
     value: "", language: "plaintext", automaticLayout: true, minimap: { enabled: false },
     fontSize: 13, scrollBeyondLastLine: false,
@@ -102,21 +109,21 @@ function languageFor(path: string): string {
         <strong>候选代码</strong>
         <el-tag size="small">revision {{ generation.generationRevision }}</el-tag>
       </div>
-      <el-tree :data="treeData" node-key="path" default-expand-all highlight-current @node-click="select">
-        <template #default="{ data }"><span class="tree-label">{{ data.label }}</span></template>
-      </el-tree>
+      <div class="code-tree-scroll">
+        <el-tree :data="treeData" node-key="path" default-expand-all highlight-current @node-click="select">
+          <template #default="{ data }"><span class="tree-label">{{ data.label }}</span></template>
+        </el-tree>
+      </div>
     </aside>
     <section class="code-editor">
       <div v-if="selectedPath" class="editor-toolbar">
-        <div>
-          <code>{{ selectedPath }}</code>
-          <el-tag v-if="selectedMeta" size="small" :type="selectedMeta.changeType === 'ADD' ? 'success' : 'warning'">{{ selectedMeta.changeType }}</el-tag>
+        <div class="editor-toolbar-main">
+          <el-tag v-if="selectedMeta" class="file-change-type" size="small" :type="selectedMeta.changeType === 'ADD' ? 'success' : 'warning'">{{ selectedMeta.changeType }}</el-tag>
+          <el-radio-group v-model="mode" class="editor-mode-switch" size="small"><el-radio-button value="edit">编辑</el-radio-button><el-radio-button value="diff">Diff</el-radio-button></el-radio-group>
+          <code class="editor-file-path">{{ selectedPath }}</code>
           <el-tag v-if="store.generatedDiff?.stale" size="small" type="danger">基线已变化</el-tag>
         </div>
-        <div>
-          <el-radio-group v-model="mode" size="small"><el-radio-button value="edit">编辑</el-radio-button><el-radio-button value="diff">Diff</el-radio-button></el-radio-group>
-          <el-button type="primary" size="small" :disabled="!dirty || store.busy" @click="save">保存</el-button>
-        </div>
+        <el-button class="editor-save" type="primary" size="small" :disabled="!dirty || store.busy" @click="save">保存</el-button>
       </div>
       <div v-if="!selectedPath" class="editor-empty">从左侧代码树选择一个文件查看内容和差异。</div>
       <div v-show="selectedPath && mode === 'edit'" ref="editorHost" class="monaco-host"></div>
@@ -126,15 +133,21 @@ function languageFor(path: string): string {
 </template>
 
 <style scoped>
-.generation-panel { display: grid; grid-template-columns: 290px minmax(0, 1fr); min-height: 590px; border: 1px solid #dfe5ed; border-radius: 12px; overflow: hidden; }
-.code-tree { padding: 14px; border-right: 1px solid #dfe5ed; overflow: auto; background: #f8fafc; }
-.generation-meta, .editor-toolbar, .editor-toolbar > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.generation-panel { display: grid; grid-template-columns: 290px minmax(0, 1fr); height: 590px; min-height: 0; border: 1px solid #dfe5ed; border-radius: 12px; overflow: hidden; }
+.code-tree { min-width: 0; min-height: 0; height: 100%; padding: 14px; border-right: 1px solid #dfe5ed; overflow: hidden; background: #f8fafc; display: flex; flex-direction: column; box-sizing: border-box; }
+.code-tree-scroll { position: relative; width: 100%; min-width: 0; min-height: 0; flex: 1 1 0; overflow-x: auto; overflow-y: scroll; scrollbar-gutter: stable; }
+.code-tree-scroll :deep(.el-tree) { width: max-content; min-width: 100%; background: transparent; }
+.code-tree-scroll :deep(.el-tree-node) { width: max-content; min-width: 100%; }
+.code-tree-scroll :deep(.el-tree-node__content) { width: max-content; min-width: 100%; box-sizing: border-box; padding-right: 14px; }
+.generation-meta, .editor-toolbar, .editor-toolbar-main { display: flex; align-items: center; gap: 10px; }
 .generation-meta { margin-bottom: 12px; }
 .tree-label { font-size: 12px; }
 .code-editor { min-width: 0; background: white; }
-.editor-toolbar { min-height: 52px; padding: 0 12px; border-bottom: 1px solid #dfe5ed; }
-.editor-toolbar code { max-width: 620px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-toolbar { min-height: 52px; padding: 0 12px; border-bottom: 1px solid #dfe5ed; justify-content: space-between; }
+.editor-toolbar-main { min-width: 0; flex: 1; }
+.editor-toolbar-main > :not(code), .editor-toolbar > .el-button { flex-shrink: 0; }
+.editor-toolbar code { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .monaco-host { height: 535px; }
 .editor-empty { height: 535px; display: grid; place-items: center; color: #7b8794; }
-@media (max-width: 1000px) { .generation-panel { grid-template-columns: 1fr; } .code-tree { max-height: 220px; border-right: 0; border-bottom: 1px solid #dfe5ed; } }
+@media (max-width: 1000px) { .generation-panel { grid-template-columns: 1fr; height: auto; } .code-tree { height: 220px; border-right: 0; border-bottom: 1px solid #dfe5ed; } }
 </style>

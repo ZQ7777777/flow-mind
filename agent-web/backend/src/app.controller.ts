@@ -16,6 +16,7 @@ import { IdentityService } from "./identity/identity.service.js";
 import { WorkflowService } from "./workflow/workflow.service.js";
 import { EventBusService } from "./workflow/event-bus.service.js";
 import { GenerationService } from "./generation/generation.service.js";
+import { loadConfig } from "./config.js";
 
 @Controller()
 export class AppController {
@@ -29,6 +30,11 @@ export class AppController {
   @Get("/api/agent/mock-users")
   listUsers() {
     return this.identity.listUsers();
+  }
+
+  @Get("/api/agent/config")
+  getPublicConfig() {
+    return { defaultTargetRoot: loadConfig().allowedTargetRoots[0] || "" };
   }
 
   @Post("/api/agent/sessions")

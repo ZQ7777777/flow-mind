@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@flowmind/agent-contracts": ["../shared/src/index.ts"]
+    }
+  }
+}

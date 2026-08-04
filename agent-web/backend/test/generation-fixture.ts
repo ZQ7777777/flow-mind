@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ENTRY_APPLICATION_REQUIREMENT, type GenerationTargetContract } from "@flowmind/agent-contracts";
+import { ENTRY_APPLICATION_REQUIREMENT, type BusinessRequirement, type GenerationTargetContract } from "@flowmind/agent-contracts";
 
 export function createGenerationTarget(parent: string, name = "business-base"): string {
   const root = join(parent, name);
   const pom = `<project><properties><platform-starter.version>0.1.0-SNAPSHOT</platform-starter.version></properties><dependencies><dependency><groupId>com.flowmind</groupId><artifactId>platform-starter</artifactId><version>\${platform-starter.version}</version></dependency></dependencies></project>\n`;
   const packageJson = `${JSON.stringify({ name: "fixture", private: true, scripts: { typecheck: "tsc", test: "vitest run", build: "vite build" } }, null, 2)}\n`;
-  const route = `import type { RouteRecordRaw } from "vue-router";\nexport const generatedRoutes: RouteRecordRaw[] = [];\n`;
+  const route = `import type { RouteRecordRaw } from "vue-router";\nexport const generatedRoutes: RouteRecordRaw[] = [{ path: "/existing", name: "existing-route", component: () => import("../modules/Existing.vue") }];\n`;
   write(root, "backend/pom.xml", pom);
   write(root, "frontend/package.json", packageJson);
   write(root, "frontend/src/router/generated-routes.ts", route);
@@ -44,20 +44,26 @@ export function createGenerationTarget(parent: string, name = "business-base"): 
   return root;
 }
 
-export function seedActiveWorkflow(database: { db: any }, sessionId: string, targetRoot: string | null, owner = "user_sales"): void {
+export function seedActiveWorkflow(
+  database: { db: any },
+  sessionId: string,
+  targetRoot: string | null,
+  owner = "user_sales",
+  requirement: BusinessRequirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT),
+): void {
   const now = new Date().toISOString();
   database.db.prepare(`INSERT INTO agent_session (
     id, owner_user_id, owner_user_name, target_root, state, row_version,
     requirement_revision, requirement_json, requirement_confirmed_at, created_at, updated_at
   ) VALUES (?, ?, 'Sales User', ?, 'PROCESS_ACTIVE', 0, 1, ?, ?, ?, ?)`)
-    .run(sessionId, owner, targetRoot, JSON.stringify(ENTRY_APPLICATION_REQUIREMENT), now, now, now);
+    .run(sessionId, owner, targetRoot, JSON.stringify(requirement), now, now, now);
   database.db.prepare(`INSERT INTO agent_process_definition (
     id, session_id, requirement_revision, platform_definition_id, process_code, process_name,
     status, saga_step, requirement_snapshot_json, platform_snapshot_json,
     create_operation_id, save_operation_id, publish_operation_id, activate_operation_id,
     created_by, created_at, activated_at, updated_at
-  ) VALUES (?, ?, 1, 'definition-entry', 'entry_application', '入金申请', 'ACTIVE', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(`process_${sessionId}`, sessionId, JSON.stringify(ENTRY_APPLICATION_REQUIREMENT), JSON.stringify({ id: "definition-entry", nodes: ENTRY_APPLICATION_REQUIREMENT.nodes }),
+  ) VALUES (?, ?, 1, ?, ?, ?, 'ACTIVE', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(`process_${sessionId}`, sessionId, `definition_${sessionId}`, requirement.businessCode, requirement.businessName, JSON.stringify(requirement), JSON.stringify({ id: `definition_${sessionId}`, processCode: requirement.businessCode, nodes: requirement.nodes }),
       `create_${sessionId}`, `save_${sessionId}`, `publish_${sessionId}`, `activate_${sessionId}`, owner, now, now, now);
 }
 
