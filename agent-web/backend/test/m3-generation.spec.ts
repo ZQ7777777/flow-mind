@@ -112,6 +112,20 @@ describe("M3 user-defined business generation", () => {
     expect(view).not.toContain('type="file"');
   });
 
+  it("generates initiation code when apply enters a parallel split gateway", async () => {
+    const target = createGenerationTarget(parent);
+    const requirement = parallelExpenseRequirement();
+    seedActiveWorkflow(database, "session-parallel", null, "user_sales", requirement);
+
+    const started = generation.start("session-parallel", user, 0, "start-parallel", target);
+    await waitForReview(started.generationId, "session-parallel");
+
+    const spec = deriveGenerationSpec(requirement, readContract(target));
+    const service = generation.readFile("session-parallel", started.generationId, spec.paths.service, user).content;
+    expect(service.match(/startAndSubmit\(/g)).toHaveLength(1);
+    expect(service).not.toMatch(/approve\(|submitTask\(/);
+  });
+
   it("rejects unsafe identifiers and an activated process-code mismatch", () => {
     const target = createGenerationTarget(parent);
     const invalid = travelExpenseRequirement();
@@ -159,6 +173,34 @@ function travelExpenseRequirement(): BusinessRequirement {
     { attachmentCode: "receipts", attachmentName: "报销凭证", allowedExtensions: ["pdf", "jpg"], maxSizeBytes: 5_000_000, required: true, minCount: 1, maxCount: 5, applicableNodeCodes: ["apply"], sortOrder: 1 },
     { attachmentCode: "itinerary", attachmentName: "行程单", allowedExtensions: ["pdf"], maxSizeBytes: 2_000_000, required: false, minCount: 0, maxCount: 2, applicableNodeCodes: ["apply"], sortOrder: 2 },
     { attachmentCode: "financeProof", attachmentName: "财务补充材料", allowedExtensions: ["pdf"], maxSizeBytes: 2_000_000, required: false, minCount: 0, maxCount: 1, applicableNodeCodes: ["finance_confirm"], sortOrder: 3 },
+  ];
+  return requirement;
+}
+
+function parallelExpenseRequirement(): BusinessRequirement {
+  const requirement = travelExpenseRequirement();
+  const start = requirement.nodes.find((node) => node.nodeCode === "start")!;
+  const apply = requirement.nodes.find((node) => node.nodeCode === "apply")!;
+  const manager = requirement.nodes.find((node) => node.nodeCode === "manager_approve")!;
+  const finance = requirement.nodes.find((node) => node.nodeCode === "finance_confirm")!;
+  const end = requirement.nodes.find((node) => node.nodeCode === "end")!;
+  requirement.nodes = [
+    start,
+    apply,
+    { nodeCode: "parallel_split", nodeName: "并行分支", nodeType: "PARALLEL_SPLIT_GATEWAY", pairedGatewayCode: "parallel_join", positionX: 360, positionY: 120, sortOrder: 3 },
+    { ...manager, sortOrder: 4 },
+    { ...finance, sortOrder: 5 },
+    { nodeCode: "parallel_join", nodeName: "并行汇聚", nodeType: "PARALLEL_JOIN_GATEWAY", pairedGatewayCode: "parallel_split", positionX: 780, positionY: 120, sortOrder: 6 },
+    { ...end, sortOrder: 7 },
+  ];
+  requirement.edges = [
+    { edgeCode: "e1", sourceNodeCode: "start", targetNodeCode: "apply", defaultEdge: false, sortOrder: 1 },
+    { edgeCode: "e2", sourceNodeCode: "apply", targetNodeCode: "parallel_split", defaultEdge: false, sortOrder: 2 },
+    { edgeCode: "e3", sourceNodeCode: "parallel_split", targetNodeCode: "manager_approve", defaultEdge: false, sortOrder: 3 },
+    { edgeCode: "e4", sourceNodeCode: "parallel_split", targetNodeCode: "finance_confirm", defaultEdge: false, sortOrder: 4 },
+    { edgeCode: "e5", sourceNodeCode: "manager_approve", targetNodeCode: "parallel_join", defaultEdge: false, sortOrder: 5 },
+    { edgeCode: "e6", sourceNodeCode: "finance_confirm", targetNodeCode: "parallel_join", defaultEdge: false, sortOrder: 6 },
+    { edgeCode: "e7", sourceNodeCode: "parallel_join", targetNodeCode: "end", defaultEdge: false, sortOrder: 7 },
   ];
   return requirement;
 }

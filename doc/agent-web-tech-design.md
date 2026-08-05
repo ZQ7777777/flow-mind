@@ -344,7 +344,7 @@ SSE 不承担历史恢复。重连时先发送 `workflow.snapshot` 和当前质�
 - 开始、`apply`、用户定义的后续审批/处理节点和结束节点。
 - 连线、审批人规则、条件和多人模式。
 
-`apply` 必须是 `STARTER` 规则的首个用户任务，且只有一条出边指向下一用户节点，保证 `startAndSubmit()` 可以确定性完成发起。
+`apply` 必须是 `STARTER` 规则的首个用户任务，且只有一条出边指向下一用户任务、排他网关或并行分支网关，保证 `startAndSubmit()` 可以确定性完成发起；网关条件、出线数量和并行配对关系由需求确认及流程发布校验负责。
 
 ### 7.2 GenerationTargetContract
 
