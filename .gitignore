@@ -13,6 +13,7 @@ agent-web/**/dist/
 agent-web/**/*.tsbuildinfo
 agent-web/.npm-cache/
 agent-web/.env
+agent-web/**/.pi-agent/auth.json
 data/agent-web/
 agent-web/.e2e-data/
 agent-web/.e2e-target/
