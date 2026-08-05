@@ -31,6 +31,7 @@ export interface ManagedDefinition {
   businessCode: string;
   businessName: string;
   status: string;
+  activationStatus?: string;
   definitionVersion?: number;
   activatedAt?: string;
   createdAt: string;

@@ -24,7 +24,11 @@ function qualityLabel(row: { hardGatePassed: number; overrideRequired: number; c
         <el-table :data="store.managedDefinitions" height="500" stripe>
           <el-table-column prop="businessCode" label="业务编码" min-width="150" />
           <el-table-column prop="businessName" label="业务名称" min-width="130" />
-          <el-table-column prop="status" label="状态" width="110" />
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              {{ row.activationStatus || row.status }}
+            </template>
+          </el-table-column>
           <el-table-column prop="definitionVersion" label="版本" width="80" />
           <el-table-column prop="activatedAt" label="激活时间" min-width="180" />
         </el-table>
@@ -52,4 +56,3 @@ function qualityLabel(row: { hardGatePassed: number; overrideRequired: number; c
 <style scoped>
 .management-lists { min-height: 540px; padding: 0 4px; }
 </style>
-

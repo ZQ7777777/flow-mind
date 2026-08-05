@@ -230,16 +230,24 @@ function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string): V
     env: fixedEnvironment(),
     signal: input.signal,
   };
-  const maven = process.platform === "win32" ? "mvn.cmd" : "mvn";
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  const command = (executable: string, args: string[]): Pick<VerificationCommand, "executable" | "args"> => {
+    if (process.platform !== "win32") return { executable, args };
+    // Node cannot directly spawn .cmd files with shell disabled on Windows. The
+    // commands below are fixed by this service, so use cmd.exe as the process
+    // while preserving a shell-free child_process invocation.
+    return {
+      executable: process.env.COMSPEC || "cmd.exe",
+      args: ["/d", "/s", "/c", `${executable}.cmd ${args.join(" ")}`],
+    };
+  };
   const backend = resolve(workspaceRoot, input.contract.backend.rootDir);
   const frontend = resolve(workspaceRoot, input.contract.frontend.rootDir);
   return [
-    { ...common, stage: "BACKEND_COMPILE", executable: maven, args: ["-q", "-DskipTests", "compile"], cwd: backend },
-    { ...common, stage: "BACKEND_TESTS", executable: maven, args: ["-q", "test"], cwd: backend },
-    { ...common, stage: "FRONTEND_TYPECHECK", executable: npm, args: ["run", "typecheck"], cwd: frontend },
-    { ...common, stage: "FRONTEND_TESTS", executable: npm, args: ["run", "test", "--", "--run"], cwd: frontend },
-    { ...common, stage: "FRONTEND_BUILD", executable: npm, args: ["run", "build"], cwd: frontend },
+    { ...common, stage: "BACKEND_COMPILE", ...command("mvn", ["-q", "-DskipTests", "compile"]), cwd: backend },
+    { ...common, stage: "BACKEND_TESTS", ...command("mvn", ["-q", "test"]), cwd: backend },
+    { ...common, stage: "FRONTEND_TYPECHECK", ...command("npm", ["run", "typecheck"]), cwd: frontend },
+    { ...common, stage: "FRONTEND_TESTS", ...command("npm", ["run", "test", "--", "--run"]), cwd: frontend },
+    { ...common, stage: "FRONTEND_BUILD", ...command("npm", ["run", "build"]), cwd: frontend },
   ];
 }
 
@@ -392,4 +400,3 @@ function assertInside(root: string, candidate: string): void {
     throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_GENERATION_PATH_FORBIDDEN", "Path escapes verification workspace.");
   }
 }
-

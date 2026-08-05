@@ -69,13 +69,22 @@ describe("verification worker", () => {
       execute,
     });
 
-    expect(commands.map(({ stage, executable, args }) => ({ stage, executable, args }))).toEqual([
-      { stage: "BACKEND_COMPILE", executable: expect.stringMatching(/mvn(?:\.cmd)?$/), args: ["-q", "-DskipTests", "compile"] },
-      { stage: "BACKEND_TESTS", executable: expect.stringMatching(/mvn(?:\.cmd)?$/), args: ["-q", "test"] },
-      { stage: "FRONTEND_TYPECHECK", executable: expect.stringMatching(/npm(?:\.cmd)?$/), args: ["run", "typecheck"] },
-      { stage: "FRONTEND_TESTS", executable: expect.stringMatching(/npm(?:\.cmd)?$/), args: ["run", "test", "--", "--run"] },
-      { stage: "FRONTEND_BUILD", executable: expect.stringMatching(/npm(?:\.cmd)?$/), args: ["run", "build"] },
-    ]);
+    const expectedCommands = process.platform === "win32"
+      ? [
+        { stage: "BACKEND_COMPILE", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "mvn.cmd -q -DskipTests compile"] },
+        { stage: "BACKEND_TESTS", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "mvn.cmd -q test"] },
+        { stage: "FRONTEND_TYPECHECK", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd run typecheck"] },
+        { stage: "FRONTEND_TESTS", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd run test -- --run"] },
+        { stage: "FRONTEND_BUILD", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd run build"] },
+      ]
+      : [
+        { stage: "BACKEND_COMPILE", executable: "mvn", args: ["-q", "-DskipTests", "compile"] },
+        { stage: "BACKEND_TESTS", executable: "mvn", args: ["-q", "test"] },
+        { stage: "FRONTEND_TYPECHECK", executable: "npm", args: ["run", "typecheck"] },
+        { stage: "FRONTEND_TESTS", executable: "npm", args: ["run", "test", "--", "--run"] },
+        { stage: "FRONTEND_BUILD", executable: "npm", args: ["run", "build"] },
+      ];
+    expect(commands.map(({ stage, executable, args }) => ({ stage, executable, args }))).toEqual(expectedCommands);
     expect(result.stages.every(({ status }) => status === "PASSED")).toBe(true);
     expect(readFileSync(join(target, "frontend/src/api/generated/example.ts"), "utf8")).toContain("target");
     expect(new Set(workspaces).size).toBe(1);
@@ -180,4 +189,3 @@ function createContract(): GenerationTargetContract {
     protectedFiles: [],
   };
 }
-

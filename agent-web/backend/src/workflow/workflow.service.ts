@@ -453,6 +453,10 @@ export class WorkflowService {
       const now = new Date().toISOString();
       this.database.transaction(() => {
         this.database.db.prepare(`
+          UPDATE agent_process_definition SET status = 'SUPERSEDED', saga_step = 'SUPERSEDED', updated_at = ?
+          WHERE process_code = ? AND id <> ? AND status = 'ACTIVE'
+        `).run(now, process.process_code, process.id);
+        this.database.db.prepare(`
           UPDATE agent_process_definition SET status = 'ACTIVE', saga_step = 'ACTIVE',
             platform_snapshot_json = ?, validation_json = ?, definition_version = ?,
             activated_at = ?, last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ?

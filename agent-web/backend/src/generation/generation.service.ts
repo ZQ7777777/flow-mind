@@ -27,6 +27,7 @@ import {
 } from "./generation-spec.js";
 import { StagingService, generationContract, parseManifest } from "./staging.service.js";
 import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
+import { PlatformClientService } from "../platform/platform-client.service.js";
 
 @Injectable()
 export class GenerationService {
@@ -38,6 +39,7 @@ export class GenerationService {
     @Inject(EventBusService) private readonly events: EventBusService,
     @Optional() @Inject(QualityPipelineService) private readonly quality?: QualityPipelineService,
     @Optional() @Inject(ArtifactWriterService) private readonly writer?: ArtifactWriterService,
+    @Optional() @Inject(PlatformClientService) private readonly platform?: PlatformClientService,
   ) {}
 
   start(
@@ -186,13 +188,37 @@ export class GenerationService {
     return this.writer.confirm(generation, request, idempotencyKey);
   }
 
-  listDefinitions(user: MockUser) {
-    return this.database.db.prepare(`
-      SELECT id, session_id AS sessionId, process_code AS businessCode,
-        process_name AS businessName, status, definition_version AS definitionVersion,
-        activated_at AS activatedAt, created_at AS createdAt
+  async listDefinitions(user: MockUser) {
+    const definitions = this.database.db.prepare(`
+      SELECT id, session_id AS sessionId, platform_definition_id AS platformDefinitionId,
+        process_code AS businessCode, process_name AS businessName, status,
+        definition_version AS definitionVersion, activated_at AS activatedAt, created_at AS createdAt
       FROM agent_process_definition WHERE created_by = ? ORDER BY created_at DESC
-    `).all(user.userId);
+    `).all(user.userId) as Array<{
+      id: string;
+      sessionId: string;
+      platformDefinitionId: string | null;
+      businessCode: string;
+      businessName: string;
+      status: string;
+      definitionVersion: number | null;
+      activatedAt: string | null;
+      createdAt: string;
+    }>;
+    return Promise.all(definitions.map(async (definition) => {
+      if (!this.platform || !definition.platformDefinitionId) return definition;
+      try {
+        const snapshot = await this.platform.getDefinition(definition.platformDefinitionId, user);
+        return {
+          ...definition,
+          activationStatus: snapshot.activationStatus,
+          definitionVersion: snapshot.version ?? definition.definitionVersion,
+        };
+      } catch {
+        // The local Saga state remains a safe fallback while the platform is unavailable.
+        return definition;
+      }
+    }));
   }
 
   listGenerations(user: MockUser) {
