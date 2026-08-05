@@ -57,7 +57,105 @@ export interface ArtifactManifest {
   files: ArtifactFile[];
 }
 
-export type CodeGenerationStatus = "GENERATING" | "REVIEW" | "FAILED" | "CANCELLED" | "SUPERSEDED";
+export const QUALITY_STAGE_NAMES = [
+  "STATIC_VALIDATION",
+  "BACKEND_COMPILE",
+  "BACKEND_TESTS",
+  "FRONTEND_TYPECHECK",
+  "FRONTEND_TESTS",
+  "FRONTEND_BUILD",
+] as const;
+
+export type QualityStageName = (typeof QUALITY_STAGE_NAMES)[number];
+export type QualityStageStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "PASSED"
+  | "FAILED"
+  | "SKIPPED"
+  | "INFRASTRUCTURE_FAILED"
+  | "CANCELLED";
+export type QualitySeverity = "ERROR" | "WARNING" | "INFO";
+
+export interface QualityDiagnostic {
+  code: string;
+  message: string;
+  severity: QualitySeverity;
+  hardGate: boolean;
+  relativePath?: string;
+  line?: number;
+  column?: number;
+}
+
+export interface QualityStageResult {
+  stage: QualityStageName;
+  status: QualityStageStatus;
+  hardGate: boolean;
+  summary: string;
+  diagnostics: QualityDiagnostic[];
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  exitCode?: number;
+  logPath?: string;
+  outputTruncated?: boolean;
+}
+
+export interface CodeReviewIssue {
+  code: string;
+  title: string;
+  message: string;
+  severity: "BLOCKING" | "WARNING" | "INFO";
+  relativePath?: string;
+  line?: number;
+}
+
+export interface CodeReviewReport {
+  reviewId: string;
+  status: "PENDING" | "RUNNING" | "PASSED" | "FAILED" | "INFRASTRUCTURE_FAILED";
+  verdict: "APPROVE" | "CHANGES_REQUESTED" | "UNAVAILABLE";
+  summary: string;
+  issues: CodeReviewIssue[];
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface QualityOverrideSummary {
+  overrideId: string;
+  revision: number;
+  scopes: Array<"BACKEND_TESTS" | "FRONTEND_TESTS" | "REVIEWER">;
+  reason: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface GenerationQualityReport {
+  generationId: string;
+  revision: number;
+  pipelineState: "VERIFYING" | "REVIEWING" | "REPAIRING" | "PASSED" | "FAILED";
+  repairRound: number;
+  maxRepairRounds: 3;
+  stages: QualityStageResult[];
+  review?: CodeReviewReport;
+  hardGatePassed: boolean;
+  overrideRequired: boolean;
+  canWrite: boolean;
+  override?: QualityOverrideSummary;
+  updatedAt: string;
+}
+
+export type CodeGenerationStatus =
+  | "GENERATING"
+  | "VERIFYING"
+  | "REVIEWING"
+  | "REPAIRING"
+  | "REVIEW"
+  | "WRITING"
+  | "WRITE_FAILED"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED"
+  | "SUPERSEDED";
 
 export interface CodeGenerationSummary {
   generationId: string;
@@ -66,6 +164,7 @@ export interface CodeGenerationSummary {
   targetRoot: string;
   contractVersion: string;
   manifest?: ArtifactManifest;
+  quality?: GenerationQualityReport;
   lastError?: { code: string; message: string };
   createdAt: string;
   updatedAt: string;

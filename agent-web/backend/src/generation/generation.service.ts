@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Injectable } from "@nestjs/common";
+import { HttpStatus, Inject, Injectable, Optional } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
@@ -10,10 +10,16 @@ import type {
   MockUser,
 } from "@flowmind/agent-contracts";
 import { AgentError } from "../common/agent-error.js";
+import {
+  ArtifactWriterService,
+  type ConfirmArtifactWriteRequest,
+} from "../artifact/artifact-writer.service.js";
+import type { SoftGateScope } from "../verification/quality-gates.js";
 import { DatabaseService, type GenerationRow, type SessionRow } from "../persistence/database.service.js";
 import { PiAdapterService, type GenerationPiCallbacks } from "../pi/pi-adapter.service.js";
 import { buildGenerationPrompt } from "../pi/generation-prompt.js";
 import { EventBusService } from "../workflow/event-bus.service.js";
+import { QualityPipelineService } from "../verification/quality-pipeline.service.js";
 import {
   deriveGenerationSpec,
   GenerationRequirementError,
@@ -30,6 +36,8 @@ export class GenerationService {
     @Inject(StagingService) private readonly staging: StagingService,
     @Inject(PiAdapterService) private readonly pi: PiAdapterService,
     @Inject(EventBusService) private readonly events: EventBusService,
+    @Optional() @Inject(QualityPipelineService) private readonly quality?: QualityPipelineService,
+    @Optional() @Inject(ArtifactWriterService) private readonly writer?: ArtifactWriterService,
   ) {}
 
   start(
@@ -81,12 +89,12 @@ export class GenerationService {
   }
 
   readFile(sessionId: string, generationId: string, path: string, user: MockUser): GeneratedFileContent {
-    const generation = this.reviewGeneration(sessionId, generationId, user);
+    const generation = this.manifestGeneration(sessionId, generationId, user);
     return this.staging.read(generation, path);
   }
 
   readDiff(sessionId: string, generationId: string, path: string, user: MockUser): GeneratedFileDiff {
-    const generation = this.reviewGeneration(sessionId, generationId, user);
+    const generation = this.manifestGeneration(sessionId, generationId, user);
     return this.staging.diff(generation, path);
   }
 
@@ -102,6 +110,99 @@ export class GenerationService {
     const manifest = this.staging.edit(generation, path, content, generationRevision);
     this.events.publish(sessionId, { type: "generation.file_changed", data: { generationId, relativePath: path, generationRevision: manifest.revision, editedByUser: true } });
     return manifest;
+  }
+
+  getQuality(sessionId: string, generationId: string, user: MockUser) {
+    this.ownedGeneration(sessionId, generationId, user);
+    return this.quality?.getReport(generationId) || null;
+  }
+
+  reverify(
+    sessionId: string,
+    generationId: string,
+    user: MockUser,
+    rowVersion: number,
+    generationRevision: number,
+    idempotencyKey: string,
+  ) {
+    requireKey(idempotencyKey, sessionId);
+    const session = this.ownedSession(sessionId, user);
+    this.ownedGeneration(sessionId, generationId, user);
+    const requestHash = digest({ generationRevision });
+    const replay = this.actionReplay<{ accepted: true; state: "CODE_VERIFYING" }>(
+      generationId, "REVERIFY", idempotencyKey, requestHash, sessionId,
+    );
+    if (replay) return replay;
+    this.expectVersion(session, rowVersion);
+    if (!this.quality) throw new AgentError(HttpStatus.SERVICE_UNAVAILABLE, "AGENT_QUALITY_UNAVAILABLE", "Quality pipeline is unavailable.", sessionId);
+    return this.quality.reverify(generationId, generationRevision, {
+      idempotencyKey,
+      requestHash,
+      expectedRowVersion: rowVersion,
+    });
+  }
+
+  overrideQuality(
+    sessionId: string,
+    generationId: string,
+    user: MockUser,
+    rowVersion: number,
+    generationRevision: number,
+    scopes: SoftGateScope[],
+    reason: string,
+    idempotencyKey: string,
+  ) {
+    requireKey(idempotencyKey, sessionId);
+    const session = this.ownedSession(sessionId, user);
+    this.ownedGeneration(sessionId, generationId, user);
+    const requestHash = digest({ generationRevision, scopes, reason });
+    const replay = this.actionReplay<ReturnType<QualityPipelineService["override"]>>(
+      generationId, "OVERRIDE_QUALITY", idempotencyKey, requestHash, sessionId,
+    );
+    if (replay) return replay;
+    this.expectVersion(session, rowVersion);
+    if (!this.quality) throw new AgentError(HttpStatus.SERVICE_UNAVAILABLE, "AGENT_QUALITY_UNAVAILABLE", "Quality pipeline is unavailable.", sessionId);
+    return this.quality.override(generationId, generationRevision, scopes, reason, user.userId, {
+      idempotencyKey,
+      requestHash,
+      expectedRowVersion: rowVersion,
+    });
+  }
+
+  confirmWrite(
+    sessionId: string,
+    generationId: string,
+    user: MockUser,
+    rowVersion: number,
+    request: ConfirmArtifactWriteRequest,
+    idempotencyKey: string,
+  ) {
+    const session = this.ownedSession(sessionId, user);
+    const generation = this.ownedGeneration(sessionId, generationId, user);
+    if (!this.writer) throw new AgentError(HttpStatus.SERVICE_UNAVAILABLE, "AGENT_WRITER_UNAVAILABLE", "Artifact writer is unavailable.", sessionId);
+    const replay = this.writer.replay(generation, request, idempotencyKey);
+    if (replay) return replay;
+    this.expectVersion(session, rowVersion);
+    return this.writer.confirm(generation, request, idempotencyKey);
+  }
+
+  listDefinitions(user: MockUser) {
+    return this.database.db.prepare(`
+      SELECT id, session_id AS sessionId, process_code AS businessCode,
+        process_name AS businessName, status, definition_version AS definitionVersion,
+        activated_at AS activatedAt, created_at AS createdAt
+      FROM agent_process_definition WHERE created_by = ? ORDER BY created_at DESC
+    `).all(user.userId);
+  }
+
+  listGenerations(user: MockUser) {
+    return this.database.db.prepare(`
+      SELECT id AS generationId, session_id AS sessionId, business_code AS businessCode,
+        business_name AS businessName, status, generation_revision AS generationRevision,
+        hard_gate_passed AS hardGatePassed, override_required AS overrideRequired,
+        can_write AS canWrite, written_at AS writtenAt, created_at AS createdAt
+      FROM agent_code_generation WHERE created_by = ? ORDER BY created_at DESC
+    `).all(user.userId);
   }
 
   cancel(
@@ -232,8 +333,17 @@ export class GenerationService {
       reportComplete: (files) => {
         const current = this.requiredGenerating(generationId);
         const manifest = this.staging.complete(current, contract, files);
-        this.events.publish(current.session_id, { type: "generation.stage_changed", data: { generationId, state: "CODE_REVIEW", manifest } });
-        this.events.publish(current.session_id, { type: "workflow.state_changed", data: { state: "CODE_REVIEW" } });
+        if (this.quality) {
+          this.events.publish(current.session_id, { type: "generation.stage_changed", data: { generationId, state: "CODE_VERIFYING", manifest } });
+          this.events.publish(current.session_id, { type: "workflow.state_changed", data: { state: "CODE_VERIFYING" } });
+          this.quality.start(generationId);
+        } else {
+          const now = new Date().toISOString();
+          this.database.transaction(() => {
+            this.database.db.prepare("UPDATE agent_code_generation SET status = 'REVIEW', updated_at = ? WHERE id = ?").run(now, generationId);
+            this.database.db.prepare("UPDATE agent_session SET state = 'CODE_REVIEW', row_version = row_version + 1, updated_at = ? WHERE id = ?").run(now, current.session_id);
+          });
+        }
       },
     };
     try {
@@ -274,7 +384,17 @@ export class GenerationService {
 
   private reviewGeneration(sessionId: string, generationId: string, user: MockUser): GenerationRow {
     const generation = this.ownedGeneration(sessionId, generationId, user);
-    if (generation.status !== "REVIEW") throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_STATE_CONFLICT", "generation is not ready for file review", sessionId);
+    if (!["REVIEW", "FAILED"].includes(generation.status)) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_STATE_CONFLICT", "generation is not ready for file review", sessionId);
+    }
+    return generation;
+  }
+
+  private manifestGeneration(sessionId: string, generationId: string, user: MockUser): GenerationRow {
+    const generation = this.ownedGeneration(sessionId, generationId, user);
+    if (!parseManifest(generation).files.length) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_STATE_CONFLICT", "Generation Manifest is not available.", sessionId);
+    }
     return generation;
   }
 
@@ -295,10 +415,29 @@ export class GenerationService {
   private expectVersion(session: SessionRow, expected: number): void {
     if (!Number.isInteger(expected) || session.row_version !== expected) throw new AgentError(HttpStatus.CONFLICT, "AGENT_ROW_VERSION_CONFLICT", "row version is stale", session.id, { expected: session.row_version });
   }
+
+  private actionReplay<T>(
+    generationId: string,
+    action: string,
+    idempotencyKey: string,
+    requestHash: string,
+    sessionId: string,
+  ): T | undefined {
+    const replay = this.database.db.prepare(`
+      SELECT request_hash, result_json FROM agent_generation_action
+      WHERE generation_id = ? AND action = ? AND idempotency_key = ?
+    `).get(generationId, action, idempotencyKey) as { request_hash: string; result_json: string } | undefined;
+    if (!replay) return undefined;
+    if (replay.request_hash !== requestHash) throw idempotencyConflict(sessionId);
+    return JSON.parse(replay.result_json) as T;
+  }
 }
 
 export function toSummary(generation: GenerationRow): CodeGenerationSummary {
   const manifest = parseManifest(generation);
+  const quality = generation.quality_report_json
+    ? JSON.parse(generation.quality_report_json) as CodeGenerationSummary["quality"]
+    : undefined;
   return {
     generationId: generation.id,
     status: generation.status as CodeGenerationSummary["status"],
@@ -307,6 +446,7 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
     contractVersion: generation.target_contract_version,
     manifest: manifest.files.length ? manifest : undefined,
     lastError: generation.last_error_code ? { code: generation.last_error_code, message: generation.last_error_message || "" } : undefined,
+    quality,
     createdAt: generation.created_at,
     updatedAt: generation.updated_at,
   };

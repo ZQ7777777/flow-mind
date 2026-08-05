@@ -8,6 +8,7 @@ import {
   businessRequirementSchema,
   type BusinessRequirement,
   type ConversationMessage,
+  type CodeReviewIssue,
   type GenerationTargetContract,
 } from "@flowmind/agent-contracts";
 import type { GenerationSpec } from "../generation/generation-spec.js";
@@ -44,6 +45,16 @@ export interface GenerationPiCallbacks {
   writeStaged(path: string, content: string): void;
   deleteStaged(path: string): void;
   reportComplete(files: string[]): void;
+}
+export interface ReviewPiCallbacks {
+  readStaged(path: string): string;
+  readDiff(path: string): string;
+  readQuality(): string;
+  submit(report: {
+    verdict: "APPROVE" | "CHANGES_REQUESTED";
+    summary: string;
+    issues: CodeReviewIssue[];
+  }): void;
 }
 
 @Injectable()
@@ -121,6 +132,8 @@ export class PiAdapterService implements OnModuleDestroy {
       ? this.createFakeGenerationHandle(generationId, callbacks)
       : await this.createRealGenerationHandle(generationId, stagingDir, callbacks);
     this.generationHandles.set(generationId, handle);
+    this.database.db.prepare("UPDATE agent_code_generation SET pi_session_id = ?, pi_session_file = ?, updated_at = ? WHERE id = ?")
+      .run(handle.sessionId, handle.sessionFile || null, new Date().toISOString(), generationId);
     try {
       await handle.prompt(prompt);
       return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
@@ -132,6 +145,47 @@ export class PiAdapterService implements OnModuleDestroy {
 
   cancelGeneration(generationId: string): void {
     this.generationHandles.get(generationId)?.abort?.();
+  }
+  async runRepair(
+    generationId: string,
+    stagingDir: string,
+    sessionFile: string,
+    prompt: string,
+    callbacks: GenerationPiCallbacks,
+  ): Promise<{ piSessionId: string; sessionFile?: string }> {
+    const key = `${generationId}:repair`;
+    if (this.generationHandles.has(key)) throw new Error("generation repair session is already active");
+    const handle = this.config.fakePi
+      ? this.createFakeRepairHandle(generationId, callbacks)
+      : await this.createRealGenerationHandle(generationId, stagingDir, callbacks, sessionFile, true);
+    this.generationHandles.set(key, handle);
+    try {
+      await handle.prompt(prompt);
+      return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
+    } finally {
+      handle.dispose();
+      this.generationHandles.delete(key);
+    }
+  }
+
+  async runReview(
+    reviewId: string,
+    prompt: string,
+    callbacks: ReviewPiCallbacks,
+  ): Promise<{ piSessionId: string; sessionFile?: string }> {
+    const key = `review:${reviewId}`;
+    if (this.generationHandles.has(key)) throw new Error("review session is already active");
+    const handle = this.config.fakePi
+      ? this.createFakeReviewHandle(reviewId, callbacks)
+      : await this.createRealReviewHandle(reviewId, callbacks);
+    this.generationHandles.set(key, handle);
+    try {
+      await handle.prompt(prompt);
+      return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
+    } finally {
+      handle.dispose();
+      this.generationHandles.delete(key);
+    }
   }
 
   private async createRealHandle(agentSessionId: string, sessionFile: string | undefined, callbacks: PiCallbacks): Promise<SessionHandle> {
@@ -280,6 +334,8 @@ export class PiAdapterService implements OnModuleDestroy {
     generationId: string,
     stagingDir: string,
     callbacks: GenerationPiCallbacks,
+    existingSessionFile?: string,
+    repairOnly = false,
   ): Promise<SessionHandle> {
     const pi: any = await import("@earendil-works/pi-coding-agent");
     const runtime = await this.getModelRuntime();
@@ -299,7 +355,7 @@ export class PiAdapterService implements OnModuleDestroy {
       cwd,
       agentDir,
       settingsManager,
-      systemPromptOverride: () => "You are a constrained Flow Mind code generator. Follow the user prompt and use only registered staging tools.",
+      systemPromptOverride: () => repairOnly ? "You repair only existing Flow Mind Manifest files. Use only registered staging tools." : "You are a constrained Flow Mind code generator. Follow the user prompt and use only registered staging tools.",
       additionalExtensionPaths: [],
       extensionFactories: [createFlowMindCompactionExtension({
         database: this.database,
@@ -312,17 +368,32 @@ export class PiAdapterService implements OnModuleDestroy {
     await loader.reload();
     const textResult = (text: string) => ({ content: [{ type: "text", text }], details: {} });
     const pathParameters = Type.Object({ path: Type.String({ minLength: 1 }) });
-    const tools = [
+    const baseTools = [
       pi.defineTool({ name: "read_generation_contract_file", label: "Read generation contract reference", description: "Read one target reference allowed by generation-target.json.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readReference(params.path)) }),
       pi.defineTool({ name: "read_staged_file", label: "Read staged file", description: "Read one file in this generation staging area.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readStaged(params.path)) }),
       pi.defineTool({ name: "list_staged_files", label: "List staged files", description: "List files staged by this generation.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listStaged())) }),
       pi.defineTool({ name: "write_staged_file", label: "Write staged file", description: "Write UTF-8 content to an allowed staged path.", parameters: Type.Object({ path: Type.String(), content: Type.String() }), execute: async (_id: string, params: any) => { callbacks.writeStaged(params.path, params.content); return textResult("staged"); } }),
+    ];
+    const completionTool = pi.defineTool({
+      name: repairOnly ? "report_repair_complete" : "report_generation_complete",
+      label: repairOnly ? "Report repair complete" : "Report generation complete",
+      description: "Report the exact complete staged Manifest file set.",
+      parameters: Type.Object({ files: Type.Array(Type.String()) }),
+      execute: async (_id: string, params: any) => {
+        callbacks.reportComplete(params.files);
+        return textResult(repairOnly ? "repair accepted for verification" : "generation accepted for verification");
+      },
+    });
+    const tools = repairOnly ? [...baseTools, completionTool] : [
+      ...baseTools,
       pi.defineTool({ name: "delete_staged_file", label: "Delete staged file", description: "Delete an unconfirmed staged file.", parameters: pathParameters, execute: async (_id: string, params: any) => { callbacks.deleteStaged(params.path); return textResult("deleted"); } }),
-      pi.defineTool({ name: "report_generation_complete", label: "Report generation complete", description: "Report the exact complete staged file set.", parameters: Type.Object({ files: Type.Array(Type.String()) }), execute: async (_id: string, params: any) => { callbacks.reportComplete(params.files); return textResult("generation accepted for human review"); } }),
+      completionTool,
     ];
     const created = await pi.createAgentSession({
       cwd, agentDir, model, modelRuntime: runtime, thinkingLevel: this.config.thinkingLevel,
-      sessionManager: pi.SessionManager.create(cwd, sessionDir), settingsManager, resourceLoader: loader,
+      sessionManager: existingSessionFile
+        ? pi.SessionManager.open(existingSessionFile, sessionDir)
+        : pi.SessionManager.create(cwd, sessionDir), settingsManager, resourceLoader: loader,
       noTools: "builtin", customTools: tools,
     });
     const session = created.session;
@@ -364,6 +435,112 @@ export class PiAdapterService implements OnModuleDestroy {
     };
   }
 
+  private createFakeRepairHandle(generationId: string, callbacks: GenerationPiCallbacks): SessionHandle {
+    const sessionFile = join(this.database.dataDir, "pi-sessions", `${generationId}.fake.jsonl`);
+    return {
+      sessionId: `pi_fake_repair_${generationId}`,
+      sessionFile,
+      prompt: async () => {
+        callbacks.onEvent("agent.started", { purpose: "REPAIR" });
+        callbacks.reportComplete(callbacks.listStaged());
+        callbacks.onEvent("agent.completed", { purpose: "REPAIR" });
+      },
+      messages: () => [],
+      dispose: () => undefined,
+    };
+  }
+
+  private createFakeReviewHandle(reviewId: string, callbacks: ReviewPiCallbacks): SessionHandle {
+    const sessionFile = join(this.database.dataDir, "pi-sessions", `${reviewId}.fake.jsonl`);
+    return {
+      sessionId: `pi_fake_${reviewId}`,
+      sessionFile,
+      prompt: async () => {
+        callbacks.readQuality();
+        callbacks.submit({
+          verdict: "APPROVE",
+          summary: "Independent read-only review found no additional boundary violations.",
+          issues: [],
+        });
+        appendFileSync(sessionFile, JSON.stringify({ type: "review_complete", verdict: "APPROVE" }) + "\n", "utf8");
+      },
+      messages: () => [],
+      dispose: () => undefined,
+    };
+  }
+
+  private async createRealReviewHandle(reviewId: string, callbacks: ReviewPiCallbacks): Promise<SessionHandle> {
+    const pi: any = await import("@earendil-works/pi-coding-agent");
+    const runtime = await this.getModelRuntime();
+    const [provider, ...modelParts] = this.config.piModel.split("/");
+    const model = runtime.getModel(provider, modelParts.join("/"));
+    if (!model) throw new Error(`PI model not found: ${this.config.piModel}`);
+    const sessionDir = join(this.database.dataDir, "pi-sessions");
+    const cwd = join(this.database.dataDir, "controlled-cwd", reviewId);
+    const agentDir = join(this.database.dataDir, "controlled-pi-agent");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+    const settingsManager = pi.SettingsManager.inMemory({ compaction: { enabled: false } });
+    const loader = new pi.DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      systemPromptOverride: () => "You are an independent read-only Flow Mind code reviewer. You cannot modify files. Inspect staged files, diffs, and quality results, then call submit_code_review exactly once.",
+      additionalExtensionPaths: [],
+      extensionFactories: [],
+    });
+    await loader.reload();
+    const textResult = (text: string) => ({ content: [{ type: "text", text }], details: {} });
+    const pathParameters = Type.Object({ path: Type.String({ minLength: 1 }) });
+    const issue = Type.Object({
+      code: Type.String({ minLength: 1 }),
+      title: Type.String({ minLength: 1 }),
+      message: Type.String({ minLength: 1 }),
+      severity: Type.Union([Type.Literal("BLOCKING"), Type.Literal("WARNING"), Type.Literal("INFO")]),
+      relativePath: Type.Optional(Type.String()),
+      line: Type.Optional(Type.Integer({ minimum: 1 })),
+    });
+    const tools = [
+      pi.defineTool({ name: "read_staged_file", label: "Read staged file", description: "Read one Manifest-managed staged file.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readStaged(params.path)) }),
+      pi.defineTool({ name: "read_staged_diff", label: "Read staged diff", description: "Read one Manifest-managed staged diff.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readDiff(params.path)) }),
+      pi.defineTool({ name: "read_quality_report", label: "Read quality report", description: "Read normalized static and command verification results.", parameters: Type.Object({}), execute: async () => textResult(callbacks.readQuality()) }),
+      pi.defineTool({
+        name: "submit_code_review",
+        label: "Submit code review",
+        description: "Submit the independent read-only review result.",
+        parameters: Type.Object({
+          verdict: Type.Union([Type.Literal("APPROVE"), Type.Literal("CHANGES_REQUESTED")]),
+          summary: Type.String(),
+          issues: Type.Array(issue),
+        }),
+        execute: async (_id: string, params: any) => {
+          callbacks.submit(params);
+          return textResult("review submitted");
+        },
+      }),
+    ];
+    const created = await pi.createAgentSession({
+      cwd,
+      agentDir,
+      model,
+      modelRuntime: runtime,
+      thinkingLevel: this.config.thinkingLevel,
+      sessionManager: pi.SessionManager.create(cwd, sessionDir),
+      settingsManager,
+      resourceLoader: loader,
+      noTools: "builtin",
+      customTools: tools,
+    });
+    const session = created.session;
+    return {
+      sessionId: session.sessionId,
+      sessionFile: session.sessionFile,
+      prompt: (text) => session.prompt(text),
+      messages: () => [],
+      abort: () => session.abort(),
+      dispose: () => session.dispose(),
+    };
+  }
   private compactionContext(agentSessionId: string, generationId?: string): string {
     const session = this.database.getSession(agentSessionId);
     const process = this.database.getProcessBySession(agentSessionId);

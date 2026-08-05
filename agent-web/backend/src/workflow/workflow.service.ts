@@ -659,7 +659,11 @@ const resettableStates: WorkflowState[] = [
 ];
 
 function hasProcessPreview(state: WorkflowState): boolean {
-  return ["PROCESS_REVIEW", "PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE", "CODE_GENERATING", "CODE_REVIEW", "CODE_PIPELINE_FAILED"].includes(state);
+  return [
+    "PROCESS_REVIEW", "PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE",
+    "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING",
+    "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "COMPLETED",
+  ].includes(state);
 }
 
 function allowedActions(state: WorkflowState, validationPassed: boolean): string[] {
@@ -673,8 +677,14 @@ function allowedActions(state: WorkflowState, validationPassed: boolean): string
     PROCESS_ACTIVATION_FAILED: ["RETRY_PROCESS"],
     PROCESS_ACTIVE: [],
     CODE_GENERATING: ["CANCEL_GENERATION"],
-    CODE_REVIEW: ["EDIT_GENERATED_FILE", "REGENERATE"],
-    CODE_PIPELINE_FAILED: ["REGENERATE"],
+    CODE_VERIFYING: [],
+    CODE_REVIEWING: [],
+    CODE_REPAIRING: [],
+    CODE_REVIEW: ["EDIT_GENERATED_FILE", "REGENERATE", "REVERIFY", "OVERRIDE_QUALITY", "CONFIRM_WRITE"],
+    CODE_PIPELINE_FAILED: ["EDIT_GENERATED_FILE", "REGENERATE", "REVERIFY"],
+    WRITING_ARTIFACTS: [],
+    ARTIFACT_WRITE_FAILED: ["CONFIRM_WRITE"],
+    COMPLETED: [],
   };
   if (state === "PROCESS_ACTIVE") mapping.PROCESS_ACTIVE = ["START_GENERATION"];
   return resettableStates.includes(state) ? [...mapping[state], "RESET_SESSION"] : mapping[state];
