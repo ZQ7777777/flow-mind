@@ -128,7 +128,7 @@ export function createDefaultUserTaskConfigs(
     reminderConfig: {
       enabled: true,
       maxCount: 2,
-      messageTemplate: "您有代办，请及时处理。",
+      messageTemplate: "您有待办，请及时处理。",
     },
   };
 }
