@@ -62,6 +62,35 @@ describe("static generated-code validation", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("accepts an attachment mapping that uses a static final string constant", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(/(public class \w+Service \{)/, "$1\n    private static final String ATTACHMENT_BANK_RECEIPT = \"bankReceipt\";")
+        .replace('item.setAttachmentCode("bankReceipt")', "item.setAttachmentCode(ATTACHMENT_BANK_RECEIPT)"),
+    );
+
+    const result = validator.validate(input);
+    expect(result.status).toBe("PASSED");
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("rejects an attachment constant whose resolved value differs from the contract", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(/(public class \w+Service \{)/, "$1\n    private static final String ATTACHMENT_OTHER = \"otherAttachment\";")
+        .replace('item.setAttachmentCode("bankReceipt")', "item.setAttachmentCode(ATTACHMENT_OTHER)"),
+    );
+
+    const result = validator.validate(input);
+    expect(result.diagnostics.map(({ code }) => code)).toContain("ATTACHMENT_MAPPING_MISSING");
+  });
+
   it("rejects platform actions outside the single allowed start call", () => {
     const input = validInput();
     const path = input.spec.paths.service;
@@ -119,4 +148,3 @@ function validInput() {
   };
   return { generationId: manifest.generationId, revision: 1, requirement, contract, spec, manifest, files };
 }
-

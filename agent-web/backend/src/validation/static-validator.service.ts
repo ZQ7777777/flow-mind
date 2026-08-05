@@ -233,7 +233,7 @@ export class StaticValidatorService {
       }
     }
     for (const attachment of input.spec.applyAttachments) {
-      if (!service.includes(`setAttachmentCode("${attachment.attachmentCode}")`)
+      if (!mapsAttachmentCode(service, attachment.attachmentCode)
         || !view.includes(`form.${attachment.attachmentCode}`)
         || !api.includes(attachment.attachmentCode)) {
         diagnostics.push(diagnostic(
@@ -286,3 +286,21 @@ function lineFromMessage(error: unknown): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+function mapsAttachmentCode(service: string, attachmentCode: string): boolean {
+  const escapedCode = escapeRegExp(attachmentCode);
+  if (new RegExp(`\\bsetAttachmentCode\\s*\\(\\s*"${escapedCode}"\\s*\\)`).test(service)) return true;
+
+  const constantNames = new Set<string>();
+  const declaration = /\b(?:public|protected|private)?\s*(?:static\s+final|final\s+static)\s+String\s+([A-Za-z_$][\w$]*)\s*=\s*"([A-Za-z][A-Za-z0-9]*)"\s*;/g;
+  for (const match of service.matchAll(declaration)) {
+    if (match[2] === attachmentCode) constantNames.add(match[1]);
+  }
+
+  return [...constantNames].some((name) =>
+    new RegExp(`\\bsetAttachmentCode\\s*\\(\\s*${escapeRegExp(name)}\\s*\\)`).test(service),
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
