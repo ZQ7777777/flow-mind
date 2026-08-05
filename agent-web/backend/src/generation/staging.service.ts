@@ -126,15 +126,15 @@ export class StagingService {
     const now = new Date().toISOString();
     this.database.transaction(() => {
       this.database.db.prepare(`
-        UPDATE agent_code_generation SET status = 'VERIFYING', generation_revision = 1,
-          quality_revision = 1, repair_round = 0, artifact_manifest_json = ?,
+        UPDATE agent_code_generation SET status = 'REVIEW', generation_revision = 1,
+          quality_revision = NULL, repair_round = 0, artifact_manifest_json = ?,
           quality_report_json = NULL, hard_gate_passed = 0, override_required = 0,
           quality_override_id = NULL, can_write = 0,
           last_error_code = NULL, last_error_message = NULL, updated_at = ?
         WHERE id = ? AND status = 'GENERATING'
       `).run(JSON.stringify(manifest), now, generation.id);
       this.database.db.prepare(`
-        UPDATE agent_session SET state = 'CODE_VERIFYING', row_version = row_version + 1,
+        UPDATE agent_session SET state = 'CODE_REVIEW', row_version = row_version + 1,
           last_error_code = NULL, last_error_message = NULL, updated_at = ?
         WHERE id = ? AND state = 'CODE_GENERATING'
       `).run(now, generation.session_id);

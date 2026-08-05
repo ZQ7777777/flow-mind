@@ -51,6 +51,12 @@ export function loadConfig(): AgentConfig {
         departmentId: "finance_dept",
         departmentName: "Finance Department",
       },
+      {
+        userId: "user_tester",
+        userName: "Quality Tester",
+        departmentId: "quality_dept",
+        departmentName: "Quality Engineering",
+      },
     ],
   };
 }

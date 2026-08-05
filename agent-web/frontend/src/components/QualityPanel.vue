@@ -34,7 +34,8 @@ const canOverride = computed(() =>
   && scopes.value.length > 0
   && reason.value.trim().length >= 10,
 );
-const canReverify = computed(() => ["REVIEW", "FAILED"].includes(props.generation.status));
+const canReverify = computed(() => Boolean(quality.value) && ["REVIEW", "FAILED"].includes(props.generation.status));
+const canStartQuality = computed(() => props.generation.status === "REVIEW" && !quality.value);
 const canConfirmWrite = computed(() =>
   Boolean(quality.value?.canWrite)
   && ["REVIEW", "WRITE_FAILED"].includes(props.generation.status),
@@ -49,8 +50,13 @@ onMounted(() => {
 });
 
 async function reverify(): Promise<void> {
-  await store.reverifyGeneration();
+  await store.reverifyGeneration(Boolean(quality.value?.aiReviewSkipped));
   ElMessage.success("已启动完整质量复验");
+}
+
+async function startQuality(skipAiReview: boolean): Promise<void> {
+  await store.startGenerationQuality(skipAiReview);
+  ElMessage.success(skipAiReview ? "已启动质量门禁，AI 审核将被跳过" : "已启动质量门禁与 AI 审核");
 }
 
 async function applyOverride(): Promise<void> {
@@ -143,6 +149,11 @@ function statusType(status: string): "success" | "warning" | "danger" | "info" {
         </button>
       </div>
 
+      <div v-else-if="quality.aiReviewSkipped" class="quality-section">
+        <div class="section-title"><strong>AI 审核</strong><el-tag size="small" type="info">已跳过</el-tag></div>
+        <p class="review-summary">由当前用户在启动质量门禁时明确跳过。</p>
+      </div>
+
       <div v-if="quality.overrideRequired" class="quality-section override-form">
         <strong>软门禁覆盖</strong>
         <el-checkbox-group v-model="scopes">
@@ -153,9 +164,13 @@ function statusType(status: string): "success" | "warning" | "danger" | "info" {
       </div>
     </div>
 
-    <div v-else class="quality-empty">等待质量流水线结果</div>
+    <div v-else class="quality-empty">代码已生成，可选择启动质量门禁</div>
 
     <div class="quality-actions">
+      <template v-if="canStartQuality">
+        <el-button type="primary" :disabled="store.busy" @click="startQuality(false)">进入质量门禁</el-button>
+        <el-button :disabled="store.busy" @click="startQuality(true)">跳过 AI 审核</el-button>
+      </template>
       <el-button :disabled="store.busy || !canReverify" @click="reverify">
         重新验证
       </el-button>
@@ -201,4 +216,3 @@ function statusType(status: string): "success" | "warning" | "danger" | "info" {
 .quality-actions .el-button { flex: 1; margin: 0; }
 .quality-empty { flex: 1; display: grid; place-items: center; color: #64748b; font-size: 12px; }
 </style>
-

@@ -91,6 +91,7 @@ export interface GenerationRow {
   hard_gate_passed: number;
   override_required: number;
   quality_override_id: string | null;
+  skip_ai_review: number;
   can_write: number;
   write_status: string;
   write_journal_json: string | null;
@@ -496,6 +497,15 @@ export class DatabaseService implements OnModuleDestroy {
             ON agent_generation_action(generation_id, action, created_at);
         `);
         this.recordMigration(6);
+      });
+    }
+    if (!applied.has(7)) {
+      this.transaction(() => {
+        const columns = this.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
+        if (!columns.some(({ name }) => name === "skip_ai_review")) {
+          this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN skip_ai_review INTEGER NOT NULL DEFAULT 0");
+        }
+        this.recordMigration(7);
       });
     }
   }

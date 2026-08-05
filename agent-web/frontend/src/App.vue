@@ -67,6 +67,10 @@ async function createSession(): Promise<void> {
   try { await store.createSession(targetRoot.value); } catch { /* store exposes error */ }
 }
 
+async function createQualityGateFixture(): Promise<void> {
+  try { await store.createQualityGateFixture(targetRoot.value || store.defaultTargetRoot); } catch { /* store exposes error */ }
+}
+
 async function send(): Promise<void> {
   const content = message.value.trim();
   if (!content) return;
@@ -137,6 +141,14 @@ function formatTokens(value: number | undefined): string {
         <el-button type="primary" size="large" :loading="store.busy" @click="createSession">
           开始采集需求
         </el-button>
+        <el-button
+          v-if="store.currentUser?.userId === 'user_tester'"
+          type="warning"
+          plain
+          size="large"
+          :loading="store.busy"
+          @click="createQualityGateFixture"
+        >创建入金申请质量门禁测试</el-button>
         <el-alert v-if="store.error" type="error" :title="store.error" :closable="false" />
       </div>
     </main>

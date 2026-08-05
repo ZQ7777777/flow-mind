@@ -119,6 +119,19 @@ export const useWorkflowStore = defineStore("workflow", () => {
     });
   }
 
+  async function createQualityGateFixture(targetRoot?: string): Promise<void> {
+    if (!currentUser.value || currentUser.value.userId !== "user_tester") return;
+    await run(async () => {
+      const created = await apiRequest<{ sessionId: string }>("/api/agent/test-fixtures/quality-gate", currentUser.value!, {
+        method: "POST",
+        body: JSON.stringify({ targetRoot: targetRoot?.trim() || undefined }),
+      });
+      localStorage.setItem(sessionStorageKey(), created.sessionId);
+      await refresh(created.sessionId);
+      connect();
+    });
+  }
+
   async function refresh(sessionId = snapshot.value?.sessionId): Promise<void> {
     if (!currentUser.value || !sessionId) return;
     applySnapshot(await apiRequest<WorkflowSnapshot>(`/api/agent/sessions/${sessionId}`, currentUser.value));
@@ -280,7 +293,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     );
   }
 
-  async function reverifyGeneration(): Promise<void> {
+  async function reverifyGeneration(skipAiReview = Boolean(qualityReport.value?.aiReviewSkipped)): Promise<void> {
     const generation = snapshot.value?.activeGeneration;
     if (!snapshot.value || !currentUser.value || !generation) return;
     await run(async () => {
@@ -288,7 +301,22 @@ export const useWorkflowStore = defineStore("workflow", () => {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: crypto.randomUUID(),
-        body: JSON.stringify({ generationRevision: generation.generationRevision }),
+        body: JSON.stringify({ generationRevision: generation.generationRevision, skipAiReview }),
+      });
+      qualityReport.value = undefined;
+      await refresh();
+    });
+  }
+
+  async function startGenerationQuality(skipAiReview: boolean): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    await run(async () => {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/quality/start`, currentUser.value!, {
+        method: "POST",
+        rowVersion: snapshot.value!.rowVersion,
+        idempotencyKey: crypto.randomUUID(),
+        body: JSON.stringify({ generationRevision: generation.generationRevision, skipAiReview }),
       });
       qualityReport.value = undefined;
       await refresh();
@@ -464,6 +492,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     initialize,
     selectUser,
     createSession,
+    createQualityGateFixture,
     refresh,
     sendMessage,
     saveRequirement,
@@ -479,6 +508,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     regenerate,
     loadGenerationQuality,
     reverifyGeneration,
+    startGenerationQuality,
     overrideGenerationQuality,
     confirmGenerationWrite,
     loadManagementLists,

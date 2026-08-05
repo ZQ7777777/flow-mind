@@ -137,6 +137,8 @@ export interface GenerationQualityReport {
   maxRepairRounds: 3;
   stages: QualityStageResult[];
   review?: CodeReviewReport;
+  /** Set only when the owner explicitly starts this run without AI review. */
+  aiReviewSkipped?: boolean;
   hardGatePassed: boolean;
   overrideRequired: boolean;
   canWrite: boolean;

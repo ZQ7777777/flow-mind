@@ -58,6 +58,7 @@ export class QualityPipelineService {
   reverify(
     generationId: string,
     revision: number,
+    skipAiReview = false,
     action?: QualityActionRequest,
   ): { accepted: true; state: "CODE_VERIFYING" } {
     const generation = this.database.getGeneration(generationId);
@@ -81,9 +82,9 @@ export class QualityPipelineService {
         UPDATE agent_code_generation SET status = 'VERIFYING', quality_revision = ?,
           quality_report_json = NULL, latest_verification_run_id = NULL, latest_review_id = NULL,
           hard_gate_passed = 0, override_required = 0, quality_override_id = NULL,
-          can_write = 0, last_error_code = NULL, last_error_message = NULL, updated_at = ?
+          skip_ai_review = ?, can_write = 0, last_error_code = NULL, last_error_message = NULL, updated_at = ?
         WHERE id = ? AND generation_revision = ?
-      `).run(revision, now, generationId, revision);
+      `).run(revision, skipAiReview ? 1 : 0, now, generationId, revision);
       const sessionUpdate = this.database.db.prepare(`
         UPDATE agent_session SET state = 'CODE_VERIFYING', row_version = row_version + 1,
           last_error_code = NULL, last_error_message = NULL, updated_at = ?
@@ -120,7 +121,7 @@ export class QualityPipelineService {
       !["BACKEND_TESTS", "FRONTEND_TESTS", "REVIEWER"].includes(scope))) {
       throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_QUALITY_OVERRIDE_SCOPE_INVALID", "Only JUnit, Vitest, or Reviewer failures can be overridden.", generation.session_id);
     }
-    const current = evaluateQualityGates(report.stages, report.review, []);
+    const current = evaluateQualityGates(report.stages, report.review, [], Boolean(report.aiReviewSkipped));
     if (!current.hardGatePassed || normalizedScopes.some((scope) => !current.softFailures.includes(scope))) {
       throw new AgentError(HttpStatus.CONFLICT, "AGENT_QUALITY_OVERRIDE_FORBIDDEN", "Hard gates and passing soft gates cannot be overridden.", generation.session_id);
     }
@@ -132,7 +133,7 @@ export class QualityPipelineService {
       createdBy,
       createdAt: new Date().toISOString(),
     };
-    const decision = evaluateQualityGates(report.stages, report.review, normalizedScopes);
+    const decision = evaluateQualityGates(report.stages, report.review, normalizedScopes, Boolean(report.aiReviewSkipped));
     const updated: GenerationQualityReport = {
       ...report,
       override,
@@ -268,12 +269,13 @@ export class QualityPipelineService {
       );
       const hardFailure = stages.some(({ hardGate, status }) => hardGate && status !== "PASSED");
       let review: CodeReviewReport | undefined;
-      if (!hardFailure && !infrastructureFailure) {
+      if (!hardFailure && !infrastructureFailure && !generation.skip_ai_review) {
         this.transition(generation.id, generation.session_id, "REVIEWING", "CODE_REVIEWING");
         generation = this.database.getGeneration(generationId)!;
         review = await this.reviewer.review(generation, runId, stages);
       }
-      const decision = evaluateQualityGates(stages, review, []);
+      const aiReviewSkipped = Boolean(generation.skip_ai_review);
+      const decision = evaluateQualityGates(stages, review, [], aiReviewSkipped);
       const reviewerInfrastructureFailure = review?.status === "INFRASTRUCTURE_FAILED";
       infrastructureFailure = infrastructureFailure || reviewerInfrastructureFailure;
       const needsRepair = !decision.hardGatePassed || decision.softFailures.length > 0;
@@ -306,6 +308,7 @@ export class QualityPipelineService {
         maxRepairRounds: 3,
         stages,
         review,
+        aiReviewSkipped,
         hardGatePassed: decision.hardGatePassed,
         overrideRequired: decision.overrideRequired,
         canWrite: decision.canWrite,
@@ -439,4 +442,3 @@ function skippedCommandStages(): QualityStageResult[] {
     diagnostics: [],
   } as QualityStageResult));
 }
-

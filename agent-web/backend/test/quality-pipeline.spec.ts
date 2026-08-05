@@ -69,7 +69,8 @@ describe("M4 quality pipeline integration", () => {
     const target = createGenerationTarget(root);
     seedActiveWorkflow(database, "session-quality", target);
     const started = generation.start("session-quality", user, 0, "start-quality", target);
-    quality.start(started.generationId);
+    await waitForGeneratedReview("session-quality", started.generationId);
+    generation.startQuality("session-quality", started.generationId, user, database.getSession("session-quality")!.row_version, 1, false, "start-quality-gate");
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       const summary = generation.get("session-quality", started.generationId, user);
@@ -95,6 +96,29 @@ describe("M4 quality pipeline integration", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     throw new Error("quality pipeline timed out");
+  });
+
+  it("records an explicit AI-review skip without creating a reviewer result", async () => {
+    const target = createGenerationTarget(root);
+    seedActiveWorkflow(database, "session-skip-review", target);
+    const started = generation.start("session-skip-review", user, 0, "start-skip-review", target);
+    await waitForGeneratedReview("session-skip-review", started.generationId);
+    generation.startQuality("session-skip-review", started.generationId, user, database.getSession("session-skip-review")!.row_version, 1, true, "start-skip-review-gate");
+
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const summary = generation.get("session-skip-review", started.generationId, user);
+      if (summary.status === "REVIEW" && summary.quality) {
+        expect(summary.quality).toEqual(expect.objectContaining({ aiReviewSkipped: true, canWrite: true }));
+        expect(summary.quality.review).toBeUndefined();
+        expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_code_review WHERE generation_id = ?")
+          .get(started.generationId)).toEqual({ count: 0 });
+        return;
+      }
+      if (summary.status === "FAILED") throw new Error(summary.lastError?.message);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("skipped-review quality pipeline timed out");
   });
   it("resumes the Generator Session and fully verifies a repaired revision", async () => {
     const realStatic = new StaticValidatorService();
@@ -135,6 +159,8 @@ describe("M4 quality pipeline integration", () => {
     const target = createGenerationTarget(root);
     seedActiveWorkflow(database, "session-repair", target);
     const started = generation.start("session-repair", user, 0, "start-repair", target);
+    await waitForGeneratedReview("session-repair", started.generationId);
+    generation.startQuality("session-repair", started.generationId, user, database.getSession("session-repair")!.row_version, 1, false, "start-repair-gate");
 
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
@@ -162,5 +188,13 @@ describe("M4 quality pipeline integration", () => {
     const row = database.getGeneration(started.generationId)!;
     throw new Error(`repaired quality pipeline timed out: status=${row.status} round=${row.repair_round} validations=${validationCalls}`);
   });
-});
 
+  async function waitForGeneratedReview(sessionId: string, generationId: string): Promise<void> {
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (generation.get(sessionId, generationId, user).status === "REVIEW") return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("generation did not reach the quality-gate selection state");
+  }
+});

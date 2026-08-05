@@ -77,6 +77,30 @@ describe("static generated-code validation", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("accepts a DTO-owned process-variable mapper and an independent attachment file list", () => {
+    const input = validInput();
+    input.files.set(
+      input.spec.paths.service,
+      input.files.get(input.spec.paths.service)!
+        .replace(/\s*variables\.put\([^\n]+/g, "")
+        .replace("request.setVariables(variables);", "request.setProcessVariables(payload.toProcessVariables());"),
+    );
+    const dto = input.files.get(input.spec.paths.requestDto)!;
+    const puts = input.requirement.formFields.map((field) => `vars.put(\"${field.fieldCode}\", null);`).join(" ");
+    input.files.set(
+      input.spec.paths.requestDto,
+      dto.replace(/\n}\s*$/, `\n    public Map<String, Object> toProcessVariables() { Map<String, Object> vars = new HashMap<>(); ${puts} return vars; }\n}`),
+    );
+    input.files.set(
+      input.spec.paths.view,
+      input.files.get(input.spec.paths.view)!
+        .replace(/form\.bankReceipt/g, "bankReceiptFileList")
+        .replace('type="file"', 'name="bankReceipt" type="file"'),
+    );
+
+    expect(validator.validate(input).diagnostics).toEqual([]);
+  });
+
   it("rejects an attachment constant whose resolved value differs from the contract", () => {
     const input = validInput();
     const path = input.spec.paths.service;

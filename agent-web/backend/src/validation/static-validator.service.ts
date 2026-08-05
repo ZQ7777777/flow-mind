@@ -218,7 +218,7 @@ export class StaticValidatorService {
     const view = input.files.get(input.spec.paths.view) || "";
     const api = input.files.get(input.spec.paths.api) || "";
     for (const field of input.requirement.formFields) {
-      if (!service.includes(`variables.put("${field.fieldCode}"`)) {
+      if (!mapsFormField(service, request, field.fieldCode)) {
         diagnostics.push(diagnostic(
           "FORM_FIELD_MAPPING_MISSING",
           `Service does not map confirmed form field ${field.fieldCode}.`,
@@ -234,7 +234,7 @@ export class StaticValidatorService {
     }
     for (const attachment of input.spec.applyAttachments) {
       if (!mapsAttachmentCode(service, attachment.attachmentCode)
-        || !view.includes(`form.${attachment.attachmentCode}`)
+        || !mapsAttachmentView(view, attachment.attachmentCode)
         || !api.includes(attachment.attachmentCode)) {
         diagnostics.push(diagnostic(
           "ATTACHMENT_MAPPING_MISSING",
@@ -260,6 +260,18 @@ export class StaticValidatorService {
       }
     }
   }
+}
+
+function mapsFormField(service: string, request: string, fieldCode: string): boolean {
+  if (service.includes(`variables.put("${fieldCode}"`)) return true;
+  // A DTO-owned mapper is equivalent when the service passes its complete map into the request.
+  return service.includes("payload.toProcessVariables()")
+    && request.includes(`put("${fieldCode}"`);
+}
+
+function mapsAttachmentView(view: string, attachmentCode: string): boolean {
+  return view.includes(`form.${attachmentCode}`)
+    || (view.includes(`${attachmentCode}FileList`) && view.includes(`name="${attachmentCode}"`));
 }
 
 function diagnostic(

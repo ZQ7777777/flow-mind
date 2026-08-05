@@ -17,6 +17,7 @@ export function evaluateQualityGates(
   stages: QualityStageResult[],
   review: CodeReviewReport | undefined,
   overriddenScopes: SoftGateScope[] | QualityOverrideSummary["scopes"],
+  aiReviewSkipped = false,
 ): QualityGateDecision {
   const hardGatePassed = stages
     .filter(({ hardGate }) => hardGate)
@@ -28,7 +29,7 @@ export function evaluateQualityGates(
   if (stages.some(({ stage, status }) => stage === "FRONTEND_TESTS" && status !== "PASSED")) {
     softFailures.push("FRONTEND_TESTS");
   }
-  if (!review || review.status !== "PASSED" || review.verdict !== "APPROVE") {
+  if (!aiReviewSkipped && (!review || review.status !== "PASSED" || review.verdict !== "APPROVE")) {
     softFailures.push("REVIEWER");
   }
   const overridden = new Set(overriddenScopes);
@@ -51,4 +52,3 @@ export function nextRepairDecision(
   }
   return { repair: true, nextRound: currentRound + 1 };
 }
-

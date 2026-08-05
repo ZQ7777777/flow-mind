@@ -9,6 +9,7 @@ import type {
   GeneratedFileDiff,
   MockUser,
 } from "@flowmind/agent-contracts";
+import { ENTRY_APPLICATION_REQUIREMENT } from "@flowmind/agent-contracts";
 import { AgentError } from "../common/agent-error.js";
 import {
   ArtifactWriterService,
@@ -28,6 +29,7 @@ import {
 import { StagingService, generationContract, parseManifest } from "./staging.service.js";
 import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
 import { PlatformClientService } from "../platform/platform-client.service.js";
+import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
 
 @Injectable()
 export class GenerationService {
@@ -85,6 +87,59 @@ export class GenerationService {
     return this.createGeneration(session, process.id, process.requirement_revision, requirement, JSON.parse(process.platform_snapshot_json), target, user, rowVersion, idempotencyKey, requestHash);
   }
 
+  createTesterQualityFixture(user: MockUser, targetRootInput: string): { sessionId: string; generationId: string } {
+    if (user.userId !== "user_tester") {
+      throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_TEST_FIXTURE_FORBIDDEN", "Only the tester mock user can create a quality-gate fixture.");
+    }
+    const target = this.targets.validate(targetRootInput, "tester-fixture");
+    const requirement = testerEntryApplicationRequirement();
+    const sessionId = `ags_tester_${randomUUID()}`;
+    const processId = `apd_tester_${randomUUID()}`;
+    const generationId = `acg_tester_${randomUUID()}`;
+    const stagingDir = join(this.database.dataDir, "staging", sessionId, generationId);
+    const now = new Date().toISOString();
+    const snapshot = { id: `definition_tester_${generationId}`, processCode: requirement.businessCode, nodes: requirement.nodes };
+    this.staging.prepare(stagingDir);
+    this.database.transaction(() => {
+      this.database.db.prepare(`
+        INSERT INTO agent_session (
+          id, owner_user_id, owner_user_name, owner_dept_id, owner_dept_name, target_root,
+          state, row_version, requirement_revision, requirement_json, requirement_confirmed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'CODE_GENERATING', 0, 1, ?, ?, ?, ?)
+      `).run(sessionId, user.userId, user.userName, user.departmentId || null, user.departmentName || null,
+        target.targetRoot, JSON.stringify(requirement), now, now, now);
+      this.database.db.prepare(`
+        INSERT INTO agent_process_definition (
+          id, session_id, requirement_revision, platform_definition_id, process_code, process_name,
+          status, saga_step, requirement_snapshot_json, platform_snapshot_json,
+          create_operation_id, save_operation_id, publish_operation_id, activate_operation_id,
+          created_by, created_at, activated_at, updated_at
+        ) VALUES (?, ?, 1, ?, ?, ?, 'ACTIVE', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(processId, sessionId, snapshot.id, requirement.businessCode, requirement.businessName,
+        JSON.stringify(requirement), JSON.stringify(snapshot), `create_${generationId}`, `save_${generationId}`,
+        `publish_${generationId}`, `activate_${generationId}`, user.userId, now, now, now);
+      this.database.db.prepare(`
+        INSERT INTO agent_code_generation (
+          id, session_id, process_definition_record_id, requirement_revision, requirement_snapshot_json,
+          process_snapshot_json, business_code, business_name, status, target_root, target_contract_version,
+          target_contract_json, staging_dir, artifact_manifest_json, generation_revision,
+          created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'GENERATING', ?, ?, ?, ?, '{}', 0, ?, ?, ?)
+      `).run(generationId, sessionId, processId, JSON.stringify(requirement), JSON.stringify(snapshot),
+        requirement.businessCode, requirement.businessName, target.targetRoot, target.contract.contractVersion,
+        JSON.stringify(target.contract), stagingDir, user.userId, now, now);
+    });
+    const spec = deriveGenerationSpec(requirement, target.contract);
+    const routeRegistry = this.targets.readReference(target, spec.paths.routeRegistry, sessionId);
+    const files = createFakeGenerationFiles(requirement, spec, target.contract, routeRegistry);
+    for (const [path, content] of Object.entries(files)) {
+      this.staging.writeDuringGeneration(this.requiredGenerating(generationId), path, content);
+    }
+    const manifest = this.staging.complete(this.requiredGenerating(generationId), target.contract, spec.files);
+    this.events.publish(sessionId, { type: "generation.stage_changed", data: { generationId, state: "CODE_REVIEW", manifest } });
+    return { sessionId, generationId };
+  }
+
   get(sessionId: string, generationId: string, user: MockUser): CodeGenerationSummary {
     this.ownedSession(sessionId, user);
     return toSummary(this.ownedGeneration(sessionId, generationId, user));
@@ -126,18 +181,48 @@ export class GenerationService {
     rowVersion: number,
     generationRevision: number,
     idempotencyKey: string,
+    skipAiReview = false,
   ) {
     requireKey(idempotencyKey, sessionId);
     const session = this.ownedSession(sessionId, user);
     this.ownedGeneration(sessionId, generationId, user);
-    const requestHash = digest({ generationRevision });
+    const requestHash = digest({ generationRevision, skipAiReview });
     const replay = this.actionReplay<{ accepted: true; state: "CODE_VERIFYING" }>(
       generationId, "REVERIFY", idempotencyKey, requestHash, sessionId,
     );
     if (replay) return replay;
     this.expectVersion(session, rowVersion);
     if (!this.quality) throw new AgentError(HttpStatus.SERVICE_UNAVAILABLE, "AGENT_QUALITY_UNAVAILABLE", "Quality pipeline is unavailable.", sessionId);
-    return this.quality.reverify(generationId, generationRevision, {
+    return this.quality.reverify(generationId, generationRevision, skipAiReview, {
+      idempotencyKey,
+      requestHash,
+      expectedRowVersion: rowVersion,
+    });
+  }
+
+  startQuality(
+    sessionId: string,
+    generationId: string,
+    user: MockUser,
+    rowVersion: number,
+    generationRevision: number,
+    skipAiReview: boolean,
+    idempotencyKey: string,
+  ) {
+    requireKey(idempotencyKey, sessionId);
+    const session = this.ownedSession(sessionId, user);
+    const generation = this.ownedGeneration(sessionId, generationId, user);
+    const requestHash = digest({ generationRevision, skipAiReview });
+    const replay = this.actionReplay<{ accepted: true; state: "CODE_VERIFYING" }>(
+      generationId, "START_QUALITY", idempotencyKey, requestHash, sessionId,
+    );
+    if (replay) return replay;
+    this.expectVersion(session, rowVersion);
+    if (generation.status !== "REVIEW" || generation.generation_revision !== generationRevision || generation.quality_report_json) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_REVISION_CONFLICT", "Only an unverified current generation can enter the quality gate.", sessionId);
+    }
+    if (!this.quality) throw new AgentError(HttpStatus.SERVICE_UNAVAILABLE, "AGENT_QUALITY_UNAVAILABLE", "Quality pipeline is unavailable.", sessionId);
+    return this.quality.reverify(generationId, generationRevision, skipAiReview, {
       idempotencyKey,
       requestHash,
       expectedRowVersion: rowVersion,
@@ -359,17 +444,8 @@ export class GenerationService {
       reportComplete: (files) => {
         const current = this.requiredGenerating(generationId);
         const manifest = this.staging.complete(current, contract, files);
-        if (this.quality) {
-          this.events.publish(current.session_id, { type: "generation.stage_changed", data: { generationId, state: "CODE_VERIFYING", manifest } });
-          this.events.publish(current.session_id, { type: "workflow.state_changed", data: { state: "CODE_VERIFYING" } });
-          this.quality.start(generationId);
-        } else {
-          const now = new Date().toISOString();
-          this.database.transaction(() => {
-            this.database.db.prepare("UPDATE agent_code_generation SET status = 'REVIEW', updated_at = ? WHERE id = ?").run(now, generationId);
-            this.database.db.prepare("UPDATE agent_session SET state = 'CODE_REVIEW', row_version = row_version + 1, updated_at = ? WHERE id = ?").run(now, current.session_id);
-          });
-        }
+        this.events.publish(current.session_id, { type: "generation.stage_changed", data: { generationId, state: "CODE_REVIEW", manifest } });
+        this.events.publish(current.session_id, { type: "workflow.state_changed", data: { state: "CODE_REVIEW" } });
       },
     };
     try {
@@ -476,6 +552,24 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
     createdAt: generation.created_at,
     updatedAt: generation.updated_at,
   };
+}
+
+function testerEntryApplicationRequirement(): BusinessRequirement {
+  const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+  requirement.formFields = [
+    { fieldCode: "applicationNo", fieldName: "申请单号", fieldType: "string", controlType: "input", required: true, validation: {}, sortOrder: 1 },
+    { fieldCode: "amount", fieldName: "入金金额", fieldType: "number", controlType: "number", required: true, validation: { minimum: 0.01 }, sortOrder: 2 },
+    {
+      fieldCode: "currency", fieldName: "币种", fieldType: "select", controlType: "select", required: true,
+      validation: {}, options: [{ label: "CNY", value: "CNY" }], sortOrder: 3,
+    },
+  ];
+  requirement.attachments = [{
+    attachmentCode: "bankReceipt", attachmentName: "付款凭证", description: "入金申请付款凭证",
+    allowedExtensions: ["pdf", "jpg", "png"], maxSizeBytes: 10_485_760, required: true,
+    minCount: 1, maxCount: 5, applicableNodeCodes: ["apply"], sortOrder: 1,
+  }];
+  return requirement;
 }
 
 function samePath(left: string, right: string): boolean {

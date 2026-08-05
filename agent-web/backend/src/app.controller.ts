@@ -37,6 +37,17 @@ export class AppController {
     return { defaultTargetRoot: loadConfig().allowedTargetRoots[0] || "" };
   }
 
+  @Post("/api/agent/test-fixtures/quality-gate")
+  createQualityGateFixture(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Body() body: { targetRoot?: string },
+  ) {
+    return this.generation.createTesterQualityFixture(
+      this.identity.resolve(userId, userName), body?.targetRoot?.trim() || "",
+    );
+  }
+
   @Post("/api/agent/sessions")
   async createSession(
     @Headers("x-agent-user-id") userId: string,
@@ -326,11 +337,28 @@ export class AppController {
     @Headers("x-agent-user-name") userName: string,
     @Headers("if-match") ifMatch: string,
     @Headers("idempotency-key") idempotencyKey: string,
-    @Body() body: { generationRevision: number },
+    @Body() body: { generationRevision: number; skipAiReview?: boolean },
   ) {
     return this.generation.reverify(
       sessionId, generationId, this.identity.resolve(userId, userName),
-      parseVersion(ifMatch), body?.generationRevision, idempotencyKey,
+      parseVersion(ifMatch), body?.generationRevision, idempotencyKey, Boolean(body?.skipAiReview),
+    );
+  }
+
+  @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/quality/start")
+  @HttpCode(202)
+  startGenerationQuality(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: { generationRevision: number; skipAiReview?: boolean },
+  ) {
+    return this.generation.startQuality(
+      sessionId, generationId, this.identity.resolve(userId, userName),
+      parseVersion(ifMatch), body?.generationRevision, Boolean(body?.skipAiReview), idempotencyKey,
     );
   }
 
