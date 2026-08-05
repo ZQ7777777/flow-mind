@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ENTRY_APPLICATION_REQUIREMENT, type BusinessRequirement, type GenerationTargetContract } from "@flowmind/agent-contracts";
@@ -124,6 +124,66 @@ describe("M3 user-defined business generation", () => {
     const service = generation.readFile("session-parallel", started.generationId, spec.paths.service, user).content;
     expect(service.match(/startAndSubmit\(/g)).toHaveLength(1);
     expect(service).not.toMatch(/approve\(|submitTask\(/);
+  });
+
+  it("preserves the frozen target baseline when a reviewed file is edited", async () => {
+    const target = createGenerationTarget(parent);
+    const requirement = travelExpenseRequirement();
+    seedActiveWorkflow(database, "session-m3", null, "user_sales", requirement);
+    const spec = deriveGenerationSpec(requirement, readContract(target));
+    const started = generation.start("session-m3", user, 0, "start-baseline", target);
+    const reviewed = await waitForReview(started.generationId);
+    const original = reviewed.manifest!.files.find(
+      ({ relativePath }) => relativePath === spec.paths.routeRegistry,
+    )!;
+    expect(original.changeType).toBe("MODIFY");
+
+    writeFileSync(
+      join(target, ...spec.paths.routeRegistry.split("/")),
+      "export default [{ path: '/external-change' }];\\n",
+      "utf8",
+    );
+    const staged = generation.readFile(
+      "session-m3",
+      started.generationId,
+      spec.paths.routeRegistry,
+      user,
+    ).content;
+    const edited = generation.editFile(
+      "session-m3",
+      started.generationId,
+      spec.paths.routeRegistry,
+      staged + "\\n// reviewed\\n",
+      1,
+      user,
+    );
+    const current = edited.files.find(
+      ({ relativePath }) => relativePath === spec.paths.routeRegistry,
+    )!;
+
+    expect(current.changeType).toBe(original.changeType);
+    expect(current.baseSha256).toBe(original.baseSha256);
+    expect(generation.readDiff(
+      "session-m3",
+      started.generationId,
+      spec.paths.routeRegistry,
+      user,
+    ).stale).toBe(true);
+  });
+
+  it("allows a hard-gate-failed revision to be edited before reverify", async () => {
+    const target = createGenerationTarget(parent);
+    const requirement = travelExpenseRequirement();
+    seedActiveWorkflow(database, "session-m3", null, "user_sales", requirement);
+    const spec = deriveGenerationSpec(requirement, readContract(target));
+    const started = generation.start("session-m3", user, 0, "start-failed-edit", target);
+    await waitForReview(started.generationId);
+    database.db.prepare("UPDATE agent_code_generation SET status = 'FAILED' WHERE id = ?").run(started.generationId);
+    database.db.prepare("UPDATE agent_session SET state = 'CODE_PIPELINE_FAILED' WHERE id = ?").run("session-m3");
+
+    const content = generation.readFile("session-m3", started.generationId, spec.paths.api, user).content;
+    const edited = generation.editFile("session-m3", started.generationId, spec.paths.api, content + "\\n// fixed\\n", 1, user);
+    expect(edited.revision).toBe(2);
   });
 
   it("rejects unsafe identifiers and an activated process-code mismatch", () => {

@@ -4,6 +4,7 @@ import type { ArtifactFile, CodeGenerationSummary } from "@flowmind/agent-contra
 import { ElMessage } from "element-plus";
 import "monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css";
 import { useWorkflowStore } from "../stores/workflow";
+import QualityPanel from "./QualityPanel.vue";
 
 interface TreeNode { label: string; path?: string; children?: TreeNode[] }
 
@@ -23,9 +24,13 @@ const selectedMeta = computed(() => props.generation.manifest?.files.find((file)
 
 async function select(node: TreeNode): Promise<void> {
   if (!node.path) return;
-  selectedPath.value = node.path;
+  await selectPath(node.path);
+}
+
+async function selectPath(relativePath: string): Promise<void> {
+  selectedPath.value = relativePath;
   dirty.value = false;
-  await store.loadGeneratedFile(node.path);
+  await store.loadGeneratedFile(relativePath);
   await ensureEditors();
   updateModels();
 }
@@ -129,11 +134,12 @@ function languageFor(path: string): string {
       <div v-show="selectedPath && mode === 'edit'" ref="editorHost" class="monaco-host"></div>
       <div v-show="selectedPath && mode === 'diff'" ref="diffHost" class="monaco-host"></div>
     </section>
+    <QualityPanel :generation="generation" @select-diagnostic="selectPath" />
   </div>
 </template>
 
 <style scoped>
-.generation-panel { display: grid; grid-template-columns: 290px minmax(0, 1fr); height: 590px; min-height: 0; border: 1px solid #dfe5ed; border-radius: 12px; overflow: hidden; }
+.generation-panel { display: grid; grid-template-columns: 240px minmax(360px, 1fr) 320px; height: 590px; min-height: 0; border: 1px solid #dfe5ed; border-radius: 12px; overflow: hidden; }
 .code-tree { min-width: 0; min-height: 0; height: 100%; padding: 14px; border-right: 1px solid #dfe5ed; overflow: hidden; background: #f8fafc; display: flex; flex-direction: column; box-sizing: border-box; }
 .code-tree-scroll { position: relative; width: 100%; min-width: 0; min-height: 0; flex: 1 1 0; overflow-x: auto; overflow-y: scroll; scrollbar-gutter: stable; }
 .code-tree-scroll :deep(.el-tree) { width: max-content; min-width: 100%; background: transparent; }
@@ -149,5 +155,5 @@ function languageFor(path: string): string {
 .editor-toolbar code { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .monaco-host { height: 535px; }
 .editor-empty { height: 535px; display: grid; place-items: center; color: #7b8794; }
-@media (max-width: 1000px) { .generation-panel { grid-template-columns: 1fr; height: auto; } .code-tree { height: 220px; border-right: 0; border-bottom: 1px solid #dfe5ed; } }
+@media (max-width: 1200px) { .generation-panel { grid-template-columns: 220px minmax(360px, 1fr); height: auto; } :deep(.quality-panel) { grid-column: 1 / -1; min-height: 360px; border-left: 0; border-top: 1px solid #dfe5ed; } }
 </style>

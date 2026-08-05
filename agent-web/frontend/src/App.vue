@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import RequirementEditor from "./components/RequirementEditor.vue";
 import ProcessPreview from "./components/ProcessPreview.vue";
 import CodeGenerationPanel from "./components/CodeGenerationPanel.vue";
+import ManagementLists from "./components/ManagementLists.vue";
 import { useResizablePanels } from "./composables/useResizablePanels";
 import { useWorkflowStore } from "./stores/workflow";
 
@@ -40,11 +41,11 @@ const stepIndex = computed(() => {
   if (["PROCESS_ACTIVE", "CODE_GENERATING"].includes(state || "")) return 4;
   return 5;
 });
-const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING", "CODE_GENERATING"].includes(store.state || ""));
+const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING", "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING", "WRITING_ARTIFACTS"].includes(store.state || ""));
 
 watch(() => store.snapshot?.targetRoot, (value) => { if (value) generationTargetRoot.value = value; }, { immediate: true });
 watch(() => store.defaultTargetRoot, (value) => { if (value && !targetRoot.value) targetRoot.value = value; }, { immediate: true });
-watch(() => store.state, (value) => { if (["CODE_GENERATING", "CODE_REVIEW", "CODE_PIPELINE_FAILED"].includes(value || "")) activeTab.value = "code"; });
+watch(() => store.state, (value) => { if (["CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING", "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "COMPLETED"].includes(value || "")) activeTab.value = "code"; });
 watch(() => store.lastCompaction, (compaction) => {
   if (!compaction) return;
   const tokensBefore = formatTokens(compaction.tokensBefore);
@@ -57,6 +58,7 @@ watch(() => store.lastCompaction, (compaction) => {
       : "";
   ElMessage.info(`会话上下文已自动压缩${details}${compaction.summary ? "，可在会话面板查看摘要" : ""}`);
 });
+
 
 onMounted(() => void store.initialize());
 onBeforeUnmount(() => store.disconnect());
@@ -263,6 +265,9 @@ function formatTokens(value: number | undefined): string {
                 <h3>{{ store.state === 'CODE_GENERATING' ? 'Generator 正在生成代码和测试' : '尚无可预览代码' }}</h3>
                 <p>生成结果只写入 Agent 暂存区，不会修改真实目标工程。</p>
               </div>
+            </el-tab-pane>
+            <el-tab-pane label="管理清单" name="management">
+              <ManagementLists />
             </el-tab-pane>
           </el-tabs>
         </section>

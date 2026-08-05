@@ -82,6 +82,18 @@ export interface GenerationRow {
   pi_session_id: string | null;
   pi_session_file: string | null;
   generation_revision: number;
+  quality_revision: number | null;
+  repair_round: number;
+  max_repair_rounds: number;
+  latest_verification_run_id: string | null;
+  latest_review_id: string | null;
+  quality_report_json: string | null;
+  hard_gate_passed: number;
+  override_required: number;
+  quality_override_id: string | null;
+  can_write: number;
+  write_status: string;
+  write_journal_json: string | null;
   start_key: string | null;
   start_hash: string | null;
   start_result_json: string | null;
@@ -368,6 +380,124 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(4);
       });
     }
+    if (!applied.has(5)) {
+      this.transaction(() => {
+        const columns = this.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
+        const names = new Set(columns.map(({ name }) => name));
+        const additions: Array<[string, string]> = [
+          ["quality_revision", "INTEGER"],
+          ["repair_round", "INTEGER NOT NULL DEFAULT 0"],
+          ["max_repair_rounds", "INTEGER NOT NULL DEFAULT 3"],
+          ["latest_verification_run_id", "TEXT"],
+          ["latest_review_id", "TEXT"],
+          ["quality_report_json", "TEXT"],
+          ["hard_gate_passed", "INTEGER NOT NULL DEFAULT 0"],
+          ["override_required", "INTEGER NOT NULL DEFAULT 0"],
+          ["quality_override_id", "TEXT"],
+          ["can_write", "INTEGER NOT NULL DEFAULT 0"],
+          ["write_status", "TEXT NOT NULL DEFAULT 'NOT_STARTED'"],
+          ["write_journal_json", "TEXT"],
+        ];
+        for (const [name, definition] of additions) {
+          if (!names.has(name)) {
+            this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN " + name + " " + definition);
+          }
+        }
+
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_verification_run (
+            id TEXT PRIMARY KEY,
+            generation_id TEXT NOT NULL REFERENCES agent_code_generation(id),
+            revision INTEGER NOT NULL,
+            repair_round INTEGER NOT NULL,
+            trigger TEXT NOT NULL,
+            status TEXT NOT NULL,
+            hard_gate_passed INTEGER NOT NULL DEFAULT 0,
+            soft_gate_passed INTEGER NOT NULL DEFAULT 0,
+            stage_results_json TEXT NOT NULL DEFAULT '[]',
+            log_dir TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_verification_generation_revision
+            ON agent_verification_run(generation_id, revision, created_at);
+
+          CREATE TABLE IF NOT EXISTS agent_code_review (
+            id TEXT PRIMARY KEY,
+            generation_id TEXT NOT NULL REFERENCES agent_code_generation(id),
+            verification_run_id TEXT REFERENCES agent_verification_run(id),
+            revision INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            issues_json TEXT NOT NULL DEFAULT '[]',
+            pi_session_id TEXT,
+            pi_session_file TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_review_generation_revision
+            ON agent_code_review(generation_id, revision, created_at);
+
+          CREATE TABLE IF NOT EXISTS agent_quality_override (
+            id TEXT PRIMARY KEY,
+            generation_id TEXT NOT NULL REFERENCES agent_code_generation(id),
+            revision INTEGER NOT NULL,
+            scopes_json TEXT NOT NULL,
+            reason TEXT NOT NULL CHECK(length(trim(reason)) >= 10),
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            invalidated_at TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_override_generation_revision
+            ON agent_quality_override(generation_id, revision, created_at);
+
+          CREATE TABLE IF NOT EXISTS agent_artifact_write (
+            id TEXT PRIMARY KEY,
+            generation_id TEXT NOT NULL REFERENCES agent_code_generation(id),
+            revision INTEGER NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            manifest_json TEXT NOT NULL,
+            backup_dir TEXT NOT NULL,
+            journal_json TEXT NOT NULL DEFAULT '[]',
+            error_code TEXT,
+            error_message TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            UNIQUE(generation_id, idempotency_key)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_artifact_write_generation
+            ON agent_artifact_write(generation_id, started_at);
+        `);
+        this.recordMigration(5);
+      });
+    }
+    if (!applied.has(6)) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_generation_action (
+            id TEXT PRIMARY KEY,
+            generation_id TEXT NOT NULL REFERENCES agent_code_generation(id),
+            action TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(generation_id, action, idempotency_key)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_generation_action
+            ON agent_generation_action(generation_id, action, created_at);
+        `);
+        this.recordMigration(6);
+      });
+    }
   }
 
   private recordMigration(version: number): void {
@@ -415,16 +545,42 @@ export class DatabaseService implements OnModuleDestroy {
       WHERE state IN ('PROCESS_PROVISIONING', 'PROCESS_ACTIVATING')
     `).run(now);
     this.db.prepare(`
-      UPDATE agent_code_generation SET status = 'FAILED',
+      UPDATE agent_code_generation SET
+        status = CASE
+          WHEN status = 'WRITING' THEN 'WRITE_FAILED'
+          WHEN status IN ('VERIFYING', 'REVIEWING', 'REPAIRING') THEN 'REVIEW'
+          ELSE 'FAILED'
+        END,
+        can_write = 0,
+        write_status = CASE WHEN status = 'WRITING' THEN 'RECOVERY_REQUIRED' ELSE write_status END,
         last_error_code = 'AGENT_INTERRUPTED',
-        last_error_message = 'Agent server restarted during code generation.', updated_at = ?
-      WHERE status = 'GENERATING'
+        last_error_message = 'Agent server restarted during an in-progress code operation.',
+        updated_at = ?
+      WHERE status IN ('GENERATING', 'VERIFYING', 'REVIEWING', 'REPAIRING', 'WRITING')
     `).run(now);
     this.db.prepare(`
-      UPDATE agent_session SET state = 'CODE_PIPELINE_FAILED', row_version = row_version + 1,
+      UPDATE agent_session SET
+        state = CASE WHEN state = 'WRITING_ARTIFACTS' THEN 'ARTIFACT_WRITE_FAILED' ELSE 'CODE_PIPELINE_FAILED' END,
+        row_version = row_version + 1,
         last_error_code = 'AGENT_INTERRUPTED',
-        last_error_message = 'Agent server restarted during code generation.', updated_at = ?
-      WHERE state = 'CODE_GENERATING'
+        last_error_message = 'Agent server restarted during an in-progress code operation.',
+        updated_at = ?
+      WHERE state IN (
+        'CODE_GENERATING', 'CODE_VERIFYING', 'CODE_REVIEWING', 'CODE_REPAIRING', 'WRITING_ARTIFACTS'
+      )
+    `).run(now);
+    this.db.prepare(`
+      UPDATE agent_verification_run
+      SET status = 'INFRASTRUCTURE_FAILED', error_code = 'AGENT_INTERRUPTED',
+        error_message = 'Agent server restarted during verification.', completed_at = ?
+      WHERE status IN ('PENDING', 'RUNNING')
+    `).run(now);
+    this.db.prepare(`
+      UPDATE agent_code_review
+      SET status = 'INFRASTRUCTURE_FAILED', verdict = 'UNAVAILABLE',
+        error_code = 'AGENT_INTERRUPTED',
+        error_message = 'Agent server restarted during review.', completed_at = ?
+      WHERE status IN ('PENDING', 'RUNNING')
     `).run(now);
   }
 

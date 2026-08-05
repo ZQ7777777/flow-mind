@@ -50,6 +50,46 @@ export class StagingService {
       sha256: sha256(content),
     };
   }
+  writeDuringRepair(generation: GenerationRow, relativePathInput: string, content: string): void {
+    if (generation.status !== "REPAIRING") throw stateError(generation);
+    const relativePath = this.allowedPath(generation, relativePathInput);
+    if (!parseManifest(generation).files.some((file) => file.relativePath === relativePath)) {
+      throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_REPAIR_PATH_FORBIDDEN", "Repair can only modify existing Manifest files.", generation.session_id);
+    }
+    this.write(generation, relativePath, content);
+  }
+
+  completeRepair(generation: GenerationRow, reportedFiles: string[]): ArtifactManifest {
+    if (generation.status !== "REPAIRING") throw stateError(generation);
+    const previous = parseManifest(generation);
+    const actual = this.list(generation).sort();
+    const reported = [...new Set(reportedFiles.map((path) => this.allowedPath(generation, path)))].sort();
+    const expected = previous.files.map(({ relativePath }) => relativePath).sort();
+    if (!sameFiles(actual, expected) || !sameFiles(reported, expected)) {
+      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_REPAIR_INCOMPLETE", "Repair must preserve the exact Manifest file set.", generation.session_id);
+    }
+    const revision = generation.generation_revision + 1;
+    const files = expected.map((relativePath) => ({
+      ...this.describe(generation, relativePath, "PENDING"),
+      editedByUser: previous.files.find((file) => file.relativePath === relativePath)?.editedByUser || false,
+    }));
+    const manifest: ArtifactManifest = { ...previous, revision, files };
+    const now = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET status = 'VERIFYING', generation_revision = ?,
+          quality_revision = ?, artifact_manifest_json = ?, quality_report_json = NULL,
+          latest_verification_run_id = NULL, latest_review_id = NULL, hard_gate_passed = 0,
+          override_required = 0, quality_override_id = NULL, can_write = 0, updated_at = ?
+        WHERE id = ? AND status = 'REPAIRING'
+      `).run(revision, revision, JSON.stringify(manifest), now, generation.id);
+      this.database.db.prepare(`
+        UPDATE agent_session SET state = 'CODE_VERIFYING', row_version = row_version + 1,
+          updated_at = ? WHERE id = ? AND state = 'CODE_REPAIRING'
+      `).run(now, generation.session_id);
+    });
+    return manifest;
+  }
 
   writeDuringGeneration(generation: GenerationRow, relativePathInput: string, content: string): void {
     if (generation.status !== "GENERATING") throw stateError(generation);
@@ -75,7 +115,7 @@ export class StagingService {
         reported,
       });
     }
-    const files = actual.map((relativePath) => this.describe(generation, relativePath));
+    const files = actual.map((relativePath) => this.describe(generation, relativePath, "PENDING"));
     const manifest: ArtifactManifest = {
       generationId: generation.id,
       targetRoot: generation.target_root,
@@ -86,12 +126,15 @@ export class StagingService {
     const now = new Date().toISOString();
     this.database.transaction(() => {
       this.database.db.prepare(`
-        UPDATE agent_code_generation SET status = 'REVIEW', generation_revision = 1,
-          artifact_manifest_json = ?, last_error_code = NULL, last_error_message = NULL, updated_at = ?
+        UPDATE agent_code_generation SET status = 'VERIFYING', generation_revision = 1,
+          quality_revision = 1, repair_round = 0, artifact_manifest_json = ?,
+          quality_report_json = NULL, hard_gate_passed = 0, override_required = 0,
+          quality_override_id = NULL, can_write = 0,
+          last_error_code = NULL, last_error_message = NULL, updated_at = ?
         WHERE id = ? AND status = 'GENERATING'
       `).run(JSON.stringify(manifest), now, generation.id);
       this.database.db.prepare(`
-        UPDATE agent_session SET state = 'CODE_REVIEW', row_version = row_version + 1,
+        UPDATE agent_session SET state = 'CODE_VERIFYING', row_version = row_version + 1,
           last_error_code = NULL, last_error_message = NULL, updated_at = ?
         WHERE id = ? AND state = 'CODE_GENERATING'
       `).run(now, generation.session_id);
@@ -110,14 +153,22 @@ export class StagingService {
     this.write(generation, relativePath, content);
     const previous = parseManifest(generation);
     const nextRevision = generation.generation_revision + 1;
-    const files = previous.files.map((file) => relativePath === file.relativePath
-      ? { ...this.describe(generation, relativePath), editedByUser: true }
-      : file);
+    const files = previous.files.map((file) => ({
+      ...(relativePath === file.relativePath
+        ? { ...this.describe(generation, relativePath, "PENDING"), editedByUser: true }
+        : file),
+      validationStatus: "PENDING" as const,
+    }));
     const manifest: ArtifactManifest = { ...previous, revision: nextRevision, files };
     this.database.db.prepare(`
-      UPDATE agent_code_generation SET generation_revision = ?, artifact_manifest_json = ?, updated_at = ?
+      UPDATE agent_code_generation SET generation_revision = ?, artifact_manifest_json = ?,
+        quality_revision = NULL, quality_report_json = NULL, latest_verification_run_id = NULL,
+        latest_review_id = NULL, hard_gate_passed = 0, override_required = 0,
+        quality_override_id = NULL, can_write = 0, updated_at = ?
       WHERE id = ? AND generation_revision = ? AND status = 'REVIEW'
     `).run(nextRevision, JSON.stringify(manifest), new Date().toISOString(), generation.id, expectedRevision);
+    this.database.db.prepare("UPDATE agent_quality_override SET invalidated_at = ? WHERE generation_id = ? AND invalidated_at IS NULL")
+      .run(new Date().toISOString(), generation.id);
     return manifest;
   }
 
@@ -158,7 +209,11 @@ export class StagingService {
     writeFileSync(path, content, "utf8");
   }
 
-  private describe(generation: GenerationRow, relativePath: string): ArtifactFile {
+  private describe(
+    generation: GenerationRow,
+    relativePath: string,
+    validationStatus: ArtifactFile["validationStatus"] = "VALID",
+  ): ArtifactFile {
     const stagedPath = this.stagedPath(generation, relativePath);
     const staged = readFileSync(stagedPath);
     decodeUtf8(staged, generation.session_id);
@@ -172,7 +227,7 @@ export class StagingService {
       stagedSha256: sha256(staged),
       baseSha256: exists ? sha256(readFileSync(targetPath)) : undefined,
       sizeBytes: staged.length,
-      validationStatus: "VALID",
+      validationStatus,
       editedByUser: false,
     };
   }

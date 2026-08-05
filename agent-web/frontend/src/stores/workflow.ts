@@ -9,6 +9,7 @@ import type {
   GeneratedFileContent,
   GeneratedFileDiff,
   ArtifactManifest,
+  GenerationQualityReport,
 } from "@flowmind/agent-contracts";
 import { ApiError, apiRequest, streamEvents, type SseMessage } from "../api";
 
@@ -23,6 +24,31 @@ export interface CompactionNotice {
   createdAt: string;
 }
 
+
+export interface ManagedDefinition {
+  id: string;
+  sessionId: string;
+  businessCode: string;
+  businessName: string;
+  status: string;
+  definitionVersion?: number;
+  activatedAt?: string;
+  createdAt: string;
+}
+
+export interface ManagedGeneration {
+  generationId: string;
+  sessionId: string;
+  businessCode: string;
+  businessName: string;
+  status: string;
+  generationRevision: number;
+  hardGatePassed: number;
+  overrideRequired: number;
+  canWrite: number;
+  writtenAt?: string;
+  createdAt: string;
+}
 export const useWorkflowStore = defineStore("workflow", () => {
   const users = ref<MockUser[]>([]);
   const defaultTargetRoot = ref("");
@@ -31,6 +57,9 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const busy = ref(false);
   const error = ref("");
   const streamingText = ref("");
+  const qualityReport = ref<GenerationQualityReport>();
+  const managedDefinitions = ref<ManagedDefinition[]>([]);
+  const managedGenerations = ref<ManagedGeneration[]>([]);
   const connected = ref(false);
   const generatedFile = ref<GeneratedFileContent>();
   const generatedDiff = ref<GeneratedFileDiff>();
@@ -241,6 +270,78 @@ export const useWorkflowStore = defineStore("workflow", () => {
     });
   }
 
+  async function loadGenerationQuality(): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    qualityReport.value = await apiRequest<GenerationQualityReport>(
+      `/api/agent/sessions/${snapshot.value.sessionId}/code-generations/${generation.generationId}/quality`,
+      currentUser.value,
+    );
+  }
+
+  async function reverifyGeneration(): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    await run(async () => {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/reverify`, currentUser.value!, {
+        method: "POST",
+        rowVersion: snapshot.value!.rowVersion,
+        idempotencyKey: crypto.randomUUID(),
+        body: JSON.stringify({ generationRevision: generation.generationRevision }),
+      });
+      qualityReport.value = undefined;
+      await refresh();
+    });
+  }
+
+  async function overrideGenerationQuality(
+    scopes: Array<"BACKEND_TESTS" | "FRONTEND_TESTS" | "REVIEWER">,
+    reason: string,
+  ): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    await run(async () => {
+      qualityReport.value = await apiRequest<GenerationQualityReport>(
+        `/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/quality-override`,
+        currentUser.value!,
+        {
+          method: "POST",
+          rowVersion: snapshot.value!.rowVersion,
+          idempotencyKey: crypto.randomUUID(),
+          body: JSON.stringify({ generationRevision: generation.generationRevision, scopes, reason }),
+        },
+      );
+      await refresh();
+    });
+  }
+
+  async function confirmGenerationWrite(): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation?.manifest) return;
+    await run(async () => {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/confirm-write`, currentUser.value!, {
+        method: "POST",
+        rowVersion: snapshot.value!.rowVersion,
+        idempotencyKey: crypto.randomUUID(),
+        body: JSON.stringify({
+          generationRevision: generation.generationRevision,
+          files: generation.manifest!.files.map(({ relativePath, stagedSha256 }) => ({ relativePath, stagedSha256 })),
+        }),
+      });
+      await refresh();
+    });
+  }
+
+  async function loadManagementLists(): Promise<void> {
+    if (!currentUser.value) return;
+    const [definitions, generations] = await Promise.all([
+      apiRequest<ManagedDefinition[]>("/api/agent/management/process-definitions", currentUser.value),
+      apiRequest<ManagedGeneration[]>("/api/agent/management/code-generations", currentUser.value),
+    ]);
+    managedDefinitions.value = definitions;
+    managedGenerations.value = generations;
+  }
+
   async function command(path: string, idempotent: boolean): Promise<void> {
     if (!snapshot.value || !currentUser.value) return;
     await run(async () => {
@@ -287,7 +388,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
       streamingText.value += (message.data as { delta: string }).delta;
     } else if (message.event === "context.compacted") {
       lastCompaction.value = { ...(message.data as Omit<CompactionNotice, "createdAt">), createdAt: new Date().toISOString() };
-    } else if (["assistant.completed", "requirement.ready", "workflow.state_changed", "process.validation_completed", "generation.stage_changed", "generation.file_changed"].includes(message.event)) {
+    } else if (["assistant.completed", "requirement.ready", "workflow.state_changed", "process.validation_completed", "generation.stage_changed", "generation.file_changed", "generation.quality_completed"].includes(message.event)) {
       streamingText.value = "";
       void refresh();
     } else if (message.event === "error") {
@@ -305,6 +406,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
 
   function applySnapshot(nextSnapshot: WorkflowSnapshot): void {
     snapshot.value = nextSnapshot;
+    qualityReport.value = nextSnapshot.activeGeneration?.quality;
     error.value = nextSnapshot.lastError?.message || "";
   }
 
@@ -354,6 +456,9 @@ export const useWorkflowStore = defineStore("workflow", () => {
     connected,
     generatedFile,
     generatedDiff,
+    qualityReport,
+    managedDefinitions,
+    managedGenerations,
     lastCompaction,
     initialize,
     selectUser,
@@ -371,6 +476,11 @@ export const useWorkflowStore = defineStore("workflow", () => {
     saveGeneratedFile,
     cancelGeneration,
     regenerate,
+    loadGenerationQuality,
+    reverifyGeneration,
+    overrideGenerationQuality,
+    confirmGenerationWrite,
+    loadManagementLists,
     disconnect,
   };
 });

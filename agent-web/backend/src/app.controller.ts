@@ -307,6 +307,88 @@ export class AppController {
       body?.generationRevision, idempotencyKey,
     );
   }
+  @Get("/api/agent/sessions/:sessionId/code-generations/:generationId/quality")
+  getGenerationQuality(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.generation.getQuality(sessionId, generationId, this.identity.resolve(userId, userName));
+  }
+
+  @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/reverify")
+  @HttpCode(202)
+  reverifyGeneration(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: { generationRevision: number },
+  ) {
+    return this.generation.reverify(
+      sessionId, generationId, this.identity.resolve(userId, userName),
+      parseVersion(ifMatch), body?.generationRevision, idempotencyKey,
+    );
+  }
+
+  @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/quality-override")
+  overrideGenerationQuality(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: {
+      generationRevision: number;
+      scopes: Array<"BACKEND_TESTS" | "FRONTEND_TESTS" | "REVIEWER">;
+      reason: string;
+    },
+  ) {
+    return this.generation.overrideQuality(
+      sessionId, generationId, this.identity.resolve(userId, userName),
+      parseVersion(ifMatch), body?.generationRevision, body?.scopes || [], body?.reason || "",
+      idempotencyKey,
+    );
+  }
+
+  @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/confirm-write")
+  confirmGenerationWrite(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: {
+      generationRevision: number;
+      files: Array<{ relativePath: string; stagedSha256: string }>;
+    },
+  ) {
+    return this.generation.confirmWrite(
+      sessionId, generationId, this.identity.resolve(userId, userName),
+      parseVersion(ifMatch), body, idempotencyKey,
+    );
+  }
+
+  @Get("/api/agent/management/process-definitions")
+  listManagedDefinitions(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.generation.listDefinitions(this.identity.resolve(userId, userName));
+  }
+
+  @Get("/api/agent/management/code-generations")
+  listManagedGenerations(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.generation.listGenerations(this.identity.resolve(userId, userName));
+  }
 }
 
 function parseVersion(value?: string): number {
