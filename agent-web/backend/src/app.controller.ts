@@ -44,7 +44,7 @@ export class AppController {
     @Body() body: { targetRoot?: string },
   ) {
     return this.generation.createTesterQualityFixture(
-      this.identity.resolve(userId, userName), body?.targetRoot?.trim() || "",
+      this.identity.resolve(userId, userName), body?.targetRoot?.trim(),
     );
   }
 

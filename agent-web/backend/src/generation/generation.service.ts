@@ -9,7 +9,6 @@ import type {
   GeneratedFileDiff,
   MockUser,
 } from "@flowmind/agent-contracts";
-import { ENTRY_APPLICATION_REQUIREMENT } from "@flowmind/agent-contracts";
 import { AgentError } from "../common/agent-error.js";
 import {
   ArtifactWriterService,
@@ -29,7 +28,7 @@ import {
 import { StagingService, generationContract, parseManifest } from "./staging.service.js";
 import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
 import { PlatformClientService } from "../platform/platform-client.service.js";
-import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
+import { loadFrozenTesterFixture } from "./frozen-tester-fixture.js";
 
 @Injectable()
 export class GenerationService {
@@ -87,18 +86,20 @@ export class GenerationService {
     return this.createGeneration(session, process.id, process.requirement_revision, requirement, JSON.parse(process.platform_snapshot_json), target, user, rowVersion, idempotencyKey, requestHash);
   }
 
-  createTesterQualityFixture(user: MockUser, targetRootInput: string): { sessionId: string; generationId: string } {
+  createTesterQualityFixture(user: MockUser, targetRootInput?: string): { sessionId: string; generationId: string } {
     if (user.userId !== "user_tester") {
       throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_TEST_FIXTURE_FORBIDDEN", "Only the tester mock user can create a quality-gate fixture.");
     }
-    const target = this.targets.validate(targetRootInput, "tester-fixture");
-    const requirement = testerEntryApplicationRequirement();
+    const target = this.targets.validate(targetRootInput || "", "tester-fixture");
+    const fixture = loadFrozenTesterFixture();
+    const requirementJson = JSON.stringify(fixture.requirement);
     const sessionId = `ags_tester_${randomUUID()}`;
     const processId = `apd_tester_${randomUUID()}`;
     const generationId = `acg_tester_${randomUUID()}`;
     const stagingDir = join(this.database.dataDir, "staging", sessionId, generationId);
     const now = new Date().toISOString();
-    const snapshot = { id: `definition_tester_${generationId}`, processCode: requirement.businessCode, nodes: requirement.nodes };
+    const snapshot = fixture.processSnapshot;
+    snapshot.id = `definition_tester_${generationId}`;
     this.staging.prepare(stagingDir);
     this.database.transaction(() => {
       this.database.db.prepare(`
@@ -107,16 +108,18 @@ export class GenerationService {
           state, row_version, requirement_revision, requirement_json, requirement_confirmed_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, 'CODE_GENERATING', 0, 1, ?, ?, ?, ?)
       `).run(sessionId, user.userId, user.userName, user.departmentId || null, user.departmentName || null,
-        target.targetRoot, JSON.stringify(requirement), now, now, now);
+        target.targetRoot, requirementJson, now, now, now);
       this.database.db.prepare(`
         INSERT INTO agent_process_definition (
           id, session_id, requirement_revision, platform_definition_id, process_code, process_name,
-          status, saga_step, requirement_snapshot_json, platform_snapshot_json,
+          definition_version, status, saga_step, requirement_snapshot_json, platform_snapshot_json, validation_json,
           create_operation_id, save_operation_id, publish_operation_id, activate_operation_id,
           created_by, created_at, activated_at, updated_at
-        ) VALUES (?, ?, 1, ?, ?, ?, 'ACTIVE', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(processId, sessionId, snapshot.id, requirement.businessCode, requirement.businessName,
-        JSON.stringify(requirement), JSON.stringify(snapshot), `create_${generationId}`, `save_${generationId}`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(processId, sessionId, 1, `definition_tester_${generationId}`,
+        fixture.requirement.businessCode, fixture.requirement.businessName, fixture.definitionVersion,
+        requirementJson, JSON.stringify(snapshot), fixture.validationJson,
+        `create_${generationId}`, `save_${generationId}`,
         `publish_${generationId}`, `activate_${generationId}`, user.userId, now, now, now);
       this.database.db.prepare(`
         INSERT INTO agent_code_generation (
@@ -124,18 +127,17 @@ export class GenerationService {
           process_snapshot_json, business_code, business_name, status, target_root, target_contract_version,
           target_contract_json, staging_dir, artifact_manifest_json, generation_revision,
           created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'GENERATING', ?, ?, ?, ?, '{}', 0, ?, ?, ?)
-      `).run(generationId, sessionId, processId, JSON.stringify(requirement), JSON.stringify(snapshot),
-        requirement.businessCode, requirement.businessName, target.targetRoot, target.contract.contractVersion,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'GENERATING', ?, ?, ?, ?, '{}', 0, ?, ?, ?)
+      `).run(generationId, sessionId, processId, 1, requirementJson, JSON.stringify(snapshot),
+        fixture.requirement.businessCode, fixture.requirement.businessName, target.targetRoot, target.contract.contractVersion,
         JSON.stringify(target.contract), stagingDir, user.userId, now, now);
     });
-    const spec = deriveGenerationSpec(requirement, target.contract);
-    const routeRegistry = this.targets.readReference(target, spec.paths.routeRegistry, sessionId);
-    const files = createFakeGenerationFiles(requirement, spec, target.contract, routeRegistry);
-    for (const [path, content] of Object.entries(files)) {
-      this.staging.writeDuringGeneration(this.requiredGenerating(generationId), path, content);
+    for (const { relativePath, content } of fixture.files) {
+      this.staging.writeDuringGeneration(this.requiredGenerating(generationId), relativePath, content);
     }
-    const manifest = this.staging.complete(this.requiredGenerating(generationId), target.contract, spec.files);
+    const manifest = this.staging.complete(
+      this.requiredGenerating(generationId), target.contract, fixture.files.map(({ relativePath }) => relativePath),
+    );
     this.events.publish(sessionId, { type: "generation.stage_changed", data: { generationId, state: "CODE_REVIEW", manifest } });
     return { sessionId, generationId };
   }
@@ -552,24 +554,6 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
     createdAt: generation.created_at,
     updatedAt: generation.updated_at,
   };
-}
-
-function testerEntryApplicationRequirement(): BusinessRequirement {
-  const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
-  requirement.formFields = [
-    { fieldCode: "applicationNo", fieldName: "申请单号", fieldType: "string", controlType: "input", required: true, validation: {}, sortOrder: 1 },
-    { fieldCode: "amount", fieldName: "入金金额", fieldType: "number", controlType: "number", required: true, validation: { minimum: 0.01 }, sortOrder: 2 },
-    {
-      fieldCode: "currency", fieldName: "币种", fieldType: "select", controlType: "select", required: true,
-      validation: {}, options: [{ label: "CNY", value: "CNY" }], sortOrder: 3,
-    },
-  ];
-  requirement.attachments = [{
-    attachmentCode: "bankReceipt", attachmentName: "付款凭证", description: "入金申请付款凭证",
-    allowedExtensions: ["pdf", "jpg", "png"], maxSizeBytes: 10_485_760, required: true,
-    minCount: 1, maxCount: 5, applicableNodeCodes: ["apply"], sortOrder: 1,
-  }];
-  return requirement;
 }
 
 function samePath(left: string, right: string): boolean {

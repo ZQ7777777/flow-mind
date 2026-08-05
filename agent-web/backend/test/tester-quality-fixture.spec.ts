@@ -36,24 +36,26 @@ describe("tester quality-gate fixture", () => {
     delete process.env.AGENT_DATA_DIR; delete process.env.AGENT_DB_PATH; delete process.env.AGENT_ALLOWED_TARGET_ROOTS;
   });
 
-  it("creates the entry-application fixture at the quality-gate selection state", () => {
+  it("creates a frozen quality-gate baseline without any sales session", () => {
+    const target = createGenerationTarget(root);
     const fixture = generation.createTesterQualityFixture(
       { userId: "user_tester", userName: "Quality Tester" },
-      createGenerationTarget(root),
+      target,
     );
 
     const summary = generation.get(fixture.sessionId, fixture.generationId, { userId: "user_tester", userName: "Quality Tester" });
+    const fixtureProcess = database.getProcessBySession(fixture.sessionId)!;
     expect(database.getSession(fixture.sessionId)?.state).toBe("CODE_REVIEW");
     expect(summary).toEqual(expect.objectContaining({ status: "REVIEW", generationRevision: 1 }));
     expect(summary.manifest?.files).toHaveLength(11);
-    expect(summary.manifest?.files.map(({ relativePath }) => relativePath)).toContain(
-      "backend/src/main/java/com/flowmind/business/generated/entryapplication/EntryApplicationService.java",
-    );
-    expect(generation.readFile(
+    expect(JSON.parse(fixtureProcess.validation_json || "{}")).toEqual({ valid: true, issues: [] });
+    expect(fixtureProcess.platform_snapshot_json).not.toBeNull();
+    const fixtureCode = generation.readFile(
       fixture.sessionId,
       fixture.generationId,
       "backend/src/main/java/com/flowmind/business/generated/entryapplication/EntryApplicationService.java",
       { userId: "user_tester", userName: "Quality Tester" },
-    ).content).toContain('variables.put("applicationNo"');
+    ).content;
+    expect(fixtureCode).toContain("request.setProcessVariables(payload.toProcessVariables())");
   });
 });

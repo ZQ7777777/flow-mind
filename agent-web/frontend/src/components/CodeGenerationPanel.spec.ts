@@ -39,6 +39,7 @@ describe("CodeGenerationPanel", () => {
     expect(JSON.stringify(data)).toContain("generated-routes.ts");
     expect(wrapper.text()).toContain("revision 1");
     expect(wrapper.find(".code-tree-scroll").exists()).toBe(true);
+    expect(wrapper.findAll("[role='separator']")).toHaveLength(2);
   });
 
   it.each([

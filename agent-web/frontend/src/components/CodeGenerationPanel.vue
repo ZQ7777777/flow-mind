@@ -4,6 +4,7 @@ import type { ArtifactFile, CodeGenerationSummary } from "@flowmind/agent-contra
 import { ElMessage } from "element-plus";
 import "monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css";
 import { useWorkflowStore } from "../stores/workflow";
+import { useResizableCodePanels, type CodePanelSide } from "../composables/useResizableCodePanels";
 import QualityPanel from "./QualityPanel.vue";
 
 interface TreeNode { label: string; path?: string; children?: TreeNode[] }
@@ -15,6 +16,14 @@ const mode = ref<"edit" | "diff">("edit");
 const editorHost = ref<HTMLElement>();
 const diffHost = ref<HTMLElement>();
 const dirty = ref(false);
+const {
+  panel,
+  resizingSide,
+  gridStyle,
+  separatorValueNow,
+  startResize,
+  resizeByKeyboard,
+} = useResizableCodePanels();
 let editor: any;
 let diffEditor: any;
 let monaco: any;
@@ -105,10 +114,18 @@ function languageFor(path: string): string {
   if (path.endsWith(".ts")) return "typescript";
   return "plaintext";
 }
+
+function resize(side: CodePanelSide, event: PointerEvent): void {
+  startResize(side, event);
+}
+
+function resizeWithKeyboard(side: CodePanelSide, event: KeyboardEvent): void {
+  resizeByKeyboard(side, event);
+}
 </script>
 
 <template>
-  <div class="generation-panel">
+  <div ref="panel" class="generation-panel" :style="gridStyle">
     <aside class="code-tree">
       <div class="generation-meta">
         <strong>候选代码</strong>
@@ -120,6 +137,18 @@ function languageFor(path: string): string {
         </el-tree>
       </div>
     </aside>
+    <div
+      :class="['code-panel-divider', { dragging: resizingSide === 'tree' }]"
+      role="separator"
+      aria-label="调整代码树宽度"
+      aria-orientation="vertical"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      :aria-valuenow="separatorValueNow('tree')"
+      tabindex="0"
+      @pointerdown="resize('tree', $event)"
+      @keydown="resizeWithKeyboard('tree', $event)"
+    ></div>
     <section class="code-editor">
       <div v-if="selectedPath" class="editor-toolbar">
         <div class="editor-toolbar-main">
@@ -134,26 +163,42 @@ function languageFor(path: string): string {
       <div v-show="selectedPath && mode === 'edit'" ref="editorHost" class="monaco-host"></div>
       <div v-show="selectedPath && mode === 'diff'" ref="diffHost" class="monaco-host"></div>
     </section>
+    <div
+      :class="['code-panel-divider', { dragging: resizingSide === 'quality' }]"
+      role="separator"
+      aria-label="调整质量门禁宽度"
+      aria-orientation="vertical"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      :aria-valuenow="separatorValueNow('quality')"
+      tabindex="0"
+      @pointerdown="resize('quality', $event)"
+      @keydown="resizeWithKeyboard('quality', $event)"
+    ></div>
     <QualityPanel :generation="generation" @select-diagnostic="selectPath" />
   </div>
 </template>
 
 <style scoped>
-.generation-panel { display: grid; grid-template-columns: 240px minmax(360px, 1fr) 320px; height: 590px; min-height: 0; border: 1px solid #dfe5ed; border-radius: 12px; overflow: hidden; }
-.code-tree { min-width: 0; min-height: 0; height: 100%; padding: 14px; border-right: 1px solid #dfe5ed; overflow: hidden; background: #f8fafc; display: flex; flex-direction: column; box-sizing: border-box; }
-.code-tree-scroll { position: relative; width: 100%; min-width: 0; min-height: 0; flex: 1 1 0; overflow-x: auto; overflow-y: scroll; scrollbar-gutter: stable; }
+.generation-panel { display: grid; grid-template-columns: 240px 12px minmax(250px, 1fr) 12px 320px; grid-template-rows: minmax(0, 1fr); height: 590px; min-height: 0; border: 1px solid #dfe5ed; border-radius: 12px; overflow: hidden; }
+.code-tree { min-width: 0; min-height: 0; height: 100%; padding: 14px; overflow: hidden; background: #f8fafc; display: flex; flex-direction: column; box-sizing: border-box; }
+.code-tree-scroll { position: relative; width: 100%; min-width: 0; min-height: 0; flex: 1 1 0; overflow-x: auto; overflow-y: auto; scrollbar-gutter: stable; }
 .code-tree-scroll :deep(.el-tree) { width: max-content; min-width: 100%; background: transparent; }
 .code-tree-scroll :deep(.el-tree-node) { width: max-content; min-width: 100%; }
 .code-tree-scroll :deep(.el-tree-node__content) { width: max-content; min-width: 100%; box-sizing: border-box; padding-right: 14px; }
 .generation-meta, .editor-toolbar, .editor-toolbar-main { display: flex; align-items: center; gap: 10px; }
 .generation-meta { margin-bottom: 12px; }
 .tree-label { font-size: 12px; }
-.code-editor { min-width: 0; background: white; }
+.code-editor { min-width: 0; min-height: 0; overflow: hidden; background: white; display: flex; flex-direction: column; }
 .editor-toolbar { min-height: 52px; padding: 0 12px; border-bottom: 1px solid #dfe5ed; justify-content: space-between; }
 .editor-toolbar-main { min-width: 0; flex: 1; }
 .editor-toolbar-main > :not(code), .editor-toolbar > .el-button { flex-shrink: 0; }
 .editor-toolbar code { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.monaco-host { height: 535px; }
-.editor-empty { height: 535px; display: grid; place-items: center; color: #7b8794; }
-@media (max-width: 1200px) { .generation-panel { grid-template-columns: 220px minmax(360px, 1fr); height: auto; } :deep(.quality-panel) { grid-column: 1 / -1; min-height: 360px; border-left: 0; border-top: 1px solid #dfe5ed; } }
+.monaco-host { min-height: 0; flex: 1; }
+.editor-empty { min-height: 0; flex: 1; display: grid; place-items: center; color: #7b8794; }
+:deep(.quality-panel) { min-height: 0; height: 100%; overflow: hidden; border-left: 0; }
+.code-panel-divider { position: relative; cursor: col-resize; touch-action: none; outline: none; background: #f8fafc; }
+.code-panel-divider::before { content: ""; position: absolute; inset: 0 4px; background: #dfe5ed; transition: background .15s ease, box-shadow .15s ease; }
+.code-panel-divider:hover::before, .code-panel-divider:focus-visible::before, .code-panel-divider.dragging::before { background: #275de7; box-shadow: 0 0 0 2px rgba(39,93,231,.12); }
+:global(body.is-resizing-code-panels) { cursor: col-resize; user-select: none; }
 </style>
