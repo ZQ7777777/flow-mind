@@ -12,6 +12,7 @@ const targetRoot = ref("");
 const message = ref("");
 const activeTab = ref("requirement");
 const generationTargetRoot = ref("");
+const compactionSummaryVisible = ref(false);
 const {
   workspaceGrid,
   resizingPanels,
@@ -44,6 +45,18 @@ const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING",
 watch(() => store.snapshot?.targetRoot, (value) => { if (value) generationTargetRoot.value = value; }, { immediate: true });
 watch(() => store.defaultTargetRoot, (value) => { if (value && !targetRoot.value) targetRoot.value = value; }, { immediate: true });
 watch(() => store.state, (value) => { if (["CODE_GENERATING", "CODE_REVIEW", "CODE_PIPELINE_FAILED"].includes(value || "")) activeTab.value = "code"; });
+watch(() => store.lastCompaction, (compaction) => {
+  if (!compaction) return;
+  const tokensBefore = formatTokens(compaction.tokensBefore);
+  const tokensAfter = formatTokens(compaction.tokensAfterEstimate);
+  const tokensReduced = formatTokens(compaction.tokensReducedEstimate);
+  const details = tokensBefore && tokensAfter && tokensReduced
+    ? `：压缩前约 ${tokensBefore} tokens，压缩后约 ${tokensAfter} tokens，减少约 ${tokensReduced} tokens`
+    : tokensBefore && compaction.summaryTokens !== undefined
+      ? `：压缩前约 ${tokensBefore} tokens，摘要约 ${formatTokens(compaction.summaryTokens)} tokens`
+      : "";
+  ElMessage.info(`会话上下文已自动压缩${details}${compaction.summary ? "，可在会话面板查看摘要" : ""}`);
+});
 
 onMounted(() => void store.initialize());
 onBeforeUnmount(() => store.disconnect());
@@ -73,6 +86,10 @@ async function resetCurrentSession(): Promise<void> {
     await store.resetSession();
     ElMessage.success("当前会话已重置，可重新收集需求并创建流程");
   } catch { /* store exposes error */ }
+}
+
+function formatTokens(value: number | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : "";
 }
 </script>
 
@@ -157,6 +174,13 @@ async function resetCurrentSession(): Promise<void> {
               <h3>和 Agent 一起把问题说清楚</h3>
             </div>
             <span v-if="processing" class="thinking">平台处理中…</span>
+          </div>
+          <div v-if="store.lastCompaction?.summary" class="compaction-summary-card">
+            <div>
+              <strong>最近一次上下文压缩摘要</strong>
+              <span>压缩前约 {{ formatTokens(store.lastCompaction.tokensBefore) }} tokens，压缩后约 {{ formatTokens(store.lastCompaction.tokensAfterEstimate) }} tokens</span>
+            </div>
+            <el-button size="small" text type="primary" @click="compactionSummaryVisible = true">查看摘要</el-button>
           </div>
           <div class="messages">
             <div v-if="!store.snapshot.messages.length" class="empty-chat">
@@ -288,10 +312,45 @@ async function resetCurrentSession(): Promise<void> {
           <el-button v-else-if="['CODE_REVIEW','CODE_PIPELINE_FAILED'].includes(store.state || '')" type="primary" :loading="store.busy" @click="action(store.regenerate, '已启动全新生成任务')">重新生成</el-button>
         </div>
       </footer>
+
+      <el-dialog v-model="compactionSummaryVisible" title="最近一次上下文压缩摘要" width="760px">
+        <pre class="compaction-summary-text">{{ store.lastCompaction?.summary }}</pre>
+      </el-dialog>
     </main>
   </div>
 </template>
 
 <style scoped>
 .target-root-input { width: min(460px, 42vw); }
+.compaction-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #f7f9ff;
+  color: var(--muted);
+  font-size: 12px;
+}
+.compaction-summary-card strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink);
+  font-size: 13px;
+}
+.compaction-summary-text {
+  max-height: 60vh;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8f9fc;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  line-height: 1.6;
+}
 </style>

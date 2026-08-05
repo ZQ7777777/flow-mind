@@ -90,6 +90,39 @@ describe("workflow SSE lifecycle", () => {
     expect(store.snapshot?.messages).toEqual([]);
   });
 
+  it("records compaction token information without refreshing the workflow snapshot", async () => {
+    mocks.streamEvents.mockImplementation((_url, _user, _signal, onMessage) => {
+      onMessage({
+        event: "context.compacted",
+        data: {
+          reason: "threshold",
+          tokensBefore: 50000,
+          summaryTokens: 1200,
+          summary: "## Current task and workflow state\nstate",
+          keptRecentTokens: 8000,
+          tokensAfterEstimate: 9200,
+          tokensReducedEstimate: 40800,
+        },
+      });
+      return new Promise<void>(() => undefined);
+    });
+    const store = useWorkflowStore();
+    await store.initialize();
+    await store.createSession();
+
+    expect(store.lastCompaction).toMatchObject({
+      reason: "threshold",
+      tokensBefore: 50000,
+      summaryTokens: 1200,
+      summary: "## Current task and workflow state\nstate",
+      keptRecentTokens: 8000,
+      tokensAfterEstimate: 9200,
+      tokensReducedEstimate: 40800,
+    });
+    expect(store.streamingText).toBe("");
+    expect(mocks.apiRequest).toHaveBeenCalledTimes(3);
+  });
+
   it("starts M3 with a late-bound target and loads generated content plus diff", async () => {
     const active: WorkflowSnapshot = { ...snapshot, state: "PROCESS_ACTIVE", rowVersion: 4, allowedActions: ["START_GENERATION"] };
     const review: WorkflowSnapshot = {

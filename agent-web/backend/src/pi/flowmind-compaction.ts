@@ -25,6 +25,55 @@ export function isValidFlowMindSummary(summary: string): boolean {
   return Boolean(summary.trim()) && estimatedTokens <= 4096 && COMPACTION_SECTIONS.every((section) => summary.includes(section));
 }
 
+export function resolveKeptRecentTokens(preparation: unknown): number | null {
+  const record = preparation as Record<string, unknown> | undefined;
+  const settings = record?.settings as Record<string, unknown> | undefined;
+  const candidates = [
+    record?.keptRecentTokens,
+    record?.recentTokens,
+    record?.tokensKept,
+    record?.keepRecentTokens,
+    settings?.keepRecentTokens,
+  ];
+  const found = candidates.find((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
+  return typeof found === "number" ? Math.floor(found) : null;
+}
+
+export function calculateCompactionTokenEstimate(
+  tokensBefore: number,
+  summaryTokens: number,
+  keptRecentTokens: number,
+): { keptRecentTokens: number; tokensAfterEstimate: number; tokensReducedEstimate: number } {
+  const normalizedKeptRecentTokens = Math.max(0, Math.floor(keptRecentTokens));
+  const tokensAfterEstimate = Math.max(0, Math.floor(summaryTokens) + normalizedKeptRecentTokens);
+  return {
+    keptRecentTokens: normalizedKeptRecentTokens,
+    tokensAfterEstimate,
+    tokensReducedEstimate: Math.max(0, Math.floor(tokensBefore) - tokensAfterEstimate),
+  };
+}
+
+export interface FlowMindCompactionNotice {
+  reason: string;
+  tokensBefore: number;
+  summaryTokens: number;
+  summary: string;
+  keptRecentTokens: number;
+  tokensAfterEstimate: number;
+  tokensReducedEstimate: number;
+}
+
+export function createFlowMindCompactionNotice(
+  reason: string,
+  tokensBefore: number,
+  summary: string,
+  keptRecentTokens: number,
+): FlowMindCompactionNotice {
+  const summaryTokens = Math.ceil(summary.length / 4);
+  const tokenEstimate = calculateCompactionTokenEstimate(tokensBefore, summaryTokens, keptRecentTokens);
+  return { reason, tokensBefore, summaryTokens, summary, ...tokenEstimate };
+}
+
 export function createFlowMindCompactionExtension(options: {
   database: DatabaseService;
   onEvent(type: string, data: unknown): void;
@@ -88,13 +137,16 @@ export function createFlowMindCompactionExtension(options: {
         const summary = response.content.filter((item): item is { type: "text"; text: string } => item.type === "text").map((item) => item.text).join("\n");
         if (!isValidFlowMindSummary(summary)) { errorCode = "COMPACTION_SUMMARY_INVALID"; return; }
         status = "SUCCESS";
-        summaryTokens = Math.ceil(summary.length / 4);
-        options.onEvent("context.compacted", { reason, tokensBefore, summaryTokens });
+        const keptRecentTokens = resolveKeptRecentTokens(event.preparation) ?? 0;
+        const notice = createFlowMindCompactionNotice(reason, tokensBefore, summary, keptRecentTokens);
+        summaryTokens = notice.summaryTokens;
+        options.onEvent("context.compacted", notice);
         return {
           compaction: {
             summary,
             firstKeptEntryId: event.preparation.firstKeptEntryId,
             tokensBefore,
+            estimatedTokensAfter: notice.tokensAfterEstimate,
             usage: response.usage,
           },
         };

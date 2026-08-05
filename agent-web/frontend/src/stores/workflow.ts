@@ -12,6 +12,17 @@ import type {
 } from "@flowmind/agent-contracts";
 import { ApiError, apiRequest, streamEvents, type SseMessage } from "../api";
 
+export interface CompactionNotice {
+  reason?: string;
+  tokensBefore?: number;
+  summaryTokens?: number;
+  summary?: string;
+  keptRecentTokens?: number;
+  tokensAfterEstimate?: number;
+  tokensReducedEstimate?: number;
+  createdAt: string;
+}
+
 export const useWorkflowStore = defineStore("workflow", () => {
   const users = ref<MockUser[]>([]);
   const defaultTargetRoot = ref("");
@@ -23,6 +34,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const connected = ref(false);
   const generatedFile = ref<GeneratedFileContent>();
   const generatedDiff = ref<GeneratedFileDiff>();
+  const lastCompaction = ref<CompactionNotice>();
   let streamAbort: AbortController | undefined;
   let reconnectTimer: number | undefined;
 
@@ -273,6 +285,8 @@ export const useWorkflowStore = defineStore("workflow", () => {
       streamingText.value = "";
     } else if (message.event === "assistant.delta") {
       streamingText.value += (message.data as { delta: string }).delta;
+    } else if (message.event === "context.compacted") {
+      lastCompaction.value = { ...(message.data as Omit<CompactionNotice, "createdAt">), createdAt: new Date().toISOString() };
     } else if (["assistant.completed", "requirement.ready", "workflow.state_changed", "process.validation_completed", "generation.stage_changed", "generation.file_changed"].includes(message.event)) {
       streamingText.value = "";
       void refresh();
@@ -340,6 +354,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     connected,
     generatedFile,
     generatedDiff,
+    lastCompaction,
     initialize,
     selectUser,
     createSession,
