@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import RequirementEditor from "./components/RequirementEditor.vue";
 import ProcessPreview from "./components/ProcessPreview.vue";
 import CodeGenerationPanel from "./components/CodeGenerationPanel.vue";
+import { useResizablePanels } from "./composables/useResizablePanels";
 import { useWorkflowStore } from "./stores/workflow";
 
 const store = useWorkflowStore();
@@ -11,6 +12,14 @@ const targetRoot = ref("");
 const message = ref("");
 const activeTab = ref("requirement");
 const generationTargetRoot = ref("");
+const {
+  workspaceGrid,
+  resizingPanels,
+  workspaceGridStyle,
+  separatorValueNow,
+  startPanelResize,
+  resizePanelsByKeyboard,
+} = useResizablePanels();
 
 const steps = [
   { state: "COLLECTING", title: "采集需求" },
@@ -24,8 +33,11 @@ const stepIndex = computed(() => {
   if (state === "COLLECTING") return 0;
   if (state === "REQUIREMENT_REVIEW") return 1;
   if (["PROCESS_PROVISIONING", "PROCESS_PROVISION_FAILED", "PROCESS_REVIEW"].includes(state || "")) return 2;
-  if (["PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE"].includes(state || "")) return 3;
-  return 4;
+  // if (["PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE"].includes(state || "")) return 3;
+  // return 4;
+  if (["PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED"].includes(state || "")) return 3;
+  if (["PROCESS_ACTIVE", "CODE_GENERATING"].includes(state || "")) return 4;
+  return 5;
 });
 const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING", "CODE_GENERATING"].includes(store.state || ""));
 
@@ -137,7 +149,7 @@ async function resetCurrentSession(): Promise<void> {
 
       <el-alert v-if="store.error" class="global-error" type="error" :title="store.error" show-icon @close="store.error = ''" />
 
-      <div class="workspace-grid">
+      <div ref="workspaceGrid" class="workspace-grid" :style="workspaceGridStyle">
         <section class="conversation-panel">
           <div class="panel-heading">
             <div>
@@ -185,6 +197,19 @@ async function resetCurrentSession(): Promise<void> {
             </div>
           </div>
         </section>
+
+        <div
+          :class="['panel-divider', { dragging: resizingPanels }]"
+          role="separator"
+          aria-label="调整 Agent 对话与功能面板宽度"
+          aria-orientation="vertical"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-valuenow="separatorValueNow"
+          tabindex="0"
+          @pointerdown="startPanelResize"
+          @keydown="resizePanelsByKeyboard"
+        ></div>
 
         <section class="review-panel">
           <el-tabs v-model="activeTab">

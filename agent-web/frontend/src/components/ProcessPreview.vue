@@ -9,8 +9,8 @@ defineProps<{ preview: ProcessPreview }>();
   <div class="process-preview">
     <div class="preview-heading">
       <div>
-        <span class="eyebrow">平台定义 ID</span>
-        <strong>{{ preview.platformDefinitionId }}</strong>
+        <span class="eyebrow">业务名称</span>
+        <strong>{{preview.processName}}_v{{preview.definitionVersion}}</strong>
       </div>
       <div class="status-tags">
         <el-tag>{{ preview.definitionStatus || "DRAFT" }}</el-tag>

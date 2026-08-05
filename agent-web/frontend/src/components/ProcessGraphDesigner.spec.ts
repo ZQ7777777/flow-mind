@@ -88,6 +88,117 @@ function mountEditableGraph() {
 }
 
 describe("ProcessGraphDesigner", () => {
+  it("centers the node bounds in the canvas viewBox", () => {
+    const wrapper = mountEditableGraph();
+
+    expect(wrapper.get('[data-testid="process-graph"]').attributes("viewBox")).toBe("-54 -40 980 380");
+  });
+
+  it("uses the default canvas viewBox when there are no nodes", () => {
+    const wrapper = mount(ProcessGraphDesigner, { props: { nodes: [], edges: [] } });
+
+    expect(wrapper.get('[data-testid="process-graph"]').attributes("viewBox")).toBe("0 0 980 380");
+  });
+
+  it("shows zoom controls in read-only mode and keeps the graph center while zooming", async () => {
+    const wrapper = mount(ProcessGraphDesigner, { props: { nodes, edges } });
+    const initial = wrapper.get('[data-testid="process-graph"]').attributes("viewBox")!.split(" ").map(Number) as [number, number, number, number];
+
+    expect(wrapper.find('[data-testid="add-node"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="zoom-percent"]').text()).toBe("100%");
+
+    await wrapper.get('[data-testid="zoom-in"]').trigger("click");
+    const zoomed = wrapper.get('[data-testid="process-graph"]').attributes("viewBox")!.split(" ").map(Number) as [number, number, number, number];
+
+    expect(wrapper.get('[data-testid="zoom-percent"]').text()).toBe("110%");
+    expect(zoomed[2]).toBeCloseTo(initial[2] / 1.1);
+    expect(zoomed[3]).toBeCloseTo(initial[3] / 1.1);
+    expect(zoomed[0] + zoomed[2] / 2).toBeCloseTo(initial[0] + initial[2] / 2);
+    expect(zoomed[1] + zoomed[3] / 2).toBeCloseTo(initial[1] + initial[3] / 2);
+
+    await wrapper.get('[data-testid="zoom-reset"]').trigger("click");
+    expect(wrapper.get('[data-testid="zoom-percent"]').text()).toBe("100%");
+    expect(wrapper.get('[data-testid="process-graph"]').attributes("viewBox")).toBe(initial.join(" "));
+  });
+
+  it("supports modified-wheel zoom and enforces the zoom limits", async () => {
+    const wrapper = mount(ProcessGraphDesigner, { props: { nodes, edges } });
+    const graph = wrapper.get('[data-testid="process-graph"]');
+
+    graph.element.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[data-testid="zoom-percent"]').text()).toBe("100%");
+    graph.element.dispatchEvent(new WheelEvent("wheel", { ctrlKey: true, deltaY: -100, cancelable: true }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[data-testid="zoom-percent"]').text()).toBe("110%");
+
+    for (let index = 0; index < 20; index += 1) {
+      await wrapper.get('[data-testid="zoom-out"]').trigger("click");
+    }
+    expect(wrapper.get('[data-testid="zoom-percent"]').text()).toBe("50%");
+    expect((wrapper.get('[data-testid="zoom-out"]').element as HTMLButtonElement).disabled).toBe(true);
+
+    for (let index = 0; index < 20; index += 1) {
+      await wrapper.get('[data-testid="zoom-in"]').trigger("click");
+    }
+    expect(wrapper.get('[data-testid="zoom-percent"]').text()).toBe("200%");
+    expect((wrapper.get('[data-testid="zoom-in"]').element as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("pans the canvas from empty space at the current zoom and resets the viewport", async () => {
+    const wrapper = mount(ProcessGraphDesigner, { props: { nodes, edges } });
+    const graph = wrapper.get('[data-testid="process-graph"]');
+    const svg = graph.element as SVGSVGElement;
+    svg.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 980,
+      bottom: 380,
+      width: 980,
+      height: 380,
+      toJSON: () => ({}),
+    });
+    const initialViewBox = graph.attributes("viewBox");
+
+    await wrapper.get('[data-testid="zoom-in"]').trigger("click");
+    const zoomed = graph.attributes("viewBox")!.split(" ").map(Number) as [number, number, number, number];
+    await graph.trigger("mousedown", { button: 0, clientX: 100, clientY: 100 });
+    expect(graph.classes()).toContain("panning");
+    expect((wrapper.get('[data-testid="zoom-in"]').element as HTMLButtonElement).disabled).toBe(true);
+    await graph.trigger("mousemove", { clientX: 144, clientY: 122 });
+    await graph.trigger("mouseup");
+
+    const panned = graph.attributes("viewBox")!.split(" ").map(Number) as [number, number, number, number];
+    expect(panned[0]).toBeCloseTo(zoomed[0] - 40);
+    expect(panned[1]).toBeCloseTo(zoomed[1] - 20);
+    expect(graph.classes()).not.toContain("panning");
+    expect((wrapper.get('[data-testid="zoom-reset"]').element as HTMLButtonElement).disabled).toBe(false);
+
+    await wrapper.get('[data-testid="zoom-reset"]').trigger("click");
+    expect(wrapper.get('[data-testid="zoom-percent"]').text()).toBe("100%");
+    expect(graph.attributes("viewBox")).toBe(initialViewBox);
+  });
+
+  it("keeps part of the graph visible while panning and ignores pan gestures for an empty graph", async () => {
+    const wrapper = mount(ProcessGraphDesigner, { props: { nodes, edges } });
+    const graph = wrapper.get('[data-testid="process-graph"]');
+    await graph.trigger("mousedown", { button: 0, clientX: 0, clientY: 0 });
+    await graph.trigger("mousemove", { clientX: 10000, clientY: 10000 });
+    await graph.trigger("mouseup");
+    const panned = graph.attributes("viewBox")!.split(" ").map(Number) as [number, number, number, number];
+    expect(panned[0]).toBe(-860);
+    expect(panned[1]).toBe(-220);
+
+    const emptyWrapper = mount(ProcessGraphDesigner, { props: { nodes: [], edges: [] } });
+    const emptyGraph = emptyWrapper.get('[data-testid="process-graph"]');
+    await emptyGraph.trigger("mousedown", { button: 0, clientX: 0, clientY: 0 });
+    await emptyGraph.trigger("mousemove", { clientX: 100, clientY: 100 });
+    expect(emptyGraph.attributes("viewBox")).toBe("0 0 980 380");
+    expect(emptyGraph.classes()).not.toContain("panning");
+  });
+
   it("shows the first user task with reject disabled by default", async () => {
     const wrapper = mountEditableGraph();
 
@@ -257,15 +368,17 @@ describe("ProcessGraphDesigner", () => {
       y: 0,
       top: 0,
       left: 0,
-      right: 960,
-      bottom: 280,
-      width: 960,
-      height: 280,
+      right: 980,
+      bottom: 380,
+      width: 980,
+      height: 380,
       toJSON: () => ({}),
     });
 
+    await wrapper.get('[data-testid="zoom-in"]').trigger("click");
     await wrapper.get('[data-testid="graph-node-apply"]').trigger("mousedown", { clientX: 320, clientY: 150 });
-    await wrapper.get('[data-testid="process-graph"]').trigger("mousemove", { clientX: 360, clientY: 170 });
+    expect((wrapper.get('[data-testid="zoom-in"]').element as HTMLButtonElement).disabled).toBe(true);
+    await wrapper.get('[data-testid="process-graph"]').trigger("mousemove", { clientX: 364, clientY: 172 });
     await wrapper.get('[data-testid="process-graph"]').trigger("mouseup");
 
     const emitted = wrapper.emitted("update:nodes");

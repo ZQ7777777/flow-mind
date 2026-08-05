@@ -8,6 +8,29 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
   await page.getByRole("button", { name: "开始采集需求" }).click();
   await expect(page.getByText("COLLECTING", { exact: true })).toBeVisible();
 
+  const conversationPanel = page.locator(".conversation-panel");
+  const panelDivider = page.getByRole("separator", { name: "调整 Agent 对话与功能面板宽度" });
+  const initialConversationBox = await conversationPanel.boundingBox();
+  const dividerBox = await panelDivider.boundingBox();
+  expect(initialConversationBox).not.toBeNull();
+  expect(dividerBox).not.toBeNull();
+  await page.mouse.move(dividerBox!.x + dividerBox!.width / 2, dividerBox!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(dividerBox!.x + dividerBox!.width / 2 + 80, dividerBox!.y + 100);
+  await page.mouse.up();
+  const resizedConversationBox = await conversationPanel.boundingBox();
+  expect(resizedConversationBox!.width).toBeGreaterThan(initialConversationBox!.width + 70);
+  expect(await page.evaluate(() => localStorage.getItem("flowmind.agent.conversationPanelRatio"))).not.toBeNull();
+
+  await page.reload();
+  await expect(page.getByText("COLLECTING", { exact: true })).toBeVisible();
+  const restoredConversationBox = await conversationPanel.boundingBox();
+  expect(Math.abs(restoredConversationBox!.width - resizedConversationBox!.width)).toBeLessThan(2);
+  await panelDivider.focus();
+  await page.keyboard.press("ArrowLeft");
+  const keyboardResizedConversationBox = await conversationPanel.boundingBox();
+  expect(Math.abs(keyboardResizedConversationBox!.width - (restoredConversationBox!.width - 16))).toBeLessThan(2);
+
   const composer = page.getByPlaceholder("描述业务流程，或回答 Agent 的问题…");
   await composer.fill("我要做一个入金申请流程");
   await page.getByRole("button", { name: "发送" }).click();
@@ -22,13 +45,13 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
   await expect(page.getByText("PROCESS_REVIEW", { exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByRole("tab", { name: "流程预览" }).click();
   await expect(page.getByText("definition_entry_v1")).toBeVisible();
-  await expect(page.getByText("部门经理审批", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "部门经理审批 用户任务" })).toBeVisible();
   await expect(page.getByText("银行回单", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "确认流程并激活" }).click();
   await expect(page.getByText("PROCESS_ACTIVE", { exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByPlaceholder("③ business-base 绝对路径").fill(resolve(".e2e-target", "business-base"));
-  await page.getByRole("button", { name: "生成代码" }).click();
+  await page.getByRole("button", { name: "生成业务发起代码" }).click();
   await expect(page.getByText("CODE_REVIEW", { exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByRole("tab", { name: "代码预览" }).click();
   await expect(page.getByText("generated-routes.ts", { exact: true })).toBeVisible();

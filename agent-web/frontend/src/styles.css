@@ -70,9 +70,18 @@ button, input, textarea { font: inherit; }
 .workflow-header code { font-size: 11px; color: var(--muted); }
 .workflow-header .el-steps { flex: 1; max-width: 720px; }
 .global-error { margin-top: 14px; }
-.workspace-grid { display: grid; grid-template-columns: minmax(360px, .72fr) minmax(620px, 1.28fr); gap: 16px; margin-top: 16px; height: calc(100vh - 238px); min-height: 600px; }
+.workspace-grid { display: grid; grid-template-columns: minmax(320px, 36%) 16px minmax(480px, 1fr); gap: 0; margin-top: 16px; height: calc(100vh - 238px); min-height: 600px; }
 .conversation-panel, .review-panel { background: #fff; border: 1px solid var(--line); overflow: hidden; }
 .conversation-panel { display: flex; flex-direction: column; }
+.panel-divider { position: relative; cursor: col-resize; touch-action: none; outline: none; }
+.panel-divider::before {
+  content: ""; position: absolute; inset: 0 7px; background: var(--line);
+  transition: background .15s ease, box-shadow .15s ease;
+}
+.panel-divider:hover::before,
+.panel-divider:focus-visible::before,
+.panel-divider.dragging::before { background: var(--blue); box-shadow: 0 0 0 2px rgba(37,99,235,.12); }
+body.is-resizing-panels { cursor: col-resize; user-select: none; }
 .panel-heading { min-height: 72px; padding: 15px 18px; border-bottom: 1px solid var(--line); justify-content: space-between; }
 .panel-heading h3 { margin: 4px 0 0; font-size: 15px; }
 .thinking { color: var(--orange); font-size: 12px; font-weight: 700; }
@@ -126,9 +135,11 @@ button, input, textarea { font: inherit; }
 }
 .graph-mode-tag.editable { border-color: #f2c39d; color: #a4572c; background: #fff8f1; }
 .graph-toolbar {
-  display: grid; grid-template-columns: repeat(4, auto) minmax(180px, 1fr); justify-content: start;
-  align-items: center; gap: 8px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
 }
+.graph-edit-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.graph-zoom-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.graph-zoom-tools span { min-width: 42px; color: #5d6978; font-size: 12px; font-weight: 700; text-align: center; }
 .graph-toolbar button,
 .graph-detail-panel input,
 .graph-detail-panel select {
@@ -138,6 +149,7 @@ button, input, textarea { font: inherit; }
 .graph-toolbar button {
   width: auto; min-width: 78px; cursor: pointer; font-weight: 700; color: #17202a; background: #fff;
 }
+.graph-zoom-tools button { min-width: 36px; padding: 5px 9px; }
 .graph-toolbar button:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; }
 .graph-toolbar button.active { border-color: #0f766e; color: #fff; background: #0f766e; }
 .graph-toolbar button:disabled { cursor: not-allowed; color: #98a2b3; background: #f3f5f9; }
@@ -152,7 +164,9 @@ button, input, textarea { font: inherit; }
   background-size: auto, 24px 24px, 24px 24px;
 }
 .graph-designer-canvas { margin: 0; min-height: 420px; }
-.process-graph { min-width: 100%; height: 280px; }
+.process-graph { min-width: 100%; height: 280px; cursor: grab; }
+.process-graph.panning,
+.process-graph.panning * { cursor: grabbing; }
 .graph-designer-canvas .process-graph { height: 420px; }
 .process-graph line { stroke: #64748b; stroke-width: 2; }
 .process-graph marker path { fill: #64748b; }
@@ -211,6 +225,6 @@ button, input, textarea { font: inherit; }
 
 @media (max-width: 1280px) {
   body { min-width: 1024px; }
-  .workspace-grid { grid-template-columns: 390px 1fr; }
+  .workspace-grid { grid-template-columns: 36% 16px minmax(0, 1fr); }
   .welcome { padding: 7vw; gap: 6vw; }
 }

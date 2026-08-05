@@ -62,15 +62,16 @@ describe("RequirementEditor", () => {
       global: { stubs: elementStubs },
     });
     const svg = wrapper.get('[data-testid="process-graph"]').element as SVGSVGElement;
+    const [, , viewBoxWidth, viewBoxHeight] = svg.getAttribute("viewBox")!.split(" ").map(Number) as [number, number, number, number];
     svg.getBoundingClientRect = () => ({
       x: 0,
       y: 0,
       top: 0,
       left: 0,
-      right: 980,
-      bottom: 360,
-      width: 980,
-      height: 360,
+      right: viewBoxWidth,
+      bottom: viewBoxHeight,
+      width: viewBoxWidth,
+      height: viewBoxHeight,
       toJSON: () => ({}),
     });
 

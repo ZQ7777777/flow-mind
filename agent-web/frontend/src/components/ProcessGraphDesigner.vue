@@ -51,6 +51,13 @@ interface DisplayEdge extends GraphEdge {
   labelY: number;
 }
 
+interface GraphViewBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface TimeoutPolicy {
   enabled: boolean;
   durationMinutes: number;
@@ -83,6 +90,10 @@ const NODE_WIDTH = 132;
 const NODE_HEIGHT = 60;
 const NODE_RADIUS = 8;
 const NODE_STEP_X = 180;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2;
+const ZOOM_STEP = 0.1;
+const PAN_VISIBLE_MARGIN = 40;
 
 const NODE_TYPE_OPTIONS = [
   { value: "START", label: "开始节点" },
@@ -140,9 +151,20 @@ const drag = ref<{
   startClientY: number;
   startX: number;
   startY: number;
+  viewBox: GraphViewBox;
+  pixelScale: number;
+}>();
+const canvasDrag = ref<{
+  startClientX: number;
+  startClientY: number;
+  startOffsetX: number;
+  startOffsetY: number;
+  pixelScale: number;
 }>();
 const connectionMode = ref(false);
 const connectionClickQueue = ref<string[]>([]);
+const zoom = ref(1);
+const viewportOffset = ref({ x: 0, y: 0 });
 const markerId = `graph-arrow-${Math.random().toString(36).slice(2)}`;
 
 const nodes = computed<DisplayNode[]>(() => props.nodes.map((node, index) => ({
@@ -183,6 +205,48 @@ const pendingConnectionSource = computed(() => connectionMode.value && connectio
 
 const width = computed(() => Math.max(980, ...nodes.value.map((node) => node.x + NODE_WIDTH + 80)));
 const height = computed(() => Math.max(380, ...nodes.value.map((node) => node.y + NODE_HEIGHT + 80)));
+const graphBounds = computed(() => {
+  if (!nodes.value.length) return undefined;
+  return {
+    minX: Math.min(...nodes.value.map((node) => node.x)),
+    maxX: Math.max(...nodes.value.map((node) => node.x + NODE_WIDTH)),
+    minY: Math.min(...nodes.value.map((node) => node.y)),
+    maxY: Math.max(...nodes.value.map((node) => node.y + NODE_HEIGHT)),
+  };
+});
+const centeredViewBox = computed<GraphViewBox>(() => {
+  const bounds = graphBounds.value;
+  if (!bounds) {
+    return { x: 0, y: 0, width: width.value, height: height.value };
+  }
+  return {
+    x: (bounds.minX + bounds.maxX - width.value) / 2,
+    y: (bounds.minY + bounds.maxY - height.value) / 2,
+    width: width.value,
+    height: height.value,
+  };
+});
+const baseViewBox = computed(() => drag.value?.viewBox || centeredViewBox.value);
+const constrainedViewportOffset = computed(() => constrainViewportOffset(viewportOffset.value, baseViewBox.value, zoom.value));
+const activeViewBox = computed<GraphViewBox>(() => {
+  const current = baseViewBox.value;
+  const zoomedWidth = current.width / zoom.value;
+  const zoomedHeight = current.height / zoom.value;
+  return {
+    x: current.x + (current.width - zoomedWidth) / 2 + constrainedViewportOffset.value.x,
+    y: current.y + (current.height - zoomedHeight) / 2 + constrainedViewportOffset.value.y,
+    width: zoomedWidth,
+    height: zoomedHeight,
+  };
+});
+const viewBox = computed(() => {
+  const current = activeViewBox.value;
+  return `${current.x} ${current.y} ${current.width} ${current.height}`;
+});
+const zoomPercent = computed(() => `${Math.round(zoom.value * 100)}%`);
+const viewportIsDefault = computed(() => zoom.value === 1
+  && Math.abs(constrainedViewportOffset.value.x) < 0.001
+  && Math.abs(constrainedViewportOffset.value.y) < 0.001);
 const selectedNode = computed(() => selected.value?.type === "node"
   ? nodes.value.find((node) => node.nodeCode === selected.value?.code)
   : undefined);
@@ -205,6 +269,56 @@ function nodeClass(type: string): string {
 
 function nodeTypeLabel(type: string): string {
   return NODE_TYPE_OPTIONS.find((option) => option.value === type)?.label || type;
+}
+
+function setZoom(value: number): void {
+  if (drag.value || canvasDrag.value) return;
+  zoom.value = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 10) / 10));
+  viewportOffset.value = constrainViewportOffset(viewportOffset.value, baseViewBox.value, zoom.value);
+}
+
+function zoomIn(): void {
+  setZoom(zoom.value + ZOOM_STEP);
+}
+
+function zoomOut(): void {
+  setZoom(zoom.value - ZOOM_STEP);
+}
+
+function resetZoom(): void {
+  if (drag.value || canvasDrag.value) return;
+  zoom.value = 1;
+  viewportOffset.value = { x: 0, y: 0 };
+}
+
+function handleWheel(event: WheelEvent): void {
+  if ((!event.ctrlKey && !event.metaKey) || drag.value || canvasDrag.value) return;
+  event.preventDefault();
+  if (event.deltaY < 0) zoomIn();
+  if (event.deltaY > 0) zoomOut();
+}
+
+function viewBoxPixelScale(current: GraphViewBox, rect: DOMRect): number {
+  if (rect.width <= 0 || rect.height <= 0) return 1;
+  return Math.min(rect.width / current.width, rect.height / current.height);
+}
+
+function constrainViewportOffset(offset: { x: number; y: number }, current: GraphViewBox, currentZoom: number): { x: number; y: number } {
+  const bounds = graphBounds.value;
+  if (!bounds) return { x: 0, y: 0 };
+  const visibleWidth = current.width / currentZoom;
+  const visibleHeight = current.height / currentZoom;
+  const defaultX = current.x + (current.width - visibleWidth) / 2;
+  const defaultY = current.y + (current.height - visibleHeight) / 2;
+  const viewX = Math.min(
+    bounds.maxX - PAN_VISIBLE_MARGIN,
+    Math.max(bounds.minX - visibleWidth + PAN_VISIBLE_MARGIN, defaultX + offset.x),
+  );
+  const viewY = Math.min(
+    bounds.maxY - PAN_VISIBLE_MARGIN,
+    Math.max(bounds.minY - visibleHeight + PAN_VISIBLE_MARGIN, defaultY + offset.y),
+  );
+  return { x: viewX - defaultX, y: viewY - defaultY };
 }
 
 function selectNode(node: DisplayNode): void {
@@ -258,26 +372,51 @@ function startDrag(node: DisplayNode, event: MouseEvent): void {
   selectNode(node);
   if (!props.editable || event.button !== 0) return;
   event.preventDefault();
+  const svg = (event.currentTarget as SVGGElement).ownerSVGElement;
+  const lockedViewBox = { ...centeredViewBox.value };
   drag.value = {
     code: node.nodeCode,
     startClientX: event.clientX,
     startClientY: event.clientY,
     startX: node.x,
     startY: node.y,
+    viewBox: lockedViewBox,
+    pixelScale: svg ? viewBoxPixelScale(activeViewBox.value, svg.getBoundingClientRect()) : 1,
+  };
+}
+
+function startCanvasDrag(event: MouseEvent): void {
+  if (event.button !== 0 || drag.value || canvasDrag.value || !graphBounds.value) return;
+  event.preventDefault();
+  const currentOffset = constrainedViewportOffset.value;
+  canvasDrag.value = {
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startOffsetX: currentOffset.x,
+    startOffsetY: currentOffset.y,
+    pixelScale: viewBoxPixelScale(activeViewBox.value, (event.currentTarget as SVGSVGElement).getBoundingClientRect()),
   };
 }
 
 function moveDrag(event: MouseEvent): void {
-  if (!drag.value) return;
-  const nextX = Math.max(20, Math.round(drag.value.startX + event.clientX - drag.value.startClientX));
-  const nextY = Math.max(20, Math.round(drag.value.startY + event.clientY - drag.value.startClientY));
-  emitNodes(props.nodes.map((node) => String(node.nodeCode) === drag.value?.code
-    ? { ...cloneValue(node), positionX: nextX, positionY: nextY }
-    : cloneValue(node)));
+  if (drag.value) {
+    const nextX = Math.max(20, Math.round(drag.value.startX + (event.clientX - drag.value.startClientX) / drag.value.pixelScale));
+    const nextY = Math.max(20, Math.round(drag.value.startY + (event.clientY - drag.value.startClientY) / drag.value.pixelScale));
+    emitNodes(props.nodes.map((node) => String(node.nodeCode) === drag.value?.code
+      ? { ...cloneValue(node), positionX: nextX, positionY: nextY }
+      : cloneValue(node)));
+    return;
+  }
+  if (!canvasDrag.value) return;
+  viewportOffset.value = constrainViewportOffset({
+    x: canvasDrag.value.startOffsetX - (event.clientX - canvasDrag.value.startClientX) / canvasDrag.value.pixelScale,
+    y: canvasDrag.value.startOffsetY - (event.clientY - canvasDrag.value.startClientY) / canvasDrag.value.pixelScale,
+  }, baseViewBox.value, zoom.value);
 }
 
 function stopDrag(): void {
   drag.value = undefined;
+  canvasDrag.value = undefined;
 }
 
 function addNode(): void {
@@ -729,37 +868,47 @@ function emitEdges(nextEdges: GraphEdge[]): void {
       </span>
     </div>
 
-    <div v-if="editable" class="graph-toolbar" aria-label="画布工具栏">
-      <button v-if="editable" data-testid="add-node" type="button" @click="addNode">添加节点</button>
-      <button
-        data-testid="start-connection"
-        type="button"
-        :class="{ active: connectionMode }"
-        :disabled="nodes.length < 2"
-        @click="startConnectionMode"
-      >
-        开始连线
-      </button>
-      <button data-testid="stop-connection" type="button" :disabled="!connectionMode" @click="stopConnectionMode">
-        退出连线
-      </button>
-      <button v-if="editable" data-testid="delete-selected" type="button" :disabled="!selected" @click="deleteSelected">删除选中</button>
-      <span v-if="connectionMode" class="connection-hint">
-        {{ pendingConnectionSource ? `已选择来源节点：${pendingConnectionSource}` : "连线模式：按顺序点击来源节点和目标节点" }}
-      </span>
+    <div class="graph-toolbar" aria-label="画布工具栏">
+      <div v-if="editable" class="graph-edit-tools">
+        <button data-testid="add-node" type="button" @click="addNode">添加节点</button>
+        <button
+          data-testid="start-connection"
+          type="button"
+          :class="{ active: connectionMode }"
+          :disabled="nodes.length < 2"
+          @click="startConnectionMode"
+        >
+          开始连线
+        </button>
+        <button data-testid="stop-connection" type="button" :disabled="!connectionMode" @click="stopConnectionMode">
+          退出连线
+        </button>
+        <button data-testid="delete-selected" type="button" :disabled="!selected" @click="deleteSelected">删除选中</button>
+        <span v-if="connectionMode" class="connection-hint">
+          {{ pendingConnectionSource ? `已选择来源节点：${pendingConnectionSource}` : "连线模式：按顺序点击来源节点和目标节点" }}
+        </span>
+      </div>
+      <div class="graph-zoom-tools" aria-label="缩放工具">
+        <button data-testid="zoom-out" type="button" :disabled="zoom <= ZOOM_MIN || Boolean(drag) || Boolean(canvasDrag)" title="缩小" @click="zoomOut">−</button>
+        <span data-testid="zoom-percent" aria-live="polite">{{ zoomPercent }}</span>
+        <button data-testid="zoom-in" type="button" :disabled="zoom >= ZOOM_MAX || Boolean(drag) || Boolean(canvasDrag)" title="放大" @click="zoomIn">＋</button>
+        <button data-testid="zoom-reset" type="button" :disabled="viewportIsDefault || Boolean(drag) || Boolean(canvasDrag)" @click="resetZoom">重置</button>
+      </div>
     </div>
 
     <div class="graph-designer-layout">
       <div class="graph-scroll graph-designer-canvas">
         <svg
-          class="process-graph"
-          :viewBox="`0 0 ${width} ${height}`"
+          :class="['process-graph', { panning: Boolean(canvasDrag) }]"
+          :viewBox="viewBox"
           role="img"
           aria-label="流程节点与连线"
           data-testid="process-graph"
+          @mousedown.self="startCanvasDrag"
           @mousemove="moveDrag"
           @mouseup="stopDrag"
           @mouseleave="stopDrag"
+          @wheel="handleWheel"
         >
           <defs>
             <marker :id="markerId" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
