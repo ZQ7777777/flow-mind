@@ -32,3 +32,7 @@ agent-web/test-results/
 
 # 根目录没有 package.json，这个空锁文件是误生成的
 /package-lock.json
+
+#固定这两类文件的工作区换行符
+business-base/backend/pom.xml text eol=lf
+business-base/frontend/package.json text eol=lf

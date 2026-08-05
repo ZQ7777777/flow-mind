@@ -46,11 +46,11 @@
   "protectedFiles": [
     {
       "path": "backend/pom.xml",
-      "sha256": "c6a5797fb98f0ec7d04e630681355572daedc4b48ee27b49b77e1977e85f821b"
+      "sha256": "540eadd4fd82b7ba8d572203503a12efba3c0f10e6ea30f6ad78e7c521cf343d"
     },
     {
       "path": "frontend/package.json",
-      "sha256": "4e2892145e5ba71f0432ca99f52f29fcff9c9bb9d1b4a6cdbcfef11e8c01372f"
+      "sha256": "df1345720219ff34bae6c6a4e4aff06f01c737cbba9e01feabbac646de1cc56c"
     }
   ]
 }
