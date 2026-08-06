@@ -229,6 +229,9 @@ function serviceTestSource(spec: GenerationSpec, fields: FormFieldRequirement[],
   const accessorType = simpleName(accessorImport);
   const firstField = fields[0];
   const setterLine = firstField ? `request.${setter(firstField.fieldCode)}(${javaTestValue(firstField)});` : "";
+  const attachmentSetup = spec.applyAttachments.map((attachment) =>
+    `        files.add("${escapeJava(attachment.attachmentCode)}", new MockMultipartFile("${escapeJava(attachment.attachmentCode)}", "proof.pdf", "application/pdf", new byte[] { 1 }));`,
+  ).join("\n");
   return `package ${spec.javaPackage};
 import static org.mockito.Mockito.*;
 import ${spec.javaPackage}.dto.*;
@@ -236,7 +239,9 @@ import ${accessorImport};
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.web.multipart.MultipartFile;
 class ${spec.classPrefix}ServiceTest {
     @Test void mapsConfirmedRequirementAndCallsStartAndSubmitOnce() {
         ProcessRuntimeService runtime = mock(ProcessRuntimeService.class);
@@ -245,7 +250,9 @@ class ${spec.classPrefix}ServiceTest {
         when(runtime.startAndSubmit(any())).thenReturn(new ProcessInstanceDTO());
         ${spec.classPrefix}SubmitRequest request = new ${spec.classPrefix}SubmitRequest();
         ${setterLine}
-        new ${spec.classPrefix}Service(runtime, users).submit(request, new LinkedMultiValueMap<>(), "key");
+        LinkedMultiValueMap<String, MultipartFile> files = new LinkedMultiValueMap<>();
+${attachmentSetup}
+        new ${spec.classPrefix}Service(runtime, users).submit(request, files, "key");
         verify(runtime, times(1)).startAndSubmit(argThat(value -> "${escapeJava(spec.processCode)}".equals(value.getProcessCode())));
     }
 }

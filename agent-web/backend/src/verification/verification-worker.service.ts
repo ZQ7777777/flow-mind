@@ -98,6 +98,7 @@ export class VerificationWorkerService {
       const commands = fixedCommands(input, workspaceRoot);
       const stages: QualityStageResult[] = [];
       const execute = input.execute || executeVerificationCommand;
+      await installFrontendDependencies(input, workspaceRoot, execute, runId, logDir);
       for (const command of commands) {
         if (input.signal?.aborted) {
           stages.push(stageResult(command, {
@@ -227,7 +228,12 @@ function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string): V
     shell: false as const,
     timeoutMs,
     maxOutputBytes,
-    env: fixedEnvironment(),
+    env: {
+      ...fixedEnvironment(),
+      // The desktop process may not have access to the interactive user's npm
+      // cache. Keep the verification cache under the agent data directory.
+      NPM_CONFIG_CACHE: join(input.dataDir, "npm-cache"),
+    },
     signal: input.signal,
   };
   const command = (executable: string, args: string[]): Pick<VerificationCommand, "executable" | "args"> => {
@@ -283,7 +289,9 @@ function copyDirectory(source: string, destination: string): void {
   if (stat.isDirectory()) {
     mkdirSync(destination, { recursive: true });
     for (const entry of readdirSync(source, { withFileTypes: true })) {
-      if ([".git", "target", "dist", "coverage"].includes(entry.name)) continue;
+      // Dependencies are restored from the lockfile in the disposable workspace.
+      // Copying node_modules can leave a partial dependency tree on Windows.
+      if ([".git", "node_modules", "target", "dist", "coverage"].includes(entry.name)) continue;
       copyDirectory(join(source, entry.name), join(destination, entry.name));
     }
     return;
@@ -292,6 +300,55 @@ function copyDirectory(source: string, destination: string): void {
     mkdirSync(dirname(destination), { recursive: true });
     writeFileSync(destination, readFileSync(source));
   }
+}
+
+async function installFrontendDependencies(
+  input: VerificationWorkerInput,
+  workspaceRoot: string,
+  execute: VerificationCommandExecutor,
+  runId: string,
+  logDir: string,
+): Promise<void> {
+  const frontend = resolve(workspaceRoot, input.contract.frontend.rootDir);
+  if (!existsSync(join(frontend, "package-lock.json"))) return;
+
+  const command = dependencyInstallCommand(frontend, workspaceRoot, input);
+  const result = await execute(command);
+  writeFileSync(join(logDir, "frontend_dependency_install.log"), `[stdout]\n${result.stdout}\n[stderr]\n${result.stderr}`, "utf8");
+  if (result.exitCode !== 0 || result.infrastructureError || result.timedOut || result.cancelled) {
+    throw new AgentError(
+      HttpStatus.SERVICE_UNAVAILABLE,
+      "AGENT_FRONTEND_DEPENDENCY_INSTALL_FAILED",
+      `Unable to restore frontend dependencies for ${runId}; see frontend_dependency_install.log.`,
+    );
+  }
+}
+
+function dependencyInstallCommand(
+  frontend: string,
+  workspaceRoot: string,
+  input: VerificationWorkerInput,
+): VerificationCommand {
+  const command = process.platform === "win32"
+    ? {
+      executable: process.env.COMSPEC || "cmd.exe",
+      args: ["/d", "/s", "/c", "npm.cmd ci --ignore-scripts --no-audit --fund=false"],
+    }
+    : { executable: "npm", args: ["ci", "--ignore-scripts", "--no-audit", "--fund=false"] };
+  return {
+    ...command,
+    stage: "FRONTEND_TYPECHECK",
+    cwd: frontend,
+    workspaceRoot,
+    shell: false,
+    timeoutMs: input.timeoutMs || DEFAULT_TIMEOUT_MS,
+    maxOutputBytes: input.maxOutputBytes || DEFAULT_MAX_OUTPUT_BYTES,
+    env: {
+      ...fixedEnvironment(),
+      NPM_CONFIG_CACHE: join(input.dataDir, "npm-cache"),
+    },
+    signal: input.signal,
+  };
 }
 
 function stageResult(

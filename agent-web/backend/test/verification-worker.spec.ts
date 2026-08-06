@@ -148,6 +148,36 @@ describe("verification worker", () => {
       message: "Argument is invalid.",
     }));
   });
+
+  it("restores frontend dependencies from the lockfile instead of copying node_modules", async () => {
+    write(target, "frontend/package-lock.json", "{\"lockfileVersion\":3}\n");
+    write(target, "frontend/node_modules/broken-package/index.js", "incomplete dependency tree\n");
+    const commands: VerificationCommand[] = [];
+    const worker = new VerificationWorkerService();
+
+    await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        commands.push(command);
+        if (command.args.join(" ").includes(" ci ")) {
+          expect(existsSync(join(command.workspaceRoot, "frontend/node_modules/broken-package/index.js"))).toBe(false);
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    expect(commands[0]).toEqual(expect.objectContaining({
+      stage: "FRONTEND_TYPECHECK",
+      cwd: expect.stringContaining("frontend"),
+    }));
+    expect(commands[0].args.join(" ")).toContain("ci");
+  });
 });
 
 function createContract(): GenerationTargetContract {

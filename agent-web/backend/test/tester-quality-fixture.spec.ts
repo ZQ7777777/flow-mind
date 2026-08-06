@@ -57,5 +57,12 @@ describe("tester quality-gate fixture", () => {
       { userId: "user_tester", userName: "Quality Tester" },
     ).content;
     expect(fixtureCode).toContain("request.setVariables(variables)");
+    const fixtureTest = generation.readFile(
+      fixture.sessionId,
+      fixture.generationId,
+      "backend/src/test/java/com/flowmind/business/generated/entryapplication/EntryApplicationServiceTest.java",
+      { userId: "user_tester", userName: "Quality Tester" },
+    ).content;
+    expect(fixtureTest).toContain("new MockMultipartFile");
   });
 });
