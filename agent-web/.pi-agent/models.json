@@ -11,14 +11,6 @@
           "name": "GPT-5.6 Terra via Sub2API",
           "reasoning": true,
           "input": ["text", "image"]
-        },
-        {
-          "id": "glm-5.2",
-          "name": "GLM-5.2 via Sub2API",
-          "reasoning": true,
-	        "input": ["text"],
-          "contextWindow": 1000000,
-          "maxTokens": 131072
         }
       ]
     }
