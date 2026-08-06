@@ -56,6 +56,6 @@ describe("tester quality-gate fixture", () => {
       "backend/src/main/java/com/flowmind/business/generated/entryapplication/EntryApplicationService.java",
       { userId: "user_tester", userName: "Quality Tester" },
     ).content;
-    expect(fixtureCode).toContain("request.setProcessVariables(payload.toProcessVariables())");
+    expect(fixtureCode).toContain("request.setVariables(variables)");
   });
 });

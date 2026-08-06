@@ -196,8 +196,8 @@ public class ${spec.classPrefix}SubmitResponse {
 
     public static ${spec.classPrefix}SubmitResponse from(ProcessInstanceDTO value) {
         ${spec.classPrefix}SubmitResponse response = new ${spec.classPrefix}SubmitResponse();
-        response.instanceId = value.getId();
-        response.status = value.getStatus();
+        response.instanceId = value.getInstanceId();
+        response.status = String.valueOf(value.getInstanceStatus());
         response.createdTasks = value.getCreatedTasks();
         return response;
     }

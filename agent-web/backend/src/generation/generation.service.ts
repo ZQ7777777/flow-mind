@@ -29,6 +29,7 @@ import { StagingService, generationContract, parseManifest } from "./staging.ser
 import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
 import { PlatformClientService } from "../platform/platform-client.service.js";
 import { loadFrozenTesterFixture } from "./frozen-tester-fixture.js";
+import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
 
 @Injectable()
 export class GenerationService {
@@ -92,6 +93,15 @@ export class GenerationService {
     }
     const target = this.targets.validate(targetRootInput || "", "tester-fixture");
     const fixture = loadFrozenTesterFixture();
+    const spec = deriveGenerationSpec(fixture.requirement, target.contract);
+    // The requirement/process snapshot is frozen, but artifact templates must
+    // track the platform-starter API exposed by the selected target.
+    const fixtureFiles = Object.entries(createFakeGenerationFiles(
+      fixture.requirement,
+      spec,
+      target.contract,
+      this.targets.readReference(target, `${target.contract.frontend.rootDir}/${target.contract.frontend.routeRegistry}`),
+    )).map(([relativePath, content]) => ({ relativePath, content }));
     const requirementJson = JSON.stringify(fixture.requirement);
     const sessionId = `ags_tester_${randomUUID()}`;
     const processId = `apd_tester_${randomUUID()}`;
@@ -132,11 +142,11 @@ export class GenerationService {
         fixture.requirement.businessCode, fixture.requirement.businessName, target.targetRoot, target.contract.contractVersion,
         JSON.stringify(target.contract), stagingDir, user.userId, now, now);
     });
-    for (const { relativePath, content } of fixture.files) {
+    for (const { relativePath, content } of fixtureFiles) {
       this.staging.writeDuringGeneration(this.requiredGenerating(generationId), relativePath, content);
     }
     const manifest = this.staging.complete(
-      this.requiredGenerating(generationId), target.contract, fixture.files.map(({ relativePath }) => relativePath),
+      this.requiredGenerating(generationId), target.contract, fixtureFiles.map(({ relativePath }) => relativePath),
     );
     this.events.publish(sessionId, { type: "generation.stage_changed", data: { generationId, state: "CODE_REVIEW", manifest } });
     return { sessionId, generationId };
