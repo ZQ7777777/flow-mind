@@ -10,6 +10,9 @@ target/
 .tmp-maven/
 agent-web/**/node_modules/
 agent-web/**/dist/
+business-base/**/node_modules/
+business-base/**/dist/
+business-base/**/*.tsbuildinfo
 agent-web/**/*.tsbuildinfo
 agent-web/.npm-cache/
 agent-web/.env
@@ -24,12 +27,9 @@ agent-web/test-results/
 # Maven 本地仓库（Start-AgentWeb.ps1 使用）
 /.m2-agent/
 
-# Agent 本地会话、SQLite、Pi session 等运行数据
+# Agent 本地会话、SQLite、Pi session、平台本地上传附件等运行数据
 /agent-web/data/
-/data/agent-web/
-
-# 平台本地上传附件
-/data/attachments/
+/data/
 
 # 根目录没有 package.json，这个空锁文件是误生成的
 /package-lock.json
