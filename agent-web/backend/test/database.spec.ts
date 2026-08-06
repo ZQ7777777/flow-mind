@@ -28,7 +28,7 @@ describe("agent database", () => {
     const versions = database!.db
       .prepare("SELECT version FROM agent_schema_migration ORDER BY version")
       .all() as Array<{ version: number }>;
-    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(database!.db.pragma("journal_mode", { simple: true })).toBe("wal");
     expect(database!.db.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(database!.db.pragma("busy_timeout", { simple: true })).toBe(5000);
@@ -108,7 +108,7 @@ describe("agent database", () => {
       pi_session_file: "legacy.jsonl",
     });
     const versions = database.db.prepare("SELECT version FROM agent_schema_migration ORDER BY version").all() as Array<{ version: number }>;
-    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(database.db.prepare("SELECT tokens_before, summary_tokens FROM agent_compaction_stat WHERE id = 'acs_legacy'").get())
       .toEqual({ tokens_before: 12345, summary_tokens: 800 });
   });
@@ -122,5 +122,22 @@ describe("agent database", () => {
       .toEqual({ name: "agent_repair_attempt" });
     expect(database.db.prepare("SELECT version FROM agent_schema_migration WHERE version = 8").get())
       .toEqual({ version: 8 });
+  });
+
+  it("adds repair failure codes to an existing repair-attempt table", () => {
+    database!.db.exec("ALTER TABLE agent_repair_attempt RENAME TO agent_repair_attempt_v8;");
+    database!.db.exec(`
+      CREATE TABLE agent_repair_attempt AS
+      SELECT id, generation_id, verification_run_id, round, diagnostic_ids_json,
+        changed_files_json, resolutions_json, outcome, created_at
+      FROM agent_repair_attempt_v8;
+      DROP TABLE agent_repair_attempt_v8;
+      DELETE FROM agent_schema_migration WHERE version = 9;
+    `);
+    database!.onModuleDestroy();
+    database = new DatabaseService();
+
+    const columns = database.db.prepare("PRAGMA table_info(agent_repair_attempt)").all() as Array<{ name: string }>;
+    expect(columns.map(({ name }) => name)).toContain("failure_code");
   });
 });

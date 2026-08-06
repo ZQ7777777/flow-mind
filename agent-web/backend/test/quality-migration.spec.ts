@@ -52,5 +52,9 @@ describe("M4-M5 quality storage", () => {
         "agent_generation_action",
       ]),
     );
+    const repairColumns = database!.db
+      .prepare("PRAGMA table_info(agent_repair_attempt)")
+      .all() as Array<{ name: string }>;
+    expect(repairColumns.map(({ name }) => name)).toContain("failure_code");
   });
 });

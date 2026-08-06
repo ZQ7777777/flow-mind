@@ -144,6 +144,7 @@ export interface RepairAttemptSummary {
   resolutions: RepairResolution[];
   diagnosticIds: string[];
   outcome: "CHANGED" | "NO_EFFECT" | "INFRASTRUCTURE_FAILED";
+  failureCode?: "REPAIR_NO_EFFECT" | "REPAIR_PROTOCOL_INVALID";
   createdAt: string;
 }
 

@@ -322,6 +322,14 @@ export class QualityPipelineService {
       };
       const finalGenerationStatus = decision.hardGatePassed ? "REVIEW" : "FAILED";
       const finalSessionState = decision.hardGatePassed ? "CODE_REVIEW" : "CODE_PIPELINE_FAILED";
+      const finalErrorCode = repairFailureCode
+        || (infrastructureFailure ? "AGENT_VERIFICATION_INFRASTRUCTURE_FAILED"
+          : decision.hardGatePassed ? null : "AGENT_QUALITY_HARD_GATE_FAILED");
+      const finalErrorMessage = repairFailureCode === "REPAIR_NO_EFFECT"
+        ? "Repair reported completion without changing staged files."
+        : repairFailureCode === "REPAIR_PROTOCOL_INVALID"
+          ? "Repair changes were not accepted because the per-diagnostic completion report was invalid."
+          : decision.hardGatePassed ? null : "Generated code did not pass the required quality gates.";
       this.database.transaction(() => {
         this.database.db.prepare(`
           UPDATE agent_verification_run SET status = ?, hard_gate_passed = ?,
@@ -350,15 +358,8 @@ export class QualityPipelineService {
           decision.hardGatePassed ? 1 : 0,
           decision.overrideRequired ? 1 : 0,
           decision.canWrite ? 1 : 0,
-          decision.hardGatePassed ? null
-            : infrastructureFailure ? "AGENT_VERIFICATION_INFRASTRUCTURE_FAILED"
-              : repairFailureCode || "AGENT_QUALITY_HARD_GATE_FAILED",
-          decision.hardGatePassed ? null
-            : repairFailureCode === "REPAIR_NO_EFFECT"
-              ? "Repair reported completion without changing staged files."
-              : repairFailureCode === "REPAIR_PROTOCOL_INVALID"
-                ? "Repair changes were not accepted because the per-diagnostic completion report was invalid."
-              : "Generated code did not pass the required quality gates.",
+          finalErrorCode,
+          finalErrorMessage,
           now,
           generation!.id,
           generation!.generation_revision,
@@ -369,8 +370,8 @@ export class QualityPipelineService {
           WHERE id = ?
         `).run(
           finalSessionState,
-          decision.hardGatePassed ? null : "AGENT_CODE_PIPELINE_FAILED",
-          decision.hardGatePassed ? null : "Generated code did not pass the required quality gates.",
+          finalErrorCode || (decision.hardGatePassed ? null : "AGENT_CODE_PIPELINE_FAILED"),
+          finalErrorMessage,
           now,
           generation!.session_id,
         );

@@ -304,6 +304,20 @@ export class StaticValidatorService {
           input.spec.paths.service,
         ));
       }
+      const validationGaps = attachmentValidationGaps(service, attachment);
+      if (validationGaps.length) {
+        diagnostics.push(diagnostic(
+          "ATTACHMENT_VALIDATION_MISSING",
+          `Generated backend service does not enforce ${validationGaps.join(", ")} for attachment ${attachmentCode}.`,
+          input.spec.paths.service,
+          undefined,
+          undefined,
+          {
+            expected: `Backend validation must enforce required/minCount=${attachment.minCount}, maxCount=${attachment.maxCount}, maxSizeBytes=${attachment.maxSizeBytes}, and allowed extensions before startAndSubmit.`,
+            repairHint: `Validate ${attachmentCode} count, each file size, and each allowed extension before constructing AttachmentUploadItem or calling startAndSubmit.`,
+          },
+        ));
+      }
       if (!mapsAttachmentView(view, attachmentCode)) {
         diagnostics.push(diagnostic(
           "ATTACHMENT_MAPPING_MISSING",
@@ -330,6 +344,10 @@ export class StaticValidatorService {
 
     const servicePath = input.spec.paths.serviceTest;
     const serviceTest = input.files.get(servicePath) || "";
+    this.forbidSource(serviceTest, servicePath, diagnostics, "GENERATED_TEST_CONTRACT_MISMATCH", [
+      "mock(InstanceStatusEnum.class)",
+      "anyList()",
+    ], "Generated Java tests must use real enum values and nullable matchers for optional collection arguments.");
     const accessorMethod = escapeRegExp(input.contract.backend.trustedUserContext.accessorMethod);
     const beforeEachBody = /@BeforeEach\s*(?:\r?\n\s*)?(?:(?:public|protected|private)\s+)?void\s+\w+\s*\([^)]*\)\s*\{([^{}]*)\}/g;
     const globalTrustedUserStub = new RegExp(
@@ -357,6 +375,8 @@ export class StaticValidatorService {
       { pattern: /\.find(?:All)?\s*\(\s*(["'])\.el-[^"']*\1\s*\)/, label: "Element Plus internal CSS query" },
       { pattern: /\b(?:payloadBlob|blob)\.text\s*\(/, label: "Blob.text() in jsdom" },
     ];
+    const ignoredFileSize = /function\s+createMockFile\s*\([^)]*\bsize\b[^)]*\)\s*\{(?:(?!Uint8Array\s*\(\s*size\s*\))[\s\S])*?new\s+File\s*\(/m.exec(viewTest);
+    if (ignoredFileSize) frontendPatterns.push({ pattern: /function\s+createMockFile/, label: "file factory ignores its size argument" });
     for (const { pattern, label } of frontendPatterns) {
       const match = pattern.exec(viewTest);
       if (!match) continue;
@@ -470,6 +490,27 @@ function mapsAttachmentCode(service: string, attachmentCode: string): boolean {
   return [...constantNames].some((name) =>
     new RegExp(`\\bsetAttachmentCode\\s*\\(\\s*${escapeRegExp(name)}\\s*\\)`).test(service),
   );
+}
+
+function attachmentValidationGaps(
+  service: string,
+  attachment: { attachmentCode: string; minCount: number; maxCount: number; maxSizeBytes: number; allowedExtensions: string[] },
+): string[] {
+  const escapedCode = escapeRegExp(attachment.attachmentCode);
+  const gaps: string[] = [];
+  const countName = `${escapedCode}Count`;
+  if (!new RegExp(`${countName}\\s*<\\s*${attachment.minCount}`, "i").test(service)
+    || !new RegExp(`${countName}\\s*>\\s*${attachment.maxCount}`, "i").test(service)) {
+    gaps.push("required/count bounds");
+  }
+  if (!new RegExp(`\\.getSize\\(\\)\\s*>\\s*${attachment.maxSizeBytes}L?`).test(service)) {
+    gaps.push("maximum file size");
+  }
+  const missingExtensions = attachment.allowedExtensions
+    .map((extension) => extension.toLowerCase().replace(/^\./, ""))
+    .filter((extension) => !service.includes(`endsWith(".${extension}")`));
+  if (missingExtensions.length) gaps.push(`allowed extensions (${missingExtensions.join("/")})`);
+  return gaps;
 }
 
 function mapsStringConstantArgument(source: string, call: string, value: string): boolean {

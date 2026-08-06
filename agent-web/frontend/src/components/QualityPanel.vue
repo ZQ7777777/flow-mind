@@ -109,6 +109,31 @@ function statusType(status: string): "success" | "warning" | "danger" | "info" {
         </div>
       </div>
 
+      <div v-if="quality.repairAttempts?.length" class="quality-section repair-history">
+        <strong>修复记录</strong>
+        <div
+          v-for="attempt in quality.repairAttempts"
+          :key="`${attempt.round}-${attempt.verificationRunId}`"
+          class="repair-attempt"
+        >
+          <div class="section-title">
+            <span>第 {{ attempt.round }} 轮 · {{ attempt.outcome }}</span>
+            <el-tag v-if="attempt.failureCode" size="small" type="danger">
+              {{ attempt.failureCode }}
+            </el-tag>
+          </div>
+          <p v-if="attempt.failureCode === 'REPAIR_PROTOCOL_INVALID'" class="review-summary">
+            {{ attempt.changedFiles.length }} 个文件的修改未通过修复协议校验，已回滚。
+          </p>
+          <p v-else-if="attempt.failureCode === 'REPAIR_NO_EFFECT'" class="review-summary">
+            本轮未产生实际文件修改。
+          </p>
+          <p v-else class="review-summary">
+            已修改 {{ attempt.changedFiles.length }} 个文件。
+          </p>
+        </div>
+      </div>
+
       <div v-if="quality.stages.some((stage) => stage.diagnostics.length)" class="quality-section">
         <strong>诊断</strong>
         <template v-for="stage in quality.stages" :key="stage.stage">
@@ -210,6 +235,7 @@ function statusType(status: string): "success" | "warning" | "danger" | "info" {
 .diagnostic span { font-size: 12px; font-weight: 600; color: #9f2f2b; }
 .diagnostic small { margin-top: 3px; color: #64748b; }
 .diagnostic p, .review-summary { margin: 5px 0 0; font-size: 12px; line-height: 1.45; color: #334155; }
+.repair-attempt { margin-top: 8px; padding: 8px; border: 1px solid #dfe5ed; border-radius: 4px; }
 .override-form { display: grid; gap: 9px; }
 .override-form :deep(.el-checkbox-group) { display: grid; }
 .quality-actions { gap: 8px; padding: 10px 12px; border-top: 1px solid #dfe5ed; }

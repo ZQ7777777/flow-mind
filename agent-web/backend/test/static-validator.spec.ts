@@ -163,6 +163,26 @@ describe("static generated-code validation", () => {
     }));
   });
 
+  it("rejects attachment mapping that omits backend count, size, and extension enforcement", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace("bankReceiptCount < 1", "bankReceiptCount < 0")
+        .replace("bankReceiptCount > 5", "bankReceiptCount > 999")
+        .replace("file.getSize() > 10485760L", "file.getSize() > Long.MAX_VALUE")
+        .replace(/lowerName\.endsWith\("\.(?:pdf|jpg|png)"\)/g, "false"),
+    );
+
+    const result = validator.validate(input);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "ATTACHMENT_VALIDATION_MISSING",
+      relativePath: path,
+      message: expect.stringContaining("bankReceipt"),
+    }));
+  });
+
   it("rejects platform actions outside the single allowed start call", () => {
     const input = validInput();
     const path = input.spec.paths.service;
@@ -242,6 +262,21 @@ describe("static generated-code validation", () => {
 
     const result = validator.validate(input);
     expect(result.diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH")).toHaveLength(4);
+  });
+
+  it("rejects enum mocks, non-nullable list matchers, and fake file sizes", () => {
+    const input = validInput();
+    input.files.set(
+      input.spec.paths.serviceTest,
+      input.files.get(input.spec.paths.serviceTest)! + "\n// mock(InstanceStatusEnum.class)\n// verify(service).submit(any(), anyList(), anyString());\n",
+    );
+    input.files.set(
+      input.spec.paths.viewTest,
+      input.files.get(input.spec.paths.viewTest)! + '\nfunction createMockFile(name: string, size: number) { return new File(["tiny"], name); }\n',
+    );
+
+    const result = validator.validate(input);
+    expect(result.diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH")).toHaveLength(3);
   });
 
   it("rejects missing field mapping and weakened tests", () => {

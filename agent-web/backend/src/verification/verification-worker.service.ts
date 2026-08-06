@@ -108,7 +108,7 @@ export class VerificationWorkerService {
             stderr: "",
             timedOut: false,
             cancelled: true,
-          }, undefined, false));
+          }, undefined, false, input.manifest));
           break;
         }
         const result = await execute(command);
@@ -116,7 +116,7 @@ export class VerificationWorkerService {
         const truncated = truncateUtf8(combined, command.maxOutputBytes);
         const logPath = join(logDir, `${command.stage.toLowerCase()}.log`);
         writeFileSync(logPath, truncated.value, "utf8");
-        stages.push(stageResult(command, result, logPath, truncated.truncated));
+        stages.push(stageResult(command, result, logPath, truncated.truncated, input.manifest));
         if (result.infrastructureError || result.timedOut || result.cancelled) break;
       }
       return {
@@ -357,6 +357,7 @@ function stageResult(
   result: VerificationCommandResult,
   logPath?: string,
   outputTruncated = false,
+  manifest?: ArtifactManifest,
 ): QualityStageResult {
   const hardGate = HARD_STAGES.has(command.stage);
   let status: QualityStageResult["status"];
@@ -367,7 +368,7 @@ function stageResult(
     || (result.timedOut ? "Verification command timed out."
       : result.cancelled ? "Verification command was cancelled."
         : status === "PASSED" ? "Command passed." : `Command exited with code ${result.exitCode}.`);
-  const parsedDiagnostics = status === "PASSED" ? [] : parseCommandDiagnostics(command, result, hardGate);
+  const parsedDiagnostics = status === "PASSED" ? [] : parseCommandDiagnostics(command, result, hardGate, manifest);
   const fallbackEvidence = diagnosticExcerpt(`${result.stdout}\n${result.stderr}`);
   return {
     stage: command.stage,
@@ -395,6 +396,7 @@ function parseCommandDiagnostics(
   command: VerificationCommand,
   result: VerificationCommandResult,
   hardGate: boolean,
+  manifest?: ArtifactManifest,
 ): QualityDiagnostic[] {
   const diagnostics: QualityDiagnostic[] = [];
   const output = `${result.stdout}\n${result.stderr}`;
@@ -409,7 +411,7 @@ function parseCommandDiagnostics(
         code: match[4],
         message: match[5].trim(),
         hardGate,
-        relativePath: diagnosticPath(command, match[1]),
+        relativePath: diagnosticPath(command, match[1], manifest),
         line: Number(match[2]),
         column: Number(match[3]),
         evidence: line,
@@ -425,7 +427,7 @@ function parseCommandDiagnostics(
         code: "JAVA_COMPILER_ERROR",
         message: match[4].trim(),
         hardGate,
-        relativePath: diagnosticPath(command, match[1]),
+        relativePath: diagnosticPath(command, match[1], manifest),
         line: Number(match[2]),
         column: match[3] ? Number(match[3]) : undefined,
         evidence: diagnosticBlock(lines, index),
@@ -441,15 +443,15 @@ function parseCommandDiagnostics(
         message: line,
         severity: "ERROR",
         hardGate,
-        relativePath: diagnosticPath(command, match[1]),
+        relativePath: diagnosticPath(command, match[1], manifest),
         line: Number(match[2]),
         column: Number(match[3]),
       });
     }
   }
-  const structuredTest = parseStructuredTestDiagnostic(command, lines, hardGate);
-  const sourceDiagnostics = structuredTest
-    ? [...diagnostics.filter(({ code }) => code !== "TEST_FAILURE"), structuredTest]
+  const structuredTests = parseStructuredTestDiagnostics(command, output, hardGate, manifest);
+  const sourceDiagnostics = structuredTests.length
+    ? [...diagnostics.filter(({ code }) => code !== "TEST_FAILURE"), ...structuredTests]
     : diagnostics;
   const enriched = sourceDiagnostics.map((item) => item.diagnosticId ? item : qualityDiagnostic(command.stage, {
     ...item,
@@ -460,44 +462,93 @@ function parseCommandDiagnostics(
   return [...new Map(enriched.map((item) => [item.diagnosticId, item])).values()];
 }
 
-function parseStructuredTestDiagnostic(
+function parseStructuredTestDiagnostics(
   command: VerificationCommand,
-  lines: string[],
+  output: string,
   hardGate: boolean,
-): QualityDiagnostic | undefined {
-  const output = lines.join("\n");
-  const vitestLocation = output.match(/[>\s❯*]*([^\s]+\.(?:spec|test)\.[jt]sx?):(\d+):(\d+)/);
-  if (vitestLocation && /(?:FAIL|AssertionError|expected)/i.test(output)) {
-    const evidence = diagnosticExcerpt(output);
-    return qualityDiagnostic(command.stage, {
+  manifest?: ArtifactManifest,
+): QualityDiagnostic[] {
+  if (command.stage === "FRONTEND_TESTS") return parseVitestDiagnostics(command, output, hardGate, manifest);
+  if (command.stage === "BACKEND_TESTS") return parseJUnitDiagnostics(command, output, hardGate, manifest);
+  return [];
+}
+
+function parseVitestDiagnostics(
+  command: VerificationCommand,
+  output: string,
+  hardGate: boolean,
+  manifest?: ArtifactManifest,
+): QualityDiagnostic[] {
+  const failures = [...output.matchAll(/^\s*FAIL\s+(\S+\.(?:spec|test)\.[jt]sx?)\s+>\s+([^\r\n]+)$/gm)];
+  return failures.flatMap((failure, index) => {
+    const blockEnd = failures[index + 1]?.index ?? output.length;
+    const block = output.slice(failure.index, blockEnd);
+    const location = block.match(/[>❯\s]*([^\s]+\.(?:spec|test)\.[jt]sx?):(\d+):(\d+)/);
+    if (!location) return [];
+    const evidence = sanitizeDiagnosticEvidence(block.slice(0, 4_000));
+    const assertion = block.match(/AssertionError[^\r\n]*/i)?.[0];
+    return [qualityDiagnostic(command.stage, {
       code: "VITEST_TEST_FAILURE",
-      message: output.match(/(?:FAIL|AssertionError)[^\r\n]*/i)?.[0] || "Vitest assertion failed.",
+      message: assertion || `Vitest test ${failure[2]} failed.`,
       hardGate,
-      relativePath: diagnosticPath(command, vitestLocation[1]),
-      line: Number(vitestLocation[2]),
-      column: Number(vitestLocation[3]),
+      relativePath: diagnosticPath(command, location[1], manifest),
+      line: Number(location[2]),
+      column: Number(location[3]),
       evidence,
       actual: assertionValue(evidence, "actual") || assertionValue(evidence, "received"),
       expected: assertionValue(evidence, "expected") || "The Vitest assertion must pass.",
       repairHint: "Use the assertion difference to correct the implementation without weakening or skipping the test.",
-    });
+    })];
+  });
+}
+
+function parseJUnitDiagnostics(
+  command: VerificationCommand,
+  output: string,
+  hardGate: boolean,
+  manifest?: ArtifactManifest,
+): QualityDiagnostic[] {
+  const summary = [...output.matchAll(/^\[ERROR\]\s+([\w$]+)\.([\w$]+):(\d+)(?:->[^\s]+)*\s+(.+)$/gm)];
+  if (summary.length) {
+    return summary.map((match) => junitDiagnostic(
+      command, hardGate, manifest, match[1], match[2], `${match[1]}.java`, Number(match[3]), match[4],
+    ));
   }
-  const junitLocation = output.match(/(?:at\s+)?[\w.$]+\.([\w$]+)\(([^()]+\.java):(\d+)\)/);
-  if (junitLocation && /(?:Assertion|expected|FAILURE!)/i.test(output)) {
-    const evidence = diagnosticExcerpt(output);
-    return qualityDiagnostic(command.stage, {
-      code: "JUNIT_TEST_FAILURE",
-      message: output.match(/(?:AssertionFailedError|AssertionError)[^\r\n]*/i)?.[0] || `JUnit test ${junitLocation[1]} failed.`,
-      hardGate,
-      relativePath: diagnosticPath(command, junitLocation[2]),
-      line: Number(junitLocation[3]),
-      evidence,
-      actual: assertionValue(evidence, "actual") || assertionValue(evidence, "but was"),
-      expected: assertionValue(evidence, "expected") || "The JUnit assertion must pass.",
-      repairHint: "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
-    });
-  }
-  return undefined;
+  const frames = [...output.matchAll(/(?:at\s+)([\w.$]+)\.([\w$]+)\(([^()]+\.java):(\d+)\)/g)];
+  return frames.flatMap((match) => {
+    const relativePath = junitPath(command, match[1], match[3], manifest);
+    if (!relativePath) return [];
+    const before = output.slice(Math.max(0, (match.index || 0) - 1_000), match.index);
+    const message = before.match(/(?:AssertionFailedError|AssertionError|MockitoException)[^\r\n]*/gi)?.at(-1)
+      || `JUnit test ${match[2]} failed.`;
+    return [junitDiagnostic(
+      command, hardGate, manifest, match[1], match[2], match[3], Number(match[4]), message,
+    )];
+  });
+}
+
+function junitDiagnostic(
+  command: VerificationCommand,
+  hardGate: boolean,
+  manifest: ArtifactManifest | undefined,
+  className: string,
+  testName: string,
+  fileName: string,
+  line: number,
+  message: string,
+): QualityDiagnostic {
+  const evidence = sanitizeDiagnosticEvidence(`${className}.${testName}:${line} ${message}`);
+  return qualityDiagnostic(command.stage, {
+    code: "JUNIT_TEST_FAILURE",
+    message,
+    hardGate,
+    relativePath: junitPath(command, className, fileName, manifest),
+    line,
+    evidence,
+    actual: assertionValue(evidence, "actual") || assertionValue(evidence, "but was"),
+    expected: assertionValue(evidence, "expected") || "The JUnit assertion must pass.",
+    repairHint: "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
+  });
 }
 
 function diagnosticExcerpt(output: string): string {
@@ -521,10 +572,31 @@ function assertionValue(evidence: string, label: string): string | undefined {
   return match?.[1]?.trim();
 }
 
-function diagnosticPath(command: VerificationCommand, input: string): string | undefined {
+function diagnosticPath(command: VerificationCommand, input: string, manifest?: ArtifactManifest): string | undefined {
   const absolute = isAbsolute(input) ? resolve(input) : resolve(command.cwd, input);
   const path = relative(command.workspaceRoot, absolute).replace(/\\/g, "/");
-  return path === ".." || path.startsWith("../") || isAbsolute(path) ? undefined : path;
+  if (path === ".." || path.startsWith("../") || isAbsolute(path)) return undefined;
+  return manifestPath(path, input, manifest);
+}
+
+function junitPath(
+  command: VerificationCommand,
+  className: string,
+  fileName: string,
+  manifest?: ArtifactManifest,
+): string | undefined {
+  const topLevelClass = className.replace(/\$.*$/, "");
+  const derived = `backend/src/test/java/${topLevelClass.replace(/\./g, "/")}.java`;
+  return manifestPath(derived, fileName, manifest) || diagnosticPath(command, fileName, manifest);
+}
+
+function manifestPath(candidate: string, original: string, manifest?: ArtifactManifest): string | undefined {
+  if (!manifest) return candidate;
+  const paths = manifest.files.map(({ relativePath }) => relativePath.replace(/\\/g, "/"));
+  if (paths.includes(candidate)) return candidate;
+  const normalizedOriginal = original.replace(/\\/g, "/").replace(/^\.\//, "");
+  const suffixMatches = paths.filter((path) => path === normalizedOriginal || path.endsWith(`/${normalizedOriginal}`));
+  return suffixMatches.length === 1 ? suffixMatches[0] : undefined;
 }
 
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {

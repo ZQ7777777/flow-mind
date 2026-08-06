@@ -80,9 +80,10 @@ export class RepairCoordinatorService {
       platformRuntime: this.targets.readReference(target, referencePaths.platformRuntime, generation.session_id),
       trustedUserContext: this.targets.readReference(target, referencePaths.trustedUserContext, generation.session_id),
     };
-    const currentStages = attachVerificationContext(stages, verificationRunId);
+    const manifestPaths = this.staging.list(generation);
+    const currentStages = attachVerificationContext(stages, verificationRunId, manifestPaths);
     const currentDiagnostics = currentStages.flatMap(({ diagnostics }) => diagnostics);
-    const currentReview = review ? { ...review, issues: normalizeReviewIssues(review.issues) } : undefined;
+    const currentReview = review ? { ...review, issues: normalizeReviewIssues(review.issues, manifestPaths) } : undefined;
     const allDiagnosticIds = [
       ...currentDiagnostics.map(({ diagnosticId }) => diagnosticId),
       ...(currentReview?.issues.map(({ diagnosticId }) => diagnosticId) || []),
@@ -151,7 +152,16 @@ export class RepairCoordinatorService {
         if (changedFiles.length) {
           for (const [path, content] of beforeContents) this.staging.writeDuringRepair(current, path, content);
         }
-        this.recordAttempt(generation.id, verificationRunId, nextRound, allDiagnosticIds, changedFiles, resolutions, "NO_EFFECT");
+        this.recordAttempt(
+          generation.id,
+          verificationRunId,
+          nextRound,
+          allDiagnosticIds,
+          changedFiles,
+          resolutions,
+          "NO_EFFECT",
+          failureCode,
+        );
         return { repaired: false, infrastructureFailure: false, noEffect: true, failureCode, changedFiles };
       }
       this.staging.completeRepair(current, reportedFiles);
@@ -181,7 +191,7 @@ export class RepairCoordinatorService {
   history(generationId: string): RepairAttemptSummary[] {
     return (this.database.db.prepare(`
       SELECT round, verification_run_id, changed_files_json, resolutions_json,
-        diagnostic_ids_json, outcome, created_at
+        diagnostic_ids_json, outcome, failure_code, created_at
       FROM agent_repair_attempt WHERE generation_id = ? ORDER BY round, created_at
     `).all(generationId) as Array<Record<string, unknown>>).map((row) => ({
       round: Number(row.round),
@@ -190,6 +200,7 @@ export class RepairCoordinatorService {
       resolutions: JSON.parse(String(row.resolutions_json)) as RepairResolution[],
       diagnosticIds: JSON.parse(String(row.diagnostic_ids_json)) as string[],
       outcome: row.outcome as RepairAttemptSummary["outcome"],
+      failureCode: row.failure_code as RepairAttemptSummary["failureCode"] || undefined,
       createdAt: String(row.created_at),
     }));
   }
@@ -213,13 +224,14 @@ export class RepairCoordinatorService {
     changedFiles: string[],
     resolutions: RepairResolution[],
     outcome: RepairAttemptSummary["outcome"],
+    failureCode?: RepairAttemptSummary["failureCode"],
   ): void {
     const previousIds = new Set(this.history(generationId).at(-1)?.diagnosticIds || []);
     this.database.db.prepare(`
       INSERT INTO agent_repair_attempt (
         id, generation_id, verification_run_id, round, diagnostic_ids_json,
-        changed_files_json, resolutions_json, outcome, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        changed_files_json, resolutions_json, outcome, failure_code, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       `repair_${randomUUID()}`,
       generationId,
@@ -229,6 +241,7 @@ export class RepairCoordinatorService {
       JSON.stringify(changedFiles),
       JSON.stringify(resolutions),
       outcome,
+      failureCode || null,
       new Date().toISOString(),
     );
     const generation = this.database.getGeneration(generationId);
@@ -314,23 +327,31 @@ export function buildRepairPrompt(
   ].join("\n");
 }
 
-function attachVerificationContext(stages: QualityStageResult[], verificationRunId: string): QualityStageResult[] {
+function attachVerificationContext(
+  stages: QualityStageResult[],
+  verificationRunId: string,
+  manifestPaths: string[],
+): QualityStageResult[] {
   return stages.map((stage) => ({
     ...stage,
     diagnostics: stage.diagnostics.map((item) => {
       const normalized = item.diagnosticId && item.stage ? item : qualityDiagnostic(stage.stage, item);
-      return { ...normalized, verificationRunId };
+      return {
+        ...normalized,
+        relativePath: canonicalManifestPath(normalized.relativePath, manifestPaths),
+        verificationRunId,
+      };
     }),
   }));
 }
 
-function normalizeReviewIssues(issues: CodeReviewIssue[]): CodeReviewIssue[] {
+function normalizeReviewIssues(issues: CodeReviewIssue[], manifestPaths: string[]): CodeReviewIssue[] {
   return issues.map((issue) => {
     const diagnostic = qualityDiagnostic("STATIC_VALIDATION", {
       code: `REVIEW_${issue.code}`,
       message: issue.message,
       hardGate: issue.severity === "BLOCKING",
-      relativePath: issue.relativePath,
+      relativePath: canonicalManifestPath(issue.relativePath, manifestPaths),
       line: issue.line,
       evidence: issue.evidence || `${issue.title}: ${issue.message}`,
       repairHint: issue.repairHint || "Address the reviewer finding with the smallest change that preserves the confirmed requirement.",
@@ -338,12 +359,22 @@ function normalizeReviewIssues(issues: CodeReviewIssue[]): CodeReviewIssue[] {
     });
     return {
       ...issue,
+      relativePath: diagnostic.relativePath,
       diagnosticId: issue.diagnosticId || diagnostic.diagnosticId,
       evidence: diagnostic.evidence,
       repairHint: diagnostic.repairHint,
       repairability: diagnostic.repairability,
     };
   });
+}
+
+function canonicalManifestPath(path: string | undefined, manifestPaths: string[]): string | undefined {
+  if (!path) return undefined;
+  const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (manifestPaths.includes(normalized)) return normalized;
+  const suffixMatches = manifestPaths.filter((candidate) =>
+    candidate.endsWith(`/${normalized}`) || candidate.endsWith(`/${normalized.split("/").at(-1)}`));
+  return suffixMatches.length === 1 ? suffixMatches[0] : undefined;
 }
 
 function validateRepairReport(

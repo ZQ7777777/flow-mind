@@ -23,5 +23,8 @@ describe("generation prompt", () => {
     expect(prompt).toContain("getTaskId(), getNodeCode(), and getNodeName()");
     expect(prompt).toContain("Do not put trusted-user stubbing in @BeforeEach");
     expect(prompt).toContain("public props and emitted update:modelValue events");
+    expect(prompt).toContain("reject a missing required attachment before startAndSubmit");
+    expect(prompt).toContain("Do not mock enum types");
+    expect(prompt).toContain("Uint8Array(size)");
   });
 });

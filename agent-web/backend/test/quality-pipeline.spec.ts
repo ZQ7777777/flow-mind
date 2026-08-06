@@ -137,6 +137,7 @@ describe("M4 quality pipeline integration", () => {
               message: "Repair the generated boundary.",
               severity: "ERROR" as const,
               hardGate: true,
+              relativePath: "backend/EntryApplicationService.java",
             }],
           };
         }
@@ -239,10 +240,92 @@ describe("M4 quality pipeline integration", () => {
     expect(summary.lastError?.code).toBe("REPAIR_NO_EFFECT");
     expect(summary.quality).toEqual(expect.objectContaining({
       repairRound: 1,
-      repairAttempts: [expect.objectContaining({ outcome: "NO_EFFECT", changedFiles: [] })],
+      repairAttempts: [expect.objectContaining({
+        outcome: "NO_EFFECT",
+        failureCode: "REPAIR_NO_EFFECT",
+        changedFiles: [],
+      })],
     }));
     expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_verification_run WHERE generation_id = ?")
       .get(started.generationId)).toEqual({ count: 1 });
+  });
+
+  it("keeps a protocol-invalid repair visible when only a soft gate failed", async () => {
+    const worker = {
+      run: vi.fn(async () => ({
+        runId: "worker-soft-failure",
+        workspaceRoot: join(root, "worker"),
+        logDir: join(root, "logs"),
+        infrastructureFailed: false,
+        stages: [
+          ["BACKEND_COMPILE", true, "PASSED"],
+          ["BACKEND_TESTS", false, "PASSED"],
+          ["FRONTEND_TYPECHECK", true, "PASSED"],
+          ["FRONTEND_TESTS", false, "FAILED"],
+          ["FRONTEND_BUILD", true, "PASSED"],
+        ].map(([stage, hardGate, status]) => ({
+          stage,
+          hardGate,
+          status,
+          summary: status === "FAILED" ? "Vitest failed." : "Passed.",
+          diagnostics: status === "FAILED" ? [{
+            code: "VITEST_TEST_FAILURE",
+            message: "The generated form test failed.",
+            severity: "ERROR" as const,
+            hardGate: false,
+            relativePath: "EntryApplicationApply.test.ts",
+          }] : [],
+        })),
+      })),
+    } as unknown as VerificationWorkerService;
+    const repair = new RepairCoordinatorService(database, targets, staging, pi, events);
+    quality = new QualityPipelineService(
+      database, staging, targets, new StaticValidatorService(), worker,
+      new ReviewerService(database, pi, staging), events, repair,
+    );
+    generation = new GenerationService(database, targets, staging, pi, events, quality);
+    vi.spyOn(pi, "runRepair").mockImplementation(async (generationId, _stagingDir, sessionFile, _prompt, callbacks) => {
+      const changedPath = callbacks.listStaged().find((path) => path.endsWith("Apply.spec.ts"))!;
+      callbacks.writeStaged(changedPath, `${callbacks.readStaged(changedPath)}\n// valid change with invalid report\n`);
+      callbacks.reportComplete(callbacks.listStaged(), []);
+      return { piSessionId: `pi_protocol_invalid_${generationId}`, sessionFile };
+    });
+    const target = createGenerationTarget(root);
+    seedActiveWorkflow(database, "session-protocol-invalid", target);
+    const started = generation.start("session-protocol-invalid", user, 0, "start-protocol-invalid", target);
+    await waitForGeneratedReview("session-protocol-invalid", started.generationId);
+    generation.startQuality(
+      "session-protocol-invalid",
+      started.generationId,
+      user,
+      database.getSession("session-protocol-invalid")!.row_version,
+      1,
+      true,
+      "quality-protocol-invalid",
+    );
+
+    const deadline = Date.now() + 7000;
+    while (Date.now() < deadline) {
+      const summary = generation.get("session-protocol-invalid", started.generationId, user);
+      if (summary.status === "REVIEW" && summary.quality) {
+        expect(summary.lastError?.code).toBe("REPAIR_PROTOCOL_INVALID");
+        expect(summary.quality).toEqual(expect.objectContaining({
+          hardGatePassed: true,
+          canWrite: false,
+          repairAttempts: [expect.objectContaining({
+            outcome: "NO_EFFECT",
+            failureCode: "REPAIR_PROTOCOL_INVALID",
+            changedFiles: [expect.stringMatching(/EntryApplicationApply\.spec\.ts$/)],
+          })],
+        }));
+        expect(staging.read(database.getGeneration(started.generationId)!, summary.quality.repairAttempts![0].changedFiles[0]).content)
+          .not.toContain("valid change with invalid report");
+        return;
+      }
+      if (summary.status === "FAILED") throw new Error(summary.lastError?.message);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("protocol-invalid quality pipeline timed out");
   });
 
   it("feeds each repair round only the latest diagnostics and records all attempts", async () => {

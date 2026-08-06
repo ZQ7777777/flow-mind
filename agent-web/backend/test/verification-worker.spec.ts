@@ -25,6 +25,10 @@ describe("verification worker", () => {
     write(target, "frontend/package.json", "{}\n");
     write(target, "frontend/src/api/generated/example.ts", "export const value = 'target';\n");
     write(staging, "frontend/src/api/generated/example.ts", "export const value = 'staged';\n");
+    write(staging, "backend/src/test/java/com/flowmind/business/generated/EntryApplicationServiceTest.java", "class EntryApplicationServiceTest {}\n");
+    write(staging, "backend/src/test/java/com/flowmind/business/generated/EntryApplicationControllerTest.java", "class EntryApplicationControllerTest {}\n");
+    write(staging, "frontend/src/modules/generated/__tests__/EntryApplicationApply.test.ts", "export {};\n");
+    write(staging, "frontend/src/modules/generated/example.ts", "export {};\n");
     contract = createContract();
     manifest = {
       generationId: "generation-worker",
@@ -37,6 +41,34 @@ describe("verification worker", () => {
         baseSha256: "a".repeat(64),
         stagedSha256: "b".repeat(64),
         sizeBytes: 31,
+        validationStatus: "PENDING",
+        editedByUser: false,
+      }, {
+        relativePath: "backend/src/test/java/com/flowmind/business/generated/EntryApplicationServiceTest.java",
+        changeType: "ADD",
+        stagedSha256: "c".repeat(64),
+        sizeBytes: 37,
+        validationStatus: "PENDING",
+        editedByUser: false,
+      }, {
+        relativePath: "backend/src/test/java/com/flowmind/business/generated/EntryApplicationControllerTest.java",
+        changeType: "ADD",
+        stagedSha256: "d".repeat(64),
+        sizeBytes: 40,
+        validationStatus: "PENDING",
+        editedByUser: false,
+      }, {
+        relativePath: "frontend/src/modules/generated/example.ts",
+        changeType: "ADD",
+        stagedSha256: "f".repeat(64),
+        sizeBytes: 11,
+        validationStatus: "PENDING",
+        editedByUser: false,
+      }, {
+        relativePath: "frontend/src/modules/generated/__tests__/EntryApplicationApply.test.ts",
+        changeType: "ADD",
+        stagedSha256: "e".repeat(64),
+        sizeBytes: 11,
         validationStatus: "PENDING",
         editedByUser: false,
       }],
@@ -226,7 +258,7 @@ describe("verification worker", () => {
     const vitest = first.stages.find(({ stage }) => stage === "FRONTEND_TESTS")!.diagnostics
       .find(({ code }) => code === "VITEST_TEST_FAILURE")!;
     expect(junit).toEqual(expect.objectContaining({
-      relativePath: "backend/EntryApplicationServiceTest.java",
+      relativePath: "backend/src/test/java/com/flowmind/business/generated/EntryApplicationServiceTest.java",
       line: 27,
       actual: expect.stringContaining("41"),
       expected: expect.stringContaining("42"),
@@ -239,6 +271,64 @@ describe("verification worker", () => {
     }));
     expect(second.stages.find(({ stage }) => stage === "BACKEND_TESTS")!.diagnostics
       .find(({ code }) => code === "JUNIT_TEST_FAILURE")!.diagnosticId).toBe(junit.diagnosticId);
+  });
+
+  it("keeps every JUnit and Vitest failure and maps locations to Manifest paths", async () => {
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        if (command.stage === "BACKEND_TESTS") {
+          return {
+            exitCode: 1,
+            stdout: "",
+            stderr: [
+              "java.lang.AssertionError: No value at JSON path $.instanceId",
+              "\tat com.flowmind.business.generated.EntryApplicationControllerTest.shouldSubmitWithoutFiles(EntryApplicationControllerTest.java:170)",
+              "org.mockito.exceptions.base.MockitoException: Cannot mock final class",
+              "\tat com.flowmind.business.generated.EntryApplicationServiceTest.shouldMapTasks(EntryApplicationServiceTest.java:81)",
+            ].join("\n"),
+            timedOut: false,
+            cancelled: false,
+          };
+        }
+        if (command.stage === "FRONTEND_TESTS") {
+          return {
+            exitCode: 1,
+            stdout: [
+              "FAIL src/modules/generated/__tests__/EntryApplicationApply.test.ts > validates required fields",
+              "AssertionError: expected false to be true",
+              "❯ src/modules/generated/__tests__/EntryApplicationApply.test.ts:64:28",
+              "FAIL src/modules/generated/__tests__/EntryApplicationApply.test.ts > rejects oversized files",
+              "AssertionError: expected true to be false",
+              "❯ src/modules/generated/__tests__/EntryApplicationApply.test.ts:286:20",
+            ].join("\n"),
+            stderr: "",
+            timedOut: false,
+            cancelled: false,
+          };
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    const junit = result.stages.find(({ stage }) => stage === "BACKEND_TESTS")!.diagnostics;
+    const vitest = result.stages.find(({ stage }) => stage === "FRONTEND_TESTS")!.diagnostics;
+    expect(junit).toHaveLength(2);
+    expect(junit.map(({ relativePath }) => relativePath)).toEqual([
+      "backend/src/test/java/com/flowmind/business/generated/EntryApplicationControllerTest.java",
+      "backend/src/test/java/com/flowmind/business/generated/EntryApplicationServiceTest.java",
+    ]);
+    expect(vitest).toHaveLength(2);
+    expect(vitest.map(({ line }) => line)).toEqual([64, 286]);
+    expect(vitest.every(({ relativePath }) => relativePath === "frontend/src/modules/generated/__tests__/EntryApplicationApply.test.ts"))
+      .toBe(true);
   });
 
   it("restores frontend dependencies from the lockfile instead of copying node_modules", async () => {

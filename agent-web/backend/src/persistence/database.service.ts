@@ -528,6 +528,15 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(8);
       });
     }
+    if (!applied.has(9)) {
+      this.transaction(() => {
+        const columns = this.db.prepare("PRAGMA table_info(agent_repair_attempt)").all() as Array<{ name: string }>;
+        if (!columns.some(({ name }) => name === "failure_code")) {
+          this.db.exec("ALTER TABLE agent_repair_attempt ADD COLUMN failure_code TEXT");
+        }
+        this.recordMigration(9);
+      });
+    }
   }
 
   private recordMigration(version: number): void {
