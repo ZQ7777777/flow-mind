@@ -24,7 +24,7 @@ import { DatabaseService, type GenerationRow } from "../persistence/database.ser
 import { MAX_GENERATED_FILE_BYTES } from "./generation.constants.js";
 import { deriveGenerationSpec } from "./generation-spec.js";
 import { assertInside, assertNoLinkInExistingPath, normalizeRelativePath } from "./path-safety.js";
-import { sha256 } from "./target-contract.service.js";
+import { normalizeGenerationContract, sha256 } from "./target-contract.service.js";
 
 @Injectable()
 export class StagingService {
@@ -143,7 +143,7 @@ export class StagingService {
   }
 
   edit(generation: GenerationRow, relativePathInput: string, content: string, expectedRevision: number): ArtifactManifest {
-    if (generation.status !== "REVIEW") throw stateError(generation);
+    if (!["REVIEW", "FAILED"].includes(generation.status)) throw stateError(generation);
     if (generation.generation_revision !== expectedRevision) {
       throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_REVISION_CONFLICT", "generation revision is stale", generation.session_id, {
         expected: generation.generation_revision,
@@ -155,7 +155,12 @@ export class StagingService {
     const nextRevision = generation.generation_revision + 1;
     const files = previous.files.map((file) => ({
       ...(relativePath === file.relativePath
-        ? { ...this.describe(generation, relativePath, "PENDING"), editedByUser: true }
+        ? {
+            ...this.describe(generation, relativePath, "PENDING"),
+            changeType: file.changeType,
+            baseSha256: file.baseSha256,
+            editedByUser: true,
+          }
         : file),
       validationStatus: "PENDING" as const,
     }));
@@ -165,7 +170,7 @@ export class StagingService {
         quality_revision = NULL, quality_report_json = NULL, latest_verification_run_id = NULL,
         latest_review_id = NULL, hard_gate_passed = 0, override_required = 0,
         quality_override_id = NULL, can_write = 0, updated_at = ?
-      WHERE id = ? AND generation_revision = ? AND status = 'REVIEW'
+      WHERE id = ? AND generation_revision = ? AND status IN ('REVIEW', 'FAILED')
     `).run(nextRevision, JSON.stringify(manifest), new Date().toISOString(), generation.id, expectedRevision);
     this.database.db.prepare("UPDATE agent_quality_override SET invalidated_at = ? WHERE generation_id = ? AND invalidated_at IS NULL")
       .run(new Date().toISOString(), generation.id);
@@ -260,7 +265,7 @@ export function parseManifest(generation: GenerationRow): ArtifactManifest {
 }
 
 export function generationContract(generation: GenerationRow): GenerationTargetContract {
-  return JSON.parse(generation.target_contract_json) as GenerationTargetContract;
+  return normalizeGenerationContract(JSON.parse(generation.target_contract_json) as GenerationTargetContract);
 }
 
 function expectedFiles(generation: GenerationRow): string[] {

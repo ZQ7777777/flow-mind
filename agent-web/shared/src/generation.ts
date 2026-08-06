@@ -1,5 +1,5 @@
 export interface GenerationTargetContract {
-  contractVersion: "1.0";
+  contractVersion: "1.0" | "1.1";
   projectId: string;
   backend: {
     rootDir: string;
@@ -19,6 +19,10 @@ export interface GenerationTargetContract {
       accessorMethod: string;
       userIdProperty: string;
       departmentIdProperty: string;
+    };
+    apiReferences?: {
+      platformRuntime: string;
+      trustedUserContext: string;
     };
     verificationProfile: "maven-java8";
   };
@@ -201,7 +205,7 @@ export const generationTargetContractSchema = {
   additionalProperties: false,
   required: ["contractVersion", "projectId", "backend", "frontend", "readableReferenceFiles", "allowedOutputPatterns", "protectedFiles"],
   properties: {
-    contractVersion: { const: "1.0" },
+    contractVersion: { enum: ["1.0", "1.1"] },
     projectId: { type: "string", minLength: 1 },
     backend: {
       type: "object", additionalProperties: false,
@@ -230,6 +234,11 @@ export const generationTargetContractSchema = {
             userIdProperty: { type: "string", minLength: 1 }, departmentIdProperty: { type: "string", minLength: 1 },
           },
         },
+        apiReferences: {
+          type: "object", additionalProperties: false,
+          required: ["platformRuntime", "trustedUserContext"],
+          properties: { platformRuntime: relativePath, trustedUserContext: relativePath },
+        },
         verificationProfile: { const: "maven-java8" },
       },
     },
@@ -252,4 +261,8 @@ export const generationTargetContractSchema = {
       },
     },
   },
+  allOf: [{
+    if: { properties: { contractVersion: { const: "1.1" } }, required: ["contractVersion"] },
+    then: { properties: { backend: { required: ["apiReferences"] } } },
+  }],
 } as const;

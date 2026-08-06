@@ -6,6 +6,8 @@ import { PiAdapterService, type GenerationPiCallbacks } from "../pi/pi-adapter.s
 import { deriveGenerationSpec } from "../generation/generation-spec.js";
 import { generationContract, StagingService } from "../generation/staging.service.js";
 import { TargetContractService } from "../generation/target-contract.service.js";
+import { apiReferencePaths } from "../generation/target-contract.service.js";
+import type { GenerationApiReferences } from "../pi/generation-prompt.js";
 
 export interface RepairAttemptResult {
   repaired: boolean;
@@ -45,6 +47,11 @@ export class RepairCoordinatorService {
     const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
     const spec = deriveGenerationSpec(requirement, contract);
     const target = { targetRoot: generation.target_root, contract };
+    const referencePaths = apiReferencePaths(contract);
+    const apiReferences: GenerationApiReferences = {
+      platformRuntime: this.targets.readReference(target, referencePaths.platformRuntime, generation.session_id),
+      trustedUserContext: this.targets.readReference(target, referencePaths.trustedUserContext, generation.session_id),
+    };
     let reported = false;
     let modelError: Error | undefined;
     const callbacks: GenerationPiCallbacks = {
@@ -68,7 +75,7 @@ export class RepairCoordinatorService {
         generation.id,
         generation.staging_dir,
         generation.pi_session_file,
-        buildRepairPrompt(nextRound, stages, review),
+        buildRepairPrompt(nextRound, stages, review, apiReferences),
         callbacks,
       );
       if (modelError) throw modelError;
@@ -101,12 +108,16 @@ export function buildRepairPrompt(
   round: number,
   stages: QualityStageResult[],
   review?: CodeReviewReport,
+  apiReferences?: GenerationApiReferences,
 ): string {
   return [
     `Repair round ${round} of 3.`,
     "Modify only existing Manifest-managed staged files. Do not add or delete files.",
-    "Resolve every hard-gate diagnostic, preserve the confirmed requirement, then call report_repair_complete.",
+    "Resolve all failed hard and soft quality stages and every reviewer issue, preserve the confirmed requirement, then call report_repair_complete.",
+    "BACKEND_TESTS and FRONTEND_TESTS are actionable failures even though they are soft gates; do not stop after compilation, typecheck, or build passes.",
+    "Before editing, use the authoritative references below. Never guess Java packages, types, getters, or setters.",
+    `Authoritative platform runtime API reference:\n${apiReferences?.platformRuntime || "Unavailable in legacy prompt test."}`,
+    `Authoritative trusted user context source:\n${apiReferences?.trustedUserContext || "Unavailable in legacy prompt test."}`,
     JSON.stringify({ stages, review }),
   ].join("\n");
 }
-

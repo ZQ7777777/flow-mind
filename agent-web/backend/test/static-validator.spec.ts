@@ -77,13 +77,13 @@ describe("static generated-code validation", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
-  it("accepts a DTO-owned process-variable mapper and an independent attachment file list", () => {
+  it("accepts a DTO-owned process-variable mapper and an independently named attachment file list", () => {
     const input = validInput();
     input.files.set(
       input.spec.paths.service,
       input.files.get(input.spec.paths.service)!
         .replace(/\s*variables\.put\([^\n]+/g, "")
-        .replace("request.setVariables(variables);", "request.setProcessVariables(payload.toProcessVariables());"),
+        .replace("request.setVariables(variables);", "request.setVariables(payload.toProcessVariables());"),
     );
     const dto = input.files.get(input.spec.paths.requestDto)!;
     const puts = input.requirement.formFields.map((field) => `vars.put(\"${field.fieldCode}\", null);`).join(" ");
@@ -94,8 +94,8 @@ describe("static generated-code validation", () => {
     input.files.set(
       input.spec.paths.view,
       input.files.get(input.spec.paths.view)!
-        .replace(/form\.bankReceipt/g, "bankReceiptFileList")
-        .replace('type="file"', 'name="bankReceipt" type="file"'),
+        .replace(/form\.bankReceipt/g, "fileList")
+        .replace(/<input([^>]*?)type="file"([^>]*?)\/>/, '<el-upload$1name = \'bankReceipt\'$2 />'),
     );
 
     expect(validator.validate(input).diagnostics).toEqual([]);
@@ -112,7 +112,41 @@ describe("static generated-code validation", () => {
     );
 
     const result = validator.validate(input);
-    expect(result.diagnostics.map(({ code }) => code)).toContain("ATTACHMENT_MAPPING_MISSING");
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "ATTACHMENT_MAPPING_MISSING",
+      relativePath: path,
+    }));
+  });
+
+  it("rejects an attachment upload whose external part name differs from the contract", () => {
+    const input = validInput();
+    const path = input.spec.paths.view;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(/form\.bankReceipt/g, "fileList")
+        .replace(/<input([^>]*?)type="file"([^>]*?)\/>/, '<el-upload$1name="otherAttachment"$2 />'),
+    );
+
+    const result = validator.validate(input);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "ATTACHMENT_MAPPING_MISSING",
+      relativePath: path,
+      message: expect.stringContaining("Vue upload"),
+    }));
+  });
+
+  it("rejects an attachment API whose multipart part name differs from the contract", () => {
+    const input = validInput();
+    const path = input.spec.paths.api;
+    input.files.set(path, input.files.get(path)!.replace(/bankReceipt/g, "otherAttachment"));
+
+    const result = validator.validate(input);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "ATTACHMENT_MAPPING_MISSING",
+      relativePath: path,
+      message: expect.stringContaining("frontend API"),
+    }));
   });
 
   it("rejects platform actions outside the single allowed start call", () => {
@@ -129,6 +163,71 @@ describe("static generated-code validation", () => {
     );
     expect(result.diagnostics.find(({ code }) => code === "PLATFORM_ACTION_FORBIDDEN"))
       .toEqual(expect.objectContaining({ relativePath: path, line: expect.any(Number) }));
+  });
+
+  it("rejects the captured user_sales platform API guesses before Maven compilation", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace("com.flowmind.platform.api.service.ProcessRuntimeService", "com.flowmind.platform.runtime.ProcessRuntimeService")
+        .replace("com.flowmind.platform.api.request.StartProcessRequest", "com.flowmind.platform.runtime.dto.StartProcessRequest")
+        .replace("com.flowmind.platform.api.request.AttachmentUploadItem", "com.flowmind.platform.runtime.dto.AttachmentUploadItem")
+        .replace("com.flowmind.platform.api.dto.ProcessInstanceDTO", "com.flowmind.platform.runtime.dto.ProcessInstance")
+        .replace("CurrentBusinessUserProvider.BusinessUser", "CurrentUser")
+        .replace("request.setVariables(variables)", "request.setProcessVariables(variables)")
+        .replace("request.setAttachments(attachments)", "request.setAttachmentItems(attachments)"),
+    );
+    const result = validator.validate(input);
+    expect(result.status).toBe("FAILED");
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "PLATFORM_API_CONTRACT_MISMATCH",
+      relativePath: path,
+    }));
+  });
+
+  it("rejects an opaque created-task mapping that drops task summary fields", () => {
+    const input = validInput();
+    const path = input.spec.paths.responseDto;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace("private List<CreatedTask> createdTasks;", "private List<?> createdTasks;"),
+    );
+
+    const result = validator.validate(input);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "PLATFORM_API_CONTRACT_MISMATCH",
+      relativePath: path,
+    }));
+  });
+
+  it("rejects captured backend test environment mismatches", () => {
+    const input = validInput();
+    input.files.set(
+      input.spec.paths.controllerTest,
+      input.files.get(input.spec.paths.controllerTest)! + "\n@WebMvcTest(EntryApplicationController.class) class SliceTest {}\n",
+    );
+    input.files.set(
+      input.spec.paths.serviceTest,
+      input.files.get(input.spec.paths.serviceTest)! + "\n@BeforeEach void setUp() { when(currentBusinessUserProvider.currentUser()).thenReturn(user); }\n",
+    );
+
+    const result = validator.validate(input);
+    expect(result.diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH")).toHaveLength(2);
+  });
+
+  it("rejects captured Element Plus and jsdom test anti-patterns", () => {
+    const input = validInput();
+    const path = input.spec.paths.viewTest;
+    input.files.set(
+      path,
+      input.files.get(path)! + `\nwrapper.findAll("option");\nwrapper.vm.form.amount = 1;\nwrapper.find(".el-form-item__error");\npayloadBlob.text();\n`,
+    );
+
+    const result = validator.validate(input);
+    expect(result.diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH")).toHaveLength(4);
   });
 
   it("rejects missing field mapping and weakened tests", () => {

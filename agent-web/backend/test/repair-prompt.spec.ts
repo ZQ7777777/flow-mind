@@ -26,7 +26,15 @@ describe("repair prompt", () => {
       createdAt: "2026-08-05T00:00:00.000Z",
       completedAt: "2026-08-05T00:00:01.000Z",
     };
-    const buildRepairPrompt = (repairModule as Record<string, unknown>).buildRepairPrompt as undefined | ((round: number, stages: QualityStageResult[], review: CodeReviewReport) => string);
-    expect(buildRepairPrompt?.(1, stages, review)).toContain("REVIEW_BOUNDARY");
+    const buildRepairPrompt = (repairModule as Record<string, unknown>).buildRepairPrompt as undefined | ((round: number, stages: QualityStageResult[], review: CodeReviewReport, references?: { platformRuntime: string; trustedUserContext: string }) => string);
+    const prompt = buildRepairPrompt?.(1, stages, review, {
+      platformRuntime: "com.flowmind.platform.api.service.ProcessRuntimeService setVariables setAttachments getCreatedTasks",
+      trustedUserContext: "CurrentBusinessUserProvider.BusinessUser",
+    });
+    expect(prompt).toContain("REVIEW_BOUNDARY");
+    expect(prompt).toContain("com.flowmind.platform.api.service.ProcessRuntimeService");
+    expect(prompt).toContain("CurrentBusinessUserProvider.BusinessUser");
+    expect(prompt).toContain("all failed hard and soft quality stages");
+    expect(prompt).toContain("BACKEND_TESTS and FRONTEND_TESTS");
   });
 });

@@ -43,7 +43,8 @@ describe("ProcessPreview", () => {
         },
       },
     });
-    expect(wrapper.text()).toContain("definition-entry");
+    expect(wrapper.text()).toContain("DRAFT");
+    expect(wrapper.text()).toContain("INACTIVE");
     expect(wrapper.text()).toContain("开始");
     expect(wrapper.text()).toContain("申请");
     expect(wrapper.text()).toContain("测试校验问题");

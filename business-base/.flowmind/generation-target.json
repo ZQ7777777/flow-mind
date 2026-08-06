@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.0",
+  "contractVersion": "1.1",
   "projectId": "flowmind-business-base",
   "backend": {
     "rootDir": "backend",
@@ -20,6 +20,10 @@
       "userIdProperty": "userId",
       "departmentIdProperty": "departmentId"
     },
+    "apiReferences": {
+      "platformRuntime": ".flowmind/references/platform-starter-0.1.0.md",
+      "trustedUserContext": "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java"
+    },
     "verificationProfile": "maven-java8"
   },
   "frontend": {
@@ -33,6 +37,8 @@
   },
   "readableReferenceFiles": [
     "backend/pom.xml",
+    ".flowmind/references/platform-starter-0.1.0.md",
+    "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java",
     "frontend/package.json",
     "frontend/src/router/generated-routes.ts"
   ],
@@ -51,6 +57,14 @@
     {
       "path": "frontend/package.json",
       "sha256": "c9b53bc59543737cd28b19e4a1a102c50d8c1cc9415eb23ade9d07f92e212021"
+    },
+    {
+      "path": ".flowmind/references/platform-starter-0.1.0.md",
+      "sha256": "9466af701bb2d9798a29442cf786750353cd68ce9e37de5f3721a34e691a0704"
+    },
+    {
+      "path": "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java",
+      "sha256": "03addaa975a358750c94c6ed5a25bf5346218b172bcfb73cdaf1e27844119141"
     }
   ]
 }

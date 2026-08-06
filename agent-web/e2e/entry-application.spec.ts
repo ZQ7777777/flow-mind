@@ -44,7 +44,7 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
   await page.getByRole("button", { name: "确认需求并创建流程" }).click();
   await expect(page.getByText("PROCESS_REVIEW", { exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByRole("tab", { name: "流程预览" }).click();
-  await expect(page.getByText("definition_entry_v1")).toBeVisible();
+  await expect(page.getByText("入金申请_v1")).toBeVisible();
   await expect(page.getByRole("button", { name: "部门经理审批 用户任务" })).toBeVisible();
   await expect(page.getByText("银行回单", { exact: true })).toBeVisible();
 

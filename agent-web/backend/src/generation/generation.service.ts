@@ -26,7 +26,7 @@ import {
   validateGenerationRequirement,
 } from "./generation-spec.js";
 import { StagingService, generationContract, parseManifest } from "./staging.service.js";
-import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
+import { apiReferencePaths, TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
 import { PlatformClientService } from "../platform/platform-client.service.js";
 import { loadFrozenTesterFixture } from "./frozen-tester-fixture.js";
 import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
@@ -442,6 +442,11 @@ export class GenerationService {
     const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
     const spec = deriveGenerationSpec(requirement, contract);
     const target: ValidatedGenerationTarget = { targetRoot: generation.target_root, contract };
+    const referencePaths = apiReferencePaths(contract);
+    const apiReferences = {
+      platformRuntime: this.targets.readReference(target, referencePaths.platformRuntime, generation.session_id),
+      trustedUserContext: this.targets.readReference(target, referencePaths.trustedUserContext, generation.session_id),
+    };
     const callbacks: GenerationPiCallbacks = {
       requirement,
       contract,
@@ -464,7 +469,7 @@ export class GenerationService {
       const piSession = await this.pi.runGeneration(
         generationId,
         generation.staging_dir,
-        buildGenerationPrompt(requirement, JSON.parse(generation.process_snapshot_json), contract, spec),
+        buildGenerationPrompt(requirement, JSON.parse(generation.process_snapshot_json), contract, spec, apiReferences),
         callbacks,
       );
       this.database.db.prepare("UPDATE agent_code_generation SET pi_session_id = ?, pi_session_file = ?, updated_at = ? WHERE id = ?")

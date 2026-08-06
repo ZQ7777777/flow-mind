@@ -17,6 +17,33 @@ export interface ValidatedGenerationTarget {
   contract: GenerationTargetContract;
 }
 
+export const DEFAULT_PLATFORM_API_REFERENCE = ".flowmind/references/platform-starter-0.1.0.md";
+
+export function normalizeGenerationContract(contract: GenerationTargetContract): GenerationTargetContract {
+  if (contract.contractVersion === "1.1" && contract.backend.apiReferences) return contract;
+  const trustedUserContext = `${contract.backend.rootDir}/src/main/java/${contract.backend.trustedUserContext.accessorType.replace(/\./g, "/")}.java`;
+  return {
+    ...contract,
+    contractVersion: "1.1",
+    backend: {
+      ...contract.backend,
+      apiReferences: {
+        platformRuntime: DEFAULT_PLATFORM_API_REFERENCE,
+        trustedUserContext,
+      },
+    },
+    readableReferenceFiles: [...new Set([
+      ...contract.readableReferenceFiles,
+      DEFAULT_PLATFORM_API_REFERENCE,
+      trustedUserContext,
+    ])],
+  };
+}
+
+export function apiReferencePaths(contract: GenerationTargetContract): { platformRuntime: string; trustedUserContext: string } {
+  return normalizeGenerationContract(contract).backend.apiReferences!;
+}
+
 @Injectable()
 export class TargetContractService {
   private readonly config = loadConfig();
@@ -65,6 +92,15 @@ export class TargetContractService {
         errors: this.validateSchema.errors || [],
       });
     }
+    if (contract.contractVersion === "1.1") {
+      const references = contract.backend.apiReferences;
+      if (!references
+        || !Object.values(references).every((path) => contract.readableReferenceFiles.includes(path))
+        || !Object.values(references).every((path) => contract.protectedFiles.some((item) => item.path === path))) {
+        throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "generation API references must be readable and protected", sessionId);
+      }
+    }
+    contract = normalizeGenerationContract(contract);
     if (contract.allowedOutputPatterns.length !== REQUIRED_OUTPUT_PATTERNS.length
       || REQUIRED_OUTPUT_PATTERNS.some((pattern, index) => contract.allowedOutputPatterns[index] !== pattern)) {
       throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "allowed output patterns do not match the Flow Mind boundary", sessionId);

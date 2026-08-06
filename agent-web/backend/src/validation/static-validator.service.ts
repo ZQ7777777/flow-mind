@@ -54,6 +54,7 @@ export class StaticValidatorService {
       this.validateJavaBoundary(input, javaTokens, diagnostics);
       this.validateTypeScriptBoundary(input, sourceFiles, diagnostics);
       this.validateMappings(input, diagnostics);
+      this.validateGeneratedTests(input, diagnostics);
     }
 
     const completedAt = new Date().toISOString();
@@ -138,6 +139,51 @@ export class StaticValidatorService {
         `Production code must call startAndSubmit exactly once; found ${startCalls.length}.`,
         startCalls[0]?.path,
         startCalls[0]?.token.startLine,
+      ));
+    }
+
+    const servicePath = input.spec.paths.service;
+    const service = input.files.get(servicePath) || "";
+    const productionSource = productionEntries.map(([path]) => input.files.get(path) || "").join("\n");
+    const accessorType = input.contract.backend.trustedUserContext.accessorType.split(".").pop()!;
+    const requiredApiSymbols = [
+      "import com.flowmind.platform.api.service.ProcessRuntimeService;",
+      "import com.flowmind.platform.api.request.StartProcessRequest;",
+      "import com.flowmind.platform.api.request.AttachmentUploadItem;",
+      "import com.flowmind.platform.api.dto.ProcessInstanceDTO;",
+      `${accessorType}.BusinessUser`,
+      ".setVariables(",
+      ".setAttachments(",
+      ".getCreatedTasks(",
+    ];
+    const missingApiSymbols = requiredApiSymbols.filter((symbol) =>
+      symbol === ".getCreatedTasks(" ? !productionSource.includes(symbol) : !service.includes(symbol),
+    );
+    if (missingApiSymbols.length || productionSource.includes("com.flowmind.platform.runtime")) {
+      diagnostics.push(diagnostic(
+        "PLATFORM_API_CONTRACT_MISMATCH",
+        `Generated backend must use the authoritative platform-starter API; missing or invalid symbols: ${missingApiSymbols.join(", ") || "com.flowmind.platform.runtime"}.`,
+        servicePath,
+      ));
+    }
+
+    const responsePath = input.spec.paths.responseDto;
+    const response = input.files.get(responsePath) || "";
+    const taskMappingSource = `${service}\n${response}`;
+    const taskMappingSymbols = [
+      "import com.flowmind.platform.api.dto.TaskDTO;",
+      ".getTaskId()",
+      ".getNodeCode()",
+      ".getNodeName()",
+    ];
+    const missingTaskSymbols = taskMappingSymbols.filter((symbol) => !taskMappingSource.includes(symbol));
+    const opaqueMapping = /\bList\s*<\s*\?\s*>\s+(?:rawTasks|createdTasks)\b/.test(taskMappingSource);
+    if (missingTaskSymbols.length || opaqueMapping) {
+      const mappingPath = response.includes("getCreatedTasks()") ? responsePath : servicePath;
+      diagnostics.push(diagnostic(
+        "PLATFORM_API_CONTRACT_MISMATCH",
+        `Generated response must map TaskDTO summaries without dropping fields; missing or invalid symbols: ${missingTaskSymbols.join(", ") || "List<?> task mapping"}.`,
+        mappingPath,
       ));
     }
 
@@ -233,14 +279,78 @@ export class StaticValidatorService {
       }
     }
     for (const attachment of input.spec.applyAttachments) {
-      if (!mapsAttachmentCode(service, attachment.attachmentCode)
-        || !mapsAttachmentView(view, attachment.attachmentCode)
-        || !api.includes(attachment.attachmentCode)) {
+      const attachmentCode = attachment.attachmentCode;
+      if (!mapsAttachmentCode(service, attachmentCode)) {
         diagnostics.push(diagnostic(
           "ATTACHMENT_MAPPING_MISSING",
-          `Generated code does not consistently map attachment ${attachment.attachmentCode}.`,
+          `Generated backend service must map attachment ${attachmentCode} with setAttachmentCode().`,
+          input.spec.paths.service,
         ));
       }
+      if (!mapsAttachmentView(view, attachmentCode)) {
+        diagnostics.push(diagnostic(
+          "ATTACHMENT_MAPPING_MISSING",
+          `Generated Vue upload must expose attachment ${attachmentCode} through form.${attachmentCode} or an exact name="${attachmentCode}" part binding.`,
+          input.spec.paths.view,
+        ));
+      }
+      if (!mapsAttachmentApi(api, attachmentCode)) {
+        diagnostics.push(diagnostic(
+          "ATTACHMENT_MAPPING_MISSING",
+          `Generated frontend API must append attachment ${attachmentCode} using the exact multipart part name.`,
+          input.spec.paths.api,
+        ));
+      }
+    }
+  }
+
+  private validateGeneratedTests(input: StaticValidationInput, diagnostics: QualityDiagnostic[]): void {
+    const controllerPath = input.spec.paths.controllerTest;
+    const controllerTest = input.files.get(controllerPath) || "";
+    this.forbidSource(controllerTest, controllerPath, diagnostics, "GENERATED_TEST_CONTRACT_MISMATCH", [
+      "@WebMvcTest",
+    ], "Generated controller tests must use MockMvcBuilders.standaloneSetup because the target has no Spring Boot application class.");
+
+    const servicePath = input.spec.paths.serviceTest;
+    const serviceTest = input.files.get(servicePath) || "";
+    const accessorMethod = escapeRegExp(input.contract.backend.trustedUserContext.accessorMethod);
+    const beforeEachBody = /@BeforeEach\s*(?:\r?\n\s*)?(?:(?:public|protected|private)\s+)?void\s+\w+\s*\([^)]*\)\s*\{([^{}]*)\}/g;
+    const globalTrustedUserStub = new RegExp(
+      `\\b(?:when|doReturn)\\s*\\([\\s\\S]{0,200}\\.${accessorMethod}\\s*\\(\\s*\\)`,
+    );
+    const globalStubMatch = [...serviceTest.matchAll(beforeEachBody)].find((match) =>
+      globalTrustedUserStub.test(match[1]),
+    );
+    if (globalStubMatch) {
+      const location = lineAndColumn(serviceTest, globalStubMatch.index);
+      diagnostics.push(diagnostic(
+        "GENERATED_TEST_CONTRACT_MISMATCH",
+        "Generated service tests must not install a trusted-user Mockito stub in @BeforeEach; validation tests do not consume it under strict stubbing.",
+        servicePath,
+        location.line,
+        location.column,
+      ));
+    }
+
+    const viewPath = input.spec.paths.viewTest;
+    const viewTest = input.files.get(viewPath) || "";
+    const frontendPatterns: Array<{ pattern: RegExp; label: string }> = [
+      { pattern: /\.findAll\s*\(\s*(["'])option\1\s*\)/, label: "native option query" },
+      { pattern: /\bwrapper\.vm\b/, label: "wrapper.vm private-state access" },
+      { pattern: /\.find(?:All)?\s*\(\s*(["'])\.el-[^"']*\1\s*\)/, label: "Element Plus internal CSS query" },
+      { pattern: /\b(?:payloadBlob|blob)\.text\s*\(/, label: "Blob.text() in jsdom" },
+    ];
+    for (const { pattern, label } of frontendPatterns) {
+      const match = pattern.exec(viewTest);
+      if (!match) continue;
+      const location = lineAndColumn(viewTest, match.index);
+      diagnostics.push(diagnostic(
+        "GENERATED_TEST_CONTRACT_MISMATCH",
+        `Generated Element Plus/jsdom test uses unsupported or internal behavior: ${label}.`,
+        viewPath,
+        location.line,
+        location.column,
+      ));
     }
   }
 
@@ -270,8 +380,24 @@ function mapsFormField(service: string, request: string, fieldCode: string): boo
 }
 
 function mapsAttachmentView(view: string, attachmentCode: string): boolean {
-  return view.includes(`form.${attachmentCode}`)
-    || (view.includes(`${attachmentCode}FileList`) && view.includes(`name="${attachmentCode}"`));
+  if (view.includes(`form.${attachmentCode}`)) return true;
+
+  const escapedCode = escapeRegExp(attachmentCode);
+  const exactName = new RegExp(`\\bname\\s*=\\s*(["'])${escapedCode}\\1`, "i");
+  const fileType = /\btype\s*=\s*(["'])file\1/i;
+  for (const match of view.matchAll(/<(el-upload|input)\b[^>]*>/gi)) {
+    const [, tagName] = match;
+    const openingTag = match[0];
+    if (exactName.test(openingTag) && (tagName.toLowerCase() === "el-upload" || fileType.test(openingTag))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function mapsAttachmentApi(api: string, attachmentCode: string): boolean {
+  const escapedCode = escapeRegExp(attachmentCode);
+  return new RegExp(`\\.append\\s*\\(\\s*(["'])${escapedCode}\\1\\s*,`).test(api);
 }
 
 function diagnostic(

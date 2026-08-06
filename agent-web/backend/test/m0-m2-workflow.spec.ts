@@ -210,7 +210,7 @@ describe("M0-M2 workflow", () => {
       action: "REMIND", durationMinutes: 1440, enabled: true, severity: "MEDIUM",
     });
     expect(JSON.parse(applyNode.reminderConfig)).toEqual({
-      enabled: true, maxCount: 2, messageTemplate: "您有代办，请及时处理。",
+      enabled: true, maxCount: 2, messageTemplate: "您有待办，请及时处理。",
     });
     expect(calls.every((call) => call.headers.get("X-Flow-User-Id") === "user_sales")).toBe(true);
   });

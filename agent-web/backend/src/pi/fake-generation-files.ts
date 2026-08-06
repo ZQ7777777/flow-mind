@@ -187,23 +187,50 @@ function responseSource(spec: GenerationSpec): string {
   return `package ${spec.javaPackage}.dto;
 
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.TaskDTO;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public class ${spec.classPrefix}SubmitResponse {
     private String instanceId;
     private String status;
-    private List<?> createdTasks;
+    private List<CreatedTask> createdTasks;
 
     public static ${spec.classPrefix}SubmitResponse from(ProcessInstanceDTO value) {
         ${spec.classPrefix}SubmitResponse response = new ${spec.classPrefix}SubmitResponse();
         response.instanceId = value.getInstanceId();
         response.status = String.valueOf(value.getInstanceStatus());
-        response.createdTasks = value.getCreatedTasks();
+        response.createdTasks = mapCreatedTasks(value.getCreatedTasks());
         return response;
     }
+
+    private static List<CreatedTask> mapCreatedTasks(List<TaskDTO> source) {
+        if (source == null || source.isEmpty()) return Collections.emptyList();
+        List<CreatedTask> result = new ArrayList<CreatedTask>(source.size());
+        for (TaskDTO task : source) {
+            result.add(new CreatedTask(task.getTaskId(), task.getNodeCode(), task.getNodeName()));
+        }
+        return result;
+    }
+
     public String getInstanceId() { return instanceId; }
     public String getStatus() { return status; }
-    public List<?> getCreatedTasks() { return createdTasks; }
+    public List<CreatedTask> getCreatedTasks() { return createdTasks; }
+
+    public static class CreatedTask {
+        private final String taskId;
+        private final String nodeCode;
+        private final String taskName;
+        public CreatedTask(String taskId, String nodeCode, String taskName) {
+            this.taskId = taskId;
+            this.nodeCode = nodeCode;
+            this.taskName = taskName;
+        }
+        public String getTaskId() { return taskId; }
+        public String getNodeCode() { return nodeCode; }
+        public String getTaskName() { return taskName; }
+    }
 }
 `;
 }
@@ -271,7 +298,7 @@ const success = ref("");
 async function submit() {
   if (${requiredChecks.length ? requiredChecks.join(" || ") : "false"}) throw new Error("请完整填写必填项");
   const result = await ${submitFunction}(form, crypto.randomUUID());
-  success.value = "提交成功，下一处理节点：" + (result.createdTasks?.[0]?.nodeName || "待处理");
+  success.value = "提交成功，下一处理节点：" + (result.createdTasks?.[0]?.taskName || "待处理");
 }
 </script>
 <template><form @submit.prevent="submit"><h1>${escapeHtml(spec.businessName)}</h1>

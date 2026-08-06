@@ -37,3 +37,10 @@ agent-web/test-results/
 #固定这两类文件的工作区换行符
 business-base/backend/pom.xml text eol=lf
 business-base/frontend/package.json text eol=lf
+
+# agent生成文件
+business-base/backend/src/main/java/com/flowmind/business/generated/
+business-base/backend/src/test/java/com/flowmind/business/generated/
+business-base/frontend/src/api/generated/
+business-base/frontend/src/modules/generated/
+business-base/frontend/src/router/generated-routes.ts
