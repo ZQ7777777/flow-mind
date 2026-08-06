@@ -101,6 +101,20 @@ describe("static generated-code validation", () => {
     expect(validator.validate(input).diagnostics).toEqual([]);
   });
 
+  it("accepts a process-variable key that uses a resolved static final string constant", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(/(public class \w+Service \{)/, '$1\n    private static final String FIELD_AMOUNT = "amount";')
+        .replace('variables.put("amount", payload.getAmount())', "variables.put(FIELD_AMOUNT, payload.getAmount())"),
+    );
+
+    expect(validator.validate(input).diagnostics.find(({ code }) => code === "FORM_FIELD_MAPPING_MISSING"))
+      .toBeUndefined();
+  });
+
   it("rejects an attachment constant whose resolved value differs from the contract", () => {
     const input = validInput();
     const path = input.spec.paths.service;
@@ -243,6 +257,16 @@ describe("static generated-code validation", () => {
     expect(result.diagnostics.map(({ code }) => code)).toEqual(
       expect.arrayContaining(["FORM_FIELD_MAPPING_MISSING", "TEST_WEAKENED"]),
     );
+    expect(result.diagnostics.find(({ code }) => code === "FORM_FIELD_MAPPING_MISSING"))
+      .toEqual(expect.objectContaining({
+        diagnosticId: expect.any(String),
+        stage: "STATIC_VALIDATION",
+        actual: expect.stringContaining("amount"),
+        expected: expect.stringContaining("amount"),
+        repairHint: expect.stringContaining("amount"),
+        acceptedForms: expect.arrayContaining([expect.stringContaining('variables.put("amount"')]),
+        repairability: "CODE_ACTIONABLE",
+      }));
   });
 });
 

@@ -80,8 +80,12 @@ export type QualityStageStatus =
   | "INFRASTRUCTURE_FAILED"
   | "CANCELLED";
 export type QualitySeverity = "ERROR" | "WARNING" | "INFO";
+export type DiagnosticRepairability = "CODE_ACTIONABLE" | "INFRASTRUCTURE" | "PROTECTED_FILE" | "UNKNOWN";
 
 export interface QualityDiagnostic {
+  /** Stable fingerprint; optional while older persisted reports are still readable. */
+  diagnosticId?: string;
+  stage?: QualityStageName;
   code: string;
   message: string;
   severity: QualitySeverity;
@@ -89,6 +93,14 @@ export interface QualityDiagnostic {
   relativePath?: string;
   line?: number;
   column?: number;
+  actual?: string;
+  expected?: string;
+  evidence?: string;
+  repairHint?: string;
+  acceptedForms?: string[];
+  unsupportedForms?: string[];
+  repairability?: DiagnosticRepairability;
+  verificationRunId?: string;
 }
 
 export interface QualityStageResult {
@@ -106,12 +118,33 @@ export interface QualityStageResult {
 }
 
 export interface CodeReviewIssue {
+  diagnosticId?: string;
   code: string;
   title: string;
   message: string;
   severity: "BLOCKING" | "WARNING" | "INFO";
   relativePath?: string;
   line?: number;
+  evidence?: string;
+  repairHint?: string;
+  repairability?: DiagnosticRepairability;
+}
+
+export interface RepairResolution {
+  diagnosticId: string;
+  status: "RESOLVED" | "BLOCKED";
+  changedFiles: string[];
+  explanation: string;
+}
+
+export interface RepairAttemptSummary {
+  round: number;
+  verificationRunId: string;
+  changedFiles: string[];
+  resolutions: RepairResolution[];
+  diagnosticIds: string[];
+  outcome: "CHANGED" | "NO_EFFECT" | "INFRASTRUCTURE_FAILED";
+  createdAt: string;
 }
 
 export interface CodeReviewReport {
@@ -141,6 +174,7 @@ export interface GenerationQualityReport {
   maxRepairRounds: 3;
   stages: QualityStageResult[];
   review?: CodeReviewReport;
+  repairAttempts?: RepairAttemptSummary[];
   /** Set only when the owner explicitly starts this run without AI review. */
   aiReviewSkipped?: boolean;
   hardGatePassed: boolean;

@@ -19,6 +19,7 @@ import type {
   QualityStageResult,
 } from "@flowmind/agent-contracts";
 import { AgentError } from "../common/agent-error.js";
+import { qualityDiagnostic, sanitizeDiagnosticEvidence } from "./quality-diagnostic.js";
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
@@ -138,7 +139,6 @@ export async function executeVerificationCommand(
   return new Promise((resolveResult) => {
     let stdout = "";
     let stderr = "";
-    let bytes = 0;
     let truncated = false;
     let timedOut = false;
     let cancelled = false;
@@ -165,16 +165,17 @@ export async function executeVerificationCommand(
     }
 
     const collect = (target: "stdout" | "stderr", chunk: Buffer): void => {
-      if (bytes >= command.maxOutputBytes) {
-        truncated = true;
-        return;
-      }
-      const remaining = command.maxOutputBytes - bytes;
-      const kept = chunk.subarray(0, remaining);
-      bytes += kept.length;
-      if (kept.length < chunk.length) truncated = true;
-      if (target === "stdout") stdout += kept.toString("utf8");
-      else stderr += kept.toString("utf8");
+      if (target === "stdout") stdout += chunk.toString("utf8");
+      else stderr += chunk.toString("utf8");
+      const totalBytes = Buffer.byteLength(stdout, "utf8") + Buffer.byteLength(stderr, "utf8");
+      if (totalBytes <= command.maxOutputBytes) return;
+      truncated = true;
+      if (stdout && stderr) {
+        const stdoutLimit = Math.floor(command.maxOutputBytes / 2);
+        stdout = truncateUtf8Tail(stdout, stdoutLimit);
+        stderr = truncateUtf8Tail(stderr, command.maxOutputBytes - stdoutLimit);
+      } else if (stdout) stdout = truncateUtf8Tail(stdout, command.maxOutputBytes);
+      else stderr = truncateUtf8Tail(stderr, command.maxOutputBytes);
     };
     child.stdout.on("data", (chunk: Buffer) => collect("stdout", chunk));
     child.stderr.on("data", (chunk: Buffer) => collect("stderr", chunk));
@@ -367,17 +368,23 @@ function stageResult(
       : result.cancelled ? "Verification command was cancelled."
         : status === "PASSED" ? "Command passed." : `Command exited with code ${result.exitCode}.`);
   const parsedDiagnostics = status === "PASSED" ? [] : parseCommandDiagnostics(command, result, hardGate);
+  const fallbackEvidence = diagnosticExcerpt(`${result.stdout}\n${result.stderr}`);
   return {
     stage: command.stage,
     status,
     hardGate,
     summary: message,
-    diagnostics: status === "PASSED" ? [] : parsedDiagnostics.length ? parsedDiagnostics : [{
+    diagnostics: status === "PASSED" ? [] : parsedDiagnostics.length ? parsedDiagnostics : [qualityDiagnostic(command.stage, {
       code: status === "INFRASTRUCTURE_FAILED" ? "VERIFICATION_INFRASTRUCTURE_FAILED" : "VERIFICATION_COMMAND_FAILED",
       message,
-      severity: "ERROR",
       hardGate,
-    }],
+      evidence: fallbackEvidence || message,
+      expected: status === "INFRASTRUCTURE_FAILED" ? "The verification environment must be available." : "The command must exit successfully.",
+      repairHint: status === "INFRASTRUCTURE_FAILED"
+        ? "Do not change generated code for this failure; retry after the verification environment is restored."
+        : "Use the evidence and verification log to locate and correct the failing code or assertion.",
+      repairability: status === "INFRASTRUCTURE_FAILED" ? "INFRASTRUCTURE" : "CODE_ACTIONABLE",
+    })],
     exitCode: result.exitCode === null ? undefined : result.exitCode,
     logPath,
     outputTruncated,
@@ -391,33 +398,40 @@ function parseCommandDiagnostics(
 ): QualityDiagnostic[] {
   const diagnostics: QualityDiagnostic[] = [];
   const output = `${result.stdout}\n${result.stderr}`;
-  for (const rawLine of output.split(/\r?\n/)) {
+  const lines = output.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const line = rawLine.trim();
     let match = line.match(/^(.+?)\((\d+),(\d+)\):\s*(?:error|warning)\s+(TS\d+):\s*(.+)$/i);
+    if (!match) match = line.match(/^(.+?):(\d+):(\d+)\s+-\s+(?:error|warning)\s+(TS\d+):\s*(.+)$/i);
     if (match) {
-      diagnostics.push({
+      diagnostics.push(qualityDiagnostic(command.stage, {
         code: match[4],
         message: match[5].trim(),
-        severity: "ERROR",
         hardGate,
         relativePath: diagnosticPath(command, match[1]),
         line: Number(match[2]),
         column: Number(match[3]),
-      });
+        evidence: line,
+        expected: "TypeScript and Vue sources must pass type checking without errors.",
+        repairHint: "Correct the reported type mismatch at the referenced source location.",
+      }));
       continue;
     }
     match = line.match(/^(?:\[ERROR\]\s*)?(.+?\.java):\[(\d+),(\d+)\]\s*(.+)$/);
     if (!match) match = line.match(/^(?:\[ERROR\]\s*)?(.+?\.java):(\d+):(?:(\d+):)?\s*(?:error:\s*)?(.+)$/i);
     if (match) {
-      diagnostics.push({
+      diagnostics.push(qualityDiagnostic(command.stage, {
         code: "JAVA_COMPILER_ERROR",
         message: match[4].trim(),
-        severity: "ERROR",
         hardGate,
         relativePath: diagnosticPath(command, match[1]),
         line: Number(match[2]),
         column: match[3] ? Number(match[3]) : undefined,
-      });
+        evidence: diagnosticBlock(lines, index),
+        expected: "Generated Java sources must compile against the authoritative platform API.",
+        repairHint: "Correct the compiler error and consult the authoritative references before editing platform calls.",
+      }));
       continue;
     }
     match = line.match(/^[>\s❯]*([^\s]+\.(?:spec|test)\.[jt]sx?):(\d+):(\d+)/);
@@ -433,7 +447,78 @@ function parseCommandDiagnostics(
       });
     }
   }
-  return diagnostics;
+  const structuredTest = parseStructuredTestDiagnostic(command, lines, hardGate);
+  const sourceDiagnostics = structuredTest
+    ? [...diagnostics.filter(({ code }) => code !== "TEST_FAILURE"), structuredTest]
+    : diagnostics;
+  const enriched = sourceDiagnostics.map((item) => item.diagnosticId ? item : qualityDiagnostic(command.stage, {
+    ...item,
+    evidence: item.message,
+    expected: item.code === "TEST_FAILURE" ? "The named test must pass." : undefined,
+    repairHint: item.code === "TEST_FAILURE" ? "Correct the implementation without weakening or skipping the test." : undefined,
+  }));
+  return [...new Map(enriched.map((item) => [item.diagnosticId, item])).values()];
+}
+
+function parseStructuredTestDiagnostic(
+  command: VerificationCommand,
+  lines: string[],
+  hardGate: boolean,
+): QualityDiagnostic | undefined {
+  const output = lines.join("\n");
+  const vitestLocation = output.match(/[>\s❯*]*([^\s]+\.(?:spec|test)\.[jt]sx?):(\d+):(\d+)/);
+  if (vitestLocation && /(?:FAIL|AssertionError|expected)/i.test(output)) {
+    const evidence = diagnosticExcerpt(output);
+    return qualityDiagnostic(command.stage, {
+      code: "VITEST_TEST_FAILURE",
+      message: output.match(/(?:FAIL|AssertionError)[^\r\n]*/i)?.[0] || "Vitest assertion failed.",
+      hardGate,
+      relativePath: diagnosticPath(command, vitestLocation[1]),
+      line: Number(vitestLocation[2]),
+      column: Number(vitestLocation[3]),
+      evidence,
+      actual: assertionValue(evidence, "actual") || assertionValue(evidence, "received"),
+      expected: assertionValue(evidence, "expected") || "The Vitest assertion must pass.",
+      repairHint: "Use the assertion difference to correct the implementation without weakening or skipping the test.",
+    });
+  }
+  const junitLocation = output.match(/(?:at\s+)?[\w.$]+\.([\w$]+)\(([^()]+\.java):(\d+)\)/);
+  if (junitLocation && /(?:Assertion|expected|FAILURE!)/i.test(output)) {
+    const evidence = diagnosticExcerpt(output);
+    return qualityDiagnostic(command.stage, {
+      code: "JUNIT_TEST_FAILURE",
+      message: output.match(/(?:AssertionFailedError|AssertionError)[^\r\n]*/i)?.[0] || `JUnit test ${junitLocation[1]} failed.`,
+      hardGate,
+      relativePath: diagnosticPath(command, junitLocation[2]),
+      line: Number(junitLocation[3]),
+      evidence,
+      actual: assertionValue(evidence, "actual") || assertionValue(evidence, "but was"),
+      expected: assertionValue(evidence, "expected") || "The JUnit assertion must pass.",
+      repairHint: "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
+    });
+  }
+  return undefined;
+}
+
+function diagnosticExcerpt(output: string): string {
+  const trimmed = output.trim();
+  if (!trimmed) return "";
+  const failureIndex = Math.max(
+    trimmed.lastIndexOf("FAIL"),
+    trimmed.lastIndexOf("[ERROR]"),
+    trimmed.lastIndexOf("Assertion"),
+    trimmed.lastIndexOf("error"),
+  );
+  return sanitizeDiagnosticEvidence(trimmed.slice(Math.max(0, failureIndex >= 0 ? failureIndex : trimmed.length - 4_000)));
+}
+
+function diagnosticBlock(lines: string[], index: number): string {
+  return sanitizeDiagnosticEvidence(lines.slice(Math.max(0, index - 4), Math.min(lines.length, index + 4)).join("\n"));
+}
+
+function assertionValue(evidence: string, label: string): string | undefined {
+  const match = evidence.match(new RegExp(`${label}\\s*:?\\s*<?([^>\\n]+)>?`, "i"));
+  return match?.[1]?.trim();
 }
 
 function diagnosticPath(command: VerificationCommand, input: string): string | undefined {
@@ -446,9 +531,15 @@ function truncateUtf8(value: string, maxBytes: number): { value: string; truncat
   const buffer = Buffer.from(value, "utf8");
   if (buffer.length <= maxBytes) return { value, truncated: false };
   return {
-    value: Buffer.concat([buffer.subarray(0, maxBytes), Buffer.from("\n[output truncated]\n")]).toString("utf8"),
+    value: `[earlier output omitted]\n${truncateUtf8Tail(value, maxBytes)}`,
     truncated: true,
   };
+}
+
+function truncateUtf8Tail(value: string, maxBytes: number): string {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.length <= maxBytes) return value;
+  return buffer.subarray(buffer.length - maxBytes).toString("utf8").replace(/^\uFFFD+/, "");
 }
 
 function assertInside(root: string, candidate: string): void {

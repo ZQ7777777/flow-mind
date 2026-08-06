@@ -104,7 +104,7 @@ describe("verification worker", () => {
       maxOutputBytes: 64,
       execute: async (command) => ({
         exitCode: command.stage === "BACKEND_TESTS" ? 1 : 0,
-        stdout: "x".repeat(256),
+        stdout: `${"x".repeat(256)}\nFINAL_FAILURE_MARKER`,
         stderr: "",
         timedOut: false,
         cancelled: false,
@@ -117,6 +117,7 @@ describe("verification worker", () => {
       outputTruncated: true,
     }));
     expect(readFileSync(tests.logPath!, "utf8").length).toBeLessThan(256);
+    expect(readFileSync(tests.logPath!, "utf8")).toContain("FINAL_FAILURE_MARKER");
   });
   it("normalizes TypeScript compiler output into source diagnostics", async () => {
     const worker = new VerificationWorkerService();
@@ -141,12 +142,103 @@ describe("verification worker", () => {
 
     const typecheck = result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")!;
     expect(typecheck.diagnostics).toContainEqual(expect.objectContaining({
+      diagnosticId: expect.any(String),
+      stage: "FRONTEND_TYPECHECK",
       code: "TS2345",
       relativePath: "frontend/src/modules/generated/example.ts",
       line: 7,
       column: 9,
       message: "Argument is invalid.",
+      evidence: expect.stringContaining("TS2345"),
+      repairability: "CODE_ACTIONABLE",
     }));
+  });
+
+  it("keeps a redacted actionable excerpt when command output is not recognized", async () => {
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => ({
+        exitCode: command.stage === "BACKEND_TESTS" ? 1 : 0,
+        stdout: "",
+        stderr: command.stage === "BACKEND_TESTS"
+          ? "Assertion failed for applicationNo\nAuthorization: Bearer top-secret-token\nexpected: 42\nactual: 41\n"
+          : "",
+        timedOut: false,
+        cancelled: false,
+      }),
+    });
+
+    const diagnostic = result.stages.find(({ stage }) => stage === "BACKEND_TESTS")!.diagnostics[0];
+    expect(diagnostic).toEqual(expect.objectContaining({
+      diagnosticId: expect.any(String),
+      stage: "BACKEND_TESTS",
+      code: "VERIFICATION_COMMAND_FAILED",
+      evidence: expect.stringContaining("expected: 42"),
+      repairability: "CODE_ACTIONABLE",
+    }));
+    expect(diagnostic.evidence).not.toContain("top-secret-token");
+  });
+
+  it("normalizes JUnit and Vitest assertion failures with stable fingerprints", async () => {
+    const execute = async (command: VerificationCommand): Promise<VerificationCommandResult> => {
+      if (command.stage === "BACKEND_TESTS") {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: "org.opentest4j.AssertionFailedError: expected: <42> but was: <41>\n\tat com.flowmind.business.generated.EntryApplicationServiceTest.mapsAmount(EntryApplicationServiceTest.java:27)\n",
+          timedOut: false,
+          cancelled: false,
+        };
+      }
+      if (command.stage === "FRONTEND_TESTS") {
+        return {
+          exitCode: 1,
+          stdout: "FAIL src/modules/generated/__tests__/EntryApplicationApply.test.ts > submits amount\nAssertionError: expected 41 to be 42\n❯ src/modules/generated/__tests__/EntryApplicationApply.test.ts:18:9\n",
+          stderr: "",
+          timedOut: false,
+          cancelled: false,
+        };
+      }
+      return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+    };
+    const worker = new VerificationWorkerService();
+    const input = {
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute,
+    };
+    const first = await worker.run(input);
+    const second = await worker.run(input);
+    const junit = first.stages.find(({ stage }) => stage === "BACKEND_TESTS")!.diagnostics
+      .find(({ code }) => code === "JUNIT_TEST_FAILURE")!;
+    const vitest = first.stages.find(({ stage }) => stage === "FRONTEND_TESTS")!.diagnostics
+      .find(({ code }) => code === "VITEST_TEST_FAILURE")!;
+    expect(junit).toEqual(expect.objectContaining({
+      relativePath: "backend/EntryApplicationServiceTest.java",
+      line: 27,
+      actual: expect.stringContaining("41"),
+      expected: expect.stringContaining("42"),
+    }));
+    expect(vitest).toEqual(expect.objectContaining({
+      relativePath: "frontend/src/modules/generated/__tests__/EntryApplicationApply.test.ts",
+      line: 18,
+      column: 9,
+      evidence: expect.stringContaining("expected 41 to be 42"),
+    }));
+    expect(second.stages.find(({ stage }) => stage === "BACKEND_TESTS")!.diagnostics
+      .find(({ code }) => code === "JUNIT_TEST_FAILURE")!.diagnosticId).toBe(junit.diagnosticId);
   });
 
   it("restores frontend dependencies from the lockfile instead of copying node_modules", async () => {

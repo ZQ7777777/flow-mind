@@ -508,6 +508,26 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(7);
       });
     }
+    if (!applied.has(8)) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_repair_attempt (
+            id TEXT PRIMARY KEY,
+            generation_id TEXT NOT NULL REFERENCES agent_code_generation(id),
+            verification_run_id TEXT NOT NULL REFERENCES agent_verification_run(id),
+            round INTEGER NOT NULL,
+            diagnostic_ids_json TEXT NOT NULL DEFAULT '[]',
+            changed_files_json TEXT NOT NULL DEFAULT '[]',
+            resolutions_json TEXT NOT NULL DEFAULT '[]',
+            outcome TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_repair_attempt_generation_round
+            ON agent_repair_attempt(generation_id, round, created_at);
+        `);
+        this.recordMigration(8);
+      });
+    }
   }
 
   private recordMigration(version: number): void {

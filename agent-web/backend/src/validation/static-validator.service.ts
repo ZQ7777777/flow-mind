@@ -10,6 +10,7 @@ import type {
   QualityStageResult,
 } from "@flowmind/agent-contracts";
 import type { GenerationSpec } from "../generation/generation-spec.js";
+import { qualityDiagnostic, type DiagnosticDetails } from "../verification/quality-diagnostic.js";
 
 export interface StaticValidationInput {
   generationId: string;
@@ -269,6 +270,22 @@ export class StaticValidatorService {
           "FORM_FIELD_MAPPING_MISSING",
           `Service does not map confirmed form field ${field.fieldCode}.`,
           input.spec.paths.service,
+          undefined,
+          undefined,
+          {
+            actual: `No supported process-variable mapping was found for ${field.fieldCode} in ${input.spec.paths.service} or ${input.spec.paths.requestDto}.`,
+            expected: `Map the confirmed form field ${field.fieldCode} into StartProcessRequest variables.`,
+            repairHint: `Add a mapping for ${field.fieldCode} using one of the accepted forms, keeping the field code exact.`,
+            acceptedForms: [
+              `variables.put("${field.fieldCode}", value)`,
+              `variables.put(FIELD_CONSTANT, value) where FIELD_CONSTANT resolves to "${field.fieldCode}"`,
+              `payload.toProcessVariables() with put("${field.fieldCode}", value) in the DTO mapper`,
+            ],
+            unsupportedForms: [
+              `A differently spelled key or a constant whose value is not "${field.fieldCode}"`,
+              "A DTO mapper that is not passed to request.setVariables(...)",
+            ],
+          },
         ));
       }
       if (!request.includes(field.fieldCode) || !view.includes(`form.${field.fieldCode}`) || !api.includes(field.fieldCode)) {
@@ -374,9 +391,10 @@ export class StaticValidatorService {
 
 function mapsFormField(service: string, request: string, fieldCode: string): boolean {
   if (service.includes(`variables.put("${fieldCode}"`)) return true;
+  if (mapsStringConstantArgument(service, "variables.put", fieldCode)) return true;
   // A DTO-owned mapper is equivalent when the service passes its complete map into the request.
   return service.includes("payload.toProcessVariables()")
-    && request.includes(`put("${fieldCode}"`);
+    && (request.includes(`put("${fieldCode}"`) || mapsStringConstantArgument(request, "put", fieldCode));
 }
 
 function mapsAttachmentView(view: string, attachmentCode: string): boolean {
@@ -406,8 +424,23 @@ function diagnostic(
   relativePath?: string,
   line?: number,
   column?: number,
+  details: Partial<DiagnosticDetails> = {},
 ): QualityDiagnostic {
-  return { code, message, severity: "ERROR", hardGate: true, relativePath, line, column };
+  return qualityDiagnostic("STATIC_VALIDATION", {
+    code,
+    message,
+    hardGate: true,
+    relativePath,
+    line,
+    column,
+    actual: details.actual || message,
+    expected: details.expected || `The generated artifacts must satisfy static rule ${code}.`,
+    evidence: details.evidence || message,
+    repairHint: details.repairHint || `Inspect the referenced generated artifact and correct static rule ${code} without changing the confirmed requirement.`,
+    acceptedForms: details.acceptedForms,
+    unsupportedForms: details.unsupportedForms,
+    repairability: details.repairability || "CODE_ACTIONABLE",
+  });
 }
 
 function sameFiles(left: string[], right: string[]): boolean {
@@ -436,6 +469,18 @@ function mapsAttachmentCode(service: string, attachmentCode: string): boolean {
 
   return [...constantNames].some((name) =>
     new RegExp(`\\bsetAttachmentCode\\s*\\(\\s*${escapeRegExp(name)}\\s*\\)`).test(service),
+  );
+}
+
+function mapsStringConstantArgument(source: string, call: string, value: string): boolean {
+  const constantNames = new Set<string>();
+  const declaration = /\b(?:public|protected|private)?\s*(?:static\s+final|final\s+static)\s+String\s+([A-Za-z_$][\w$]*)\s*=\s*"([^"]+)"\s*;/g;
+  for (const match of source.matchAll(declaration)) {
+    if (match[2] === value) constantNames.add(match[1]);
+  }
+  const escapedCall = escapeRegExp(call);
+  return [...constantNames].some((name) =>
+    new RegExp(`${escapedCall}\\s*\\(\\s*${escapeRegExp(name)}\\s*,`).test(source),
   );
 }
 

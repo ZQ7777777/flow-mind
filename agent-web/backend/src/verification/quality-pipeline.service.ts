@@ -21,6 +21,7 @@ import {
   VerificationWorkerService,
   type VerificationCommandExecutor,
 } from "./verification-worker.service.js";
+import { qualityDiagnostic } from "./quality-diagnostic.js";
 
 interface QualityActionRequest {
   idempotencyKey: string;
@@ -261,6 +262,7 @@ export class QualityPipelineService {
       } else {
         stages.push(...skippedCommandStages());
       }
+      attachRunToDiagnostics(stages, runId);
 
       generation = this.database.getGeneration(generationId);
       if (!generation || generation.generation_revision !== manifest.revision) return;
@@ -280,8 +282,9 @@ export class QualityPipelineService {
       infrastructureFailure = infrastructureFailure || reviewerInfrastructureFailure;
       const needsRepair = !decision.hardGatePassed || decision.softFailures.length > 0;
       const repairDecision = nextRepairDecision(generation.repair_round, needsRepair, infrastructureFailure);
+      let repairFailureCode: "REPAIR_NO_EFFECT" | "REPAIR_PROTOCOL_INVALID" | undefined;
       if (repairDecision.repair && this.repair) {
-        const repairResult = await this.repair.attempt(generation, repairDecision.nextRound, stages, review);
+        const repairResult = await this.repair.attempt(generation, repairDecision.nextRound, runId, stages, review);
         if (repairResult.repaired) {
           const repairedAt = new Date().toISOString();
           this.database.db.prepare(`
@@ -297,7 +300,9 @@ export class QualityPipelineService {
           setImmediate(() => this.start(generationId, "REPAIR"));
           return;
         }
+        repairFailureCode = repairResult.failureCode;
         infrastructureFailure = infrastructureFailure || repairResult.infrastructureFailure;
+        generation = this.database.getGeneration(generationId) || generation;
       }
       const now = new Date().toISOString();
       const report: GenerationQualityReport = {
@@ -308,6 +313,7 @@ export class QualityPipelineService {
         maxRepairRounds: 3,
         stages,
         review,
+        repairAttempts: this.repair?.history(generationId),
         aiReviewSkipped,
         hardGatePassed: decision.hardGatePassed,
         overrideRequired: decision.overrideRequired,
@@ -344,8 +350,15 @@ export class QualityPipelineService {
           decision.hardGatePassed ? 1 : 0,
           decision.overrideRequired ? 1 : 0,
           decision.canWrite ? 1 : 0,
-          decision.hardGatePassed ? null : infrastructureFailure ? "AGENT_VERIFICATION_INFRASTRUCTURE_FAILED" : "AGENT_QUALITY_HARD_GATE_FAILED",
-          decision.hardGatePassed ? null : "Generated code did not pass the required quality gates.",
+          decision.hardGatePassed ? null
+            : infrastructureFailure ? "AGENT_VERIFICATION_INFRASTRUCTURE_FAILED"
+              : repairFailureCode || "AGENT_QUALITY_HARD_GATE_FAILED",
+          decision.hardGatePassed ? null
+            : repairFailureCode === "REPAIR_NO_EFFECT"
+              ? "Repair reported completion without changing staged files."
+              : repairFailureCode === "REPAIR_PROTOCOL_INVALID"
+                ? "Repair changes were not accepted because the per-diagnostic completion report was invalid."
+              : "Generated code did not pass the required quality gates.",
           now,
           generation!.id,
           generation!.generation_revision,
@@ -441,4 +454,13 @@ function skippedCommandStages(): QualityStageResult[] {
     summary: "Skipped because static validation failed.",
     diagnostics: [],
   } as QualityStageResult));
+}
+
+function attachRunToDiagnostics(stages: QualityStageResult[], verificationRunId: string): void {
+  for (const stage of stages) {
+    stage.diagnostics = stage.diagnostics.map((item) => ({
+      ...(item.diagnosticId && item.stage ? item : qualityDiagnostic(stage.stage, item)),
+      verificationRunId,
+    }));
+  }
 }

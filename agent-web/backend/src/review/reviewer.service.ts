@@ -33,7 +33,7 @@ export class ReviewerService {
       if (this.pi && this.staging) {
         session = await this.pi.runReview(
           reviewId,
-          "Review the current staged Manifest against the confirmed requirement and quality results. Do not propose files outside the Manifest. Submit exactly one code review.",
+          "Review the current staged Manifest against the confirmed requirement and quality results. Do not propose files outside the Manifest. For every issue include concrete evidence, an actionable repairHint, and repairability. Submit exactly one code review.",
           {
             readStaged: (path) => this.staging!.read(generation, path).content,
             readDiff: (path) => this.staging!.diff(generation, path).unifiedDiff,
@@ -84,4 +84,3 @@ export class ReviewerService {
     }
   }
 }
-

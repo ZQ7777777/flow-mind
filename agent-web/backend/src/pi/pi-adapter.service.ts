@@ -10,6 +10,8 @@ import {
   type ConversationMessage,
   type CodeReviewIssue,
   type GenerationTargetContract,
+  type QualityDiagnostic,
+  type RepairResolution,
 } from "@flowmind/agent-contracts";
 import type { GenerationSpec } from "../generation/generation-spec.js";
 import { loadConfig } from "../config.js";
@@ -44,7 +46,12 @@ export interface GenerationPiCallbacks {
   listStaged(): string[];
   writeStaged(path: string, content: string): void;
   deleteStaged(path: string): void;
-  reportComplete(files: string[]): void;
+  readVerificationDiagnostic?(diagnosticId: string): {
+    diagnostic: QualityDiagnostic;
+    stdoutExcerpt?: string;
+    stderrExcerpt?: string;
+  };
+  reportComplete(files: string[], resolutions?: RepairResolution[]): void;
 }
 export interface ReviewPiCallbacks {
   readStaged(path: string): string;
@@ -374,13 +381,32 @@ export class PiAdapterService implements OnModuleDestroy {
       pi.defineTool({ name: "list_staged_files", label: "List staged files", description: "List files staged by this generation.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listStaged())) }),
       pi.defineTool({ name: "write_staged_file", label: "Write staged file", description: "Write UTF-8 content to an allowed staged path.", parameters: Type.Object({ path: Type.String(), content: Type.String() }), execute: async (_id: string, params: any) => { callbacks.writeStaged(params.path, params.content); return textResult("staged"); } }),
     ];
+    if (repairOnly && callbacks.readVerificationDiagnostic) {
+      baseTools.push(pi.defineTool({
+        name: "read_verification_diagnostic",
+        label: "Read verification diagnostic",
+        description: "Read the current verification run's bounded, redacted evidence for one diagnostic id.",
+        parameters: Type.Object({ diagnosticId: Type.String({ minLength: 1 }) }),
+        execute: async (_id: string, params: any) => textResult(JSON.stringify(callbacks.readVerificationDiagnostic!(params.diagnosticId))),
+      }));
+    }
+    const repairResolution = Type.Object({
+      diagnosticId: Type.String({ minLength: 1 }),
+      status: Type.Union([Type.Literal("RESOLVED"), Type.Literal("BLOCKED")]),
+      changedFiles: Type.Array(Type.String()),
+      explanation: Type.String({ minLength: 1 }),
+    });
     const completionTool = pi.defineTool({
       name: repairOnly ? "report_repair_complete" : "report_generation_complete",
       label: repairOnly ? "Report repair complete" : "Report generation complete",
-      description: "Report the exact complete staged Manifest file set.",
-      parameters: Type.Object({ files: Type.Array(Type.String()) }),
+      description: repairOnly
+        ? "Report the exact staged Manifest file set and the outcome for every current actionable diagnostic."
+        : "Report the exact complete staged Manifest file set.",
+      parameters: repairOnly
+        ? Type.Object({ files: Type.Array(Type.String()), resolutions: Type.Array(repairResolution) })
+        : Type.Object({ files: Type.Array(Type.String()) }),
       execute: async (_id: string, params: any) => {
-        callbacks.reportComplete(params.files);
+        callbacks.reportComplete(params.files, params.resolutions);
         return textResult(repairOnly ? "repair accepted for verification" : "generation accepted for verification");
       },
     });
@@ -499,6 +525,14 @@ export class PiAdapterService implements OnModuleDestroy {
       severity: Type.Union([Type.Literal("BLOCKING"), Type.Literal("WARNING"), Type.Literal("INFO")]),
       relativePath: Type.Optional(Type.String()),
       line: Type.Optional(Type.Integer({ minimum: 1 })),
+      evidence: Type.Optional(Type.String()),
+      repairHint: Type.Optional(Type.String()),
+      repairability: Type.Optional(Type.Union([
+        Type.Literal("CODE_ACTIONABLE"),
+        Type.Literal("INFRASTRUCTURE"),
+        Type.Literal("PROTECTED_FILE"),
+        Type.Literal("UNKNOWN"),
+      ])),
     });
     const tools = [
       pi.defineTool({ name: "read_staged_file", label: "Read staged file", description: "Read one Manifest-managed staged file.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readStaged(params.path)) }),

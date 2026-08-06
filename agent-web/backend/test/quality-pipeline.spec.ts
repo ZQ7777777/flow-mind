@@ -155,7 +155,26 @@ describe("M4 quality pipeline integration", () => {
       repair,
     );
     generation = new GenerationService(database, targets, staging, pi, events, quality);
-    const repairRun = vi.spyOn(pi, "runRepair");
+    const repairRun = vi.spyOn(pi, "runRepair").mockImplementation(async (
+      generationId,
+      _stagingDir,
+      sessionFile,
+      prompt,
+      callbacks,
+    ) => {
+      const brief = JSON.parse(prompt.split("Current Repair Brief:\n")[1]) as {
+        actionableDiagnostics: Array<{ diagnosticId: string }>;
+      };
+      const changedPath = callbacks.listStaged().find((path) => path.endsWith("Service.java"))!;
+      callbacks.writeStaged(changedPath, `${callbacks.readStaged(changedPath)}\n// repaired from current diagnostic\n`);
+      callbacks.reportComplete(callbacks.listStaged(), brief.actionableDiagnostics.map(({ diagnosticId }) => ({
+        diagnosticId,
+        status: "RESOLVED",
+        changedFiles: [changedPath],
+        explanation: "Updated the generated service for the current static diagnostic.",
+      })));
+      return { piSessionId: `pi_fake_repair_${generationId}`, sessionFile };
+    });
     const target = createGenerationTarget(root);
     seedActiveWorkflow(database, "session-repair", target);
     const started = generation.start("session-repair", user, 0, "start-repair", target);
@@ -188,6 +207,118 @@ describe("M4 quality pipeline integration", () => {
     const row = database.getGeneration(started.generationId)!;
     throw new Error(`repaired quality pipeline timed out: status=${row.status} round=${row.repair_round} validations=${validationCalls}`);
   });
+
+  it("rejects a repair that reports completion without changing staged files", async () => {
+    const staticValidator = {
+      validate: vi.fn(() => ({
+        stage: "STATIC_VALIDATION" as const,
+        status: "FAILED" as const,
+        hardGate: true,
+        summary: "repair required",
+        diagnostics: [{
+          code: "STATIC_REPAIR_REQUIRED",
+          message: "Repair must change a staged file.",
+          severity: "ERROR" as const,
+          hardGate: true,
+        }],
+      })),
+    } as unknown as StaticValidatorService;
+    const repair = new RepairCoordinatorService(database, targets, staging, pi, events);
+    quality = new QualityPipelineService(
+      database, staging, targets, staticValidator, new VerificationWorkerService(),
+      new ReviewerService(database, pi, staging), events, repair,
+    );
+    generation = new GenerationService(database, targets, staging, pi, events, quality);
+    const target = createGenerationTarget(root);
+    seedActiveWorkflow(database, "session-no-effect", target);
+    const started = generation.start("session-no-effect", user, 0, "start-no-effect", target);
+    await waitForGeneratedReview("session-no-effect", started.generationId);
+    generation.startQuality("session-no-effect", started.generationId, user, database.getSession("session-no-effect")!.row_version, 1, false, "quality-no-effect");
+
+    const summary = await waitForStatus("session-no-effect", started.generationId, "FAILED");
+    expect(summary.lastError?.code).toBe("REPAIR_NO_EFFECT");
+    expect(summary.quality).toEqual(expect.objectContaining({
+      repairRound: 1,
+      repairAttempts: [expect.objectContaining({ outcome: "NO_EFFECT", changedFiles: [] })],
+    }));
+    expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_verification_run WHERE generation_id = ?")
+      .get(started.generationId)).toEqual({ count: 1 });
+  });
+
+  it("feeds each repair round only the latest diagnostics and records all attempts", async () => {
+    let validationCalls = 0;
+    const staticValidator = {
+      validate: vi.fn(() => {
+        validationCalls += 1;
+        const code = validationCalls === 1 ? "ROUND_A" : validationCalls === 2 ? "ROUND_B" : "ROUND_C";
+        return {
+          stage: "STATIC_VALIDATION" as const,
+          status: "FAILED" as const,
+          hardGate: true,
+          summary: `${code} failed`,
+          diagnostics: [{ code, message: `${code} must be repaired.`, severity: "ERROR" as const, hardGate: true }],
+        };
+      }),
+    } as unknown as StaticValidatorService;
+    const repair = new RepairCoordinatorService(database, targets, staging, pi, events);
+    quality = new QualityPipelineService(
+      database, staging, targets, staticValidator, new VerificationWorkerService(),
+      new ReviewerService(database, pi, staging), events, repair,
+    );
+    generation = new GenerationService(database, targets, staging, pi, events, quality);
+    const briefs: Array<{ verificationRunId: string; actionableDiagnostics: Array<{ diagnosticId: string; code: string }> }> = [];
+    vi.spyOn(pi, "runRepair").mockImplementation(async (generationId, _stagingDir, sessionFile, prompt, callbacks) => {
+      const brief = JSON.parse(prompt.split("Current Repair Brief:\n")[1]) as typeof briefs[number];
+      const priorDiagnosticId = briefs.at(-1)?.actionableDiagnostics[0].diagnosticId;
+      briefs.push(brief);
+      expect(callbacks.readVerificationDiagnostic!(brief.actionableDiagnostics[0].diagnosticId).diagnostic)
+        .toEqual(expect.objectContaining({ verificationRunId: brief.verificationRunId }));
+      if (priorDiagnosticId) {
+        expect(() => callbacks.readVerificationDiagnostic!(priorDiagnosticId))
+          .toThrow("not part of the current verification run");
+      }
+      const changedPath = callbacks.listStaged().find((path) => path.endsWith("Service.java"))!;
+      callbacks.writeStaged(changedPath, `${callbacks.readStaged(changedPath)}\n// repair round ${briefs.length}\n`);
+      callbacks.reportComplete(callbacks.listStaged(), brief.actionableDiagnostics.map(({ diagnosticId }) => ({
+        diagnosticId,
+        status: "RESOLVED",
+        changedFiles: [changedPath],
+        explanation: `Changed the service for repair round ${briefs.length}.`,
+      })));
+      return { piSessionId: `pi_fake_repair_${generationId}`, sessionFile };
+    });
+    const target = createGenerationTarget(root);
+    seedActiveWorkflow(database, "session-three-rounds", target);
+    const started = generation.start("session-three-rounds", user, 0, "start-three-rounds", target);
+    await waitForGeneratedReview("session-three-rounds", started.generationId);
+    generation.startQuality("session-three-rounds", started.generationId, user, database.getSession("session-three-rounds")!.row_version, 1, false, "quality-three-rounds");
+
+    const summary = await waitForStatus("session-three-rounds", started.generationId, "FAILED");
+    expect(briefs.map(({ actionableDiagnostics }) => actionableDiagnostics.map(({ code }) => code)))
+      .toEqual([["ROUND_A"], ["ROUND_B"], ["ROUND_C"]]);
+    expect(new Set(briefs.map(({ verificationRunId }) => verificationRunId)).size).toBe(3);
+    expect(summary.generationRevision).toBe(4);
+    expect(summary.quality).toEqual(expect.objectContaining({
+      repairRound: 3,
+      repairAttempts: [
+        expect.objectContaining({ round: 1, outcome: "CHANGED" }),
+        expect.objectContaining({ round: 2, outcome: "CHANGED" }),
+        expect.objectContaining({ round: 3, outcome: "CHANGED" }),
+      ],
+    }));
+    expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_verification_run WHERE generation_id = ?")
+      .get(started.generationId)).toEqual({ count: 4 });
+  });
+
+  async function waitForStatus(sessionId: string, generationId: string, status: "FAILED") {
+    const deadline = Date.now() + 7000;
+    while (Date.now() < deadline) {
+      const summary = generation.get(sessionId, generationId, user);
+      if (summary.status === status) return summary;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`generation did not reach ${status}`);
+  }
 
   async function waitForGeneratedReview(sessionId: string, generationId: string): Promise<void> {
     const deadline = Date.now() + 3000;

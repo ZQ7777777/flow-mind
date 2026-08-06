@@ -46,6 +46,7 @@ describe("M4-M5 quality storage", () => {
     expect(tables.map(({ name }) => name)).toEqual(
       expect.arrayContaining([
         "agent_verification_run",
+        "agent_repair_attempt",
         "agent_code_review",
         "agent_quality_override",
         "agent_generation_action",

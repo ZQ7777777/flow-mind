@@ -28,7 +28,7 @@ describe("agent database", () => {
     const versions = database!.db
       .prepare("SELECT version FROM agent_schema_migration ORDER BY version")
       .all() as Array<{ version: number }>;
-    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(database!.db.pragma("journal_mode", { simple: true })).toBe("wal");
     expect(database!.db.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(database!.db.pragma("busy_timeout", { simple: true })).toBe(5000);
@@ -108,8 +108,19 @@ describe("agent database", () => {
       pi_session_file: "legacy.jsonl",
     });
     const versions = database.db.prepare("SELECT version FROM agent_schema_migration ORDER BY version").all() as Array<{ version: number }>;
-    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(database.db.prepare("SELECT tokens_before, summary_tokens FROM agent_compaction_stat WHERE id = 'acs_legacy'").get())
       .toEqual({ tokens_before: 12345, summary_tokens: 800 });
+  });
+
+  it("adds repair-attempt history to an existing version seven database", () => {
+    database!.db.exec("DROP TABLE agent_repair_attempt; DELETE FROM agent_schema_migration WHERE version = 8;");
+    database!.onModuleDestroy();
+    database = new DatabaseService();
+
+    expect(database.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_repair_attempt'").get())
+      .toEqual({ name: "agent_repair_attempt" });
+    expect(database.db.prepare("SELECT version FROM agent_schema_migration WHERE version = 8").get())
+      .toEqual({ version: 8 });
   });
 });
