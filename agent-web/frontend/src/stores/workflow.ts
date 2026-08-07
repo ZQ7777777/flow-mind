@@ -50,6 +50,36 @@ export interface ManagedGeneration {
   writtenAt?: string;
   createdAt: string;
 }
+
+export interface GenerationLogEntry {
+  id: string;
+  at: string;
+  toolName?: string;
+  target?: string;
+  status: "running" | "completed" | "error";
+}
+
+export interface VerifyStageEntry {
+  stage: string;
+  status: string;
+  hardGate: boolean;
+}
+
+/** Fixed order + hard-gate flags for the six verification stages. The backend
+ * streams live status for each via `generation.verify_stage` events. */
+const QUALITY_STAGE_ORDER: Array<{ stage: string; hardGate: boolean }> = [
+  { stage: "STATIC_VALIDATION", hardGate: true },
+  { stage: "BACKEND_COMPILE", hardGate: true },
+  { stage: "BACKEND_TESTS", hardGate: false },
+  { stage: "FRONTEND_TYPECHECK", hardGate: true },
+  { stage: "FRONTEND_TESTS", hardGate: false },
+  { stage: "FRONTEND_BUILD", hardGate: true },
+];
+
+function initialVerifyStages(): VerifyStageEntry[] {
+  return QUALITY_STAGE_ORDER.map(({ stage, hardGate }) => ({ stage, status: "PENDING", hardGate }));
+}
+
 export const useWorkflowStore = defineStore("workflow", () => {
   const users = ref<MockUser[]>([]);
   const defaultTargetRoot = ref("");
@@ -65,6 +95,11 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const generatedFile = ref<GeneratedFileContent>();
   const generatedDiff = ref<GeneratedFileDiff>();
   const lastCompaction = ref<CompactionNotice>();
+  const generationLog = ref<GenerationLogEntry[]>([]);
+  const verifyStages = ref<VerifyStageEntry[]>(initialVerifyStages());
+  const qualityLog = ref<GenerationLogEntry[]>([]);
+  const qualityStream = ref("");
+  const reasoningText = ref("");
   let streamAbort: AbortController | undefined;
   let reconnectTimer: number | undefined;
 
@@ -97,6 +132,11 @@ export const useWorkflowStore = defineStore("workflow", () => {
     currentUser.value = users.value.find((user) => user.userId === userId);
     snapshot.value = undefined;
     error.value = "";
+    generationLog.value = [];
+    verifyStages.value = initialVerifyStages();
+    qualityLog.value = [];
+    qualityStream.value = "";
+    reasoningText.value = "";
     if (currentUser.value) {
       localStorage.setItem("flowmind.agent.user", userId);
       const sessionId = localStorage.getItem(sessionStorageKey());
@@ -414,11 +454,58 @@ export const useWorkflowStore = defineStore("workflow", () => {
       applySnapshot(message.data as WorkflowSnapshot);
       streamingText.value = "";
     } else if (message.event === "assistant.delta") {
-      streamingText.value += (message.data as { delta: string }).delta;
+      // Real output begins -> stop showing the transient reasoning buffer.
+      reasoningText.value = "";
+      const data = message.data as { delta: string; purpose?: string };
+      if (data.purpose === "REVIEWER" || data.purpose === "REPAIR") qualityStream.value += data.delta;
+      else streamingText.value += data.delta;
     } else if (message.event === "context.compacted") {
       lastCompaction.value = { ...(message.data as Omit<CompactionNotice, "createdAt">), createdAt: new Date().toISOString() };
-    } else if (["assistant.completed", "requirement.ready", "workflow.state_changed", "process.validation_completed", "generation.stage_changed", "generation.file_changed", "generation.quality_completed"].includes(message.event)) {
+    } else if (message.event === "generation.stage_changed") {
       streamingText.value = "";
+      reasoningText.value = "";
+      const stageState = (message.data as { state?: string }).state;
+      // A fresh CODE_GENERATING stage marks the start of a new generation run.
+      if (stageState === "CODE_GENERATING") generationLog.value = [];
+      // A fresh CODE_VERIFYING stage marks the start of a new quality run.
+      if (stageState === "CODE_VERIFYING") {
+        verifyStages.value = initialVerifyStages();
+        qualityLog.value = [];
+        qualityStream.value = "";
+      }
+      void refresh();
+    } else if (message.event === "tool.started") {
+      const purpose = (message.data as { purpose?: string }).purpose;
+      if (purpose === "GENERATOR" || purpose === "REVIEWER" || purpose === "REPAIR") {
+        reasoningText.value = "";
+        const data = message.data as { toolCallId: string; toolName: string; target?: string };
+        const entry: GenerationLogEntry = { id: data.toolCallId, at: new Date().toISOString(), toolName: data.toolName, target: data.target, status: "running" };
+        if (purpose === "GENERATOR") generationLog.value = [...generationLog.value, entry];
+        else qualityLog.value = [...qualityLog.value, entry];
+      }
+    } else if (message.event === "tool.completed") {
+      const purpose = (message.data as { purpose?: string }).purpose;
+      if (purpose === "GENERATOR" || purpose === "REVIEWER" || purpose === "REPAIR") {
+        const data = message.data as { toolCallId: string; isError?: boolean };
+        const nextStatus: GenerationLogEntry["status"] = data.isError ? "error" : "completed";
+        const advance = (entries: GenerationLogEntry[]) => entries.map((entry) => entry.id === data.toolCallId ? { ...entry, status: nextStatus } : entry);
+        if (purpose === "GENERATOR") generationLog.value = advance(generationLog.value);
+        else qualityLog.value = advance(qualityLog.value);
+      }
+    } else if (message.event === "generation.verify_stage") {
+      const data = message.data as { stage: string; status: string; hardGate?: boolean };
+      verifyStages.value = verifyStages.value.map((entry) => entry.stage === data.stage
+        ? { ...entry, status: data.status, hardGate: data.hardGate ?? entry.hardGate }
+        : entry);
+    } else if (message.event === "reasoning.delta") {
+      // Transient "model is thinking" buffer; cleared once real text/tools follow.
+      reasoningText.value += (message.data as { delta: string }).delta;
+    } else if (message.event === "reasoning.completed") {
+      reasoningText.value = "";
+    } else if (["assistant.completed", "requirement.ready", "workflow.state_changed", "process.validation_completed", "generation.file_changed", "generation.quality_completed"].includes(message.event)) {
+      streamingText.value = "";
+      qualityStream.value = "";
+      reasoningText.value = "";
       void refresh();
     } else if (message.event === "error") {
       error.value = (message.data as { message?: string }).message || "操作失败";
@@ -489,6 +576,11 @@ export const useWorkflowStore = defineStore("workflow", () => {
     managedDefinitions,
     managedGenerations,
     lastCompaction,
+    generationLog,
+    verifyStages,
+    qualityLog,
+    qualityStream,
+    reasoningText,
     initialize,
     selectUser,
     createSession,

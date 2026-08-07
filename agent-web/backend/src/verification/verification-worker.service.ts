@@ -68,6 +68,8 @@ export interface VerificationWorkerInput {
   maxOutputBytes?: number;
   signal?: AbortSignal;
   execute?: VerificationCommandExecutor;
+  /** Per-stage progress sink so the orchestrator can stream stage status to the UI. */
+  onStage?: (stage: VerificationCommand["stage"], status: QualityStageResult["status"], hardGate: boolean) => void;
 }
 
 export interface VerificationWorkerResult {
@@ -102,28 +104,34 @@ export class VerificationWorkerService {
       const execute = input.execute || executeVerificationCommand;
       await installFrontendDependencies(input, workspaceRoot, execute, runId, logDir);
       for (const command of commands) {
+        const hardGate = HARD_STAGES.has(command.stage);
         const blockers = commandBlockers(command.stage, stages);
         if (blockers.length) {
           stages.push(blockedStageResult(command, blockers));
           continue;
         }
         if (input.signal?.aborted) {
-          stages.push(stageResult(command, {
+          const cancelledStage = stageResult(command, {
             exitCode: null,
             stdout: "",
             stderr: "",
             timedOut: false,
             cancelled: true,
-          }, undefined, false, input.manifest));
+          }, undefined, false, input.manifest);
+          stages.push(cancelledStage);
+          input.onStage?.(command.stage, cancelledStage.status, hardGate);
           break;
         }
+        input.onStage?.(command.stage, "RUNNING", hardGate);
         const result = await execute(command);
         const combined = `[stdout]\n${result.stdout}\n[stderr]\n${result.stderr}`;
         const truncated = truncateUtf8(combined, command.maxOutputBytes);
         const logPath = join(logDir, `${command.stage.toLowerCase()}.log`);
         writeFileSync(logPath, truncated.value, "utf8");
-        stages.push(stageResult(command, result, logPath, truncated.truncated, input.manifest));
-        if (result.cancelled) break;
+        const stage = stageResult(command, result, logPath, truncated.truncated, input.manifest);
+        stages.push(stage);
+        input.onStage?.(command.stage, stage.status, hardGate);
+        if (result.infrastructureError || result.timedOut || result.cancelled) break;
       }
       linkDerivedFrontendDiagnostics(stages);
       return {

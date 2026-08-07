@@ -82,6 +82,7 @@ button, input, textarea { font: inherit; }
 .panel-divider:focus-visible::before,
 .panel-divider.dragging::before { background: var(--blue); box-shadow: 0 0 0 2px rgba(37,99,235,.12); }
 body.is-resizing-panels { cursor: col-resize; user-select: none; }
+body.is-resizing-reasoning { cursor: ns-resize; user-select: none; }
 .panel-heading { min-height: 72px; padding: 15px 18px; border-bottom: 1px solid var(--line); justify-content: space-between; }
 .panel-heading h3 { margin: 4px 0 0; font-size: 15px; }
 .thinking { color: var(--orange); font-size: 12px; font-weight: 700; }

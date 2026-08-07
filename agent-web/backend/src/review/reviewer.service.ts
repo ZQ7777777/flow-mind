@@ -4,6 +4,7 @@ import type { CodeReviewReport, QualityStageResult } from "@flowmind/agent-contr
 import { DatabaseService, type GenerationRow } from "../persistence/database.service.js";
 import { PiAdapterService } from "../pi/pi-adapter.service.js";
 import { StagingService } from "../generation/staging.service.js";
+import { EventBusService } from "../workflow/event-bus.service.js";
 
 @Injectable()
 export class ReviewerService {
@@ -11,6 +12,7 @@ export class ReviewerService {
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Optional() @Inject(PiAdapterService) private readonly pi?: PiAdapterService,
     @Optional() @Inject(StagingService) private readonly staging?: StagingService,
+    @Optional() @Inject(EventBusService) private readonly events?: EventBusService,
   ) {}
 
   async review(
@@ -39,6 +41,8 @@ export class ReviewerService {
             readDiff: (path) => this.staging!.diff(generation, path).unifiedDiff,
             readQuality: () => JSON.stringify(stages),
             submit: (report) => { submitted = report; },
+            onEvent: (type, data) => this.events?.publish(generation.session_id, { type, data }),
+            onError: (_code, message) => this.events?.publish(generation.session_id, { type: "error", data: { message } }),
           },
         );
         if (!submitted) throw new Error("reviewer ended without submit_code_review");
