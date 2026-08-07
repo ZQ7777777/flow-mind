@@ -256,7 +256,7 @@ export class QualityPipelineService {
       this.database.db.prepare("UPDATE agent_code_generation SET artifact_manifest_json = ?, updated_at = ? WHERE id = ? AND generation_revision = ?")
         .run(JSON.stringify(validatedManifest), new Date().toISOString(), generation.id, generation.generation_revision);
       const sessionId = generation.session_id;
-      const stages: QualityStageResult[] = [staticResult, ...workerResult.stages];
+      const stages: QualityStageResult[] = [staticResult];
       if (staticResult.status === "PASSED") {
         const workerResult = await this.worker.run({
           generationId,
@@ -496,6 +496,40 @@ function attachRunToDiagnostics(stages: QualityStageResult[], verificationRunId:
       verificationRunId,
     }));
   }
+}
+
+// Mirrors the worker's HARD_STAGES so skipped command stages carry the same
+// hard-gate flags as when they actually run.
+const SKIPPABLE_COMMAND_STAGES: ReadonlyArray<{ stage: Exclude<QualityStageName, "STATIC_VALIDATION">; hardGate: boolean }> = [
+  { stage: "BACKEND_COMPILE", hardGate: true },
+  { stage: "BACKEND_TESTS", hardGate: false },
+  { stage: "FRONTEND_TYPECHECK", hardGate: true },
+  { stage: "FRONTEND_TESTS", hardGate: false },
+  { stage: "FRONTEND_BUILD", hardGate: true },
+];
+
+/** When static validation fails, the five command stages cannot run. Emit them
+ * as SKIPPED (blocked by STATIC_VALIDATION) so the report still covers all six
+ * stages and downstream gating/review logic sees every stage. */
+function skippedCommandStages(): QualityStageResult[] {
+  return SKIPPABLE_COMMAND_STAGES.map(({ stage, hardGate }) => {
+    const diagnostic = qualityDiagnostic(stage, {
+      code: "QUALITY_STAGE_BLOCKED",
+      message: `${stage} was skipped because STATIC_VALIDATION did not pass.`,
+      hardGate,
+      expected: "STATIC_VALIDATION must pass before command verification can run.",
+      repairHint: "Resolve the static validation findings; command stages run automatically on the next verification.",
+      repairability: "UNKNOWN",
+    });
+    return {
+      stage,
+      status: "SKIPPED",
+      hardGate,
+      summary: "Blocked by STATIC_VALIDATION.",
+      diagnostics: [{ ...diagnostic, classification: "BLOCKED" }],
+      blockedBy: ["STATIC_VALIDATION"],
+    };
+  });
 }
 
 export function classifyDiagnostics(stages: QualityStageResult[], previousStages?: QualityStageResult[]): void {
