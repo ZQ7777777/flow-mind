@@ -49,10 +49,13 @@ async function ensureEditors(): Promise<void> {
   const [editorApi] = await Promise.all([
     import("monaco-editor/esm/vs/editor/editor.api.js"),
     import("monaco-editor/esm/vs/basic-languages/java/java.contribution.js"),
+    import("monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js"),
+    import("monaco-editor/esm/vs/basic-languages/html/html.contribution.js"),
     import("monaco-editor/esm/vs/language/typescript/monaco.contribution.js"),
     import("monaco-editor/esm/vs/language/html/monaco.contribution.js"),
   ]);
   monaco = editorApi;
+  registerVueLanguage(monaco);
   editor = monaco.editor.create(editorHost.value, {
     value: "", language: "plaintext", automaticLayout: true, minimap: { enabled: false },
     fontSize: 13, scrollBeyondLastLine: false,
@@ -110,9 +113,59 @@ function buildTree(files: ArtifactFile[]): TreeNode[] {
 
 function languageFor(path: string): string {
   if (path.endsWith(".java")) return "java";
-  if (path.endsWith(".vue")) return "html";
+  if (path.endsWith(".vue")) return "vue";
   if (path.endsWith(".ts")) return "typescript";
   return "plaintext";
+}
+
+let vueRegistered = false;
+function registerVueLanguage(m: any): void {
+  if (vueRegistered || !m.languages?.register) return;
+  vueRegistered = true;
+  m.languages.register({ id: "vue", extensions: [".vue"], aliases: ["Vue", "vue"] });
+  m.languages.setMonarchTokensProvider("vue", {
+    defaultToken: "",
+    tokenPostfix: "",
+    tokenizer: {
+      root: [
+        [/<\?[\s\S]*?\?>/, "comment"],
+        [/<!--[\s\S]*?-->/, "comment"],
+        [/<(template|script|style)\b/, { token: "type.identifier", next: "@sfcBlock.$1" }],
+        [/<\/?[a-zA-Z][\w-]*/, { token: "type.identifier", next: "@tag" }],
+        [/[^<]+/, ""],
+      ],
+      tag: [
+        [/[a-zA-Z-]+/, "attribute.name"],
+        [/=/, "delimiter"],
+        [/"[^"]*"/, "string.value"],
+        [/'[^']*'/, "string.value"],
+        [/`[^`]*`/, "string.value"],
+        [/>/, { token: "type.identifier", next: "@pop" }],
+        [/\s+/, ""],
+      ],
+      "sfcBlock.template": [
+        [/<\/template>/, { token: "type.identifier", next: "@pop" }],
+        [/<!--[\s\S]*?-->/, "comment"],
+        [/<\/?[a-zA-Z][\w-]*/, { token: "type.identifier", next: "@tag" }],
+        [/[^<]+/, ""],
+      ],
+      "sfcBlock.script": [
+        [/<\/script>/, { token: "type.identifier", next: "@pop" }],
+        [/\/\/.*$/, "comment"],
+        [/\/\*[\s\S]*?\*\//, "comment"],
+        [/"[^"]*"|'[^']*'|`[^`]*`/, "string"],
+        [/\b(import|from|export|default|const|let|var|function|return|if|else|for|while|class|extends|new|interface|type|enum|public|private|readonly|async|await|void|number|string|boolean|any|true|false|null|undefined)\b/, "keyword"],
+        [/[A-Z][\w]*/, "type.identifier"],
+        [/[^<]/, ""],
+      ],
+      "sfcBlock.style": [
+        [/<\/style>/, { token: "type.identifier", next: "@pop" }],
+        [/\/\*[\s\S]*?\*\//, "comment"],
+        [/[.#:][\w-]+/, "attribute.name"],
+        [/[^<]/, ""],
+      ],
+    },
+  });
 }
 
 function resize(side: CodePanelSide, event: PointerEvent): void {
