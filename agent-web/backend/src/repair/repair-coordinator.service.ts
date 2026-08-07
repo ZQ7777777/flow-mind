@@ -90,7 +90,8 @@ export class RepairCoordinatorService {
     ].filter((value): value is string => Boolean(value));
     const actionableDiagnostics = [
       ...currentDiagnostics
-      .filter(({ repairability }) => repairability === "CODE_ACTIONABLE" || repairability === "UNKNOWN" || !repairability)
+      .filter(({ repairability, derivedFrom, classification }) => !derivedFrom?.length && classification !== "BLOCKED"
+        && (repairability === "CODE_ACTIONABLE" || repairability === "UNKNOWN" || !repairability))
       .map(({ diagnosticId, relativePath }) => ({ diagnosticId, relativePath })),
       ...(currentReview?.issues
         .filter(({ repairability }) => repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE")
@@ -296,15 +297,17 @@ export function buildRepairPrompt(
   },
   previousAttempt?: PreviousRepairAttempt,
 ): string {
-  const failedStages = stages.filter(({ status }) => !["PASSED", "SKIPPED"].includes(status));
+  const failedStages = stages.filter(({ status }) => status !== "PASSED");
   const diagnostics = boundRepairDiagnostics(failedStages.flatMap(({ diagnostics }) => diagnostics));
   const brief = {
     ...context,
     round,
-    actionableDiagnostics: diagnostics.filter(({ repairability }) =>
-      repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE"),
-    blockedDiagnostics: diagnostics.filter(({ repairability }) =>
-      repairability === "INFRASTRUCTURE" || repairability === "PROTECTED_FILE"),
+    actionableDiagnostics: diagnostics.filter(({ repairability, derivedFrom, classification }) =>
+      !derivedFrom?.length && classification !== "BLOCKED"
+      && repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE"),
+    derivedDiagnostics: diagnostics.filter(({ derivedFrom }) => Boolean(derivedFrom?.length)),
+    blockedDiagnostics: diagnostics.filter(({ repairability, classification }) =>
+      classification === "BLOCKED" || repairability === "INFRASTRUCTURE" || repairability === "PROTECTED_FILE"),
     reviewIssues: review?.issues.filter(({ repairability }) =>
       repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE") || [],
     blockedReviewIssues: review?.issues.filter(({ repairability }) =>
@@ -325,7 +328,7 @@ export function buildRepairPrompt(
       : [],
   };
   return [
-    `Repair round ${round} of 3.`,
+    round <= 3 ? `Repair round ${round} of 3.` : "Unblock extension repair round 4 (the only permitted extension).",
     "This Repair Brief is the only authoritative diagnostic state for the current verification run; it supersedes historical errors in the session.",
     "Modify only existing Manifest-managed staged files. Do not add or delete files.",
     "Resolve all failed hard and soft quality stages and every reviewer issue, preserve the confirmed requirement, then call report_repair_complete.",
@@ -333,7 +336,7 @@ export function buildRepairPrompt(
     "Before editing, read every referenced staged file. If evidence is insufficient, call read_verification_diagnostic with its diagnosticId.",
     "Follow expected, repairHint, and acceptedForms exactly. Make the smallest relevant changes and never weaken tests.",
     "If repeatedDiagnostics is non-empty, compare it with previousAttempt.changedFiles and fix the explicitly remaining subchecks; do not repeat the same syntactic guess.",
-    "Report one RESOLVED resolution for every actionable diagnostic and actionable reviewer diagnostic. Do not claim blocked infrastructure or protected-file findings are resolved.",
+    "Report one RESOLVED resolution for every actionable diagnostic and actionable reviewer diagnostic. This is a repair claim only; the next verification run decides whether the diagnostic is actually RESOLVED. Do not claim blocked infrastructure, protected-file, or derived findings are resolved.",
     "Before editing, use the authoritative references below. Never guess Java packages, types, getters, or setters.",
     `Authoritative platform runtime API reference:\n${apiReferences?.platformRuntime || "Unavailable in legacy prompt test."}`,
     `Authoritative trusted user context source:\n${apiReferences?.trustedUserContext || "Unavailable in legacy prompt test."}`,

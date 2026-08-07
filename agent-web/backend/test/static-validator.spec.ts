@@ -171,6 +171,43 @@ describe("static generated-code validation", () => {
       .toBeUndefined();
   });
 
+  it("accepts attachment validation delegated through renamed collection and file parameters", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(
+          /\s*int bankReceiptCount = [^;]+;\s*if \(bankReceiptCount < 1 \|\| bankReceiptCount > 5\) \{[^}]+\}/,
+          "\n        validateBankReceipts(bankReceiptFiles);",
+        )
+        .replace(
+          /\s*if \(bankReceiptFiles != null\) \{\s*for \(MultipartFile file : bankReceiptFiles\) \{\s*if \(file\.getSize\(\) > 10485760L\) throw new IllegalArgumentException\([^\n]+\);\s*String lowerName = [^;]+;\s*if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\) throw new IllegalArgumentException\([^\n]+\);/,
+          "\n        if (bankReceiptFiles != null) {\n            for (MultipartFile file : bankReceiptFiles) {",
+        )
+        .replace(
+          /\n}\s*$/,
+          `\n    private void validateBankReceipts(java.util.List<MultipartFile> files) {\n        if (files == null || files.isEmpty()) throw new IllegalArgumentException("required");\n        if (files.size() > 5) throw new IllegalArgumentException("too many");\n        for (MultipartFile upload : files) validateBankReceiptFile(upload);\n    }\n\n    private void validateBankReceiptFile(MultipartFile upload) {\n        if (upload.getSize() > 10485760L) throw new IllegalArgumentException("too large");\n        String lowerName = upload.getOriginalFilename() == null ? "" : upload.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);\n        if (!(lowerName.endsWith(".pdf") || lowerName.endsWith(".jpg") || lowerName.endsWith(".png"))) throw new IllegalArgumentException("invalid extension");\n    }\n}\n`,
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics).toEqual([]);
+  });
+
+  it("does not borrow attachment checks from an unrelated collection", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace("bankReceiptCount > 5", "bankReceiptCount > 999")
+        .replace(/\n}\s*$/, "\n    private void validateOther(java.util.List<MultipartFile> otherFiles) { if (otherFiles.size() > 5) throw new IllegalArgumentException(\"too many\"); }\n}\n"),
+    );
+
+    expect(validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING"))
+      .toEqual(expect.objectContaining({ message: expect.stringContaining("maxCount=5") }));
+  });
+
   it("rejects an attachment constant whose resolved value differs from the contract", () => {
     const input = validInput();
     const path = input.spec.paths.service;

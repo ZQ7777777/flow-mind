@@ -101,6 +101,11 @@ export class VerificationWorkerService {
       const execute = input.execute || executeVerificationCommand;
       await installFrontendDependencies(input, workspaceRoot, execute, runId, logDir);
       for (const command of commands) {
+        const blockers = commandBlockers(command.stage, stages);
+        if (blockers.length) {
+          stages.push(blockedStageResult(command, blockers));
+          continue;
+        }
         if (input.signal?.aborted) {
           stages.push(stageResult(command, {
             exitCode: null,
@@ -117,8 +122,9 @@ export class VerificationWorkerService {
         const logPath = join(logDir, `${command.stage.toLowerCase()}.log`);
         writeFileSync(logPath, truncated.value, "utf8");
         stages.push(stageResult(command, result, logPath, truncated.truncated, input.manifest));
-        if (result.infrastructureError || result.timedOut || result.cancelled) break;
+        if (result.cancelled) break;
       }
+      linkDerivedFrontendDiagnostics(stages);
       return {
         runId,
         workspaceRoot,
@@ -392,6 +398,53 @@ function stageResult(
   };
 }
 
+function commandBlockers(stage: QualityStageName, stages: QualityStageResult[]): QualityStageName[] {
+  const dependencies: Partial<Record<QualityStageName, QualityStageName[]>> = {
+    BACKEND_TESTS: ["BACKEND_COMPILE"],
+  };
+  return (dependencies[stage] || []).filter((dependency) =>
+    stages.some((result) => result.stage === dependency && result.status !== "PASSED"),
+  );
+}
+
+function blockedStageResult(
+  command: VerificationCommand,
+  blockedBy: QualityStageName[],
+): QualityStageResult {
+  const diagnostic = qualityDiagnostic(command.stage, {
+    code: "QUALITY_STAGE_BLOCKED",
+    message: `${command.stage} could not run because ${blockedBy.join(", ")} did not pass.`,
+    hardGate: HARD_STAGES.has(command.stage),
+    expected: `${blockedBy.join(", ")} must pass before ${command.stage} can run.`,
+    repairHint: "Resolve the blocking stage; this dependent stage will run automatically on the next verification.",
+    repairability: "UNKNOWN",
+  });
+  return {
+    stage: command.stage,
+    status: "SKIPPED",
+    hardGate: HARD_STAGES.has(command.stage),
+    summary: `Blocked by ${blockedBy.join(", ")}.`,
+    diagnostics: [{ ...diagnostic, classification: "BLOCKED" }],
+    blockedBy,
+  };
+}
+
+function linkDerivedFrontendDiagnostics(stages: QualityStageResult[]): void {
+  const typecheck = stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK");
+  const build = stages.find(({ stage }) => stage === "FRONTEND_BUILD");
+  if (!typecheck || !build) return;
+  for (const buildDiagnostic of build.diagnostics) {
+    const primary = typecheck.diagnostics.find((candidate) =>
+      candidate.code === buildDiagnostic.code
+      && candidate.relativePath === buildDiagnostic.relativePath
+      && candidate.line === buildDiagnostic.line
+      && candidate.column === buildDiagnostic.column
+      && candidate.message === buildDiagnostic.message,
+    );
+    if (primary?.fingerprint) buildDiagnostic.derivedFrom = [primary.fingerprint];
+  }
+}
+
 function parseCommandDiagnostics(
   command: VerificationCommand,
   result: VerificationCommandResult,
@@ -519,7 +572,7 @@ function parseJUnitDiagnostics(
     const relativePath = junitPath(command, match[1], match[3], manifest);
     if (!relativePath) return [];
     const before = output.slice(Math.max(0, (match.index || 0) - 1_000), match.index);
-    const message = before.match(/(?:AssertionFailedError|AssertionError|MockitoException)[^\r\n]*/gi)?.at(-1)
+    const message = before.match(/(?:AssertionFailedError|AssertionError|MockitoException|UnnecessaryStubbingException)[^\r\n]*/gi)?.at(-1)
       || `JUnit test ${match[2]} failed.`;
     return [junitDiagnostic(
       command, hardGate, manifest, match[1], match[2], match[3], Number(match[4]), message,
@@ -538,16 +591,21 @@ function junitDiagnostic(
   message: string,
 ): QualityDiagnostic {
   const evidence = sanitizeDiagnosticEvidence(`${className}.${testName}:${line} ${message}`);
+  const unnecessaryStubbing = /UnnecessaryStubbingException/i.test(message);
   return qualityDiagnostic(command.stage, {
-    code: "JUNIT_TEST_FAILURE",
+    code: unnecessaryStubbing ? "JUNIT_UNNECESSARY_STUBBING" : "JUNIT_TEST_FAILURE",
     message,
     hardGate,
     relativePath: junitPath(command, className, fileName, manifest),
     line,
     evidence,
     actual: assertionValue(evidence, "actual") || assertionValue(evidence, "but was"),
-    expected: assertionValue(evidence, "expected") || "The JUnit assertion must pass.",
-    repairHint: "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
+    expected: unnecessaryStubbing
+      ? "Every Mockito stubbing must be used by the exercised code path."
+      : assertionValue(evidence, "expected") || "The JUnit assertion must pass.",
+    repairHint: unnecessaryStubbing
+      ? "Remove only the unused stubbing reported for this test; do not make Mockito globally lenient."
+      : "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
   });
 }
 

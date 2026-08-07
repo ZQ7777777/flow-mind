@@ -628,6 +628,7 @@ function inspectAttachmentValidation(
   const constants = javaNumericConstants(validationSource);
   const collectionNames = attachmentCollectionNames(validationSource, attachment.attachmentCode);
   const countSubjects = attachmentCountSubjects(validationSource, collectionNames);
+  const fileNames = attachmentFileNames(validationSource, collectionNames);
   const recognized: string[] = [];
   const missing: string[] = [];
 
@@ -652,7 +653,7 @@ function inspectAttachmentValidation(
 
   const sizeHandled = hasNumericComparison(
     validationSource,
-    ["\\.\\s*getSize\\s*\\(\\s*\\)"],
+    fileNames.map((name) => `${escapeRegExp(name)}\\s*\\.\\s*getSize\\s*\\(\\s*\\)`),
     "maximum",
     attachment.maxSizeBytes,
     constants,
@@ -662,8 +663,8 @@ function inspectAttachmentValidation(
 
   const normalizedExtensions = attachment.allowedExtensions.map((item) => item.toLowerCase().replace(/^\./, ""));
   const missingExtensions = normalizedExtensions.filter((extension) =>
-    !hasDirectExtensionCheck(validationSource, extension)
-      && !hasAllowedExtensionCollection(validationSource, normalizedExtensions),
+    !hasDirectExtensionCheck(validationSource, extension, fileNames)
+      && !hasAllowedExtensionCollection(validationSource, normalizedExtensions, fileNames),
   );
   if (!missingExtensions.length) recognized.push(`allowedExtensions=${normalizedExtensions.join("/")}`);
   else missing.push(`allowedExtensions=${missingExtensions.join("/")}`);
@@ -784,7 +785,71 @@ function attachmentCollectionNames(source: string, attachmentCode: string): stri
     names.add(match[1]);
   }
   const related = [...names].filter((name) => name.toLowerCase().includes(attachmentCode.toLowerCase()));
-  return related.length ? related : [...names];
+  const roots = related.length ? related : [...names];
+  return propagateJavaAliases(source, roots, names, "(?:java\\.util\\.)?(?:List|Collection)\\s*<\\s*MultipartFile\\s*>");
+}
+
+function attachmentFileNames(source: string, collectionNames: string[]): string[] {
+  const allFiles = new Set<string>();
+  const roots = new Set<string>();
+  for (const match of source.matchAll(/\bMultipartFile\s+([A-Za-z_$][\w$]*)/g)) allFiles.add(match[1]);
+  for (const collectionName of collectionNames) {
+    const loop = new RegExp(
+      `\\bMultipartFile\\s+([A-Za-z_$][\\w$]*)\\s*:\\s*${escapeRegExp(collectionName)}\\b`,
+      "g",
+    );
+    for (const match of source.matchAll(loop)) roots.add(match[1]);
+  }
+  return propagateJavaAliases(source, [...roots], allFiles, "MultipartFile");
+}
+
+function propagateJavaAliases(
+  source: string,
+  roots: string[],
+  candidates: Set<string>,
+  typePattern: string,
+): string[] {
+  const edges = new Map<string, Set<string>>();
+  const connect = (left: string, right: string): void => {
+    if (!candidates.has(left) || !candidates.has(right)) return;
+    if (!edges.has(left)) edges.set(left, new Set());
+    if (!edges.has(right)) edges.set(right, new Set());
+    edges.get(left)!.add(right);
+    edges.get(right)!.add(left);
+  };
+  const assignment = new RegExp(`\\b${typePattern}\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([A-Za-z_$][\\w$]*)\\b`, "g");
+  for (const match of source.matchAll(assignment)) connect(match[1], match[2]);
+
+  const declaration = /\b(?:public|protected|private)\s+(?:static\s+)?[A-Za-z_$][\w$<>,.?\[\]]*\s+([A-Za-z_$][\w$]*)\s*\(([^;{}]*)\)\s*(?:throws\s+[^\{]+)?\{/g;
+  for (const method of source.matchAll(declaration)) {
+    const parameters = splitJavaArguments(method[2]);
+    const calls = new RegExp(`\\b${escapeRegExp(method[1])}\\s*\\(([^;{}()]*)\\)`, "g");
+    for (const call of source.matchAll(calls)) {
+      const argumentsList = splitJavaArguments(call[1]);
+      parameters.forEach((parameter, index) => {
+        if (!new RegExp(typePattern).test(parameter)) return;
+        const parameterName = parameter.match(/([A-Za-z_$][\w$]*)\s*$/)?.[1];
+        const argumentName = argumentsList[index]?.trim().match(/^([A-Za-z_$][\w$]*)$/)?.[1];
+        if (parameterName && argumentName) connect(parameterName, argumentName);
+      });
+    }
+  }
+
+  const discovered = new Set(roots);
+  const queue = [...roots];
+  while (queue.length) {
+    const current = queue.shift()!;
+    for (const alias of edges.get(current) || []) {
+      if (discovered.has(alias)) continue;
+      discovered.add(alias);
+      queue.push(alias);
+    }
+  }
+  return [...discovered];
+}
+
+function splitJavaArguments(value: string): string[] {
+  return value.split(",").map((item) => item.trim());
 }
 
 function attachmentCountSubjects(source: string, collectionNames: string[]): string[] {
@@ -858,16 +923,34 @@ function reverseOperator(operator: string): string {
   return ({ "<": ">", "<=": ">=", ">": "<", ">=": "<=", "==": "==" } as Record<string, string>)[operator];
 }
 
-function hasDirectExtensionCheck(source: string, extension: string): boolean {
+function hasDirectExtensionCheck(source: string, extension: string, fileNames: string[]): boolean {
+  const derivedNames = attachmentExtensionValueNames(source, fileNames);
+  if (!derivedNames.length) return false;
   const escaped = escapeRegExp(extension);
-  return new RegExp(`\\.\\s*endsWith\\s*\\(\\s*"\\.${escaped}"\\s*\\)`, "i").test(source)
-    || new RegExp(`"${escaped}"\\s*\\.\\s*equals\\s*\\(`, "i").test(source)
-    || new RegExp(`\\.\\s*equals\\s*\\(\\s*"${escaped}"\\s*\\)`, "i").test(source);
+  return derivedNames.some((name) => {
+    const subject = escapeRegExp(name);
+    return new RegExp(`\\b${subject}\\s*\\.\\s*endsWith\\s*\\(\\s*"\\.${escaped}"\\s*\\)`, "i").test(source)
+      || new RegExp(`"${escaped}"\\s*\\.\\s*equals\\s*\\(\\s*${subject}\\s*\\)`, "i").test(source)
+      || new RegExp(`\\b${subject}\\s*\\.\\s*equals\\s*\\(\\s*"${escaped}"\\s*\\)`, "i").test(source);
+  });
 }
 
-function hasAllowedExtensionCollection(source: string, extensions: string[]): boolean {
-  if (!/\.\s*contains\s*\(/.test(source)) return false;
+function hasAllowedExtensionCollection(source: string, extensions: string[], fileNames: string[]): boolean {
+  const derivedNames = attachmentExtensionValueNames(source, fileNames);
+  if (!derivedNames.some((name) => new RegExp(`\\.\\s*contains\\s*\\(\\s*${escapeRegExp(name)}\\s*\\)`).test(source))) return false;
   return extensions.every((extension) => new RegExp(`"${escapeRegExp(extension)}"`, "i").test(source));
+}
+
+function attachmentExtensionValueNames(source: string, fileNames: string[]): string[] {
+  const names = new Set<string>();
+  for (const fileName of fileNames) {
+    const declaration = new RegExp(
+      `\\bString\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*[^;]*\\b${escapeRegExp(fileName)}\\s*\\.\\s*getOriginalFilename\\s*\\(\\s*\\)[^;]*;`,
+      "g",
+    );
+    for (const match of source.matchAll(declaration)) names.add(match[1]);
+  }
+  return [...names];
 }
 
 function normalizeJavaNumbers(source: string): string {

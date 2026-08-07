@@ -360,6 +360,84 @@ describe("verification worker", () => {
     }));
     expect(commands[0].args.join(" ")).toContain("ci");
   });
+
+  it("parses Mockito unnecessary stubbing failures at their generated test lines", async () => {
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => command.stage === "BACKEND_TESTS" ? {
+        exitCode: 1,
+        stdout: "",
+        stderr: [
+          "org.mockito.exceptions.misusing.UnnecessaryStubbingException: Unnecessary stubbings detected.",
+          "  1. -> at com.flowmind.business.generated.EntryApplicationServiceTest.rejectsTooManyFiles(EntryApplicationServiceTest.java:222)",
+        ].join("\n"),
+        timedOut: false,
+        cancelled: false,
+      } : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false },
+    });
+
+    expect(result.stages.find(({ stage }) => stage === "BACKEND_TESTS")!.diagnostics[0]).toEqual(expect.objectContaining({
+      code: "JUNIT_UNNECESSARY_STUBBING",
+      relativePath: "backend/src/test/java/com/flowmind/business/generated/EntryApplicationServiceTest.java",
+      line: 222,
+      message: expect.stringContaining("UnnecessaryStubbingException"),
+    }));
+  });
+
+  it("blocks JUnit after compilation failure while continuing independent frontend gates", async () => {
+    const executed: string[] = [];
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        executed.push(command.stage);
+        return command.stage === "BACKEND_COMPILE"
+          ? { exitCode: 1, stdout: "compile failed", stderr: "", timedOut: false, cancelled: false }
+          : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    expect(executed).not.toContain("BACKEND_TESTS");
+    expect(executed).toEqual(expect.arrayContaining(["FRONTEND_TYPECHECK", "FRONTEND_TESTS", "FRONTEND_BUILD"]));
+    expect(result.stages.find(({ stage }) => stage === "BACKEND_TESTS")).toEqual(expect.objectContaining({
+      status: "SKIPPED",
+      blockedBy: ["BACKEND_COMPILE"],
+    }));
+  });
+
+  it("marks build type diagnostics as derived from matching typecheck diagnostics", async () => {
+    const worker = new VerificationWorkerService();
+    const typeError = "src/modules/generated/EntryApplicationApply.vue(65,24): error TS2307: Cannot find module '../../api/generated/entry-application'.";
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => ["FRONTEND_TYPECHECK", "FRONTEND_BUILD"].includes(command.stage)
+        ? { exitCode: 1, stdout: typeError, stderr: "", timedOut: false, cancelled: false }
+        : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false },
+    });
+    const typecheck = result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")!.diagnostics[0];
+    const build = result.stages.find(({ stage }) => stage === "FRONTEND_BUILD")!.diagnostics[0];
+
+    expect(build.derivedFrom).toEqual([typecheck.fingerprint]);
+  });
 });
 
 function createContract(): GenerationTargetContract {
