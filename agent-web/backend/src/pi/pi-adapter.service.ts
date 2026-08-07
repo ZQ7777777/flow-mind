@@ -53,7 +53,14 @@ export interface GenerationPiCallbacks {
   };
   reportComplete(files: string[], resolutions?: RepairResolution[]): void;
 }
-export interface ReviewPiCallbacks {
+/** Minimal sink shared by every PI event mapper so generation/repair/review can
+ * forward streaming progress through the same code path with a distinct purpose. */
+export interface PiEventSink {
+  onEvent(type: string, data: unknown): void;
+  onError(code: string, message: string): void;
+}
+
+export interface ReviewPiCallbacks extends PiEventSink {
   readStaged(path: string): string;
   readDiff(path: string): string;
   readQuality(): string;
@@ -425,7 +432,7 @@ export class PiAdapterService implements OnModuleDestroy {
     const session = created.session;
     activePiSessionId = session.sessionId;
     activePiSessionId = session.sessionId;
-    session.subscribe((event: any) => mapGenerationEvent(event, callbacks));
+    session.subscribe((event: any) => mapPiEvent(event, callbacks, repairOnly ? "REPAIR" : "GENERATOR"));
     return {
       sessionId: session.sessionId,
       sessionFile: session.sessionFile,
@@ -566,6 +573,7 @@ export class PiAdapterService implements OnModuleDestroy {
       customTools: tools,
     });
     const session = created.session;
+    session.subscribe((event: any) => mapPiEvent(event, callbacks, "REVIEWER"));
     return {
       sessionId: session.sessionId,
       sessionFile: session.sessionFile,
@@ -618,15 +626,40 @@ export class PiAdapterService implements OnModuleDestroy {
   }
 }
 
-function mapGenerationEvent(event: any, callbacks: GenerationPiCallbacks): void {
-  if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-    callbacks.onEvent("assistant.delta", { delta: event.assistantMessageEvent.delta, purpose: "GENERATOR" });
+function mapPiEvent(event: any, callbacks: PiEventSink, purpose: "GENERATOR" | "REPAIR" | "REVIEWER" = "GENERATOR"): void {
+  if (event.type === "message_update") {
+    const am = event.assistantMessageEvent;
+    if (am?.type === "text_delta") {
+      callbacks.onEvent("assistant.delta", { delta: am.delta, purpose });
+    } else if (am?.type === "thinking_delta") {
+      // Reasoning models stream their thinking separately from the visible
+      // text. Forward it so the UI can show a transient "thinking" buffer that
+      // is discarded once real output or a tool call begins.
+      callbacks.onEvent("reasoning.delta", { delta: am.delta, purpose });
+    } else if (am?.type === "thinking_end") {
+      callbacks.onEvent("reasoning.completed", { purpose });
+    }
   } else if (event.type === "message_end" && (event.message?.stopReason === "error" || event.message?.errorMessage)) {
     callbacks.onError("AGENT_MODEL_ERROR", event.message.errorMessage || "generator model failed");
-  } else if (event.type === "agent_start") callbacks.onEvent("agent.started", { purpose: "GENERATOR" });
-  else if (event.type === "agent_end") callbacks.onEvent("agent.completed", { purpose: "GENERATOR" });
-  else if (event.type === "tool_execution_start") callbacks.onEvent("tool.started", { toolName: event.toolName, purpose: "GENERATOR" });
-  else if (event.type === "tool_execution_end") callbacks.onEvent("tool.completed", { toolName: event.toolName, isError: event.isError, purpose: "GENERATOR" });
+  } else if (event.type === "agent_start") callbacks.onEvent("agent.started", { purpose });
+  else if (event.type === "agent_end") callbacks.onEvent("agent.completed", { purpose });
+  else if (event.type === "tool_execution_start") callbacks.onEvent("tool.started", { toolName: event.toolName, toolCallId: event.toolCallId, ...summarizeToolArgs(event.args), purpose });
+  else if (event.type === "tool_execution_end") callbacks.onEvent("tool.completed", { toolName: event.toolName, toolCallId: event.toolCallId, isError: event.isError, purpose });
+}
+
+/**
+ * Extract a compact, safe identifier from a tool call's arguments so the UI can
+ * show "which file" without leaking large payloads (e.g. write_staged_file.content)
+ * over the event stream. Returns the staged/reference path, or a diagnostic id.
+ */
+function summarizeToolArgs(args: any): { target?: string } {
+  if (!args || typeof args !== "object") return {};
+  const target = typeof args.path === "string" && args.path.trim()
+    ? args.path
+    : typeof args.diagnosticId === "string" && args.diagnosticId.trim()
+      ? args.diagnosticId
+      : undefined;
+  return target ? { target } : {};
 }
 
 function toConversationMessage(message: any): ConversationMessage {

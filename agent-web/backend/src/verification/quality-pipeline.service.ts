@@ -5,6 +5,7 @@ import type {
   CodeReviewReport,
   GenerationQualityReport,
   QualityOverrideSummary,
+  QualityStageName,
   QualityStageResult,
 } from "@flowmind/agent-contracts";
 import { DatabaseService } from "../persistence/database.service.js";
@@ -224,6 +225,7 @@ export class QualityPipelineService {
         relativePath,
         this.staging.read(generation!, relativePath).content,
       ]));
+      this.publishVerifyStage(generation.session_id, generationId, runId, "STATIC_VALIDATION", "RUNNING", true);
       const staticResult = this.staticValidator.validate({
         generationId,
         revision: generation.generation_revision,
@@ -233,6 +235,7 @@ export class QualityPipelineService {
         manifest,
         files,
       });
+      this.publishVerifyStage(generation.session_id, generationId, runId, "STATIC_VALIDATION", staticResult.status, staticResult.hardGate);
       const invalidPaths = new Set(staticResult.diagnostics.map(({ relativePath }) => relativePath).filter(Boolean));
       const hasGlobalError = staticResult.diagnostics.some(({ relativePath }) => !relativePath);
       const validatedManifest = {
@@ -246,6 +249,7 @@ export class QualityPipelineService {
       };
       this.database.db.prepare("UPDATE agent_code_generation SET artifact_manifest_json = ?, updated_at = ? WHERE id = ? AND generation_revision = ?")
         .run(JSON.stringify(validatedManifest), new Date().toISOString(), generation.id, generation.generation_revision);
+      const sessionId = generation.session_id;
       const stages: QualityStageResult[] = [staticResult];
       if (staticResult.status === "PASSED") {
         const workerResult = await this.worker.run({
@@ -257,10 +261,15 @@ export class QualityPipelineService {
           manifest,
           dataDir: this.database.dataDir,
           execute: fakeExecutor(),
+          onStage: (stage, status, hardGate) => this.publishVerifyStage(sessionId, generationId, runId, stage, status, hardGate),
         });
         stages.push(...workerResult.stages);
       } else {
-        stages.push(...skippedCommandStages());
+        const skipped = skippedCommandStages();
+        for (const stage of skipped) {
+          this.publishVerifyStage(generation.session_id, generationId, runId, stage.stage, stage.status, stage.hardGate);
+        }
+        stages.push(...skipped);
       }
       attachRunToDiagnostics(stages, runId);
 
@@ -272,7 +281,7 @@ export class QualityPipelineService {
       const hardFailure = stages.some(({ hardGate, status }) => hardGate && status !== "PASSED");
       let review: CodeReviewReport | undefined;
       if (!hardFailure && !infrastructureFailure && !generation.skip_ai_review) {
-        this.transition(generation.id, generation.session_id, "REVIEWING", "CODE_REVIEWING");
+        this.transition(generation.id, generation.session_id, "REVIEWING", "CODE_REVIEWING", runId);
         generation = this.database.getGeneration(generationId)!;
         review = await this.reviewer.review(generation, runId, stages);
       }
@@ -284,6 +293,10 @@ export class QualityPipelineService {
       const repairDecision = nextRepairDecision(generation.repair_round, needsRepair, infrastructureFailure);
       let repairFailureCode: "REPAIR_NO_EFFECT" | "REPAIR_PROTOCOL_INVALID" | undefined;
       if (repairDecision.repair && this.repair) {
+        this.events.publish(generation.session_id, {
+          type: "generation.stage_changed",
+          data: { generationId: generation.id, state: "CODE_REPAIRING", runId },
+        });
         const repairResult = await this.repair.attempt(generation, repairDecision.nextRound, runId, stages, review);
         if (repairResult.repaired) {
           const repairedAt = new Date().toISOString();
@@ -392,11 +405,26 @@ export class QualityPipelineService {
     }
   }
 
+  private publishVerifyStage(
+    sessionId: string,
+    generationId: string,
+    runId: string,
+    stage: QualityStageName,
+    status: QualityStageResult["status"],
+    hardGate: boolean,
+  ): void {
+    this.events.publish(sessionId, {
+      type: "generation.verify_stage",
+      data: { generationId, runId, stage, status, hardGate },
+    });
+  }
+
   private transition(
     generationId: string,
     sessionId: string,
     generationStatus: "REVIEWING",
     sessionState: "CODE_REVIEWING",
+    runId: string,
   ): void {
     const now = new Date().toISOString();
     this.database.transaction(() => {
@@ -404,6 +432,10 @@ export class QualityPipelineService {
         .run(generationStatus, now, generationId);
       this.database.db.prepare("UPDATE agent_session SET state = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?")
         .run(sessionState, now, sessionId);
+    });
+    this.events.publish(sessionId, {
+      type: "generation.stage_changed",
+      data: { generationId, state: sessionState, runId },
     });
   }
 

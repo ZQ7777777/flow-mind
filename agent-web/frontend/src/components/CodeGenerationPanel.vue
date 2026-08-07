@@ -6,11 +6,13 @@ import "monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css";
 import { useWorkflowStore } from "../stores/workflow";
 import { useResizableCodePanels, type CodePanelSide } from "../composables/useResizableCodePanels";
 import QualityPanel from "./QualityPanel.vue";
+import QualityProgress from "./QualityProgress.vue";
 
 interface TreeNode { label: string; path?: string; children?: TreeNode[] }
 
 const props = defineProps<{ generation: CodeGenerationSummary }>();
 const store = useWorkflowStore();
+const pipelineActive = computed(() => ["CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING"].includes(store.state || ""));
 const selectedPath = ref("");
 const mode = ref<"edit" | "diff">("edit");
 const editorHost = ref<HTMLElement>();
@@ -175,7 +177,8 @@ function resizeWithKeyboard(side: CodePanelSide, event: KeyboardEvent): void {
       @pointerdown="resize('quality', $event)"
       @keydown="resizeWithKeyboard('quality', $event)"
     ></div>
-    <QualityPanel :generation="generation" @select-diagnostic="selectPath" />
+    <QualityProgress v-if="pipelineActive" />
+    <QualityPanel v-else :generation="generation" @select-diagnostic="selectPath" />
   </div>
 </template>
 

@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import RequirementEditor from "./components/RequirementEditor.vue";
 import ProcessPreview from "./components/ProcessPreview.vue";
 import CodeGenerationPanel from "./components/CodeGenerationPanel.vue";
+import GenerationProgress from "./components/GenerationProgress.vue";
 import ManagementLists from "./components/ManagementLists.vue";
 import { useResizablePanels } from "./composables/useResizablePanels";
 import { useWorkflowStore } from "./stores/workflow";
@@ -272,9 +273,10 @@ function formatTokens(value: number | undefined): string {
                 v-if="store.snapshot.activeGeneration?.manifest"
                 :generation="store.snapshot.activeGeneration"
               />
+              <GenerationProgress v-else-if="store.state === 'CODE_GENERATING'" />
               <div v-else class="review-empty">
                 <div class="empty-orbit"></div>
-                <h3>{{ store.state === 'CODE_GENERATING' ? 'Generator 正在生成代码和测试' : '尚无可预览代码' }}</h3>
+                <h3>尚无可预览代码</h3>
                 <p>生成结果只写入 Agent 暂存区，不会修改真实目标工程。</p>
               </div>
             </el-tab-pane>
