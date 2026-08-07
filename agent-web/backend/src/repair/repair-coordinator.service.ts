@@ -310,6 +310,19 @@ export function buildRepairPrompt(
     blockedReviewIssues: review?.issues.filter(({ repairability }) =>
       repairability === "INFRASTRUCTURE" || repairability === "PROTECTED_FILE") || [],
     previousAttempt,
+    repeatedDiagnostics: previousAttempt
+      ? diagnostics.filter(({ diagnosticId }) => diagnosticId && previousAttempt.unresolvedDiagnosticIds.includes(diagnosticId))
+        .map(({ diagnosticId, code, relativePath, actual, expected, evidence, repairHint, acceptedForms }) => ({
+          diagnosticId,
+          code,
+          relativePath,
+          actual,
+          expected,
+          evidence,
+          repairHint,
+          acceptedForms,
+        }))
+      : [],
   };
   return [
     `Repair round ${round} of 3.`,
@@ -319,6 +332,7 @@ export function buildRepairPrompt(
     "BACKEND_TESTS and FRONTEND_TESTS are actionable failures even though they are soft gates; do not stop after compilation, typecheck, or build passes.",
     "Before editing, read every referenced staged file. If evidence is insufficient, call read_verification_diagnostic with its diagnosticId.",
     "Follow expected, repairHint, and acceptedForms exactly. Make the smallest relevant changes and never weaken tests.",
+    "If repeatedDiagnostics is non-empty, compare it with previousAttempt.changedFiles and fix the explicitly remaining subchecks; do not repeat the same syntactic guess.",
     "Report one RESOLVED resolution for every actionable diagnostic and actionable reviewer diagnostic. Do not claim blocked infrastructure or protected-file findings are resolved.",
     "Before editing, use the authoritative references below. Never guess Java packages, types, getters, or setters.",
     `Authoritative platform runtime API reference:\n${apiReferences?.platformRuntime || "Unavailable in legacy prompt test."}`,

@@ -25,8 +25,12 @@ describe("repair prompt", () => {
         message: "Argument is invalid.",
         severity: "ERROR",
         hardGate: true,
+        relativePath: "frontend/src/modules/generated/example.ts",
+        actual: "The payload exposes a string argument.",
+        expected: "The payload must expose a numeric argument.",
         evidence: "example.ts(7,9): error TS2345",
         repairHint: "Correct the argument type.",
+        acceptedForms: ["Pass a number directly", "Convert the validated string to a number"],
         repairability: "CODE_ACTIONABLE",
       }],
     }];
@@ -45,7 +49,7 @@ describe("repair prompt", () => {
       createdAt: "2026-08-05T00:00:00.000Z",
       completedAt: "2026-08-05T00:00:01.000Z",
     };
-    const buildRepairPrompt = (repairModule as Record<string, unknown>).buildRepairPrompt as undefined | ((round: number, stages: QualityStageResult[], review: CodeReviewReport, references?: { platformRuntime: string; trustedUserContext: string }, context?: { generationId: string; generationRevision: number; verificationRunId: string }) => string);
+    const buildRepairPrompt = (repairModule as Record<string, unknown>).buildRepairPrompt as undefined | ((round: number, stages: QualityStageResult[], review: CodeReviewReport, references?: { platformRuntime: string; trustedUserContext: string }, context?: { generationId: string; generationRevision: number; verificationRunId: string }, previousAttempt?: { changedFiles: string[]; resolvedDiagnosticIds: string[]; unresolvedDiagnosticIds: string[] }) => string);
     const prompt = buildRepairPrompt?.(1, stages, review, {
       platformRuntime: "com.flowmind.platform.api.service.ProcessRuntimeService setVariables setAttachments getCreatedTasks",
       trustedUserContext: "CurrentBusinessUserProvider.BusinessUser",
@@ -53,6 +57,10 @@ describe("repair prompt", () => {
       generationId: "generation-1",
       generationRevision: 2,
       verificationRunId: "verification-current",
+    }, {
+      changedFiles: ["frontend/src/modules/generated/example.ts"],
+      resolvedDiagnosticIds: [],
+      unresolvedDiagnosticIds: ["diagnostic-current"],
     });
     expect(prompt).toContain("REVIEW_BOUNDARY");
     expect(prompt).toContain("com.flowmind.platform.api.service.ProcessRuntimeService");
@@ -61,6 +69,12 @@ describe("repair prompt", () => {
     expect(prompt).toContain("BACKEND_TESTS and FRONTEND_TESTS");
     expect(prompt).toContain("diagnostic-current");
     expect(prompt).toContain("verification-current");
+    expect(prompt).toContain("The payload exposes a string argument.");
+    expect(prompt).toContain("The payload must expose a numeric argument.");
+    expect(prompt).toContain("Pass a number directly");
+    expect(prompt).toContain('"repeatedDiagnostics":[{');
+    expect(prompt).toContain('"changedFiles":["frontend/src/modules/generated/example.ts"]');
+    expect(prompt).toContain("explicitly remaining subchecks");
     expect(prompt).not.toContain('"summary":"passed"');
   });
 

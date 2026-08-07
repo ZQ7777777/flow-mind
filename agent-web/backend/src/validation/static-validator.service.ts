@@ -54,7 +54,7 @@ export class StaticValidatorService {
     if (!diagnostics.some(({ code }) => code.endsWith("_SYNTAX_ERROR"))) {
       this.validateJavaBoundary(input, javaTokens, diagnostics);
       this.validateTypeScriptBoundary(input, sourceFiles, diagnostics);
-      this.validateMappings(input, diagnostics);
+      this.validateMappings(input, sourceFiles, diagnostics);
       this.validateGeneratedTests(input, diagnostics);
     }
 
@@ -259,7 +259,11 @@ export class StaticValidatorService {
     }
   }
 
-  private validateMappings(input: StaticValidationInput, diagnostics: QualityDiagnostic[]): void {
+  private validateMappings(
+    input: StaticValidationInput,
+    sourceFiles: Map<string, ts.SourceFile>,
+    diagnostics: QualityDiagnostic[],
+  ): void {
     const service = input.files.get(input.spec.paths.service) || "";
     const request = input.files.get(input.spec.paths.requestDto) || "";
     const view = input.files.get(input.spec.paths.view) || "";
@@ -288,10 +292,62 @@ export class StaticValidatorService {
           },
         ));
       }
-      if (!request.includes(field.fieldCode) || !view.includes(`form.${field.fieldCode}`) || !api.includes(field.fieldCode)) {
+      if (!javaDtoExposesField(request, field.fieldCode)) {
         diagnostics.push(diagnostic(
           "FORM_FIELD_CONTRACT_MISSING",
-          `Generated DTO/view/API does not consistently expose ${field.fieldCode}.`,
+          `Generated request DTO does not expose confirmed form field ${field.fieldCode}.`,
+          input.spec.paths.requestDto,
+          undefined,
+          undefined,
+          {
+            actual: `No Java property or accessor named ${field.fieldCode} was found in the request DTO.`,
+            expected: `The request DTO must expose a Java property named ${field.fieldCode}.`,
+            evidence: `Inspected ${input.spec.paths.requestDto} for an exact ${field.fieldCode} property or accessor.`,
+            repairHint: `Add the ${field.fieldCode} property and its JavaBean accessor methods to the generated request DTO.`,
+            acceptedForms: [
+              `private Type ${field.fieldCode}; with get${upperFirst(field.fieldCode)}()/set${upperFirst(field.fieldCode)}(...)`,
+              `A public JavaBean accessor for ${field.fieldCode}`,
+            ],
+          },
+        ));
+      }
+      if (!vueViewExposesField(view, field.fieldCode)) {
+        diagnostics.push(diagnostic(
+          "FORM_FIELD_CONTRACT_MISSING",
+          `Generated Vue form does not expose confirmed form field ${field.fieldCode}.`,
+          input.spec.paths.view,
+          undefined,
+          undefined,
+          {
+            actual: `No binding for ${field.fieldCode} was found on the model declared by <el-form :model> or through an exact name attribute.`,
+            expected: `The generated Vue form must bind a control to ${field.fieldCode}.`,
+            evidence: `Inspected ${input.spec.paths.view} for ${field.fieldCode}. Recognized Vue form models: ${vueFormModels(view).join(", ") || "none"}.`,
+            repairHint: `Bind the field through the actual form model, for example v-model="formData.${field.fieldCode}", or use name="${field.fieldCode}".`,
+            acceptedForms: [
+              `<el-form :model="formData"> with v-model="formData.${field.fieldCode}"`,
+              `A form control with name="${field.fieldCode}"`,
+            ],
+            unsupportedForms: [`A field mentioned only in comments or display text`],
+          },
+        ));
+      }
+      if (!typeScriptExposesProperty(sourceFiles.get(input.spec.paths.api), field.fieldCode)) {
+        diagnostics.push(diagnostic(
+          "FORM_FIELD_CONTRACT_MISSING",
+          `Generated frontend API does not expose confirmed form field ${field.fieldCode}.`,
+          input.spec.paths.api,
+          undefined,
+          undefined,
+          {
+            actual: `No TypeScript property named ${field.fieldCode} was found in the generated API contract.`,
+            expected: `The frontend API payload contract must expose ${field.fieldCode}.`,
+            evidence: `Inspected the TypeScript syntax tree for ${field.fieldCode} in ${input.spec.paths.api}.`,
+            repairHint: `Add ${field.fieldCode} to the payload interface/type used by the generated submit API.`,
+            acceptedForms: [
+              `${field.fieldCode}: Type in an interface or type literal`,
+              `An object property or shorthand property named ${field.fieldCode}`,
+            ],
+          },
         ));
       }
     }
@@ -304,17 +360,29 @@ export class StaticValidatorService {
           input.spec.paths.service,
         ));
       }
-      const validationGaps = attachmentValidationGaps(service, attachment);
-      if (validationGaps.length) {
+      const validation = inspectAttachmentValidation(service, attachment);
+      if (validation.missing.length) {
         diagnostics.push(diagnostic(
           "ATTACHMENT_VALIDATION_MISSING",
-          `Generated backend service does not enforce ${validationGaps.join(", ")} for attachment ${attachmentCode}.`,
+          `Generated backend service does not enforce ${validation.missing.join(", ")} for attachment ${attachmentCode}.`,
           input.spec.paths.service,
           undefined,
           undefined,
           {
-            expected: `Backend validation must enforce required/minCount=${attachment.minCount}, maxCount=${attachment.maxCount}, maxSizeBytes=${attachment.maxSizeBytes}, and allowed extensions before startAndSubmit.`,
-            repairHint: `Validate ${attachmentCode} count, each file size, and each allowed extension before constructing AttachmentUploadItem or calling startAndSubmit.`,
+            actual: `Recognized before startAndSubmit: ${validation.recognized.join("; ") || "no attachment validation"}. Missing: ${validation.missing.join(", ")}.`,
+            expected: `Backend validation before startAndSubmit must enforce required/minCount=${attachment.minCount}, maxCount=${attachment.maxCount}, maxSizeBytes=${attachment.maxSizeBytes}, and allowed extensions ${attachment.allowedExtensions.join("/")}.`,
+            evidence: `Attachment collection candidates: ${validation.collectionNames.join(", ") || "none"}. ${validation.recognized.join("; ") || "No supported validation evidence was recognized."}`,
+            repairHint: `Add only the missing checks (${validation.missing.join(", ")}) before startAndSubmit; equivalent direct expressions, local variables, and resolved constants are accepted.`,
+            acceptedForms: [
+              `required/minCount: null/isEmpty or collection size compared with ${attachment.minCount}`,
+              `maxCount: collection size or a derived count variable compared with ${attachment.maxCount}`,
+              `maxSizeBytes: file.getSize() compared with ${attachment.maxSizeBytes}, directly or through a numeric constant`,
+              `allowedExtensions: endsWith, extracted-extension equals, or an allowed collection contains check for ${attachment.allowedExtensions.join("/")}`,
+            ],
+            unsupportedForms: [
+              "Validation mentioned only in comments, messages, or tests",
+              "Validation that occurs only after startAndSubmit",
+            ],
           },
         ));
       }
@@ -417,8 +485,62 @@ function mapsFormField(service: string, request: string, fieldCode: string): boo
     && (request.includes(`put("${fieldCode}"`) || mapsStringConstantArgument(request, "put", fieldCode));
 }
 
+function javaDtoExposesField(source: string, fieldCode: string): boolean {
+  const escaped = escapeRegExp(fieldCode);
+  const property = new RegExp(`\\b(?:private|protected|public)\\s+[A-Za-z_$][\\w$<>?,. \\t]*\\s+${escaped}\\s*;`);
+  const accessor = new RegExp(`\\b(?:get|is|set)${escapeRegExp(upperFirst(fieldCode))}\\s*\\(`);
+  return property.test(source) || accessor.test(source);
+}
+
+function vueFormModels(source: string): string[] {
+  const models = new Set<string>();
+  for (const match of source.matchAll(/<el-form\b[^>]*\b(?::model|v-bind:model)\s*=\s*(["'])([A-Za-z_$][\w$]*)\1/gi)) {
+    models.add(match[2]);
+  }
+  for (const match of source.matchAll(/\bv-model(?::[\w-]+)?\s*=\s*(["'])([A-Za-z_$][\w$]*)\s*\./gi)) {
+    models.add(match[2]);
+  }
+  return [...models];
+}
+
+function vueViewExposesField(source: string, fieldCode: string): boolean {
+  const escaped = escapeRegExp(fieldCode);
+  if (new RegExp(`\\bname\\s*=\\s*(["'])${escaped}\\1`, "i").test(source)) return true;
+  if (new RegExp(`\\bv-model(?::[\\w-]+)?\\s*=\\s*(["'])[A-Za-z_$][\\w$]*\\s*\\.\\s*${escaped}\\b`, "i").test(source)) {
+    return true;
+  }
+  return vueFormModels(source).some((model) =>
+    new RegExp(`\\b${escapeRegExp(model)}\\s*\\.\\s*${escaped}\\b`).test(source),
+  );
+}
+
+function typeScriptExposesProperty(source: ts.SourceFile | undefined, fieldCode: string): boolean {
+  if (!source) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if ((ts.isPropertySignature(node) || ts.isPropertyDeclaration(node) || ts.isPropertyAssignment(node)
+      || ts.isShorthandPropertyAssignment(node) || ts.isMethodSignature(node))
+      && propertyNameText(node.name) === fieldCode) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+function propertyNameText(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  return undefined;
+}
+
 function mapsAttachmentView(view: string, attachmentCode: string): boolean {
   if (view.includes(`form.${attachmentCode}`)) return true;
+  if (vueFormModels(view).some((model) =>
+    new RegExp(`\\b${escapeRegExp(model)}\\s*\\.\\s*${escapeRegExp(attachmentCode)}\\b`).test(view),
+  )) return true;
 
   const escapedCode = escapeRegExp(attachmentCode);
   const exactName = new RegExp(`\\bname\\s*=\\s*(["'])${escapedCode}\\1`, "i");
@@ -492,25 +614,268 @@ function mapsAttachmentCode(service: string, attachmentCode: string): boolean {
   );
 }
 
-function attachmentValidationGaps(
+interface AttachmentValidationInspection {
+  missing: string[];
+  recognized: string[];
+  collectionNames: string[];
+}
+
+function inspectAttachmentValidation(
   service: string,
   attachment: { attachmentCode: string; minCount: number; maxCount: number; maxSizeBytes: number; allowedExtensions: string[] },
-): string[] {
-  const escapedCode = escapeRegExp(attachment.attachmentCode);
-  const gaps: string[] = [];
-  const countName = `${escapedCode}Count`;
-  if (!new RegExp(`${countName}\\s*<\\s*${attachment.minCount}`, "i").test(service)
-    || !new RegExp(`${countName}\\s*>\\s*${attachment.maxCount}`, "i").test(service)) {
-    gaps.push("required/count bounds");
+): AttachmentValidationInspection {
+  const validationSource = normalizeJavaNumbers(javaValidationSourceBeforeRuntimeCall(stripJavaComments(service)));
+  const constants = javaNumericConstants(validationSource);
+  const collectionNames = attachmentCollectionNames(validationSource, attachment.attachmentCode);
+  const countSubjects = attachmentCountSubjects(validationSource, collectionNames);
+  const recognized: string[] = [];
+  const missing: string[] = [];
+
+  const nullHandled = collectionNames.some((name) =>
+    new RegExp(`\\b${escapeRegExp(name)}\\s*==\\s*null\\b`).test(validationSource),
+  );
+  const emptyHandled = collectionNames.some((name) =>
+    new RegExp(`\\b${escapeRegExp(name)}\\s*\\.\\s*isEmpty\\s*\\(\\s*\\)`).test(validationSource),
+  );
+  const minHandled = attachment.minCount <= 0 || emptyHandled
+    || hasBoundComparison(validationSource, countSubjects, "minimum", attachment.minCount, constants);
+  const requiredAndMinimumHandled = minHandled && (attachment.minCount <= 0 || nullHandled);
+  if (requiredAndMinimumHandled) {
+    recognized.push(`required/minCount=${attachment.minCount}`);
+  } else {
+    missing.push(`required/minCount=${attachment.minCount}`);
   }
-  if (!new RegExp(`\\.getSize\\(\\)\\s*>\\s*${attachment.maxSizeBytes}L?`).test(service)) {
-    gaps.push("maximum file size");
+
+  const maxHandled = hasBoundComparison(validationSource, countSubjects, "maximum", attachment.maxCount, constants);
+  if (maxHandled) recognized.push(`maxCount=${attachment.maxCount}`);
+  else missing.push(`maxCount=${attachment.maxCount}`);
+
+  const sizeHandled = hasNumericComparison(
+    validationSource,
+    ["\\.\\s*getSize\\s*\\(\\s*\\)"],
+    "maximum",
+    attachment.maxSizeBytes,
+    constants,
+  );
+  if (sizeHandled) recognized.push(`maxSizeBytes=${attachment.maxSizeBytes}`);
+  else missing.push(`maxSizeBytes=${attachment.maxSizeBytes}`);
+
+  const normalizedExtensions = attachment.allowedExtensions.map((item) => item.toLowerCase().replace(/^\./, ""));
+  const missingExtensions = normalizedExtensions.filter((extension) =>
+    !hasDirectExtensionCheck(validationSource, extension)
+      && !hasAllowedExtensionCollection(validationSource, normalizedExtensions),
+  );
+  if (!missingExtensions.length) recognized.push(`allowedExtensions=${normalizedExtensions.join("/")}`);
+  else missing.push(`allowedExtensions=${missingExtensions.join("/")}`);
+
+  return { missing, recognized, collectionNames };
+}
+
+function stripJavaComments(source: string): string {
+  let result = "";
+  let state: "CODE" | "STRING" | "CHAR" | "LINE_COMMENT" | "BLOCK_COMMENT" = "CODE";
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (state === "LINE_COMMENT") {
+      if (char === "\n") {
+        state = "CODE";
+        result += char;
+      } else {
+        result += " ";
+      }
+      continue;
+    }
+    if (state === "BLOCK_COMMENT") {
+      if (char === "*" && next === "/") {
+        result += "  ";
+        index += 1;
+        state = "CODE";
+      } else {
+        result += char === "\n" ? "\n" : " ";
+      }
+      continue;
+    }
+    if (state === "STRING" || state === "CHAR") {
+      result += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if ((state === "STRING" && char === '"') || (state === "CHAR" && char === "'")) state = "CODE";
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      result += "  ";
+      index += 1;
+      state = "LINE_COMMENT";
+    } else if (char === "/" && next === "*") {
+      result += "  ";
+      index += 1;
+      state = "BLOCK_COMMENT";
+    } else {
+      result += char;
+      if (char === '"') state = "STRING";
+      else if (char === "'") state = "CHAR";
+    }
   }
-  const missingExtensions = attachment.allowedExtensions
-    .map((extension) => extension.toLowerCase().replace(/^\./, ""))
-    .filter((extension) => !service.includes(`endsWith(".${extension}")`));
-  if (missingExtensions.length) gaps.push(`allowed extensions (${missingExtensions.join("/")})`);
-  return gaps;
+  return result;
+}
+
+function javaValidationSourceBeforeRuntimeCall(source: string): string {
+  const runtimeCall = /\.\s*startAndSubmit\s*\(/.exec(source);
+  const prefix = runtimeCall ? source.slice(0, runtimeCall.index) : source;
+  const blocks = javaMethodBlocks(source);
+  const included = new Set<string>();
+  let context = prefix;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, block] of blocks) {
+      if (included.has(name) || !new RegExp(`\\b${escapeRegExp(name)}\\s*\\(`).test(context)) continue;
+      if (/\.\s*startAndSubmit\s*\(/.test(block)) continue;
+      included.add(name);
+      context += `\n${block}`;
+      changed = true;
+    }
+  }
+  return context;
+}
+
+function javaMethodBlocks(source: string): Map<string, string> {
+  const blocks = new Map<string, string>();
+  const declaration = /\b(?:public|protected|private)\s+(?:static\s+)?[A-Za-z_$][\w$<>,.?\[\] \t]*\s+([A-Za-z_$][\w$]*)\s*\([^;{}]*\)\s*(?:throws\s+[^{]+)?\{/g;
+  for (const match of source.matchAll(declaration)) {
+    const openingBrace = (match.index || 0) + match[0].lastIndexOf("{");
+    const closingBrace = matchingBrace(source, openingBrace);
+    if (closingBrace > openingBrace) blocks.set(match[1], source.slice(match.index, closingBrace + 1));
+  }
+  return blocks;
+}
+
+function matchingBrace(source: string, openingBrace: number): number {
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let index = openingBrace; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    if (char === "}" && --depth === 0) return index;
+  }
+  return -1;
+}
+
+function attachmentCollectionNames(source: string, attachmentCode: string): string[] {
+  const names = new Set<string>();
+  const escapedCode = escapeRegExp(attachmentCode);
+  for (const match of source.matchAll(/\b(?:java\.util\.)?(?:List|Collection)\s*<\s*MultipartFile\s*>\s+([A-Za-z_$][\w$]*)/g)) {
+    names.add(match[1]);
+  }
+  for (const match of source.matchAll(new RegExp(`\\b([A-Za-z_$][\\w$]*)\\s*=\\s*[A-Za-z_$][\\w$]*\\.get\\s*\\(\\s*"${escapedCode}"\\s*\\)`, "g"))) {
+    names.add(match[1]);
+  }
+  const related = [...names].filter((name) => name.toLowerCase().includes(attachmentCode.toLowerCase()));
+  return related.length ? related : [...names];
+}
+
+function attachmentCountSubjects(source: string, collectionNames: string[]): string[] {
+  const subjects = collectionNames.map((name) => `${escapeRegExp(name)}\\s*\\.\\s*size\\s*\\(\\s*\\)`);
+  for (const name of collectionNames) {
+    const escaped = escapeRegExp(name);
+    const declarations = new RegExp(
+      `\\b(?:int|long|Integer|Long)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:${escaped}\\s*==\\s*null\\s*\\?\\s*0\\s*:\\s*)?${escaped}\\s*\\.\\s*size\\s*\\(\\s*\\)`,
+      "g",
+    );
+    for (const match of source.matchAll(declarations)) subjects.push(`\\b${escapeRegExp(match[1])}\\b`);
+  }
+  return subjects;
+}
+
+function javaNumericConstants(source: string): Map<string, number> {
+  const constants = new Map<string, number>();
+  const declaration = /\b(?:static\s+final|final\s+static)\s+(?:int|long|Integer|Long)\s+([A-Za-z_$][\w$]*)\s*=\s*(\d+)L?\s*;/g;
+  for (const match of source.matchAll(declaration)) constants.set(match[1], Number(match[2]));
+  return constants;
+}
+
+function hasBoundComparison(
+  source: string,
+  subjects: string[],
+  kind: "minimum" | "maximum",
+  boundary: number,
+  constants: Map<string, number>,
+): boolean {
+  return hasNumericComparison(source, subjects, kind, boundary, constants);
+}
+
+function hasNumericComparison(
+  source: string,
+  subjects: string[],
+  kind: "minimum" | "maximum",
+  boundary: number,
+  constants: Map<string, number>,
+): boolean {
+  for (const subject of subjects) {
+    const direct = new RegExp(`(?:${subject})\\s*(<=|>=|<|>|==)\\s*([A-Za-z_$][\\w$]*|\\d+)L?`, "g");
+    for (const match of source.matchAll(direct)) {
+      const value = /^\d+$/.test(match[2]) ? Number(match[2]) : constants.get(match[2]);
+      if (value !== undefined && comparisonRejectsBoundary(match[1], value, kind, boundary)) return true;
+    }
+    const reversed = new RegExp(`([A-Za-z_$][\\w$]*|\\d+)L?\\s*(<=|>=|<|>|==)\\s*(?:${subject})`, "g");
+    for (const match of source.matchAll(reversed)) {
+      const value = /^\d+$/.test(match[1]) ? Number(match[1]) : constants.get(match[1]);
+      if (value !== undefined && comparisonRejectsBoundary(reverseOperator(match[2]), value, kind, boundary)) return true;
+    }
+  }
+  return false;
+}
+
+function comparisonRejectsBoundary(
+  operator: string,
+  value: number,
+  kind: "minimum" | "maximum",
+  boundary: number,
+): boolean {
+  if (kind === "minimum") {
+    return (operator === "<" && value === boundary)
+      || (operator === "<=" && value === boundary - 1)
+      || (operator === "==" && boundary === 1 && value === 0);
+  }
+  return (operator === ">" && value === boundary)
+    || (operator === ">=" && value === boundary + 1);
+}
+
+function reverseOperator(operator: string): string {
+  return ({ "<": ">", "<=": ">=", ">": "<", ">=": "<=", "==": "==" } as Record<string, string>)[operator];
+}
+
+function hasDirectExtensionCheck(source: string, extension: string): boolean {
+  const escaped = escapeRegExp(extension);
+  return new RegExp(`\\.\\s*endsWith\\s*\\(\\s*"\\.${escaped}"\\s*\\)`, "i").test(source)
+    || new RegExp(`"${escaped}"\\s*\\.\\s*equals\\s*\\(`, "i").test(source)
+    || new RegExp(`\\.\\s*equals\\s*\\(\\s*"${escaped}"\\s*\\)`, "i").test(source);
+}
+
+function hasAllowedExtensionCollection(source: string, extensions: string[]): boolean {
+  if (!/\.\s*contains\s*\(/.test(source)) return false;
+  return extensions.every((extension) => new RegExp(`"${escapeRegExp(extension)}"`, "i").test(source));
+}
+
+function normalizeJavaNumbers(source: string): string {
+  return source.replace(/(?<=\d)_(?=\d)/g, "");
+}
+
+function upperFirst(value: string): string {
+  return value ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
 function mapsStringConstantArgument(source: string, call: string, value: string): boolean {

@@ -101,6 +101,62 @@ describe("static generated-code validation", () => {
     expect(validator.validate(input).diagnostics).toEqual([]);
   });
 
+  it("accepts the user_sales formData model and extracted-extension validation style", () => {
+    const input = validInput();
+    input.files.set(
+      input.spec.paths.view,
+      input.files.get(input.spec.paths.view)!
+        .replace(/\bform\./g, "formData.")
+        .replace("const form = reactive", "const formData = reactive"),
+    );
+    input.files.set(
+      input.spec.paths.service,
+      useDirectAttachmentValidation(input.files.get(input.spec.paths.service)!, "bankReceiptFiles"),
+    );
+
+    expect(validator.validate(input).diagnostics).toEqual([]);
+  });
+
+  it("accepts the user_manager direct collection checks and equality extension checks", () => {
+    const input = validInput();
+    input.files.set(
+      input.spec.paths.service,
+      useDirectAttachmentValidation(input.files.get(input.spec.paths.service)!, "bankReceipt"),
+    );
+
+    expect(validator.validate(input).diagnostics).toEqual([]);
+  });
+
+  it("accepts numeric constants, digit separators, and a validation helper called before startAndSubmit", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(
+          /(public class \w+Service \{)/,
+          "$1\n    private static final int MIN_FILES = 1;\n    private static final int MAX_FILES = 5;\n    private static final long MAX_FILE_SIZE = 10_485_760L;",
+        )
+        .replace("bankReceiptCount < 1", "bankReceiptCount < MIN_FILES")
+        .replace("bankReceiptCount > 5", "bankReceiptCount > MAX_FILES")
+        .replace("file.getSize() > 10485760L", "file.getSize() > MAX_FILE_SIZE")
+        .replace(
+          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
+          "validateBankReceiptExtension(file);",
+        )
+        .replace(
+          /\s*if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\) throw new IllegalArgumentException\([^\n]+/,
+          "",
+        )
+        .replace(
+          /\n}\s*$/,
+          `\n    private void validateBankReceiptExtension(MultipartFile file) {\n        String extension = file.getOriginalFilename().substring(file.getOriginalFilename().lastIndexOf('.') + 1);\n        if (!\"pdf\".equals(extension) && !\"jpg\".equals(extension) && !\"png\".equals(extension)) throw new IllegalArgumentException(\"invalid extension\");\n    }\n}\n`,
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics).toEqual([]);
+  });
+
   it("accepts a process-variable key that uses a resolved static final string constant", () => {
     const input = validInput();
     const path = input.spec.paths.service;
@@ -180,7 +236,63 @@ describe("static generated-code validation", () => {
       code: "ATTACHMENT_VALIDATION_MISSING",
       relativePath: path,
       message: expect.stringContaining("bankReceipt"),
+      actual: expect.stringContaining("Missing:"),
+      expected: expect.stringContaining("minCount=1"),
+      evidence: expect.stringContaining("Attachment collection candidates"),
+      repairHint: expect.stringContaining("missing checks"),
+      acceptedForms: expect.arrayContaining([expect.stringContaining("isEmpty")]),
     }));
+  });
+
+  it.each([
+    ["required/minCount=1", (source: string) => source.replace("bankReceiptCount < 1", "bankReceiptCount < 0")],
+    ["maxCount=5", (source: string) => source.replace("bankReceiptCount > 5", "bankReceiptCount > 999")],
+    ["maxSizeBytes=10485760", (source: string) => source.replace("file.getSize() > 10485760L", "file.getSize() > Long.MAX_VALUE")],
+    ["allowedExtensions=pdf", (source: string) => source.replace('lowerName.endsWith(".pdf")', "false")],
+  ])("reports the specific missing attachment subrule %s", (missing, mutate) => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(path, mutate(input.files.get(path)!));
+
+    const diagnostic = validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING");
+    expect(diagnostic).toEqual(expect.objectContaining({
+      relativePath: path,
+      message: expect.stringContaining(missing),
+      actual: expect.stringContaining(missing),
+    }));
+  });
+
+  it("does not accept attachment validation patterns that appear only in comments", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace("bankReceiptCount < 1", "bankReceiptCount < 0")
+        .replace("bankReceiptCount > 5", "bankReceiptCount > 999")
+        .replace("file.getSize() > 10485760L", "file.getSize() > Long.MAX_VALUE")
+        .replace(/lowerName\.endsWith\("\.(?:pdf|jpg|png)"\)/g, "false")
+        .replace(/\n}\s*$/, '\n// bankReceiptCount < 1; bankReceiptCount > 5; file.getSize() > 10485760L; lowerName.endsWith(".pdf"); lowerName.endsWith(".jpg"); lowerName.endsWith(".png");\n}\n'),
+    );
+
+    const diagnostic = validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING");
+    expect(diagnostic?.message).toEqual(expect.stringContaining("required/minCount=1"));
+    expect(diagnostic?.message).toEqual(expect.stringContaining("maxCount=5"));
+    expect(diagnostic?.message).toEqual(expect.stringContaining("maxSizeBytes=10485760"));
+    expect(diagnostic?.message).toEqual(expect.stringContaining("allowedExtensions=pdf/jpg/png"));
+  });
+
+  it("reports separate path-bound diagnostics for each missing Vue field", () => {
+    const input = validInput();
+    const path = input.spec.paths.view;
+    input.files.set(path, input.files.get(path)!.replace(/\bform\.(applicantName|amount|accountNo)\b/g, "form.removedField"));
+
+    const diagnostics = validator.validate(input).diagnostics.filter(({ code, relativePath }) =>
+      code === "FORM_FIELD_CONTRACT_MISSING" && relativePath === path,
+    );
+    expect(diagnostics).toHaveLength(input.requirement.formFields.length);
+    expect(new Set(diagnostics.map(({ diagnosticId }) => diagnosticId)).size).toBe(input.requirement.formFields.length);
+    expect(diagnostics.every(({ actual, expected, repairHint }) => Boolean(actual && expected && repairHint))).toBe(true);
   });
 
   it("rejects platform actions outside the single allowed start call", () => {
@@ -329,4 +441,21 @@ function validInput() {
     })),
   };
   return { generationId: manifest.generationId, revision: 1, requirement, contract, spec, manifest, files };
+}
+
+function useDirectAttachmentValidation(source: string, collectionName: string): string {
+  return source
+    .replace(/bankReceiptFiles/g, collectionName)
+    .replace(
+      /\s*int bankReceiptCount = [^;]+;\s*if \(bankReceiptCount < 1 \|\| bankReceiptCount > 5\) \{[^}]+\}/,
+      `\n        if (${collectionName} == null || ${collectionName}.isEmpty()) throw new IllegalArgumentException("required");\n        if (${collectionName}.size() > 5) throw new IllegalArgumentException("too many");`,
+    )
+    .replace(
+      "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
+      "String extension = file.getOriginalFilename().substring(file.getOriginalFilename().lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT);",
+    )
+    .replace(
+      /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
+      'if (!"pdf".equals(extension) && !"jpg".equals(extension) && !"png".equals(extension))',
+    );
 }
