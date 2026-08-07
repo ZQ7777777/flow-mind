@@ -81,10 +81,14 @@ export type QualityStageStatus =
   | "CANCELLED";
 export type QualitySeverity = "ERROR" | "WARNING" | "INFO";
 export type DiagnosticRepairability = "CODE_ACTIONABLE" | "INFRASTRUCTURE" | "PROTECTED_FILE" | "UNKNOWN";
+export type DiagnosticClassification = "NEW" | "PERSISTING" | "RESOLVED" | "BLOCKED";
 
 export interface QualityDiagnostic {
   /** Stable fingerprint; optional while older persisted reports are still readable. */
   diagnosticId?: string;
+  /** Content fingerprint used to correlate this finding across verification runs. */
+  fingerprint?: string;
+  classification?: DiagnosticClassification;
   stage?: QualityStageName;
   code: string;
   message: string;
@@ -101,6 +105,8 @@ export interface QualityDiagnostic {
   unsupportedForms?: string[];
   repairability?: DiagnosticRepairability;
   verificationRunId?: string;
+  /** Fingerprints of primary diagnostics that already explain this finding. */
+  derivedFrom?: string[];
 }
 
 export interface QualityStageResult {
@@ -115,6 +121,8 @@ export interface QualityStageResult {
   exitCode?: number;
   logPath?: string;
   outputTruncated?: boolean;
+  /** Earlier stages that made this stage unsafe or meaningless to execute. */
+  blockedBy?: QualityStageName[];
 }
 
 export interface CodeReviewIssue {
@@ -173,7 +181,10 @@ export interface GenerationQualityReport {
   pipelineState: "VERIFYING" | "REVIEWING" | "REPAIRING" | "PASSED" | "FAILED";
   repairRound: number;
   maxRepairRounds: 3;
+  unblockExtensionUsed?: boolean;
   stages: QualityStageResult[];
+  /** Findings present in the preceding run and absent from this verified run. */
+  resolvedDiagnostics?: QualityDiagnostic[];
   review?: CodeReviewReport;
   repairAttempts?: RepairAttemptSummary[];
   /** Set only when the owner explicitly starts this run without AI review. */

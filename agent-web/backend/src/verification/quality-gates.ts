@@ -46,9 +46,15 @@ export function nextRepairDecision(
   currentRound: number,
   hardFailure: boolean,
   infrastructureFailure: boolean,
-): { repair: boolean; nextRound: number } {
-  if (infrastructureFailure || !hardFailure || currentRound >= 3) {
+  firstUnblockedFailure = false,
+): { repair: boolean; nextRound: number; unblockExtension?: true } {
+  if (infrastructureFailure || !hardFailure || currentRound >= 4) {
     return { repair: false, nextRound: currentRound };
+  }
+  if (currentRound === 3) {
+    return firstUnblockedFailure
+      ? { repair: true, nextRound: 4, unblockExtension: true }
+      : { repair: false, nextRound: currentRound };
   }
   return { repair: true, nextRound: currentRound + 1 };
 }

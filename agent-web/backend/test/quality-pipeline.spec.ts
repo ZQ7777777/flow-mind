@@ -11,7 +11,12 @@ import { PiAdapterService } from "../src/pi/pi-adapter.service.js";
 import { StaticValidatorService } from "../src/validation/static-validator.service.js";
 import { VerificationWorkerService } from "../src/verification/verification-worker.service.js";
 import { ReviewerService } from "../src/review/reviewer.service.js";
-import { QualityPipelineService } from "../src/verification/quality-pipeline.service.js";
+import {
+  classifyDiagnostics,
+  collectResolvedDiagnostics,
+  hasFirstUnblockedFailure,
+  QualityPipelineService,
+} from "../src/verification/quality-pipeline.service.js";
 import { RepairCoordinatorService } from "../src/repair/repair-coordinator.service.js";
 import { createGenerationTarget, seedActiveWorkflow } from "./generation-fixture.js";
 
@@ -25,6 +30,77 @@ describe("M4 quality pipeline integration", () => {
   let pi: PiAdapterService;
   let events: EventBusService;
   const user = { userId: "user_sales", userName: "Sales User" };
+
+  it("classifies persistent, resolved, and first-unblocked diagnostics from verified runs", () => {
+    const previous = [{
+      stage: "BACKEND_TESTS" as const,
+      status: "SKIPPED" as const,
+      hardGate: false,
+      summary: "blocked",
+      blockedBy: ["BACKEND_COMPILE" as const],
+      diagnostics: [{
+        diagnosticId: "diag_blocked",
+        fingerprint: "blocked",
+        classification: "BLOCKED" as const,
+        stage: "BACKEND_TESTS" as const,
+        code: "QUALITY_STAGE_BLOCKED",
+        message: "blocked",
+        severity: "ERROR" as const,
+        hardGate: false,
+      }, {
+        diagnosticId: "diag_persistent",
+        fingerprint: "persistent",
+        classification: "NEW" as const,
+        stage: "BACKEND_TESTS" as const,
+        code: "PERSISTENT_FAILURE",
+        message: "persistent",
+        severity: "ERROR" as const,
+        hardGate: false,
+      }, {
+        diagnosticId: "diag_old",
+        fingerprint: "old",
+        classification: "NEW" as const,
+        stage: "BACKEND_TESTS" as const,
+        code: "OLD_FAILURE",
+        message: "old",
+        severity: "ERROR" as const,
+        hardGate: false,
+      }],
+    }];
+    const current = [{
+      stage: "BACKEND_TESTS" as const,
+      status: "FAILED" as const,
+      hardGate: false,
+      summary: "failed",
+      diagnostics: [{
+        diagnosticId: "diag_persistent",
+        fingerprint: "persistent",
+        classification: "NEW" as const,
+        stage: "BACKEND_TESTS" as const,
+        code: "PERSISTENT_FAILURE",
+        message: "persistent",
+        severity: "ERROR" as const,
+        hardGate: false,
+      }, {
+        diagnosticId: "diag_current",
+        fingerprint: "current",
+        classification: "NEW" as const,
+        stage: "BACKEND_TESTS" as const,
+        code: "CURRENT_FAILURE",
+        message: "current",
+        severity: "ERROR" as const,
+        hardGate: false,
+      }],
+    }];
+
+    classifyDiagnostics(current, previous);
+    expect(current[0].diagnostics.map(({ classification }) => classification)).toEqual(["PERSISTING", "NEW"]);
+    expect(collectResolvedDiagnostics(current, previous)).toEqual([
+      expect.objectContaining({ fingerprint: "old", classification: "RESOLVED" }),
+    ]);
+    expect(hasFirstUnblockedFailure(current, [previous])).toBe(true);
+    expect(hasFirstUnblockedFailure(current, [previous, current])).toBe(false);
+  });
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "flowmind-quality-pipeline-"));
@@ -224,9 +300,11 @@ describe("M4 quality pipeline integration", () => {
         }],
       })),
     } as unknown as StaticValidatorService;
+    const worker = new VerificationWorkerService();
+    const workerRun = vi.spyOn(worker, "run");
     const repair = new RepairCoordinatorService(database, targets, staging, pi, events);
     quality = new QualityPipelineService(
-      database, staging, targets, staticValidator, new VerificationWorkerService(),
+      database, staging, targets, staticValidator, worker,
       new ReviewerService(database, pi, staging), events, repair,
     );
     generation = new GenerationService(database, targets, staging, pi, events, quality);
@@ -248,6 +326,7 @@ describe("M4 quality pipeline integration", () => {
     }));
     expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_verification_run WHERE generation_id = ?")
       .get(started.generationId)).toEqual({ count: 1 });
+    expect(workerRun).toHaveBeenCalledOnce();
   });
 
   it("keeps a protocol-invalid repair visible when only a soft gate failed", async () => {

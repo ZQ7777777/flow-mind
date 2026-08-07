@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type {
   ArtifactManifest,
   GenerationTargetContract,
@@ -104,6 +105,11 @@ export class VerificationWorkerService {
       await installFrontendDependencies(input, workspaceRoot, execute, runId, logDir);
       for (const command of commands) {
         const hardGate = HARD_STAGES.has(command.stage);
+        const blockers = commandBlockers(command.stage, stages);
+        if (blockers.length) {
+          stages.push(blockedStageResult(command, blockers));
+          continue;
+        }
         if (input.signal?.aborted) {
           const cancelledStage = stageResult(command, {
             exitCode: null,
@@ -127,6 +133,7 @@ export class VerificationWorkerService {
         input.onStage?.(command.stage, stage.status, hardGate);
         if (result.infrastructureError || result.timedOut || result.cancelled) break;
       }
+      linkDerivedFrontendDiagnostics(stages);
       return {
         runId,
         workspaceRoot,
@@ -151,6 +158,8 @@ export async function executeVerificationCommand(
     let timedOut = false;
     let cancelled = false;
     let settled = false;
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let child;
     try {
       child = spawn(command.executable, command.args, {
@@ -173,8 +182,8 @@ export async function executeVerificationCommand(
     }
 
     const collect = (target: "stdout" | "stderr", chunk: Buffer): void => {
-      if (target === "stdout") stdout += chunk.toString("utf8");
-      else stderr += chunk.toString("utf8");
+      if (target === "stdout") stdout += stdoutDecoder.write(chunk);
+      else stderr += stderrDecoder.write(chunk);
       const totalBytes = Buffer.byteLength(stdout, "utf8") + Buffer.byteLength(stderr, "utf8");
       if (totalBytes <= command.maxOutputBytes) return;
       truncated = true;
@@ -193,8 +202,10 @@ export async function executeVerificationCommand(
       settled = true;
       clearTimeout(timer);
       command.signal?.removeEventListener("abort", cancel);
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
       if (truncated) stderr += "\n[output truncated]";
-      resolveResult(result);
+      resolveResult({ ...result, stdout, stderr });
     };
     const terminate = (): void => {
       if (child.pid && process.platform === "win32") {
@@ -271,7 +282,11 @@ function fixedEnvironment(): NodeJS.ProcessEnv {
     "PATH", "Path", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC",
     "JAVA_HOME", "MAVEN_HOME", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "TEMP", "TMP",
   ];
-  const env: NodeJS.ProcessEnv = { CI: "true", NO_COLOR: "1" };
+  const env: NodeJS.ProcessEnv = {
+    CI: "true",
+    NO_COLOR: "1",
+    JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8",
+  };
   for (const name of names) if (process.env[name] !== undefined) env[name] = process.env[name];
   return env;
 }
@@ -398,6 +413,53 @@ function stageResult(
     logPath,
     outputTruncated,
   };
+}
+
+function commandBlockers(stage: QualityStageName, stages: QualityStageResult[]): QualityStageName[] {
+  const dependencies: Partial<Record<QualityStageName, QualityStageName[]>> = {
+    BACKEND_TESTS: ["BACKEND_COMPILE"],
+  };
+  return (dependencies[stage] || []).filter((dependency) =>
+    stages.some((result) => result.stage === dependency && result.status !== "PASSED"),
+  );
+}
+
+function blockedStageResult(
+  command: VerificationCommand,
+  blockedBy: QualityStageName[],
+): QualityStageResult {
+  const diagnostic = qualityDiagnostic(command.stage, {
+    code: "QUALITY_STAGE_BLOCKED",
+    message: `${command.stage} could not run because ${blockedBy.join(", ")} did not pass.`,
+    hardGate: HARD_STAGES.has(command.stage),
+    expected: `${blockedBy.join(", ")} must pass before ${command.stage} can run.`,
+    repairHint: "Resolve the blocking stage; this dependent stage will run automatically on the next verification.",
+    repairability: "UNKNOWN",
+  });
+  return {
+    stage: command.stage,
+    status: "SKIPPED",
+    hardGate: HARD_STAGES.has(command.stage),
+    summary: `Blocked by ${blockedBy.join(", ")}.`,
+    diagnostics: [{ ...diagnostic, classification: "BLOCKED" }],
+    blockedBy,
+  };
+}
+
+function linkDerivedFrontendDiagnostics(stages: QualityStageResult[]): void {
+  const typecheck = stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK");
+  const build = stages.find(({ stage }) => stage === "FRONTEND_BUILD");
+  if (!typecheck || !build) return;
+  for (const buildDiagnostic of build.diagnostics) {
+    const primary = typecheck.diagnostics.find((candidate) =>
+      candidate.code === buildDiagnostic.code
+      && candidate.relativePath === buildDiagnostic.relativePath
+      && candidate.line === buildDiagnostic.line
+      && candidate.column === buildDiagnostic.column
+      && candidate.message === buildDiagnostic.message,
+    );
+    if (primary?.fingerprint) buildDiagnostic.derivedFrom = [primary.fingerprint];
+  }
 }
 
 function parseCommandDiagnostics(
@@ -527,7 +589,7 @@ function parseJUnitDiagnostics(
     const relativePath = junitPath(command, match[1], match[3], manifest);
     if (!relativePath) return [];
     const before = output.slice(Math.max(0, (match.index || 0) - 1_000), match.index);
-    const message = before.match(/(?:AssertionFailedError|AssertionError|MockitoException)[^\r\n]*/gi)?.at(-1)
+    const message = before.match(/(?:AssertionFailedError|AssertionError|MockitoException|UnnecessaryStubbingException)[^\r\n]*/gi)?.at(-1)
       || `JUnit test ${match[2]} failed.`;
     return [junitDiagnostic(
       command, hardGate, manifest, match[1], match[2], match[3], Number(match[4]), message,
@@ -546,17 +608,33 @@ function junitDiagnostic(
   message: string,
 ): QualityDiagnostic {
   const evidence = sanitizeDiagnosticEvidence(`${className}.${testName}:${line} ${message}`);
+  const unnecessaryStubbing = /UnnecessaryStubbingException/i.test(message);
+  const responseCharsetMismatch = isResponseCharsetMismatch(message);
   return qualityDiagnostic(command.stage, {
-    code: "JUNIT_TEST_FAILURE",
+    code: unnecessaryStubbing ? "JUNIT_UNNECESSARY_STUBBING" : "JUNIT_TEST_FAILURE",
     message,
     hardGate,
     relativePath: junitPath(command, className, fileName, manifest),
     line,
     evidence,
     actual: assertionValue(evidence, "actual") || assertionValue(evidence, "but was"),
-    expected: assertionValue(evidence, "expected") || "The JUnit assertion must pass.",
-    repairHint: "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
+    expected: unnecessaryStubbing
+      ? "Every Mockito stubbing must be used by the exercised code path."
+      : assertionValue(evidence, "expected") || "The JUnit assertion must pass.",
+    repairHint: unnecessaryStubbing
+      ? "Remove only the unused stubbing reported for this test; do not make Mockito globally lenient."
+      : responseCharsetMismatch
+        ? "Set the production controller's plain-text error response Content-Type to text/plain;charset=UTF-8, then assert its status, advertised charset, and decoded body. A CharacterEncodingFilter added only to the test is insufficient."
+        : "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
+    acceptedForms: responseCharsetMismatch
+      ? ["ResponseEntity status with Content-Type text/plain;charset=UTF-8 and the original error body"]
+      : undefined,
   });
+}
+
+function isResponseCharsetMismatch(message: string): boolean {
+  const match = /Response content expected:<([^>]+)> but was:<([^>]+)>/i.exec(message);
+  return Boolean(match && /[^\x00-\x7F]/.test(match[1]) && /\?{2,}/.test(match[2]));
 }
 
 function diagnosticExcerpt(output: string): string {

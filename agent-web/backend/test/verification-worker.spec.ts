@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ArtifactManifest, GenerationTargetContract } from "@flowmind/agent-contracts";
 import {
+  executeVerificationCommand,
   VerificationWorkerService,
   type VerificationCommand,
   type VerificationCommandResult,
@@ -77,6 +78,27 @@ describe("verification worker", () => {
 
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
+  it("decodes UTF-8 output correctly when a character spans process chunks", async () => {
+    const result = await executeVerificationCommand({
+      stage: "BACKEND_TESTS",
+      executable: process.execPath,
+      args: [
+        "-e",
+        "const value=Buffer.from('付款','utf8');process.stdout.write(value.subarray(0,1));setTimeout(()=>process.stdout.write(value.subarray(1)),10);",
+      ],
+      cwd: root,
+      env: { ...process.env },
+      shell: false,
+      workspaceRoot: root,
+      timeoutMs: 2_000,
+      maxOutputBytes: 4_096,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("付款");
+    expect(result.stdout).not.toContain("�");
+  });
+
   it("overlays a disposable copy and runs only fixed commands", async () => {
     const commands: VerificationCommand[] = [];
     const workspaces: string[] = [];
@@ -84,6 +106,9 @@ describe("verification worker", () => {
       commands.push(command);
       workspaces.push(command.workspaceRoot);
       expect(command.shell).toBe(false);
+      expect(command.env.JAVA_TOOL_OPTIONS).toBe(
+        "-Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8",
+      );
       expect(readFileSync(join(command.workspaceRoot, "frontend/src/api/generated/example.ts"), "utf8"))
         .toContain("staged");
       return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
@@ -273,6 +298,39 @@ describe("verification worker", () => {
       .find(({ code }) => code === "JUNIT_TEST_FAILURE")!.diagnosticId).toBe(junit.diagnosticId);
   });
 
+  it("returns a production UTF-8 response repair for corrupted Chinese controller text", async () => {
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => command.stage === "BACKEND_TESTS" ? {
+        exitCode: 1,
+        stdout: "",
+        stderr: [
+          "java.lang.AssertionError: Response content expected:<付款凭证为必传附件> but was:<?????????>",
+          "\tat com.flowmind.business.generated.EntryApplicationControllerTest.rejectsMissingAttachment(EntryApplicationControllerTest.java:131)",
+        ].join("\n"),
+        timedOut: false,
+        cancelled: false,
+      } : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false },
+    });
+
+    const diagnostic = result.stages.find(({ stage }) => stage === "BACKEND_TESTS")!.diagnostics[0];
+    expect(diagnostic).toEqual(expect.objectContaining({
+      code: "JUNIT_TEST_FAILURE",
+      actual: expect.stringContaining("?"),
+      expected: expect.stringContaining("付款凭证为必传附件"),
+      repairHint: expect.stringContaining("production controller's plain-text error response"),
+      acceptedForms: expect.arrayContaining([expect.stringContaining("text/plain;charset=UTF-8")]),
+    }));
+    expect(diagnostic.evidence).toContain("付款凭证为必传附件");
+  });
+
   it("keeps every JUnit and Vitest failure and maps locations to Manifest paths", async () => {
     const worker = new VerificationWorkerService();
     const result = await worker.run({
@@ -359,6 +417,84 @@ describe("verification worker", () => {
       cwd: expect.stringContaining("frontend"),
     }));
     expect(commands[0].args.join(" ")).toContain("ci");
+  });
+
+  it("parses Mockito unnecessary stubbing failures at their generated test lines", async () => {
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => command.stage === "BACKEND_TESTS" ? {
+        exitCode: 1,
+        stdout: "",
+        stderr: [
+          "org.mockito.exceptions.misusing.UnnecessaryStubbingException: Unnecessary stubbings detected.",
+          "  1. -> at com.flowmind.business.generated.EntryApplicationServiceTest.rejectsTooManyFiles(EntryApplicationServiceTest.java:222)",
+        ].join("\n"),
+        timedOut: false,
+        cancelled: false,
+      } : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false },
+    });
+
+    expect(result.stages.find(({ stage }) => stage === "BACKEND_TESTS")!.diagnostics[0]).toEqual(expect.objectContaining({
+      code: "JUNIT_UNNECESSARY_STUBBING",
+      relativePath: "backend/src/test/java/com/flowmind/business/generated/EntryApplicationServiceTest.java",
+      line: 222,
+      message: expect.stringContaining("UnnecessaryStubbingException"),
+    }));
+  });
+
+  it("blocks JUnit after compilation failure while continuing independent frontend gates", async () => {
+    const executed: string[] = [];
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        executed.push(command.stage);
+        return command.stage === "BACKEND_COMPILE"
+          ? { exitCode: 1, stdout: "compile failed", stderr: "", timedOut: false, cancelled: false }
+          : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    expect(executed).not.toContain("BACKEND_TESTS");
+    expect(executed).toEqual(expect.arrayContaining(["FRONTEND_TYPECHECK", "FRONTEND_TESTS", "FRONTEND_BUILD"]));
+    expect(result.stages.find(({ stage }) => stage === "BACKEND_TESTS")).toEqual(expect.objectContaining({
+      status: "SKIPPED",
+      blockedBy: ["BACKEND_COMPILE"],
+    }));
+  });
+
+  it("marks build type diagnostics as derived from matching typecheck diagnostics", async () => {
+    const worker = new VerificationWorkerService();
+    const typeError = "src/modules/generated/EntryApplicationApply.vue(65,24): error TS2307: Cannot find module '../../api/generated/entry-application'.";
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => ["FRONTEND_TYPECHECK", "FRONTEND_BUILD"].includes(command.stage)
+        ? { exitCode: 1, stdout: typeError, stderr: "", timedOut: false, cancelled: false }
+        : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false },
+    });
+    const typecheck = result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")!.diagnostics[0];
+    const build = result.stages.find(({ stage }) => stage === "FRONTEND_BUILD")!.diagnostics[0];
+
+    expect(build.derivedFrom).toEqual([typecheck.fingerprint]);
   });
 });
 

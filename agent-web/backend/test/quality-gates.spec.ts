@@ -39,6 +39,12 @@ describe("quality gates and repair budget", () => {
     expect(nextRepairDecision(2, true, false)).toEqual({ repair: true, nextRound: 3 });
     expect(nextRepairDecision(3, true, false)).toEqual({ repair: false, nextRound: 3 });
   });
+
+  it("allows one fourth repair only for a first unblocked failure", () => {
+    expect(nextRepairDecision(3, true, false, true)).toEqual({ repair: true, nextRound: 4, unblockExtension: true });
+    expect(nextRepairDecision(4, true, false, true)).toEqual({ repair: false, nextRound: 4 });
+    expect(nextRepairDecision(3, true, false, false)).toEqual({ repair: false, nextRound: 3 });
+  });
 });
 
 function stages(): QualityStageResult[] {
@@ -66,4 +72,3 @@ function review(verdict: CodeReviewReport["verdict"]): CodeReviewReport {
     createdAt: new Date().toISOString(),
   };
 }
-

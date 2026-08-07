@@ -29,13 +29,23 @@ export interface DiagnosticDetails {
 export function qualityDiagnostic(stage: QualityStageName, details: DiagnosticDetails): QualityDiagnostic {
   const evidence = details.evidence ? sanitizeDiagnosticEvidence(details.evidence) : undefined;
   const relativePath = details.relativePath?.replace(/\\/g, "/");
-  const fingerprintEvidence = normalizeFingerprintEvidence(evidence || details.message);
-  const diagnosticId = `diag_${createHash("sha256")
-    .update([stage, details.code, relativePath || "", fingerprintEvidence].join("\u0000"))
+  const fingerprintEvidence = normalizeFingerprintEvidence(details.message);
+  const fingerprint = createHash("sha256")
+    .update([
+      stage,
+      details.code,
+      relativePath || "",
+      details.line || "",
+      details.column || "",
+      fingerprintEvidence,
+    ].join("\u0000"))
     .digest("hex")
-    .slice(0, 24)}`;
+    .slice(0, 24);
+  const diagnosticId = `diag_${fingerprint}`;
   return {
     diagnosticId,
+    fingerprint,
+    classification: "NEW",
     stage,
     code: details.code,
     message: details.message,

@@ -24,6 +24,12 @@ const quality: GenerationQualityReport = {
       relativePath: "frontend/src/modules/generated/example.ts",
       line: 7,
       column: 9,
+      actual: "No numeric payload property was recognized.",
+      expected: "The payload property must be numeric.",
+      evidence: "Inspected the generated API payload syntax tree.",
+      repairHint: "Change the payload property type to number.",
+      acceptedForms: ["amount: number"],
+      unsupportedForms: ["A comment that only mentions amount"],
     }],
   }],
   repairAttempts: [{
@@ -87,8 +93,25 @@ describe("QualityPanel", () => {
       props: { generation: generation("REVIEW") },
       global: { stubs },
     });
-    await wrapper.find(".diagnostic").trigger("click");
+    await wrapper.find(".diagnostic-target").trigger("click");
     expect(wrapper.emitted("selectDiagnostic")).toEqual([["frontend/src/modules/generated/example.ts"]]);
+  });
+
+  it("shows the same detailed diagnostic evidence and repair forms sent to the repair agent", async () => {
+    const store = useWorkflowStore();
+    store.qualityReport = quality;
+    const wrapper = shallowMount(QualityPanel, {
+      props: { generation: generation("FAILED") },
+      global: { stubs },
+    });
+
+    expect(wrapper.find(".diagnostic-details").exists()).toBe(true);
+    expect(wrapper.text()).toContain("No numeric payload property was recognized.");
+    expect(wrapper.text()).toContain("The payload property must be numeric.");
+    expect(wrapper.text()).toContain("Inspected the generated API payload syntax tree.");
+    expect(wrapper.text()).toContain("Change the payload property type to number.");
+    expect(wrapper.text()).toContain("amount: number");
+    expect(wrapper.text()).toContain("A comment that only mentions amount");
   });
 
   it("shows when repair changes were rolled back by protocol validation", () => {

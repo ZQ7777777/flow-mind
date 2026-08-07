@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import type {
   CodeGenerationSummary,
   GenerationQualityReport,
+  QualityDiagnostic,
   QualityStageName,
 } from "@flowmind/agent-contracts";
 import { useWorkflowStore } from "../stores/workflow";
@@ -86,6 +87,17 @@ function statusType(status: string): "success" | "warning" | "danger" | "info" {
   if (status === "RUNNING" || status === "PENDING") return "warning";
   return "info";
 }
+
+function hasDiagnosticDetails(item: QualityDiagnostic): boolean {
+  return Boolean(
+    item.actual
+    || item.expected
+    || item.evidence
+    || item.repairHint
+    || item.acceptedForms?.length
+    || item.unsupportedForms?.length,
+  );
+}
 </script>
 
 <template>
@@ -137,18 +149,39 @@ function statusType(status: string): "success" | "warning" | "danger" | "info" {
       <div v-if="quality.stages.some((stage) => stage.diagnostics.length)" class="quality-section">
         <strong>诊断</strong>
         <template v-for="stage in quality.stages" :key="stage.stage">
-          <button
+          <div
             v-for="item in stage.diagnostics"
-            :key="`${stage.stage}-${item.code}-${item.line || 0}`"
+            :key="item.diagnosticId || `${stage.stage}-${item.code}-${item.relativePath || ''}-${item.line || 0}`"
             class="diagnostic"
-            type="button"
-            :disabled="!item.relativePath"
-            @click="item.relativePath && emit('selectDiagnostic', item.relativePath)"
           >
-            <span>{{ item.code }}</span>
-            <small>{{ item.relativePath }}{{ item.line ? `:${item.line}` : "" }}</small>
-            <p>{{ item.message }}</p>
-          </button>
+            <button
+              class="diagnostic-target"
+              type="button"
+              :disabled="!item.relativePath"
+              @click="item.relativePath && emit('selectDiagnostic', item.relativePath)"
+            >
+              <span>{{ item.code }}</span>
+              <small>{{ item.relativePath }}{{ item.line ? `:${item.line}` : "" }}</small>
+              <p>{{ item.message }}</p>
+            </button>
+            <details v-if="hasDiagnosticDetails(item)" class="diagnostic-details">
+              <summary>检查详情</summary>
+              <dl>
+                <template v-if="item.actual"><dt>实际识别</dt><dd>{{ item.actual }}</dd></template>
+                <template v-if="item.expected"><dt>期望结果</dt><dd>{{ item.expected }}</dd></template>
+                <template v-if="item.evidence"><dt>检查证据</dt><dd>{{ item.evidence }}</dd></template>
+                <template v-if="item.repairHint"><dt>修复建议</dt><dd>{{ item.repairHint }}</dd></template>
+                <template v-if="item.acceptedForms?.length">
+                  <dt>可接受写法</dt>
+                  <dd><ul><li v-for="form in item.acceptedForms" :key="form">{{ form }}</li></ul></dd>
+                </template>
+                <template v-if="item.unsupportedForms?.length">
+                  <dt>不支持写法</dt>
+                  <dd><ul><li v-for="form in item.unsupportedForms" :key="form">{{ form }}</li></ul></dd>
+                </template>
+              </dl>
+            </details>
+          </div>
         </template>
       </div>
 
@@ -229,12 +262,21 @@ function statusType(status: string): "success" | "warning" | "danger" | "info" {
 .status-dot.danger { background: #c2413b; }
 .quality-section { margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5eaf0; }
 .section-title { justify-content: space-between; }
-.diagnostic { width: 100%; margin-top: 8px; padding: 8px; border: 1px solid #dfe5ed; border-radius: 4px; background: #fff; text-align: left; cursor: pointer; }
-.diagnostic:disabled { cursor: default; }
+.diagnostic { width: 100%; margin-top: 8px; border: 1px solid #dfe5ed; border-radius: 4px; background: #fff; text-align: left; }
+button.diagnostic { padding: 8px; cursor: pointer; }
+button.diagnostic:disabled { cursor: default; }
+.diagnostic-target { width: 100%; padding: 8px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.diagnostic-target:disabled { cursor: default; }
 .diagnostic span, .diagnostic small { display: block; overflow-wrap: anywhere; }
 .diagnostic span { font-size: 12px; font-weight: 600; color: #9f2f2b; }
 .diagnostic small { margin-top: 3px; color: #64748b; }
 .diagnostic p, .review-summary { margin: 5px 0 0; font-size: 12px; line-height: 1.45; color: #334155; }
+.diagnostic-details { padding: 0 8px 8px; border-top: 1px solid #eef2f6; font-size: 12px; color: #334155; }
+.diagnostic-details summary { padding-top: 8px; cursor: pointer; color: #315f82; }
+.diagnostic-details dl { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 6px 8px; margin: 8px 0 0; }
+.diagnostic-details dt { font-weight: 600; color: #64748b; }
+.diagnostic-details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.diagnostic-details ul { margin: 0; padding-left: 18px; }
 .repair-attempt { margin-top: 8px; padding: 8px; border: 1px solid #dfe5ed; border-radius: 4px; }
 .override-form { display: grid; gap: 9px; }
 .override-form :deep(.el-checkbox-group) { display: grid; }

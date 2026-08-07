@@ -194,6 +194,12 @@ export class QualityPipelineService {
       this.activeGenerations.delete(generationId);
       return;
     }
+    const previousStageRuns = (this.database.db.prepare(`
+      SELECT stage_results_json FROM agent_verification_run
+      WHERE generation_id = ? AND status != 'RUNNING'
+      ORDER BY created_at
+    `).all(generationId) as Array<{ stage_results_json: string }>).map(({ stage_results_json }) =>
+      JSON.parse(stage_results_json) as QualityStageResult[]);
     const runId = `verification_${randomUUID()}`;
     const startedAt = new Date().toISOString();
     this.database.db.prepare(`
@@ -250,7 +256,7 @@ export class QualityPipelineService {
       this.database.db.prepare("UPDATE agent_code_generation SET artifact_manifest_json = ?, updated_at = ? WHERE id = ? AND generation_revision = ?")
         .run(JSON.stringify(validatedManifest), new Date().toISOString(), generation.id, generation.generation_revision);
       const sessionId = generation.session_id;
-      const stages: QualityStageResult[] = [staticResult];
+      const stages: QualityStageResult[] = [staticResult, ...workerResult.stages];
       if (staticResult.status === "PASSED") {
         const workerResult = await this.worker.run({
           generationId,
@@ -272,6 +278,8 @@ export class QualityPipelineService {
         stages.push(...skipped);
       }
       attachRunToDiagnostics(stages, runId);
+      classifyDiagnostics(stages, previousStageRuns.at(-1));
+      const resolvedDiagnostics = collectResolvedDiagnostics(stages, previousStageRuns.at(-1));
 
       generation = this.database.getGeneration(generationId);
       if (!generation || generation.generation_revision !== manifest.revision) return;
@@ -290,7 +298,13 @@ export class QualityPipelineService {
       const reviewerInfrastructureFailure = review?.status === "INFRASTRUCTURE_FAILED";
       infrastructureFailure = infrastructureFailure || reviewerInfrastructureFailure;
       const needsRepair = !decision.hardGatePassed || decision.softFailures.length > 0;
-      const repairDecision = nextRepairDecision(generation.repair_round, needsRepair, infrastructureFailure);
+      const firstUnblockedFailure = hasFirstUnblockedFailure(stages, previousStageRuns);
+      const repairDecision = nextRepairDecision(
+        generation.repair_round,
+        needsRepair,
+        infrastructureFailure,
+        firstUnblockedFailure,
+      );
       let repairFailureCode: "REPAIR_NO_EFFECT" | "REPAIR_PROTOCOL_INVALID" | undefined;
       if (repairDecision.repair && this.repair) {
         this.events.publish(generation.session_id, {
@@ -324,7 +338,9 @@ export class QualityPipelineService {
         pipelineState: decision.hardGatePassed ? "PASSED" : "FAILED",
         repairRound: generation.repair_round,
         maxRepairRounds: 3,
+        unblockExtensionUsed: generation.repair_round > 3,
         stages,
+        resolvedDiagnostics,
         review,
         repairAttempts: this.repair?.history(generationId),
         aiReviewSkipped,
@@ -473,22 +489,6 @@ function fakeExecutor(): VerificationCommandExecutor | undefined {
   });
 }
 
-function skippedCommandStages(): QualityStageResult[] {
-  return [
-    ["BACKEND_COMPILE", true],
-    ["BACKEND_TESTS", false],
-    ["FRONTEND_TYPECHECK", true],
-    ["FRONTEND_TESTS", false],
-    ["FRONTEND_BUILD", true],
-  ].map(([stage, hardGate]) => ({
-    stage,
-    status: "SKIPPED",
-    hardGate,
-    summary: "Skipped because static validation failed.",
-    diagnostics: [],
-  } as QualityStageResult));
-}
-
 function attachRunToDiagnostics(stages: QualityStageResult[], verificationRunId: string): void {
   for (const stage of stages) {
     stage.diagnostics = stage.diagnostics.map((item) => ({
@@ -496,4 +496,49 @@ function attachRunToDiagnostics(stages: QualityStageResult[], verificationRunId:
       verificationRunId,
     }));
   }
+}
+
+export function classifyDiagnostics(stages: QualityStageResult[], previousStages?: QualityStageResult[]): void {
+  const previousFingerprints = new Set(
+    (previousStages || []).flatMap(({ diagnostics }) => diagnostics)
+      .map(({ fingerprint, diagnosticId }) => fingerprint || diagnosticId)
+      .filter((value): value is string => Boolean(value)),
+  );
+  for (const stage of stages) {
+    stage.diagnostics = stage.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      classification: diagnostic.classification === "BLOCKED"
+        ? "BLOCKED"
+        : previousFingerprints.has(diagnostic.fingerprint || diagnostic.diagnosticId || "")
+          ? "PERSISTING"
+          : "NEW",
+    }));
+  }
+}
+
+export function collectResolvedDiagnostics(
+  stages: QualityStageResult[],
+  previousStages?: QualityStageResult[],
+) {
+  const currentFingerprints = new Set(stages.flatMap(({ diagnostics }) => diagnostics)
+    .map(({ fingerprint, diagnosticId }) => fingerprint || diagnosticId)
+    .filter((value): value is string => Boolean(value)));
+  return (previousStages || []).flatMap(({ diagnostics }) => diagnostics)
+    .filter(({ classification, fingerprint, diagnosticId }) => classification !== "BLOCKED"
+      && !currentFingerprints.has(fingerprint || diagnosticId || ""))
+    .map((diagnostic) => ({ ...diagnostic, classification: "RESOLVED" as const }));
+}
+
+export function hasFirstUnblockedFailure(
+  stages: QualityStageResult[],
+  previousRuns: QualityStageResult[][],
+): boolean {
+  return stages.some((current) => {
+    if (current.status !== "FAILED") return false;
+    const history = previousRuns
+      .map((run) => run.find(({ stage }) => stage === current.stage))
+      .filter((stage): stage is QualityStageResult => Boolean(stage));
+    return history.length > 0
+      && history.every(({ status, blockedBy }) => status === "SKIPPED" && Boolean(blockedBy?.length));
+  });
 }

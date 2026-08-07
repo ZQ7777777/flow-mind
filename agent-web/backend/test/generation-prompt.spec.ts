@@ -22,7 +22,11 @@ describe("generation prompt", () => {
     expect(prompt).toContain("Do not use @WebMvcTest");
     expect(prompt).toContain("getTaskId(), getNodeCode(), and getNodeName()");
     expect(prompt).toContain("Do not put trusted-user stubbing in @BeforeEach");
-    expect(prompt).toContain("public props and emitted update:modelValue events");
+    expect(prompt).toContain("public update:modelValue events");
+    expect(prompt).toContain("text/plain;charset=UTF-8");
+    expect(prompt).toContain("CharacterEncodingFilter added only in a test");
+    expect(prompt).toContain("drive ElUpload through update:fileList");
+    expect(prompt).toContain("Do not read or mutate the root wrapper.vm");
     expect(prompt).toContain("reject a missing required attachment before startAndSubmit");
     expect(prompt).toContain("Do not mock enum types");
     expect(prompt).toContain("Uint8Array(size)");
