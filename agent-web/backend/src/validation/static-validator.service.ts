@@ -437,15 +437,25 @@ export class StaticValidatorService {
 
     const viewPath = input.spec.paths.viewTest;
     const viewTest = input.files.get(viewPath) || "";
-    const frontendPatterns: Array<{ pattern: RegExp; label: string }> = [
+    const frontendPatterns: Array<{ pattern: RegExp; label: string; repairHint?: string; acceptedForms?: string[] }> = [
       { pattern: /\.findAll\s*\(\s*(["'])option\1\s*\)/, label: "native option query" },
-      { pattern: /\bwrapper\.vm\b/, label: "wrapper.vm private-state access" },
+      {
+        pattern: /\bwrapper\.vm\b/,
+        label: "wrapper.vm private-state access",
+        repairHint: "Drive the form through Element Plus child components and their public update:modelValue/update:fileList events; do not read or mutate the root component instance.",
+        acceptedForms: [
+          "findComponent({ name: \"ElInput\" }) and emit update:modelValue",
+          "findComponent({ name: \"ElInputNumber\" }) and emit update:modelValue",
+          "findComponent({ name: \"ElSelect\" }) and emit update:modelValue",
+          "findComponent({ name: \"ElUpload\" }) and emit update:fileList",
+        ],
+      },
       { pattern: /\.find(?:All)?\s*\(\s*(["'])\.el-[^"']*\1\s*\)/, label: "Element Plus internal CSS query" },
       { pattern: /\b(?:payloadBlob|blob)\.text\s*\(/, label: "Blob.text() in jsdom" },
     ];
     const ignoredFileSize = /function\s+createMockFile\s*\([^)]*\bsize\b[^)]*\)\s*\{(?:(?!Uint8Array\s*\(\s*size\s*\))[\s\S])*?new\s+File\s*\(/m.exec(viewTest);
     if (ignoredFileSize) frontendPatterns.push({ pattern: /function\s+createMockFile/, label: "file factory ignores its size argument" });
-    for (const { pattern, label } of frontendPatterns) {
+    for (const { pattern, label, repairHint, acceptedForms } of frontendPatterns) {
       const match = pattern.exec(viewTest);
       if (!match) continue;
       const location = lineAndColumn(viewTest, match.index);
@@ -455,6 +465,7 @@ export class StaticValidatorService {
         viewPath,
         location.line,
         location.column,
+        { repairHint, acceptedForms },
       ));
     }
   }
@@ -950,7 +961,35 @@ function attachmentExtensionValueNames(source: string, fileNames: string[]): str
     );
     for (const match of source.matchAll(declaration)) names.add(match[1]);
   }
+
+  // Follow only the string transformations used to normalize a filename or
+  // extract its extension. This keeps the check tied to the MultipartFile
+  // while accepting common multi-statement implementations.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const match of source.matchAll(/\bString\s+([A-Za-z_$][\w$]*)\s*=\s*([^;]+);/g)) {
+      const [, target, expression] = match;
+      if (names.has(target)) continue;
+      const sourceName = [...names].find((name) =>
+        new RegExp(`\\b${escapeRegExp(name)}\\b`).test(expression),
+      );
+      if (!sourceName || !isSupportedExtensionDerivation(expression, sourceName)) continue;
+      names.add(target);
+      changed = true;
+    }
+  }
   return [...names];
+}
+
+function isSupportedExtensionDerivation(expression: string, sourceName: string): boolean {
+  const escaped = escapeRegExp(sourceName);
+  const directAlias = new RegExp(`^\\s*${escaped}\\s*$`);
+  const lowercase = new RegExp(`^\\s*${escaped}\\s*\\.\\s*toLowerCase\\s*\\([^;]*\\)\\s*$`);
+  const substring = new RegExp(
+    `^\\s*${escaped}\\s*\\.\\s*substring\\s*\\(\\s*${escaped}\\s*\\.\\s*lastIndexOf\\s*\\(\\s*["']\\.["']\\s*\\)\\s*\\+\\s*1\\s*\\)\\s*(?:\\.\\s*toLowerCase\\s*\\([^;]*\\))?\\s*$`,
+  );
+  return directAlias.test(expression) || lowercase.test(expression) || substring.test(expression);
 }
 
 function normalizeJavaNumbers(source: string): string {

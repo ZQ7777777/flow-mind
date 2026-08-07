@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type {
   ArtifactManifest,
   GenerationTargetContract,
@@ -149,6 +150,8 @@ export async function executeVerificationCommand(
     let timedOut = false;
     let cancelled = false;
     let settled = false;
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let child;
     try {
       child = spawn(command.executable, command.args, {
@@ -171,8 +174,8 @@ export async function executeVerificationCommand(
     }
 
     const collect = (target: "stdout" | "stderr", chunk: Buffer): void => {
-      if (target === "stdout") stdout += chunk.toString("utf8");
-      else stderr += chunk.toString("utf8");
+      if (target === "stdout") stdout += stdoutDecoder.write(chunk);
+      else stderr += stderrDecoder.write(chunk);
       const totalBytes = Buffer.byteLength(stdout, "utf8") + Buffer.byteLength(stderr, "utf8");
       if (totalBytes <= command.maxOutputBytes) return;
       truncated = true;
@@ -191,8 +194,10 @@ export async function executeVerificationCommand(
       settled = true;
       clearTimeout(timer);
       command.signal?.removeEventListener("abort", cancel);
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
       if (truncated) stderr += "\n[output truncated]";
-      resolveResult(result);
+      resolveResult({ ...result, stdout, stderr });
     };
     const terminate = (): void => {
       if (child.pid && process.platform === "win32") {
@@ -269,7 +274,11 @@ function fixedEnvironment(): NodeJS.ProcessEnv {
     "PATH", "Path", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC",
     "JAVA_HOME", "MAVEN_HOME", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "TEMP", "TMP",
   ];
-  const env: NodeJS.ProcessEnv = { CI: "true", NO_COLOR: "1" };
+  const env: NodeJS.ProcessEnv = {
+    CI: "true",
+    NO_COLOR: "1",
+    JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8",
+  };
   for (const name of names) if (process.env[name] !== undefined) env[name] = process.env[name];
   return env;
 }
@@ -592,6 +601,7 @@ function junitDiagnostic(
 ): QualityDiagnostic {
   const evidence = sanitizeDiagnosticEvidence(`${className}.${testName}:${line} ${message}`);
   const unnecessaryStubbing = /UnnecessaryStubbingException/i.test(message);
+  const responseCharsetMismatch = isResponseCharsetMismatch(message);
   return qualityDiagnostic(command.stage, {
     code: unnecessaryStubbing ? "JUNIT_UNNECESSARY_STUBBING" : "JUNIT_TEST_FAILURE",
     message,
@@ -605,8 +615,18 @@ function junitDiagnostic(
       : assertionValue(evidence, "expected") || "The JUnit assertion must pass.",
     repairHint: unnecessaryStubbing
       ? "Remove only the unused stubbing reported for this test; do not make Mockito globally lenient."
-      : "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
+      : responseCharsetMismatch
+        ? "Set the production controller's plain-text error response Content-Type to text/plain;charset=UTF-8, then assert its status, advertised charset, and decoded body. A CharacterEncodingFilter added only to the test is insufficient."
+        : "Use the assertion difference and generated-code stack frame to correct the implementation without weakening the test.",
+    acceptedForms: responseCharsetMismatch
+      ? ["ResponseEntity status with Content-Type text/plain;charset=UTF-8 and the original error body"]
+      : undefined,
   });
+}
+
+function isResponseCharsetMismatch(message: string): boolean {
+  const match = /Response content expected:<([^>]+)> but was:<([^>]+)>/i.exec(message);
+  return Boolean(match && /[^\x00-\x7F]/.test(match[1]) && /\?{2,}/.test(match[2]));
 }
 
 function diagnosticExcerpt(output: string): string {

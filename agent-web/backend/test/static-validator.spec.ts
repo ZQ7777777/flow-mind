@@ -127,6 +127,104 @@ describe("static generated-code validation", () => {
     expect(validator.validate(input).diagnostics).toEqual([]);
   });
 
+  it("accepts a separately extracted extension checked through an allowed collection", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(
+          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
+          "String originalFilename = file.getOriginalFilename();\n                String extension = originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT);",
+        )
+        .replace(
+          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
+          'if (!java.util.Arrays.asList("pdf", "jpg", "png").contains(extension))',
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics).toEqual([]);
+  });
+
+  it("tracks filename normalization across multiple string variables", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(
+          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
+          "String originalFilename = file.getOriginalFilename();\n                String normalizedFilename = originalFilename.toLowerCase(java.util.Locale.ROOT);\n                String extension = normalizedFilename.substring(normalizedFilename.lastIndexOf('.') + 1);",
+        )
+        .replace(
+          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
+          'if (!"pdf".equals(extension) && !"jpg".equals(extension) && !"png".equals(extension))',
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics).toEqual([]);
+  });
+
+  it("does not accept an allowed collection check on an unrelated string", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(
+          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
+          "String originalFilename = file.getOriginalFilename();\n                String extension = suppliedExtension;",
+        )
+        .replace(
+          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
+          'if (!java.util.Arrays.asList("pdf", "jpg", "png").contains(extension))',
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING"))
+      .toEqual(expect.objectContaining({ message: expect.stringContaining("allowedExtensions=pdf/jpg/png") }));
+  });
+
+  it("does not treat an arbitrary filename substring as an extracted extension", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(
+          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
+          "String originalFilename = file.getOriginalFilename();\n                String extension = originalFilename.substring(0, 1);",
+        )
+        .replace(
+          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
+          'if (!java.util.Arrays.asList("pdf", "jpg", "png").contains(extension))',
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING"))
+      .toEqual(expect.objectContaining({ message: expect.stringContaining("allowedExtensions=pdf/jpg/png") }));
+  });
+
+  it("does not accept extension validation placed after startAndSubmit", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(
+          /\s*String lowerName = file\.getOriginalFilename\(\) == null \? "" : file\.getOriginalFilename\(\)\.toLowerCase\(java\.util\.Locale\.ROOT\);\s*if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\) throw new IllegalArgumentException\([^\n]+/,
+          "",
+        )
+        .replace(
+          "ProcessInstanceDTO result = runtimeService.startAndSubmit(request);",
+          "ProcessInstanceDTO result = runtimeService.startAndSubmit(request);\n        String lowerName = \"receipt.pdf\";\n        if (!lowerName.endsWith(\".pdf\") || !lowerName.endsWith(\".jpg\") || !lowerName.endsWith(\".png\")) throw new IllegalArgumentException(\"late\");",
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING"))
+      .toEqual(expect.objectContaining({ message: expect.stringContaining("allowedExtensions=pdf/jpg/png") }));
+  });
+
   it("accepts numeric constants, digit separators, and a validation helper called before startAndSubmit", () => {
     const input = validInput();
     const path = input.spec.paths.service;
@@ -411,6 +509,30 @@ describe("static generated-code validation", () => {
 
     const result = validator.validate(input);
     expect(result.diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH")).toHaveLength(4);
+    expect(result.diagnostics.find(({ message }) => message.includes("wrapper.vm"))).toEqual(expect.objectContaining({
+      repairHint: expect.stringContaining("update:modelValue/update:fileList"),
+      acceptedForms: expect.arrayContaining([expect.stringContaining("ElUpload")]),
+    }));
+  });
+
+  it("accepts Element Plus public update events without root wrapper state access", () => {
+    const input = validInput();
+    input.files.set(
+      input.spec.paths.viewTest,
+      input.files.get(input.spec.paths.viewTest)! + `
+const applicationNo = wrapper.findComponent({ name: "ElInput" });
+applicationNo.vm.$emit("update:modelValue", "APP-001");
+const amount = wrapper.findComponent({ name: "ElInputNumber" });
+amount.vm.$emit("update:modelValue", 10);
+const currency = wrapper.findComponent({ name: "ElSelect" });
+currency.vm.$emit("update:modelValue", "CNY");
+const upload = wrapper.findComponent({ name: "ElUpload" });
+upload.vm.$emit("update:fileList", []);
+`,
+    );
+
+    expect(validator.validate(input).diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH"))
+      .toEqual([]);
   });
 
   it("rejects enum mocks, non-nullable list matchers, and fake file sizes", () => {
