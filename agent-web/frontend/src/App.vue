@@ -8,6 +8,7 @@ import GenerationProgress from "./components/GenerationProgress.vue";
 import ManagementLists from "./components/ManagementLists.vue";
 import { useResizablePanels } from "./composables/useResizablePanels";
 import { useWorkflowStore } from "./stores/workflow";
+import { isResetSessionDisabled, nextStepMessage } from "./workflow-presentation";
 
 const store = useWorkflowStore();
 const targetRoot = ref("");
@@ -174,7 +175,12 @@ function formatTokens(value: number | undefined): string {
           @confirm="resetCurrentSession"
         >
           <template #reference>
-            <el-button type="danger" plain size="small" :disabled="store.busy || processing">重置当前会话</el-button>
+            <el-button
+              type="danger"
+              plain
+              size="small"
+              :disabled="isResetSessionDisabled(store.allowedActions, store.busy)"
+            >重置当前会话</el-button>
           </template>
         </el-popconfirm>
       </section>
@@ -290,15 +296,7 @@ function formatTokens(value: number | undefined): string {
       <footer class="action-bar">
         <div>
           <span class="eyebrow">下一步</span>
-          <p v-if="store.state === 'COLLECTING'">继续对话，直到结构化需求准备完成。</p>
-          <p v-else-if="store.state === 'REQUIREMENT_REVIEW'">检查并保存需求，然后完成人工门禁一。</p>
-          <p v-else-if="store.state === 'PROCESS_REVIEW'">检查流程图、字段、附件和校验结果，然后完成人工门禁二。</p>
-          <p v-else-if="processing">Agent 正在和流程平台协作，请稍候。</p>
-          <p v-else-if="store.state === 'PROCESS_ACTIVE'">流程已激活；绑定并校验③工程后可按确认需求生成业务发起代码。</p>
-          <p v-else-if="store.state === 'CODE_GENERATING'">Generator 正在受限暂存区生成固定范围的代码和测试。</p>
-          <p v-else-if="store.state === 'CODE_REVIEW'">检查全部文件、编辑内容并查看与目标基线的 diff。</p>
-          <p v-else-if="store.state === 'CODE_PIPELINE_FAILED'">生成失败，可在修复目标前置条件后重新生成。</p>
-          <p v-else>上一步失败，可使用原幂等操作号安全重试。</p>
+          <p>{{ nextStepMessage(store.state) }}</p>
         </div>
         <div class="primary-actions">
           <template v-if="store.state === 'REQUIREMENT_REVIEW'">

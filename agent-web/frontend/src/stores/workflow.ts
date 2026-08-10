@@ -225,17 +225,20 @@ export const useWorkflowStore = defineStore("workflow", () => {
 
   async function resetSession(): Promise<void> {
     if (!snapshot.value || !currentUser.value) return;
-    await run(async () => {
-      disconnect();
-      const resetSnapshot = await apiRequest<WorkflowSnapshot>(
-        `/api/agent/sessions/${snapshot.value!.sessionId}/reset`,
-        currentUser.value!,
-        { method: "POST", rowVersion: snapshot.value!.rowVersion, body: JSON.stringify({}) },
-      );
-      streamingText.value = "";
-      applySnapshot(resetSnapshot);
+    disconnect();
+    try {
+      await run(async () => {
+        const resetSnapshot = await apiRequest<WorkflowSnapshot>(
+          `/api/agent/sessions/${snapshot.value!.sessionId}/reset`,
+          currentUser.value!,
+          { method: "POST", rowVersion: snapshot.value!.rowVersion, body: JSON.stringify({}) },
+        );
+        streamingText.value = "";
+        applySnapshot(resetSnapshot);
+      });
+    } finally {
       connect();
-    });
+    }
   }
 
   async function confirmProcess(): Promise<void> {
@@ -539,8 +542,9 @@ export const useWorkflowStore = defineStore("workflow", () => {
     try {
       await operation();
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : String(cause);
+      const message = cause instanceof Error ? cause.message : String(cause);
       if (refreshOnConflict && cause instanceof ApiError && cause.status === 409) await refresh();
+      error.value = message;
       throw cause;
     } finally {
       busy.value = false;

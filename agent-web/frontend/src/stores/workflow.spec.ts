@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import type { MockUser, WorkflowSnapshot } from "@flowmind/agent-contracts";
+import { ApiError } from "../api";
 
 const mocks = vi.hoisted(() => ({
   apiRequest: vi.fn(),
@@ -88,6 +89,29 @@ describe("workflow SSE lifecycle", () => {
     );
     expect(store.snapshot?.rowVersion).toBe(1);
     expect(store.snapshot?.messages).toEqual([]);
+  });
+
+  it("reconnects the current session when reset fails", async () => {
+    mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/mock-users") return [user];
+      if (path === "/api/agent/sessions") return snapshot;
+      if (path === "/api/agent/sessions/ags_1/reset") {
+        throw new ApiError(409, "AGENT_STATE_CONFLICT", "current state does not allow this operation");
+      }
+      if (path === "/api/agent/sessions/ags_1") return snapshot;
+      return snapshot;
+    });
+    const store = useWorkflowStore();
+    await store.initialize();
+    await store.createSession();
+
+    await expect(store.resetSession()).rejects.toThrow("current state does not allow this operation");
+
+    expect(store.connected).toBe(true);
+    expect(mocks.streamEvents).toHaveBeenCalledTimes(2);
+    expect(store.snapshot).toMatchObject({ sessionId: "ags_1", state: "COLLECTING" });
   });
 
   it("records compaction token information without refreshing the workflow snapshot", async () => {

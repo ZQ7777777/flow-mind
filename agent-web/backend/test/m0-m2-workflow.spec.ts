@@ -235,6 +235,50 @@ describe("M0-M2 workflow", () => {
     await waitFor(async () => existsSync(after.pi_session_file!));
   });
 
+  it("resets a completed workflow while preserving its published artifacts as history", async () => {
+    const created = await workflow.createSession(user);
+    const before = database.getSession(created.sessionId)!;
+    const previousSessionFile = before.pi_session_file!;
+    const now = new Date().toISOString();
+    database.db.prepare(`
+      INSERT INTO agent_process_definition (
+        id, session_id, requirement_revision, platform_definition_id,
+        process_code, process_name, status, saga_step, requirement_snapshot_json,
+        create_operation_id, save_operation_id, publish_operation_id, activate_operation_id,
+        created_by, created_at, activated_at, updated_at
+      ) VALUES (?, ?, 1, 'definition-completed', 'completed_flow', 'Completed Flow',
+        'ACTIVE', 'ACTIVE', '{}', 'op-create', 'op-save', 'op-publish', 'op-activate', ?, ?, ?, ?)
+    `).run("apd_completed", created.sessionId, user.userId, now, now, now);
+    database.db.prepare(`
+      INSERT INTO agent_code_generation (
+        id, session_id, process_definition_record_id, requirement_revision,
+        requirement_snapshot_json, business_code, business_name, status,
+        artifact_manifest_json, generation_revision, created_by, created_at, updated_at,
+        process_snapshot_json, target_contract_json, hard_gate_passed, can_write, write_status
+      ) VALUES (?, ?, ?, 1, '{}', 'completed_flow', 'Completed Flow', 'COMPLETED',
+        '{}', 1, ?, ?, ?, '{}', '{}', 1, 1, 'COMPLETED')
+    `).run("acg_completed", created.sessionId, "apd_completed", user.userId, now, now);
+    database.db.prepare("UPDATE agent_session SET state = 'COMPLETED' WHERE id = ?").run(created.sessionId);
+
+    const completed = await workflow.getSnapshot(created.sessionId, user);
+    expect(completed.allowedActions).toContain("RESET_SESSION");
+
+    const reset = await workflow.resetSession(created.sessionId, user, created.rowVersion);
+    const after = database.getSession(created.sessionId)!;
+
+    expect(reset).toMatchObject({ state: "COLLECTING", messages: [] });
+    expect(reset.requirement).toBeUndefined();
+    expect(reset.processPreview).toBeUndefined();
+    expect(reset.activeGeneration).toBeUndefined();
+    expect(after.pi_session_id).not.toBe(before.pi_session_id);
+    expect(after.pi_session_file).not.toBe(previousSessionFile);
+    expect(existsSync(previousSessionFile)).toBe(false);
+    expect(database.db.prepare("SELECT status FROM agent_process_definition WHERE id = ?").get("apd_completed"))
+      .toEqual({ status: "ACTIVE" });
+    expect(database.db.prepare("SELECT status FROM agent_code_generation WHERE id = ?").get("acg_completed"))
+      .toEqual({ status: "COMPLETED" });
+  });
+
   async function waitForState(sessionId: string, state: string): Promise<WorkflowSnapshot> {
     return waitFor(async () => {
       const current = await workflow.getSnapshot(sessionId, user);

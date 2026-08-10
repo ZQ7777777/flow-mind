@@ -64,7 +64,9 @@ export class WorkflowService {
     const requirement = toRequirementRevision(session);
     const process = hasProcessPreview(session.state) ? this.database.getProcessBySession(sessionId) : undefined;
     const preview = process ? toProcessPreview(process) : undefined;
-    const generation = this.database.getLatestGenerationBySession(sessionId);
+    const generation = hasGenerationPreview(session.state)
+      ? this.database.getLatestGenerationBySession(sessionId)
+      : undefined;
     const messages = await this.pi.getMessages(sessionId, this.callbacks(sessionId));
     return {
       sessionId,
@@ -660,11 +662,19 @@ const resettableStates: WorkflowState[] = [
   "PROCESS_ACTIVE",
   "CODE_REVIEW",
   "CODE_PIPELINE_FAILED",
+  "COMPLETED",
 ];
 
 function hasProcessPreview(state: WorkflowState): boolean {
   return [
     "PROCESS_REVIEW", "PROCESS_ACTIVATING", "PROCESS_ACTIVATION_FAILED", "PROCESS_ACTIVE",
+    "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING",
+    "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "COMPLETED",
+  ].includes(state);
+}
+
+function hasGenerationPreview(state: WorkflowState): boolean {
+  return [
     "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING",
     "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "COMPLETED",
   ].includes(state);
