@@ -30,5 +30,14 @@ describe("generation prompt", () => {
     expect(prompt).toContain("reject a missing required attachment before startAndSubmit");
     expect(prompt).toContain("Do not mock enum types");
     expect(prompt).toContain("Uint8Array(size)");
+    expect(prompt).toContain("Frontend visual contract - match the platform flow-test UI");
+    expect(prompt).toContain('class="page-surface generated-entry-page"');
+    expect(prompt).toContain("Do not generate another application shell, top bar, status bar, or side navigation");
+    expect(prompt).toContain("#17202a");
+    expect(prompt).toContain("#d8dee8");
+    expect(prompt).toContain("#2563eb");
+    expect(prompt).toContain("<style scoped>");
+    expect(prompt).toContain("repeat(auto-fit, minmax(240px, 1fr))");
+    expect(prompt).toContain("No gradients, decorative blobs, oversized hero typography, or nested cards");
   });
 });

@@ -37,7 +37,7 @@ export function useResizableHeight(): {
   startResize: (event: PointerEvent) => void;
   resizeByKeyboard: (event: KeyboardEvent) => void;
 } {
-  const height = ref(readStoredHeight());
+  const height = ref(clampReasoningHeight(readStoredHeight()));
   let activePointerId: number | undefined;
   let startY = 0;
   let startHeight = 0;

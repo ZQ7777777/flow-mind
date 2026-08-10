@@ -6,6 +6,19 @@ export interface GenerationApiReferences {
   trustedUserContext: string;
 }
 
+const FRONTEND_VISUAL_CONTRACT = [
+  "Frontend visual contract - match the platform flow-test UI:",
+  '- The generated Vue view owns only the routed content area. Its root must be <section class="page-surface generated-entry-page">. Do not generate another application shell, top bar, status bar, or side navigation; the target business-base App.vue already owns them.',
+  '- Start with a compact .section-heading containing an uppercase teal eyebrow such as "Generated Entry" and an h1 using the confirmed business display name. Keep the h1 at 24px; do not create a hero section or explanatory marketing copy.',
+  "- Use Element Plus form controls already available in the target. Put fields in a top-aligned .entry-form-grid using grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) with 12px gaps. Textareas, uploads, and other content that needs horizontal room may span the full grid. Collapse to one column on narrow screens.",
+  "- Keep the page dense and operational: 16px outer panel padding, 14px section spacing, 8px maximum border radius, 6px control/button radius, 34-36px control height, and no decorative shadow. Do not center the form in a narrow floating card; use the available content width.",
+  "- Use the platform palette exactly: ink #17202a, muted text #5d6978, border #d8dee8, panel #ffffff, subtle surface #f8fafc, primary blue #2563eb, eyebrow teal #0f766e, error #be123c, success #15803d, and focus outline #f59e0b. Define scoped custom properties or scoped declarations so the view is stable without modifying global styles.",
+  "- Place submit/reset commands in a left-aligned or right-aligned .form-actions row separated from the fields by a top border. The submit command is the single primary blue button; secondary commands stay white with a neutral border. Preserve clear disabled and loading states without changing layout dimensions.",
+  "- Render validation and request feedback as compact inline status panels with role=alert or role=status: pale red for errors and pale green for success. Long messages and file names must wrap without overflowing.",
+  "- Include a complete <style scoped> block for the generated page and its own semantic classes. Do not style body, #app, the shared shell, or generic global Element Plus selectors. No gradients, decorative blobs, oversized hero typography, or nested cards.",
+  "- Keep labels visible, mark required fields accessibly, preserve keyboard focus, and ensure every field and action remains usable at desktop and mobile widths.",
+].join("\n");
+
 export function buildGenerationPrompt(
   requirement: BusinessRequirement,
   processSnapshot: Record<string, unknown>,
@@ -52,6 +65,8 @@ Hard runtime boundary:
 - The authoritative references below are part of the generation contract. Never guess or substitute Java packages, return types, nested user types, getters, or setters.
 - Generated Vitest tests run in the target's configured jsdom environment: do not assume Blob.text() exists, and assert form behavior rather than Element Plus internal CSS classes.
 - Generated file-size fixtures must allocate the requested bytes, for example new File([new Uint8Array(size)], name, ...); never accept a size argument and ignore it. Use Uint8Array(size) so size-limit tests exercise the real boundary.
+
+${FRONTEND_VISUAL_CONTRACT}
 
 Authoritative platform runtime API reference:
 ${apiReferences.platformRuntime}

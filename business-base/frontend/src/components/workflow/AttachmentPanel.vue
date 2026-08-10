@@ -1,0 +1,234 @@
+<script setup lang="ts">
+import { computed, ref } from "vue";
+import type { WorkflowAttachment } from "../../types/workflow";
+import { formatDateTime, formatFileSize } from "../../utils/format";
+
+const props = defineProps<{
+  attachments: WorkflowAttachment[];
+  canUpload?: boolean;
+}>();
+
+const emit = defineEmits<{
+  upload: [payload: { file: File; fieldCode: string; templateCode: string }];
+  download: [attachment: WorkflowAttachment];
+  delete: [attachment: WorkflowAttachment];
+}>();
+
+const selectedFile = ref<File | null>(null);
+const fieldCode = ref("");
+const templateCode = ref("");
+
+const grouped = computed(() => ({
+  instance: props.attachments.filter((item) => item.scope !== "TASK"),
+  task: props.attachments.filter((item) => item.scope === "TASK"),
+}));
+
+function onFileChange(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  selectedFile.value = input.files?.[0] ?? null;
+}
+
+function submitUpload(): void {
+  if (!selectedFile.value) {
+    return;
+  }
+  emit("upload", {
+    file: selectedFile.value,
+    fieldCode: fieldCode.value.trim(),
+    templateCode: templateCode.value.trim(),
+  });
+  selectedFile.value = null;
+}
+</script>
+
+<template>
+  <section class="workflow-section" aria-labelledby="attachments-heading">
+    <div class="section-header">
+      <h2 id="attachments-heading">附件</h2>
+    </div>
+
+    <form v-if="canUpload" class="upload-row" @submit.prevent="submitUpload">
+      <label>
+        <span>文件</span>
+        <input type="file" @change="onFileChange" />
+      </label>
+      <label>
+        <span>字段编码</span>
+        <input v-model="fieldCode" type="text" autocomplete="off" />
+      </label>
+      <label>
+        <span>模板编码</span>
+        <input v-model="templateCode" type="text" autocomplete="off" />
+      </label>
+      <button type="submit" :disabled="!selectedFile">上传</button>
+    </form>
+
+    <div class="attachment-groups">
+      <div>
+        <h3>实例附件</h3>
+        <ul v-if="grouped.instance.length" class="attachment-list">
+          <li v-for="attachment in grouped.instance" :key="attachment.attachmentId">
+            <span class="file-name">{{ attachment.fileName }}</span>
+            <span>{{ formatFileSize(attachment.fileSize) }}</span>
+            <span>{{ formatDateTime(attachment.createdAt) }}</span>
+            <button
+              type="button"
+              :disabled="attachment.canDownload === false"
+              @click="emit('download', attachment)"
+            >
+              下载
+            </button>
+            <button
+              type="button"
+              :disabled="attachment.canDelete !== true"
+              @click="emit('delete', attachment)"
+            >
+              删除
+            </button>
+          </li>
+        </ul>
+        <p v-else class="empty-state">暂无实例附件</p>
+      </div>
+
+      <div>
+        <h3>任务附件</h3>
+        <ul v-if="grouped.task.length" class="attachment-list">
+          <li v-for="attachment in grouped.task" :key="attachment.attachmentId">
+            <span class="file-name">{{ attachment.fileName }}</span>
+            <span>{{ formatFileSize(attachment.fileSize) }}</span>
+            <span>{{ formatDateTime(attachment.createdAt) }}</span>
+            <button
+              type="button"
+              :disabled="attachment.canDownload === false"
+              @click="emit('download', attachment)"
+            >
+              下载
+            </button>
+            <button
+              type="button"
+              :disabled="attachment.canDelete !== true"
+              @click="emit('delete', attachment)"
+            >
+              删除
+            </button>
+          </li>
+        </ul>
+        <p v-else class="empty-state">暂无任务附件</p>
+      </div>
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.workflow-section {
+  padding: 20px 0;
+  border-top: 1px solid #e5e7eb;
+}
+
+.section-header {
+  margin-bottom: 12px;
+}
+
+h2,
+h3 {
+  margin: 0;
+  color: #111827;
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: 650;
+}
+
+h3 {
+  margin-bottom: 8px;
+  font-size: 15px;
+}
+
+.upload-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.6fr) minmax(140px, 1fr) minmax(140px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: #374151;
+  font-size: 13px;
+}
+
+input {
+  min-height: 36px;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+button {
+  min-height: 36px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 0 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+input:focus,
+button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.attachment-groups {
+  display: grid;
+  gap: 18px;
+}
+
+.attachment-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.attachment-list li {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 90px 150px auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.file-name {
+  overflow-wrap: anywhere;
+  color: #111827;
+  font-weight: 600;
+}
+
+.empty-state {
+  margin: 0;
+  color: #6b7280;
+}
+
+@media (max-width: 760px) {
+  .upload-row,
+  .attachment-list li {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

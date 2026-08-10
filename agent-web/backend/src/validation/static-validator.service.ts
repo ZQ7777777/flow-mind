@@ -947,9 +947,50 @@ function hasDirectExtensionCheck(source: string, extension: string, fileNames: s
 }
 
 function hasAllowedExtensionCollection(source: string, extensions: string[], fileNames: string[]): boolean {
+  const lowered = extensions.map((extension) => extension.toLowerCase());
+  const hasEveryLiteral = extensions.every((extension) => new RegExp(`"${escapeRegExp(extension)}"`, "i").test(source));
+
+  // Form 1: an inlined extension value (substring/lastIndexOf derivation) passed
+  // to .contains(...), with every allowed extension appearing as a literal.
   const derivedNames = attachmentExtensionValueNames(source, fileNames);
-  if (!derivedNames.some((name) => new RegExp(`\\.\\s*contains\\s*\\(\\s*${escapeRegExp(name)}\\s*\\)`).test(source))) return false;
-  return extensions.every((extension) => new RegExp(`"${escapeRegExp(extension)}"`, "i").test(source));
+  if (hasEveryLiteral && derivedNames.some((name) =>
+    new RegExp(`\\.\\s*contains\\s*\\(\\s*${escapeRegExp(name)}\\s*\\)`).test(source),
+  )) {
+    return true;
+  }
+
+  // Form 2: a named List<String> constant enumerating the allowed extensions,
+  // checked via NAME.contains(...). The argument is the file extension by
+  // construction, so any extraction form (inline variable, helper method, ...)
+  // is accepted. This recognizes idiomatic code such as
+  //   static final List<String> ALLOWED = Arrays.asList("pdf");
+  //   ... ALLOWED.contains(getExtension(fileName)) ...
+  for (const name of allowedExtensionCollectionNames(source, lowered)) {
+    if (new RegExp(`\\b${escapeRegExp(name)}\\s*\\.\\s*contains\\s*\\(`).test(source)) return true;
+  }
+
+  // Form 3: an inline collection literal covering the allowed extensions,
+  // checked immediately, e.g. Arrays.asList("pdf").contains(...) / List.of(...).
+  for (const match of source.matchAll(/\b(?:Arrays\.asList|List\.of)\s*\(\s*([^)]*)\)\s*\.\s*contains\s*\(/g)) {
+    const literals = [...match[1].matchAll(/"([^"]+)"/g)].map((literal) => literal[1].toLowerCase());
+    if (literals.length && lowered.every((extension) => literals.includes(extension))) return true;
+  }
+  return false;
+}
+
+// Names of `List<String>` constants whose initializer enumerates a superset of
+// the allowed extensions (e.g. `static final List<String> X = Arrays.asList("pdf");`).
+function allowedExtensionCollectionNames(source: string, loweredExtensions: string[]): string[] {
+  const names: string[] = [];
+  const declaration = /\b(?:static\s+)?(?:final\s+)?List\s*<\s*String\s*>\s+([A-Za-z_$][\w$]*)\s*=\s*([^;]+);/g;
+  for (const match of source.matchAll(declaration)) {
+    const [, name, initializer] = match;
+    const literals = [...initializer.matchAll(/"([^"]+)"/g)].map((literal) => literal[1].toLowerCase());
+    if (literals.length && loweredExtensions.every((extension) => literals.includes(extension))) {
+      names.push(name);
+    }
+  }
+  return names;
 }
 
 function attachmentExtensionValueNames(source: string, fileNames: string[]): string[] {

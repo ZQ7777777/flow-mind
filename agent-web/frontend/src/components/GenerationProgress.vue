@@ -99,7 +99,8 @@ const { height: reasoningHeight, startResize: startReasoningResize, resizeByKeyb
 .gp-error { color: #b3261e; background: #ffe7e5; }
 .gp-stream { margin: 0; padding: 10px 12px; border-radius: 8px; background: #f8fafc; color: #5a6678; font-size: 12px; line-height: 1.5; max-height: 96px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 .gp-reasoning { background: #eef3ff; color: #44506b; display: block; overflow-y: auto; -webkit-line-clamp: unset; white-space: pre-wrap; word-break: break-word; }
-.gp-reasoning-wrap { display: flex; flex-direction: column; flex-shrink: 0; }
+.gp-reasoning-wrap { display: flex; flex-direction: column; flex-shrink: 0; margin-top: auto; }
+.generation-progress > .gp-stream { margin-top: auto; }
 .gp-reasoning-handle { height: 8px; cursor: ns-resize; background: #e7edff; border-radius: 8px 8px 0 0; display: flex; align-items: center; justify-content: center; }
 .gp-reasoning-handle::after { content: ""; width: 30px; height: 3px; border-radius: 3px; background: #aebbd9; transition: background .15s; }
 .gp-reasoning-handle:hover::after,

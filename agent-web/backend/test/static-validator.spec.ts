@@ -165,6 +165,39 @@ describe("static generated-code validation", () => {
     expect(validator.validate(input).diagnostics).toEqual([]);
   });
 
+  it("accepts a named allowed-extension constant checked via a helper method (model repair pattern)", () => {
+    // Reproduces the real generated code that previously caused a false-positive
+    // ATTACHMENT_VALIDATION_MISSING: the extension set lives in a named
+    // List<String> constant and the extension is extracted by a private helper
+    // method, then checked with NAME.contains(helper(file)). The detection must
+    // resolve the constant and accept the contains() call regardless of how the
+    // extension value is derived.
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!
+        .replace(
+          /(public class \w+Service \{)/,
+          '$1\n    private static final List<String> BANK_RECEIPT_ALLOWED_EXTENSIONS = java.util.Arrays.asList("pdf", "jpg", "png");',
+        )
+        .replace(
+          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
+          "String fileName = file.getOriginalFilename();",
+        )
+        .replace(
+          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
+          'if (!BANK_RECEIPT_ALLOWED_EXTENSIONS.contains(getExtension(fileName)))',
+        )
+        .replace(
+          /\n}\s*$/,
+          `\n    private static String getExtension(String fileName) {\n        if (fileName == null) return "";\n        int dotIndex = fileName.lastIndexOf('.');\n        return dotIndex < 0 || dotIndex == fileName.length() - 1 ? "" : fileName.substring(dotIndex + 1).toLowerCase(java.util.Locale.ROOT);\n    }\n}\n`,
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics).toEqual([]);
+  });
+
   it("does not accept an allowed collection check on an unrelated string", () => {
     const input = validInput();
     const path = input.spec.paths.service;
