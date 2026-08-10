@@ -221,6 +221,22 @@ class DefaultTaskQueryServiceTest {
     }
 
     @Test
+    void getTaskReturnsJoinedReadModelAndRejectsMissingTask() {
+        insertTask("task-by-id", "operator-001", "Operator", "principal-001", "ACTIVE",
+                "[\"operator-001\"]", LocalDateTime.of(2026, 7, 22, 9, 0));
+
+        TaskDTO task = taskQueryService.getTask("task-by-id");
+
+        assertEquals("instance-1", task.getInstanceId());
+        assertEquals("history-test", task.getProcessCode());
+        assertEquals("Review", task.getNodeName());
+        assertEquals("principal-001", task.getDelegateFromUserId());
+        assertEquals(Long.valueOf(0L), task.getTaskVersion());
+        assertThrows(com.flowmind.platform.core.runtime.RuntimeStateException.class,
+                () -> taskQueryService.getTask("missing-task"));
+    }
+
+    @Test
     void completedQueryUsesCurrentUserAndReturnsDisplayFields() {
         historyTaskWriter.archive(command("task-apply", "apply", "op-apply",
                 "提交申请", LocalDateTime.of(2026, 7, 22, 9, 0)));

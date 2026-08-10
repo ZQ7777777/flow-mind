@@ -13,6 +13,8 @@ import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
+import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
+import com.flowmind.platform.core.runtime.RuntimeStateException;
 import com.flowmind.platform.persistence.entity.HistoryTaskQueryEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
@@ -65,6 +67,22 @@ public class DefaultTaskQueryService implements TaskQueryService {
                                    CurrentUserProvider currentUserProvider) {
         this(historyTaskRepository, activeTaskRepository, instanceRepository, traceAssembler, queryAssembler,
                 currentUserProvider, null);
+    }
+
+    /**
+     * 按任务 ID 查询活动任务，并在不存在时按平台统一错误契约抛出任务不存在。
+     */
+    @Override
+    public TaskDTO getTask(String taskId) {
+        if (isBlank(taskId)) {
+            throw new IllegalArgumentException("taskId must not be empty");
+        }
+        com.flowmind.platform.persistence.entity.TaskQueryEntity entity =
+                activeTaskRepository.queryTaskById(taskId.trim());
+        if (entity == null) {
+            throw new RuntimeStateException(RuntimeErrorCodes.TASK_NOT_FOUND, "active task does not exist");
+        }
+        return queryAssembler.toTaskDTO(entity);
     }
 
     @Override
@@ -159,12 +177,18 @@ public class DefaultTaskQueryService implements TaskQueryService {
         return readRecordManager.query(normalized);
     }
 
+    /**
+     * 校验实例 ID，实例详情相关查询必须显式指定目标实例。
+     */
     private void validateInstanceId(String instanceId) {
         if (instanceId == null || instanceId.trim().isEmpty()) {
             throw new IllegalArgumentException("instanceId must not be empty");
         }
     }
 
+    /**
+     * 取得平台可信当前用户，查询接口不接受业务端伪造用户身份。
+     */
     private UserContext currentUser() {
         UserContext currentUser = currentUserProvider.getCurrentUser();
         if (currentUser == null || isBlank(currentUser.getUserId())) {
@@ -173,6 +197,9 @@ public class DefaultTaskQueryService implements TaskQueryService {
         return currentUser;
     }
 
+    /**
+     * 将待办查询用户固定为当前用户，并拒绝与当前用户不一致的客户端用户参数。
+     */
     private void applyTrustedTodoUser(TodoTaskQuery query, UserContext currentUser) {
         if (!isBlank(query.getUserId()) && !currentUser.getUserId().equals(query.getUserId())) {
             throw new IllegalArgumentException("query userId must match current user");
@@ -180,6 +207,9 @@ public class DefaultTaskQueryService implements TaskQueryService {
         query.setUserId(currentUser.getUserId());
     }
 
+    /**
+     * 将已办查询用户固定为当前用户，并拒绝与当前用户不一致的客户端用户参数。
+     */
     private void applyTrustedCompletedUser(CompletedTaskQuery query, UserContext currentUser) {
         if (!isBlank(query.getUserId()) && !currentUser.getUserId().equals(query.getUserId())) {
             throw new IllegalArgumentException("query userId must match current user");
@@ -187,6 +217,9 @@ public class DefaultTaskQueryService implements TaskQueryService {
         query.setUserId(currentUser.getUserId());
     }
 
+    /**
+     * 将我发起查询的发起人固定为当前用户，防止横向查询他人实例。
+     */
     private void applyTrustedStarterUser(StartedInstanceQuery query, UserContext currentUser) {
         if (!isBlank(query.getStarterUserId()) && !currentUser.getUserId().equals(query.getStarterUserId())) {
             throw new IllegalArgumentException("query starterUserId must match current user");
@@ -194,6 +227,9 @@ public class DefaultTaskQueryService implements TaskQueryService {
         query.setStarterUserId(currentUser.getUserId());
     }
 
+    /**
+     * 组装分页响应，分页参数已在调用点完成归一化。
+     */
     private <T> PageResult<T> page(List<T> records, int pageNo, int pageSize, long total) {
         PageResult<T> result = new PageResult<T>();
         result.setRecords(records);
@@ -204,10 +240,16 @@ public class DefaultTaskQueryService implements TaskQueryService {
         return result;
     }
 
+    /**
+     * 在旧构造路径未注入可选能力时返回明确的未支持异常。
+     */
     private UnsupportedOperationException unsupported(String methodName) {
         return new UnsupportedOperationException(methodName + " is not implemented in C M3");
     }
 
+    /**
+     * 判断字符串是否为空白。
+     */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }

@@ -336,13 +336,7 @@ public class BusinessBaseApplication {
 }
 ```
 
-不要参考 `PlatformStandaloneApplication` 的 `scanBasePackages = "com.flowmind.platform"` 写法。该写法是①独立应用的需要；如果③扫描 `com.flowmind.platform`，会把①平台 Web Controller、调试静态资源和内部实现类混入业务应用，导致以下问题：
-
-- `/api/platform/**` 等调试/管理接口绕过③的 `WorkflowAccessGuard` 和业务 DTO 脱敏。
-- `static/flow-test` 与③前端构建产物职责混淆，最终业务用户可能进入平台调试页。
-- 同一个平台 Service 可能同时被 Starter 自动装配和组件扫描实例化，产生 Bean 冲突或事务边界不一致。
-- ③代码可能误依赖 `platform-core` 内部类，破坏“只依赖 `platform.api` + Starter”的契约。
-
+不要参考 `PlatformStandaloneApplication` 的 `scanBasePackages = "com.flowmind.platform"` 写法。该写法是①独立应用的需要；如果③扫描 `com.flowmind.platform`，会把①平台 Web Controller、调试静态资源和内部实现类混入业务应用。
 若本地调试确实需要打开①平台调试页，应单独启动①的 `PlatformStandaloneApplication`；若需要验证③业务链路，应只启动③的 `BusinessBaseApplication`，并通过 Starter 在同进程内调用平台 Service。两种启动形态不能合并成一个应用。
 
 主要配置：

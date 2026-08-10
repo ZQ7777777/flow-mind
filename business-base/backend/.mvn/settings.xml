@@ -2,11 +2,14 @@
 <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
-  <!--
-    Keep the business application self-contained when Maven is launched from
-    backend/.  The Maven installation on this machine has an invalid global
-    repository path, so explicitly use the developer repository shared by the
-    verification worker. platform-starter is installed there during setup.
-  -->
-  <localRepository>${user.home}/.m2/repository</localRepository>
+  <localRepository>${user.dir}/../../.m2/repository</localRepository>
+
+  <mirrors>
+    <mirror>
+      <id>aliyun-public</id>
+      <mirrorOf>central</mirrorOf>
+      <name>Aliyun Maven Public</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+    </mirror>
+  </mirrors>
 </settings>

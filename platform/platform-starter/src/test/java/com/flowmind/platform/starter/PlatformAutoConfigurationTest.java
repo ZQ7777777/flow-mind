@@ -553,6 +553,11 @@ class PlatformAutoConfigurationTest {
 
     static class CustomTaskQueryService implements TaskQueryService {
         @Override
+        public TaskDTO getTask(String taskId) {
+            return null;
+        }
+
+        @Override
         public PageResult<TaskDTO> queryTodoTasks(TodoTaskQuery query) {
             return null;
         }

@@ -18,6 +18,14 @@ import java.util.List;
  */
 public interface TaskQueryService {
     /**
+     * 按任务 ID 查询活动任务。
+     *
+     * @param taskId 活动任务 ID
+     * @return 活动任务
+     */
+    TaskDTO getTask(String taskId);
+
+    /**
      * 分页查询待办任务。
      *
      * @param query 查询条件

@@ -204,6 +204,15 @@ public class ActiveTaskRepository {
         return count == null ? 0L : count.longValue();
     }
 
+    /** 按任务 ID 读取活动任务读模型；不存在时返回 {@code null}。 */
+    public TaskQueryEntity queryTaskById(String taskId) {
+        StringBuilder sql = new StringBuilder();
+        appendAdminTaskSelect(sql);
+        sql.append("WHERE t.id = ? AND t.task_status IN ('ACTIVE', 'CLAIMED')");
+        List<TaskQueryEntity> results = jdbcTemplate.query(sql.toString(), QUERY_ROW_MAPPER, taskId);
+        return results.isEmpty() ? null : results.get(0);
+    }
+
     /** 按实例 ID 读取开放活动任务读模型。 */
     public List<TaskQueryEntity> queryOpenTasksByInstanceId(String instanceId) {
         return jdbcTemplate.query("SELECT t.id AS task_id, t.instance_id, t.definition_id, "
