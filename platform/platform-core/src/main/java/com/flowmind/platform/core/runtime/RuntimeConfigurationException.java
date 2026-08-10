@@ -1,12 +1,16 @@
 package com.flowmind.platform.core.runtime;
 
+import com.flowmind.platform.api.error.PlatformError;
+import com.flowmind.platform.api.error.PlatformErrorCategories;
+import com.flowmind.platform.api.error.PlatformErrorCategory;
+
 /**
  * 运行时定义配置解析异常。
  *
  * @author Yuxin Xu
  * @since 2026-07-22
  */
-public class RuntimeConfigurationException extends IllegalArgumentException {
+public class RuntimeConfigurationException extends IllegalArgumentException implements PlatformError {
 
     /**
      * 错误码，典型值：FLOW_RUNTIME_NODE_CONFIG_INVALID、FLOW_RUNTIME_CONDITION_EXPRESSION_INVALID。
@@ -43,5 +47,10 @@ public class RuntimeConfigurationException extends IllegalArgumentException {
      */
     public String getErrorCode() {
         return errorCode;
+    }
+
+    @Override
+    public PlatformErrorCategory getErrorCategory() {
+        return PlatformErrorCategories.resolve(errorCode, PlatformErrorCategory.INVALID_REQUEST);
     }
 }

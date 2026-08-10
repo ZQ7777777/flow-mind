@@ -1,0 +1,19 @@
+server:
+  address: 127.0.0.1
+  port: 8081
+
+flow-mind:
+  platform:
+    enabled: true
+    sqlite:
+      path: ./data/business-flow.db
+    mock:
+      enabled: false
+    callback:
+      async-enabled: true
+    timeout-scan:
+      enabled: false
+  business:
+    local-user:
+      header-name: X-FlowMind-Local-User
+      default-user-id: u_sales_01

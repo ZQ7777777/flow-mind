@@ -1,0 +1,21 @@
+server:
+  address: 127.0.0.1
+  port: 0
+
+flow-mind:
+  platform:
+    mock:
+      enabled: true
+    sqlite:
+      path: ./target/business-flow-test.db
+    callback:
+      async-enabled: false
+    timeout-scan:
+      enabled: false
+  business:
+    local-user:
+      default-user-id: u_sales_01
+      users:
+        u_sales_01: dept_sales
+        u_dept_manager_01: dept_sales
+        u_finance_01: dept_finance

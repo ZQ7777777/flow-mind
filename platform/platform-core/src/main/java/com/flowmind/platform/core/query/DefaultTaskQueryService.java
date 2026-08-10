@@ -154,7 +154,9 @@ public class DefaultTaskQueryService implements TaskQueryService {
         if (readRecordManager == null) {
             throw unsupported("queryReadRecords");
         }
-        return readRecordManager.query(query);
+        ReadRecordQuery normalized = query == null ? new ReadRecordQuery() : query;
+        normalized.setUserId(currentUser().getUserId());
+        return readRecordManager.query(normalized);
     }
 
     private void validateInstanceId(String instanceId) {

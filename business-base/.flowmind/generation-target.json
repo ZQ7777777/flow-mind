@@ -52,7 +52,7 @@
   "protectedFiles": [
     {
       "path": "backend/pom.xml",
-      "sha256": "63ff795f2cbd81c28fac25a974d91a93334b42d3336416d21fee019ef19edf07"
+      "sha256": "388a8d076a685881e19e5d1d7958b1c5e2df50b1c4fb51a896bf939b5e65138a"
     },
     {
       "path": "frontend/package.json",

@@ -22,11 +22,13 @@ import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.CallbackService;
 import com.flowmind.platform.api.service.AdminProcessService;
 import com.flowmind.platform.api.service.ProcessMonitorService;
+import com.flowmind.platform.api.service.ProcessDefinitionService;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
+import com.flowmind.platform.api.spi.ConditionExpressionEvaluator;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.OrganizationProvider;
@@ -43,6 +45,10 @@ import com.flowmind.platform.core.callback.CallbackLogMapper;
 import com.flowmind.platform.core.callback.CallbackOutboxService;
 import com.flowmind.platform.core.callback.DefaultCallbackService;
 import com.flowmind.platform.core.definition.OperationIdempotencyService;
+import com.flowmind.platform.core.definition.DefaultProcessDefinitionService;
+import com.flowmind.platform.core.definition.ProcessDefinitionAttachmentConfigManager;
+import com.flowmind.platform.core.definition.ProcessDefinitionCache;
+import com.flowmind.platform.core.definition.ProcessFormFieldDefinitionManager;
 import com.flowmind.platform.core.monitor.ActionExceptionAlertWriter;
 import com.flowmind.platform.core.monitor.DefaultProcessMonitorService;
 import com.flowmind.platform.core.monitor.MonitorModelMapper;
@@ -51,11 +57,23 @@ import com.flowmind.platform.core.monitor.ReminderPolicyReader;
 import com.flowmind.platform.core.monitor.TimeoutActionExecutor;
 import com.flowmind.platform.core.monitor.TimeoutScanScheduler;
 import com.flowmind.platform.core.monitor.TimeoutPolicyReader;
+import com.flowmind.platform.core.monitor.TimeoutDueDateCalculator;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
+import com.flowmind.platform.core.runtime.ApproverResolveRequestFactory;
+import com.flowmind.platform.core.runtime.DefaultProcessRuntimeService;
+import com.flowmind.platform.core.runtime.InstanceTaskCancellationService;
+import com.flowmind.platform.core.runtime.RuntimeDefinitionLoader;
+import com.flowmind.platform.core.runtime.RuntimeNodeAdvancer;
+import com.flowmind.platform.core.runtime.RuntimeNodeConfigReader;
+import com.flowmind.platform.core.runtime.RuntimeStateValidator;
+import com.flowmind.platform.core.runtime.SimpleConditionExpressionEvaluator;
 import com.flowmind.platform.core.runtime.AdminPermissionGuard;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
 import com.flowmind.platform.core.runtime.RuntimeRequestValidator;
 import com.flowmind.platform.core.runtime.RuntimeTransactionExecutor;
+import com.flowmind.platform.core.task.HistoryTaskWriter;
+import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigValidator;
+import com.flowmind.platform.core.validation.ProcessFormFieldValidator;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.core.attachment.DefaultAttachmentService;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
@@ -74,6 +92,12 @@ import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
 import com.flowmind.platform.persistence.repository.ProcessOperationRecordRepository;
 import com.flowmind.platform.persistence.repository.ProcessCallbackLogRepository;
 import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
+import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
+import com.flowmind.platform.persistence.repository.ProcessEdgeRepository;
+import com.flowmind.platform.persistence.repository.ProcessFormFieldRepository;
+import com.flowmind.platform.persistence.repository.ProcessInstanceDeletionRepository;
+import com.flowmind.platform.persistence.repository.HistoryTaskRepository;
+import com.flowmind.platform.persistence.repository.TaskGroupRepository;
 import com.flowmind.platform.persistence.repository.ProcessReadRecordRepository;
 import com.flowmind.platform.persistence.repository.ReminderRecordRepository;
 import com.flowmind.platform.persistence.repository.AlertRecordRepository;
@@ -249,6 +273,42 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public ProcessDefinitionRepository processDefinitionRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessDefinitionRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessEdgeRepository processEdgeRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessEdgeRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessFormFieldRepository processFormFieldRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessFormFieldRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessInstanceDeletionRepository processInstanceDeletionRepository(JdbcTemplate jdbcTemplate) {
+        return new ProcessInstanceDeletionRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public HistoryTaskRepository historyTaskRepository(JdbcTemplate jdbcTemplate) {
+        return new HistoryTaskRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TaskGroupRepository taskGroupRepository(JdbcTemplate jdbcTemplate) {
+        return new TaskGroupRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public ProcessCallbackLogRepository processCallbackLogRepository(JdbcTemplate jdbcTemplate) {
         return new ProcessCallbackLogRepository(jdbcTemplate);
     }
@@ -269,6 +329,161 @@ public class PlatformAutoConfiguration {
     @ConditionalOnMissingBean
     public RuntimeQueryAssembler runtimeQueryAssembler() {
         return new RuntimeQueryAssembler();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessDefinitionCache processDefinitionCache() {
+        return new ProcessDefinitionCache();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessFormFieldValidator processFormFieldValidator() {
+        return new ProcessFormFieldValidator();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessFormFieldDefinitionManager processFormFieldDefinitionManager(
+            ProcessFormFieldRepository repository,
+            ProcessFormFieldValidator validator) {
+        return new ProcessFormFieldDefinitionManager(repository, validator);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessDefinitionAttachmentConfigValidator processDefinitionAttachmentConfigValidator(
+            ProcessAttachmentTemplateRepository templateRepository) {
+        return new ProcessDefinitionAttachmentConfigValidator(templateRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessDefinitionAttachmentConfigManager processDefinitionAttachmentConfigManager(
+            ProcessDefinitionAttachmentConfigRepository configRepository,
+            ProcessAttachmentTemplateRepository templateRepository,
+            ProcessDefinitionAttachmentConfigValidator validator) {
+        return new ProcessDefinitionAttachmentConfigManager(configRepository, templateRepository, validator);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessDefinitionService processDefinitionService(
+            ProcessDefinitionRepository definitionRepository,
+            ProcessNodeRepository nodeRepository,
+            ProcessEdgeRepository edgeRepository,
+            ProcessFormFieldDefinitionManager formFieldManager,
+            ProcessDefinitionAttachmentConfigManager attachmentConfigManager,
+            OperationIdempotencyService idempotencyService,
+            ProcessDefinitionCache definitionCache,
+            ObjectProvider<FileStorageProvider> fileStorageProvider) {
+        return new DefaultProcessDefinitionService(definitionRepository, nodeRepository, edgeRepository,
+                formFieldManager, attachmentConfigManager, idempotencyService, definitionCache,
+                fileStorageProvider.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RuntimeDefinitionLoader runtimeDefinitionLoader(ProcessDefinitionRepository definitionRepository,
+                                                           ProcessDefinitionService definitionService,
+                                                           ProcessDefinitionCache definitionCache) {
+        return new RuntimeDefinitionLoader(definitionRepository, definitionService, definitionCache);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RuntimeNodeConfigReader runtimeNodeConfigReader() {
+        return new RuntimeNodeConfigReader();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ApproverResolveRequestFactory approverResolveRequestFactory(RuntimeNodeConfigReader configReader) {
+        return new ApproverResolveRequestFactory(configReader);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ConditionExpressionEvaluator conditionExpressionEvaluator() {
+        return new SimpleConditionExpressionEvaluator();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TimeoutDueDateCalculator timeoutDueDateCalculator(TimeoutPolicyReader timeoutPolicyReader) {
+        return new TimeoutDueDateCalculator(timeoutPolicyReader);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RuntimeNodeAdvancer runtimeNodeAdvancer(ActiveTaskRepository activeTaskRepository,
+                                                   TaskGroupRepository taskGroupRepository,
+                                                   ProcessInstanceRepository instanceRepository,
+                                                   RuntimeRequestValidator requestValidator,
+                                                   ObjectProvider<ApproverResolver> approverResolver,
+                                                   ConditionExpressionEvaluator conditionExpressionEvaluator,
+                                                   ApproverResolveRequestFactory requestFactory,
+                                                   TimeoutDueDateCalculator timeoutDueDateCalculator) {
+        ApproverResolver resolver = approverResolver.getIfAvailable();
+        if (resolver == null) {
+            resolver = request -> {
+                throw new IllegalStateException("ApproverResolver bean is required for runtime advancement");
+            };
+        }
+        return new RuntimeNodeAdvancer(activeTaskRepository, taskGroupRepository, instanceRepository,
+                requestValidator, resolver, conditionExpressionEvaluator, requestFactory,
+                timeoutDueDateCalculator);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RuntimeStateValidator runtimeStateValidator(ActiveTaskRepository activeTaskRepository,
+                                                       ProcessInstanceRepository instanceRepository,
+                                                       TaskGroupRepository taskGroupRepository) {
+        return new RuntimeStateValidator(activeTaskRepository, instanceRepository, taskGroupRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public HistoryTaskWriter historyTaskWriter(ProcessHistoryTaskRepository historyTaskRepository) {
+        return new HistoryTaskWriter(historyTaskRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public InstanceTaskCancellationService instanceTaskCancellationService(
+            ActiveTaskRepository activeTaskRepository,
+            TaskGroupRepository taskGroupRepository,
+            HistoryTaskWriter historyTaskWriter) {
+        return new InstanceTaskCancellationService(activeTaskRepository, taskGroupRepository, historyTaskWriter);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ProcessRuntimeService processRuntimeService(
+            ProcessInstanceRepository instanceRepository,
+            ActiveTaskRepository activeTaskRepository,
+            HistoryTaskRepository historyTaskRepository,
+            RuntimeDefinitionLoader definitionLoader,
+            RuntimeRequestValidator requestValidator,
+            RuntimeOperationExecutor operationExecutor,
+            RuntimeNodeAdvancer nodeAdvancer,
+            ObjectProvider<AttachmentService> attachmentService,
+            CallbackService callbackService,
+            RuntimeStateValidator runtimeStateValidator,
+            HistoryTaskWriter historyTaskWriter,
+            RuntimeTransactionExecutor transactionExecutor,
+            InstanceTaskCancellationService cancellationService,
+            ProcessInstanceDeletionRepository deletionRepository,
+            TaskGroupRepository taskGroupRepository,
+            ProcessDefinitionRepository definitionRepository,
+            ObjectProvider<FileStorageProvider> fileStorageProvider) {
+        return new DefaultProcessRuntimeService(instanceRepository, activeTaskRepository, historyTaskRepository,
+                definitionLoader, requestValidator, operationExecutor, nodeAdvancer, attachmentService.getIfAvailable(),
+                callbackService, runtimeStateValidator, historyTaskWriter, transactionExecutor,
+                cancellationService, deletionRepository, taskGroupRepository, definitionRepository,
+                fileStorageProvider.getIfAvailable());
     }
 
     @Bean

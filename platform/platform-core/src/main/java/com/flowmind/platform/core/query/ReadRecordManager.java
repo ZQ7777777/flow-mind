@@ -4,6 +4,7 @@ import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ReadRecordDTO;
 import com.flowmind.platform.api.dto.ReadRecordQuery;
 import com.flowmind.platform.api.dto.UserContext;
+import com.flowmind.platform.api.service.ReadRecordService;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
 import com.flowmind.platform.core.runtime.RuntimeValidationException;
@@ -17,7 +18,7 @@ import java.util.List;
 
 /** Handles idempotent read-record writes and read-record queries. */
 @Component
-public class ReadRecordManager {
+public class ReadRecordManager implements ReadRecordService {
 
     private final ProcessReadRecordRepository readRecordRepository;
     private final CurrentUserProvider currentUserProvider;
@@ -28,6 +29,7 @@ public class ReadRecordManager {
         this.currentUserProvider = currentUserProvider;
     }
 
+    @Override
     public ReadRecordDTO markRead(String instanceId) {
         if (isBlank(instanceId)) {
             throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "instanceId is required");

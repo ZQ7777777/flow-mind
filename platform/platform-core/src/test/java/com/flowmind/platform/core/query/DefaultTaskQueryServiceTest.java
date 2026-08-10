@@ -5,6 +5,8 @@ import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.ReadRecordDTO;
+import com.flowmind.platform.api.dto.ReadRecordQuery;
 import com.flowmind.platform.api.dto.StartedInstanceQuery;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
@@ -19,6 +21,7 @@ import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.ProcessReadRecordRepository;
 import com.flowmind.platform.testsupport.ExistingConnectionDataSource;
 import com.flowmind.platform.testsupport.SchemaTestSupport;
 import org.junit.jupiter.api.AfterEach;
@@ -45,6 +48,7 @@ class DefaultTaskQueryServiceTest {
     private ActiveTaskRepository activeTaskRepository;
     private ProcessInstanceRepository instanceRepository;
     private HistoryTaskWriter historyTaskWriter;
+    private ReadRecordManager readRecordManager;
     private DefaultTaskQueryService taskQueryService;
 
     @BeforeEach
@@ -56,9 +60,11 @@ class DefaultTaskQueryServiceTest {
         activeTaskRepository = new ActiveTaskRepository(jdbcTemplate);
         instanceRepository = new ProcessInstanceRepository(jdbcTemplate);
         historyTaskWriter = new HistoryTaskWriter(historyTaskRepository);
+        readRecordManager = new ReadRecordManager(new ProcessReadRecordRepository(jdbcTemplate),
+                () -> new UserContext("operator-001", "Operator", "dept-001", "Dept"));
         taskQueryService = new DefaultTaskQueryService(historyTaskRepository, activeTaskRepository,
                 instanceRepository, new ProcessTraceAssembler(), new RuntimeQueryAssembler(),
-                () -> new UserContext("operator-001", "Operator", "dept-001", "Dept"));
+                () -> new UserContext("operator-001", "Operator", "dept-001", "Dept"), readRecordManager);
         insertDefinitionAndInstance();
     }
 
@@ -235,6 +241,22 @@ class DefaultTaskQueryServiceTest {
             illegalQuery.setUserId("other-user");
             taskQueryService.queryCompletedTasks(illegalQuery);
         });
+    }
+
+    @Test
+    void readRecordQueryAlwaysUsesTrustedCurrentUser() {
+        readRecordManager.markRead("instance-1");
+        new ProcessReadRecordRepository(jdbcTemplate).upsert(
+                "instance-1", "other-user", "Other", LocalDateTime.of(2026, 8, 10, 9, 0));
+        ReadRecordQuery query = new ReadRecordQuery();
+        query.setInstanceId("instance-1");
+        query.setUserId("other-user");
+
+        PageResult<ReadRecordDTO> result = taskQueryService.queryReadRecords(query);
+
+        assertEquals(Long.valueOf(1L), result.getTotal());
+        assertEquals("operator-001", result.getRecords().get(0).getUserId());
+        assertEquals("operator-001", query.getUserId());
     }
 
     private HistoryArchiveCommand command(String taskId,

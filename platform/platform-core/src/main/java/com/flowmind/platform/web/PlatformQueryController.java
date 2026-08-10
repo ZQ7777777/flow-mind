@@ -12,8 +12,8 @@ import com.flowmind.platform.api.dto.StartedInstanceQuery;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
+import com.flowmind.platform.api.service.ReadRecordService;
 import com.flowmind.platform.api.service.TaskQueryService;
-import com.flowmind.platform.core.query.ReadRecordManager;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,15 +37,15 @@ public class PlatformQueryController {
 
     private final TaskQueryService taskQueryService;
     private final ProcessRuntimeService processRuntimeService;
-    private final ReadRecordManager readRecordManager;
+    private final ReadRecordService readRecordService;
 
     @Autowired
     public PlatformQueryController(TaskQueryService taskQueryService,
                                    ProcessRuntimeService processRuntimeService,
-                                   ReadRecordManager readRecordManager) {
+                                   ReadRecordService readRecordService) {
         this.taskQueryService = taskQueryService;
         this.processRuntimeService = processRuntimeService;
-        this.readRecordManager = readRecordManager;
+        this.readRecordService = readRecordService;
     }
 
     public PlatformQueryController(TaskQueryService taskQueryService,
@@ -113,10 +113,10 @@ public class PlatformQueryController {
     @Operation(summary = "Mark instance as read")
     @PostMapping("/api/platform/instances/{instanceId}/read")
     public ReadRecordDTO markRead(@Parameter(description = "Instance id") @PathVariable String instanceId) {
-        if (readRecordManager == null) {
-            throw new UnsupportedOperationException("read record manager is unavailable");
+        if (readRecordService == null) {
+            throw new UnsupportedOperationException("read record service is unavailable");
         }
-        return readRecordManager.markRead(instanceId);
+        return readRecordService.markRead(instanceId);
     }
 
     @Operation(summary = "Query read records")

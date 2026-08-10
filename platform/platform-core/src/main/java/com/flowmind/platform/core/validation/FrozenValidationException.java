@@ -1,5 +1,9 @@
 package com.flowmind.platform.core.validation;
 
+import com.flowmind.platform.api.error.PlatformError;
+import com.flowmind.platform.api.error.PlatformErrorCategories;
+import com.flowmind.platform.api.error.PlatformErrorCategory;
+
 /**
  * 冻结规则校验失败时抛出的业务异常。
  *
@@ -8,7 +12,7 @@ package com.flowmind.platform.core.validation;
  * @author Yuxin Xu
  * @since 2026-07-15
  */
-public class FrozenValidationException extends RuntimeException {
+public class FrozenValidationException extends RuntimeException implements PlatformError {
     private static final long serialVersionUID = 1L;
 
     private final String errorCode;
@@ -20,5 +24,10 @@ public class FrozenValidationException extends RuntimeException {
 
     public String getErrorCode() {
         return errorCode;
+    }
+
+    @Override
+    public PlatformErrorCategory getErrorCategory() {
+        return PlatformErrorCategories.resolve(errorCode, PlatformErrorCategory.INVALID_REQUEST);
     }
 }
