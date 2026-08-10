@@ -32,7 +32,7 @@
     > 需求文档中的一般性示例
 ```
 
-因此，本设计冻结一个重要结论：**Agent 生成的业务模块只负责业务发起并调用一次 `ProcessRuntimeService.startAndSubmit()`；待办、已办、我发起、已阅、详情、审批动作、附件和轨迹全部由③通用基座提供。** 需求文档 6.4、8.3 中“业务 Controller 生成详情和审批接口”的早期表述不再作为③的实现依据。
+因此，本设计冻结一个重要结论：**Agent 生成的业务模块只负责业务发起并调用一次 `ProcessRuntimeService.startAndSubmit()`；待办、已办、我发起、已阅、任务详情、实例详情、审批动作、附件和轨迹全部由③通用基座提供。** 需求文档 6.4、8.3 中“业务 Controller 生成详情和审批接口”的早期表述不再作为当前 `GenerationTargetContract 1.1` 的实现依据。
 
 ### 1.3 当前基线与缺口
 
@@ -56,6 +56,15 @@
 
 需要特别区分：①阶段为了展示平台能力，已经在 `platform-core` 中提供了 `PlatformStandaloneApplication`、平台 REST Controller 和 `static/flow-test` 静态调试页面。它们服务于①独立运行和演示，不是③业务平台的组成部分。③可以借鉴其“本地可启动、Mock 依赖、端到端演示”的工程思路，但不得复用其启动类、静态页面、URL 命名空间或 `com.flowmind.platform.web` Controller 作为业务运行入口。
 
+### 1.4 与基础底座目标设计的差异处理
+
+`doc/三阶段业务流程代码基础底座设计文档.md` 是③目标边界基线；本文是面向当前源码和 `business-base/` 骨架的落地设计。两者出现差异时按以下方式处理，避免文档互相矛盾：
+
+1. **manifest 命名**：目标设计使用 `.flowmind/target-manifest.json` 表达③与②的长期契约命名；当前 `agent-web` 和 `business-base` 已落地的是 `.flowmind/generation-target.json` 1.1。实现阶段继续以 `generation-target.json` 为当前权威，不额外创建第二份并行契约；若后续迁移为 `target-manifest.json`，必须先升级②读取逻辑、保留兼容窗口、迁移受保护文件哈希，并确保同一时间只有一份权威契约。
+2. **业务详情扩展**：目标设计允许未来通过扩展契约接入业务增强详情；当前 1.1 契约不生成业务详情组件或业务详情接口。首期采用定义驱动的通用只读详情。若要支持业务增强详情，必须先在③和 manifest 中冻结扩展点，再允许②生成对应文件。
+3. **发起附件链路**：早期①v4设计曾描述“先 `startAndSubmit`，再 `submitTask` 提交申请节点附件”。当前 `platform-starter 0.1.0` 已把 `StartProcessRequest.attachments` 暴露为生成 API，且 1.1 契约只允许生成 Service 调用一次 `startAndSubmit()`。因此本文按当前源码和生成契约设计。
+4. **REST 前缀**：目标设计示例使用 `/api/business/workflow`，当前工程采用 `/api/workflow` 和 `/api/generated/**`。两者核心约束相同：前端只调用③后端，不直连①。若统一前缀，需要作为一次受控兼容变更处理。
+
 ## 2. 范围与职责边界
 
 ### 2.1 本期包含
@@ -65,7 +74,7 @@
 - Spring Boot 启动与 `platform-starter` 同进程装配。
 - 当前业务用户可信身份获取，以及到平台 `CurrentUserProvider` 的适配。
 - 待办、已办、我发起、已阅查询。
-- 流程实例详情聚合：实例、定义、表单字段、流程图、活动任务、历史轨迹、审批意见和附件。
+- 任务详情与流程实例详情聚合：实例、定义、表单字段、流程图、当前任务、活动任务、历史轨迹、审批意见和附件。
 - 通用任务动作：审批、驳回、退回、撤回、直送、转办、委托、加签、认领、取消认领。
 - 实例级与任务级附件的查询、上传、下载和删除。
 - 服务端幂等号生成、乐观锁版本透传、访问控制和统一错误响应。
@@ -75,7 +84,7 @@
 
 - 应用壳、导航、主路由和生成路由静态合并。
 - 待办、已办、我发起、已阅列表页。
-- 通用审批详情页及流程图、表单变量、意见、附件、轨迹和动作区。
+- 通用任务详情页、实例详情页及流程图、表单变量、意见、附件、轨迹和动作区。
 - 基于流程定义 `formFields` 的只读通用表单渲染。
 - 通用 API 层、状态管理、错误处理、加载态与空态。
 
@@ -210,7 +219,7 @@ ProcessRuntimeService#startAndSubmit(StartProcessRequest)
 
 ### 4.6 受保护基础文件先冻结、后生成
 
-`backend/pom.xml`、`frontend/package.json`、平台 API 参考和可信身份接口均受 `.flowmind/generation-target.json` 的 SHA-256 保护。
+当前 `backend/pom.xml`、`frontend/package.json`、平台 API 参考和可信身份接口均受 `.flowmind/generation-target.json` 1.1 的 SHA-256 保护。该文件是当前实现的权威契约；目标设计中的 `.flowmind/target-manifest.json` 作为下一版命名方向，不得在②未升级前与当前契约并行维护。
 
 基础底座开发若必须修改受保护文件，应按以下顺序处理：
 
@@ -227,7 +236,7 @@ ProcessRuntimeService#startAndSubmit(StartProcessRequest)
 ```text
 business-base/
 ├── .flowmind/
-│   ├── generation-target.json
+│   ├── generation-target.json          # 当前 1.1 权威契约；target-manifest 迁移见 1.4
 │   └── references/
 │       └── platform-starter-0.1.0.md
 ├── backend/
@@ -289,7 +298,8 @@ business-base/
         │   ├── CompletedListView.vue
         │   ├── StartedListView.vue
         │   ├── ReadListView.vue
-        │   └── WorkflowDetailView.vue
+        │   ├── WorkflowTaskDetailView.vue
+        │   └── WorkflowInstanceDetailView.vue
         ├── components/workflow/
         │   ├── ProcessGraph.vue
         │   ├── VariableFormReadonly.vue
@@ -372,6 +382,17 @@ HTTP 请求认证
 
 管理员能力通过独立的 `BusinessAuthorizationProvider` 判断，不能为此扩展②受保护的 `CurrentBusinessUserProvider.BusinessUser` 结构。默认实现不授予管理员权限，生产实现再对接宿主角色体系。
 
+#### 6.2.1 业务角色适配与权限边界
+
+③需要适配不同业务角色，但不维护角色主数据，也不让浏览器提交可生效角色。角色相关能力按以下边界落地：
+
+- **发起入口展示**：前端可根据服务端返回的当前用户能力和生成路由元数据控制入口显隐；这只是体验优化，后端发起接口仍必须校验。
+- **发起权限校验**：生成业务 Service 只能使用 `CurrentBusinessUserProvider` 和服务端配置判断，不能信任请求体中的用户、部门或角色字段。
+- **审批人解析**：审批候选人由①流程定义中的审批人规则和 `ApproverResolver` / `DelegateProvider` SPI 解析。生成发起 Service 只负责把影响解析的业务字段写入流程变量。
+- **委托代办**：待办来源 `OWN/DELEGATED` 由①任务查询和委托 SPI 给出，③只展示委托来源并透传平台权限判断。
+- **管理员权限**：仅通过 `BusinessAuthorizationProvider` 适配宿主角色体系，默认实现不授予管理员权限。
+- **业务特定字段或动作权限**：首期不允许②绕过基座生成按业务命名的审批接口；如果确需业务特定详情、字段权限或动作前置校验，必须先扩展③契约和 manifest，再允许②生成对应扩展实现。
+
 `LocalBusinessUserProvider` 仅在 `local` 或 `test` profile 启用。若通过请求头切换演示用户，必须同时满足：
 
 - 服务仅监听 `127.0.0.1`；
@@ -409,16 +430,19 @@ Facade 不得：
 
 列表查询直接转调 `TaskQueryService`。当前平台对待办、已办和我发起查询会用 `CurrentUserProvider` 覆盖或校验 Query 中的用户 ID，因此③的 REST Query 不暴露用户 ID 字段。当前 `queryReadRecords()` 尚未自动限定当前用户，Facade 必须把可信用户 ID 写入 `ReadRecordQuery.userId`，不得透传客户端 userId；后续应在①补充同样的服务端身份约束。
 
+详情聚合分为两个入口：待办和审批处理使用 `taskId` 入口，后端先读取当前任务并定位实例；我发起、已办和已阅使用 `instanceId` 入口，按只读实例视角聚合。这样可以避免前端从待办跳转时丢失当前任务、任务版本和可执行动作上下文。
+
 详情聚合步骤：
 
 1. 读取可信当前用户。
-2. 调 `ProcessRuntimeService.getInstance(instanceId)` 取得实例、变量、活动任务和历史信息。
-3. `WorkflowAccessGuard` 判断当前用户是否为发起人、活动任务候选人/办理人/委托代理人、历史办理人，或具有宿主授予的管理员权限。
-4. 无权限立即返回 403，不能继续查询或返回附件内容。
-5. 调 `ProcessDefinitionService.getDefinition(definitionId)` 取得图结构和表单字段。
-6. 调 `TaskQueryService.queryComments(instanceId)` 和 `AttachmentService.queryAttachments(...)` 补齐意见及附件。
-7. 组装 `WorkflowDetailResponse`，服务端给出当前用户可执行的 `allowedActions`。
-8. 首次成功打开详情后调用公共“标记已阅”能力；失败不得影响详情读取，但需记录告警。
+2. 根据 `taskId` 或 `instanceId` 定位实例；任务入口必须同时保留当前任务和 `taskVersion`。
+3. 调 `ProcessRuntimeService.getInstance(instanceId)` 取得实例、变量、活动任务和历史信息。
+4. `WorkflowAccessGuard` 判断当前用户是否为发起人、活动任务候选人/办理人/委托代理人、历史办理人，或具有宿主授予的管理员权限。
+5. 无权限立即返回 403，不能继续查询或返回附件内容。
+6. 调 `ProcessDefinitionService.getDefinition(definitionId)` 取得图结构和表单字段。
+7. 调 `TaskQueryService.queryComments(instanceId)` 和 `AttachmentService.queryAttachments(...)` 补齐意见及附件。
+8. 组装 `WorkflowDetailResponse`，服务端给出当前用户可执行的 `allowedActions`。
+9. 首次成功打开详情后调用公共“标记已阅”能力；失败不得影响详情读取，但需记录告警。
 
 `WorkflowDetailResponse` 至少包含：
 
@@ -427,7 +451,8 @@ instance          实例基础信息和流程变量
 definition        定义编码、名称、版本
 formFields        字段编码、名称、类型、控件、规则、顺序
 nodes / edges     流程图结构
-activeTasks       当前任务及 taskVersion
+currentTask       taskId 入口对应的当前任务和 taskVersion，可为空
+activeTasks       当前实例的活动任务列表
 historyTasks      历史轨迹
 comments          审批意见
 attachments       附件元数据，不返回 storageKey 和二进制内容
@@ -461,6 +486,8 @@ allowedActions    当前用户、当前任务和状态下可显示的动作
 - 可选 `comment` 和动作特定参数。
 
 Controller 不根据前端传来的 `allowedActions` 决定权限。平台仍是任务状态和办理权限的最终裁决者；③的 `allowedActions` 只用于用户体验和减少无效请求。
+
+委托相关能力需要区分两类语义：待办中的委托代办来源由① `DelegateProvider` 和任务查询结果表达；主动委派动作使用当前①公共接口 `ProcessRuntimeService.delegateTask(DelegateTaskRequest)`。③可以提供 `/delegate` 动作端点，但不得自行维护委托关系或绕过平台权限校验。
 
 `submit`、`direct-send` 等接口若接收变量，只允许写入当前流程定义 `formFields` 中明确声明、且当前节点允许编辑的字段。`processCode`、身份字段、流程状态、审批人和其他系统控制字段永远不能通过通用变量 Map 覆盖。首期若尚未冻结节点级可编辑字段规则，则审批动作不开放变量编辑，只允许生成发起接口在 `apply` 阶段写入业务变量。
 
@@ -528,6 +555,17 @@ public interface ReadRecordService {
 - 回调和消息由①异步处理，失败不回滚主流程。
 - ③不实现补偿式状态回写；重试依赖平台幂等记录。
 
+### 6.10 回调与业务联动
+
+①平台关键动作后会通过 `WorkflowCallbackHandler` 和回调日志发布流程事件。③首期不新增本地事件表，也不把回调失败纳入业务流程事务。
+
+落地规则：
+
+- 通用审批动作成功后的页面刷新以 `TaskActionResult` 为准，不等待异步回调。
+- 业务联动优先由宿主实现① `WorkflowCallbackHandler`，例如消息通知、外部系统同步和审计扩展。
+- ②生成模块首期不生成回调订阅器，也不直接注入① core 内部回调实现。
+- 如果未来需要业务模块在发起或审批后执行同步 Hook，必须先在③基础底座定义扩展接口并写入 manifest；在扩展点冻结前，不允许②通过生成重复审批接口实现联动。
+
 ## 7. REST API 设计
 
 ### 7.1 通用约定
@@ -549,7 +587,8 @@ public interface ReadRecordService {
 | `GET /api/workflow/tasks/completed` | 已办 | 分页、流程/标题/节点/动作筛选 |
 | `GET /api/workflow/instances/started` | 我发起 | 分页、流程/标题/状态筛选 |
 | `GET /api/workflow/read-records` | 已阅 | 当前用户分页记录 |
-| `GET /api/workflow/instances/{instanceId}` | 通用详情 | `WorkflowDetailResponse` |
+| `GET /api/workflow/tasks/{taskId}` | 待办/审批任务详情 | `WorkflowDetailResponse`，包含当前任务和可执行动作 |
+| `GET /api/workflow/instances/{instanceId}` | 实例详情 | `WorkflowDetailResponse`，可无当前任务 |
 | `POST /api/workflow/instances/{instanceId}/read` | 标记已阅 | 幂等 upsert 后的已阅记录 |
 
 ### 7.3 动作接口
@@ -604,6 +643,7 @@ const router = createRouter({
 /workflow/completed
 /workflow/started
 /workflow/read
+/workflow/tasks/:taskId
 /workflow/instances/:instanceId
 ```
 
@@ -630,6 +670,8 @@ const router = createRouter({
 4. `AttachmentPanel`：实例附件和当前任务附件分区，按权限显示上传/删除/下载。
 5. `CommentPanel` 与 `ProcessTimeline`：按完成时间展示意见和历史动作。
 6. `TaskActionPanel`：只渲染后端给出的允许动作，提交时携带当前 `taskVersion` 和新幂等键。
+
+待办入口进入 `/workflow/tasks/:taskId`，由后端按 taskId 反查实例并返回当前任务、`taskVersion` 和 `allowedActions`；我发起、已办、已阅入口进入 `/workflow/instances/:instanceId`，以只读实例视角展示。
 
 详情页不导入任何 `modules/generated/{business}` 组件。这样新增业务后不需要修改通用详情代码。
 
@@ -666,6 +708,8 @@ const router = createRouter({
 - `CurrentBusinessUserProvider.currentUser()` 及 `BusinessUser.userId/departmentId` 不变。
 - 生成代码仅允许 `ProcessRuntimeService.startAndSubmit(StartProcessRequest)`。
 - 后端验证命令在 `business-base/backend` 执行；前端验证命令在 `business-base/frontend` 执行。
+- 当前 1.1 契约未显式声明目标设计中的 `providedCapabilities`，但通过 `allowedApi`、生成白名单、受保护文件和“仅发起”约束表达了相同边界。下一版 manifest 应补充 `TODO_QUERY`、`DONE_QUERY`、`INITIATED_QUERY`、`READ_QUERY`、`APPROVAL_DETAIL`、`TASK_ACTION` 等能力声明。
+- 若契约文件迁移为 `.flowmind/target-manifest.json`，②必须先支持读取新文件或兼容别名，并在迁移完成后移除旧权威文件，避免双 manifest 漂移。
 
 ### 9.2 生成模块接入流程
 
@@ -676,11 +720,35 @@ Agent 确认需求和流程
   → 在基础底座副本上执行 Maven 与 npm 验证
   → Reviewer 审核
   → 人工确认写入白名单
-  → 重新构建③前后端
+  → 重新构建受影响的③构件
+  → 重新加载③运行进程或发布新版本
   → 新业务录入路由可用
 ```
 
 通用基座不得假设生成目录为空，也不得覆盖已有生成业务。主路由只消费 `generatedRoutes` 导出的数组。
+
+#### 9.2.1 重新构建与重启策略
+
+当前 `GenerationTargetContract 1.1` 采用“构建时集成”模型：生成 Java 源码位于 `backend/src/main/java/com/flowmind/business/generated/**`，生成 Vue 页面和路由位于 `frontend/src/modules/generated/**`、`frontend/src/router/generated-routes.ts`。因此每次 Agent 确认写入新业务或改动既有业务后，都必须重新验证并重新构建受影响构件。
+
+运行态处理分环境说明：
+
+- **本地开发**：后端可以使用 IDE 或 Spring Boot DevTools 触发自动重启，前端 Vite dev server 可以通过文件监听和 HMR 刷新页面；这减少手工操作，但本质上仍是后端应用上下文重新加载、前端模块重新编译。
+- **测试/生产**：后端 Java 类已经被 JVM 和 Spring 容器加载，普通源码或 class 文件写入不会让运行中进程自动发现新的 Controller/Service Bean；需要重新打包并重启③后端，或发布一个包含新生成代码的新后端版本。前端生成路由是静态打包的一部分，需要重新构建并发布前端 bundle，浏览器再加载新资源。
+- **只改前端生成页**：只需要重新构建/发布前端，不需要重启后端。
+- **只改后端生成模块且前端 API 契约不变**：只需要重新构建/重启后端，不需要重新发布前端。
+- **新增业务或修改路由/API 契约**：通常前后端都受影响，需要前后端一起验证和发布。
+
+#### 9.2.2 生成后端单独打包的可选演进
+
+可以把 Agent 生成的后端模块演进为单独 Maven module 或业务插件 jar，以减少基础底座本身的重编译范围；但这并不等于无需重启③后端。
+
+可选方案分两档：
+
+1. **生成 jar + 重启加载**：生成模块单独打包，③后端启动时把这些 jar 放入 classpath。优点是基础底座 jar 不必每次重打，生成模块可单独验证和替换；限制是 Spring Bean 仍在启动期扫描注册，新增或替换业务 Controller/Service 后仍需重启③后端。
+2. **运行时插件加载**：通过独立 ClassLoader、子 Spring ApplicationContext、插件注册表和卸载机制在运行中加载生成 jar。理论上可以避免整进程重启，但需要额外解决 Bean 生命周期、路由注册、依赖隔离、版本冲突、权限沙箱、回滚、内存泄漏、并发请求切换和安全扫描问题。该方案改变当前“构建时打包集成”边界，首期不采用；若要引入，必须单独形成插件化设计，并同步升级 `generation-target.json` / 后续 `target-manifest.json` 契约。
+
+因此，首期推荐保持源码级生成 + 构建时集成。若后续生成业务数量增多、发布频繁，再优先考虑“生成 jar + 重启加载”来降低构建成本；只有在确有不停机发布需求时，才评估运行时插件加载。
 
 ### 9.3 当前入金申请样例
 
@@ -895,4 +963,4 @@ npm run build
 - ③不创建业务实体和业务表，业务表单值始终存于①流程变量。
 - 可信身份、幂等号、任务版本和实例访问控制是③所有通用接口的强制门禁。
 - 通用详情采用流程定义驱动的只读表单，因此新增业务无需重复生成详情页面。
-- `.flowmind/generation-target.json` 及其受保护文件是②与③之间的正式生产契约，基础底座实现必须持续兼容。
+- `.flowmind/generation-target.json` 1.1 及其受保护文件是当前②与③之间的正式生产契约；目标命名可迁移到 `.flowmind/target-manifest.json`，但迁移必须受控且不能形成双权威。
