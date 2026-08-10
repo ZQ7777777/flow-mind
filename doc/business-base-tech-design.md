@@ -20,7 +20,7 @@
 
 1. `doc/rebuild-functional-requirements-optimized.md`：功能范围和验收目标。
 2. `doc/三阶段业务系统文件结构设计.md`：三块产物边界、最终目录和生成白名单。
-3. `platform/` 当前源码：③实际可调用的平台 API、DTO、SPI、错误码、事务和并发语义。
+3. `platform/` 当前源码：③实际可调用的平台 API、DTO、SPI、错误码、事务和并发语义；其中 `platform/platform-core/src/main/java/com/flowmind/platform/web/PlatformStandaloneApplication.java` 只作为①本地独立演示/联调入口参考，不作为③启动类或扫描范围参考。
 4. `agent-web/` 当前源码及 `doc/agent-web-tech-design.md`：生成目标契约、唯一允许的生成调用、路径规则和验证 profile。
 5. `business-base/` 当前骨架与已生成的入金申请样例：目标工程的真实现状。
 
@@ -53,6 +53,8 @@
 - ①公共 API 中稳定的“标记已阅”Service 契约，及同进程调用场景下稳定的公共异常契约。
 
 当前生成的入金申请代码只能证明②生成产物可编译，尚不能证明③基础底座或端到端业务系统已完成。
+
+需要特别区分：①阶段为了展示平台能力，已经在 `platform-core` 中提供了 `PlatformStandaloneApplication`、平台 REST Controller 和 `static/flow-test` 静态调试页面。它们服务于①独立运行和演示，不是③业务平台的组成部分。③可以借鉴其“本地可启动、Mock 依赖、端到端演示”的工程思路，但不得复用其启动类、静态页面、URL 命名空间或 `com.flowmind.platform.web` Controller 作为业务运行入口。
 
 ## 2. 范围与职责边界
 
@@ -124,6 +126,34 @@ flowchart TD
 运行时只有一个 Spring Boot 进程。`platform-starter` 在③后端中自动装配平台 Service、平台 SQLite 数据源和平台表；③本身不再创建第二套业务数据源。
 
 前端只面对③的同源 REST 接口。通用页面调用 `/api/workflow/**`，Agent 生成录入页调用 `/api/generated/**`，两者都不能直连①。
+
+### 3.1 与①独立演示应用的关系
+
+`PlatformStandaloneApplication` 是①平台在第一阶段为“平台自身可独立运行、加载静态调试页、暴露平台调试 REST”准备的启动形态。③业务平台不继承这套 Web 层，而是新建 `BusinessBaseApplication`，并通过 `platform-starter` 获得平台 Service Bean。
+
+两者边界如下：
+
+| 项目 | ① `PlatformStandaloneApplication` | ③ `BusinessBaseApplication` |
+|---|---|---|
+| 目标 | 平台自身本地演示、调试、验收①能力 | 最终业务系统运行入口，承载通用业务基座和生成业务 |
+| 扫描范围 | `com.flowmind.platform` | 仅 `com.flowmind.business` |
+| 平台能力来源 | 直接扫描①内部实现与 Web Controller | 通过 `platform-starter` 自动装配公共 Service/SPI |
+| 前端资源 | `platform-core` 的 `static/flow-test` 调试页 | `business-base/frontend` 构建出的业务前端 |
+| HTTP API 定位 | 平台调试/管理 API | `/api/workflow/**` 通用业务 API 与 `/api/generated/**` 业务发起 API |
+| 是否给最终业务用户使用 | 否 | 是 |
+
+因此③实现时禁止：
+
+- 把 `PlatformStandaloneApplication` 复制或移动到 `business-base`。
+- 在③启动类中扩大扫描到 `com.flowmind.platform`，从而把①的独立 REST Controller、静态调试页或内部实现类带进业务应用。
+- 让③前端跳转或代理到①的 `static/flow-test` 页面。
+- 在③通用 Controller 中透出①平台调试 API 的原始路由。
+
+允许借鉴：
+
+- 本地开发 profile、SQLite、Mock SPI 和静态资源服务的装配方式。
+- ①独立演示应用中的端到端演示数据准备思路。
+- 平台 REST Controller 的字段语义，但③必须重新封装成面向业务用户的 DTO 和权限边界。
 
 ## 4. 核心设计决策
 
@@ -284,6 +314,26 @@ business-base/
 ### 6.1 启动与装配
 
 `BusinessBaseApplication` 使用标准 `@SpringBootApplication`，扫描范围保持在 `com.flowmind.business`。平台能力由 `platform-starter` 自动配置，不扫描或直接实例化平台 `core` 包。
+
+启动类推荐保持为最小形态：
+
+```java
+@SpringBootApplication(scanBasePackages = "com.flowmind.business")
+public class BusinessBaseApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(BusinessBaseApplication.class, args);
+    }
+}
+```
+
+不要参考 `PlatformStandaloneApplication` 的 `scanBasePackages = "com.flowmind.platform"` 写法。该写法是①独立应用的需要；如果③扫描 `com.flowmind.platform`，会把①平台 Web Controller、调试静态资源和内部实现类混入业务应用，导致以下问题：
+
+- `/api/platform/**` 等调试/管理接口绕过③的 `WorkflowAccessGuard` 和业务 DTO 脱敏。
+- `static/flow-test` 与③前端构建产物职责混淆，最终业务用户可能进入平台调试页。
+- 同一个平台 Service 可能同时被 Starter 自动装配和组件扫描实例化，产生 Bean 冲突或事务边界不一致。
+- ③代码可能误依赖 `platform-core` 内部类，破坏“只依赖 `platform.api` + Starter”的契约。
+
+若本地调试确实需要打开①平台调试页，应单独启动①的 `PlatformStandaloneApplication`；若需要验证③业务链路，应只启动③的 `BusinessBaseApplication`，并通过 Starter 在同进程内调用平台 Service。两种启动形态不能合并成一个应用。
 
 主要配置：
 
@@ -681,6 +731,7 @@ requestId、action、instanceId/taskId、可信userId、operationId、结果状�
 
 使用 Mock 平台 Service，覆盖：
 
+- `BusinessBaseApplication` 的扫描范围仅包含 `com.flowmind.business`，上下文中不得出现①独立演示用的 `PlatformStandaloneApplication`、`com.flowmind.platform.web.*Controller` 或 `flow-test` 静态资源处理假设。
 - Controller 不接受或不透传客户端用户 ID。
 - PlatformFacade 正确映射分页、详情、图、字段、意见和附件。
 - `WorkflowAccessGuard` 覆盖发起人、候选人、办理人、委托代理人、历史参与人、无权限用户。
@@ -754,10 +805,11 @@ npm run build
 ### B1：可启动后端与身份
 
 - 实现启动类、配置、`CurrentBusinessUserProvider` 实现和 `PlatformCurrentUserAdapter`。
+- 验证启动类只扫描 `com.flowmind.business`，不得引入① `PlatformStandaloneApplication`、平台 Web Controller 或 `static/flow-test` 调试页。
 - 接入 local/test Mock 用户和生产 profile 防误启用检查。
 - 实现统一错误响应、请求 ID 和 `OperationIdFactory`。
 
-退出条件：③后端能以 Starter 方式启动，可信身份能同时被③和①读取。
+退出条件：③后端能以 Starter 方式启动，可信身份能同时被③和①读取；上下文中不存在①独立演示应用的 Web 层 Bean。
 
 ### B2：通用查询与详情
 
@@ -795,6 +847,7 @@ npm run build
 - 启动③单体后端和完整前端。
 - 由生成录入页发起，随后全部使用通用页面办理。
 - 验证流程变量、附件、权限、幂等、任务版本和完整历史。
+- 验证浏览器链路没有访问①独立演示应用端口或 `flow-test` 静态页；`PlatformStandaloneApplication` 只可作为旁路平台演示，不参与③验收主链路。
 
 退出条件：满足第 13 节验收矩阵。
 
@@ -805,6 +858,7 @@ npm run build
 | 基础底座只开发一次 | 通用 `/api/workflow/**` 与通用页面 | 第二个业务无需新增通用页面 |
 | 前端不直连平台 | 所有请求发往③同源 API | 网络请求与静态扫描 |
 | 后端通过 Starter 同进程调用 | PlatformFacade 注入平台 Service | 集成测试无平台 HTTP 服务 |
+| ③不复用①独立演示入口 | `BusinessBaseApplication` 独立启动且只扫描 `com.flowmind.business` | 上下文 Bean/静态资源/网络请求扫描 |
 | 不建业务表 | 仅平台 SQLite 表 | 源码/迁移目录静态扫描 |
 | 待办、已办、我发起、已阅 | 四类通用列表 | 分用户分页测试 |
 | 审批详情可复用 | 定义驱动只读表单与通用详情 | 两个不同业务联合测试 |
