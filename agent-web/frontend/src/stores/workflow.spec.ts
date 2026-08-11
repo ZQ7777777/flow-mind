@@ -170,6 +170,7 @@ describe("workflow SSE lifecycle", () => {
       if (path.endsWith("/code-generations")) { expect(JSON.parse(options!.body!)).toEqual({ targetRoot: "E:\\workspace\\business-base" }); current = review; return { accepted: true }; }
       if (path.endsWith("/files/frontend/src/router/generated-routes.ts")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/router/generated-routes.ts", content: "route", sha256: "abc" };
       if (path.endsWith("/diff/frontend/src/router/generated-routes.ts")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/router/generated-routes.ts", changeType: "MODIFY", stagedSha256: "abc", stale: false, originalContent: "", stagedContent: "route", unifiedDiff: "+route" };
+      if (path.endsWith("/files/frontend/src/modules/generated/entry/EntryApply.vue")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/modules/generated/entry/EntryApply.vue", content: "<template><form /></template>", sha256: "def" };
       return current;
     });
     const store = useWorkflowStore();
@@ -179,5 +180,55 @@ describe("workflow SSE lifecycle", () => {
     await store.loadGeneratedFile("frontend/src/router/generated-routes.ts");
     expect(store.generatedFile?.content).toBe("route");
     expect(store.generatedDiff?.unifiedDiff).toBe("+route");
+    await store.loadGeneratedPreviewFile("frontend/src/modules/generated/entry/EntryApply.vue");
+    expect(store.generatedPreviewFile?.relativePath).toBe("frontend/src/modules/generated/entry/EntryApply.vue");
+    expect(mocks.apiRequest).not.toHaveBeenCalledWith(
+      expect.stringContaining("/diff/frontend/src/modules/generated/entry/EntryApply.vue"),
+      expect.anything(),
+    );
+  });
+
+  it("reverifies the current generation revision after an edited failure", async () => {
+    const failed: WorkflowSnapshot = {
+      ...snapshot,
+      state: "CODE_PIPELINE_FAILED",
+      rowVersion: 7,
+      activeGeneration: {
+        generationId: "acg_failed",
+        status: "FAILED",
+        generationRevision: 2,
+        targetRoot: "E:\\workspace\\business-base",
+        contractVersion: "1.0",
+        manifest: {
+          generationId: "acg_failed",
+          targetRoot: "E:\\workspace\\business-base",
+          contractVersion: "1.0",
+          revision: 2,
+          files: [],
+        },
+        createdAt: "2026-08-03T00:00:00Z",
+        updatedAt: "2026-08-03T00:01:00Z",
+      },
+      allowedActions: ["EDIT_GENERATED_FILE", "REGENERATE", "REVERIFY"],
+    };
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path.endsWith("/reverify")) return { accepted: true, state: "CODE_VERIFYING" };
+      return failed;
+    });
+    const store = useWorkflowStore();
+    store.currentUser = user;
+    store.snapshot = failed;
+
+    await store.reverifyGeneration();
+
+    expect(mocks.apiRequest).toHaveBeenCalledWith(
+      "/api/agent/sessions/ags_1/code-generations/acg_failed/reverify",
+      user,
+      expect.objectContaining({
+        method: "POST",
+        rowVersion: 7,
+        body: JSON.stringify({ generationRevision: 2, skipAiReview: false }),
+      }),
+    );
   });
 });
