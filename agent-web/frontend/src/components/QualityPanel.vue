@@ -35,7 +35,7 @@ const canOverride = computed(() =>
   && scopes.value.length > 0
   && reason.value.trim().length >= 10,
 );
-const canReverify = computed(() => Boolean(quality.value) && ["REVIEW", "FAILED"].includes(props.generation.status));
+const canReverify = computed(() => store.allowedActions.includes("REVERIFY"));
 const canStartQuality = computed(() => props.generation.status === "REVIEW" && !quality.value);
 const canConfirmWrite = computed(() =>
   Boolean(quality.value?.canWrite)

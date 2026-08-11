@@ -55,4 +55,8 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
   await expect(page.getByText("CODE_REVIEW", { exact: true })).toBeVisible({ timeout: 10000 });
   await page.getByRole("tab", { name: "代码预览" }).click();
   await expect(page.getByText("generated-routes.ts", { exact: true })).toBeVisible();
+  const previewFrame = page.frameLocator('iframe[title="Agent 生成前端界面静态预览"]');
+  await expect(previewFrame.locator("form")).toBeVisible();
+  await previewFrame.locator('[data-preview-action="submit"]').click();
+  await expect(previewFrame.getByText("当前仅为界面预览，内容未真实提交。")).toBeVisible();
 });

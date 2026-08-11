@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { shallowMount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import type { CodeGenerationSummary, GenerationQualityReport } from "@flowmind/agent-contracts";
+import type { CodeGenerationSummary, GenerationQualityReport, WorkflowSnapshot } from "@flowmind/agent-contracts";
 import { useWorkflowStore } from "../stores/workflow";
 import QualityPanel from "./QualityPanel.vue";
 
@@ -136,5 +136,50 @@ describe("QualityPanel", () => {
     const buttons = wrapper.findAll("button");
     expect(buttons.find((button) => button.text().includes("重新验证"))?.attributes("disabled")).toBeDefined();
     expect(buttons.find((button) => button.text().includes("写入工程"))?.attributes("disabled")).toBeDefined();
+  });
+
+  it("allows reverify after a failed revision is edited and its stale quality report is cleared", async () => {
+    const store = useWorkflowStore();
+    const failedGeneration = { ...generation("FAILED"), quality: undefined };
+    store.snapshot = {
+      sessionId: "session-quality",
+      ownerUserId: "user-quality",
+      state: "CODE_PIPELINE_FAILED",
+      rowVersion: 3,
+      messages: [],
+      activeGeneration: failedGeneration,
+      allowedActions: ["EDIT_GENERATED_FILE", "REGENERATE", "REVERIFY"],
+    } satisfies WorkflowSnapshot;
+    const reverify = vi.spyOn(store, "reverifyGeneration").mockResolvedValue();
+    const wrapper = shallowMount(QualityPanel, {
+      props: { generation: failedGeneration },
+      global: { stubs },
+    });
+
+    const button = wrapper.findAll("button").find((item) => item.text().includes("重新验证"));
+    expect(button?.attributes("disabled")).toBeUndefined();
+    await button!.trigger("click");
+
+    expect(reverify).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps reverify disabled when the backend does not allow it", () => {
+    const store = useWorkflowStore();
+    store.snapshot = {
+      sessionId: "session-quality",
+      ownerUserId: "user-quality",
+      state: "COMPLETED",
+      rowVersion: 4,
+      messages: [],
+      activeGeneration: generation("COMPLETED"),
+      allowedActions: [],
+    } satisfies WorkflowSnapshot;
+    const wrapper = shallowMount(QualityPanel, {
+      props: { generation: generation("COMPLETED") },
+      global: { stubs },
+    });
+
+    const button = wrapper.findAll("button").find((item) => item.text().includes("重新验证"));
+    expect(button?.attributes("disabled")).toBeDefined();
   });
 });
