@@ -15,7 +15,9 @@ public class WorkflowDetailResponse {
     private List<WorkflowHistoryTaskResponse> historyTasks = new ArrayList<WorkflowHistoryTaskResponse>();
     private List<CommentView> comments = new ArrayList<CommentView>();
     private List<AttachmentView> attachments = new ArrayList<AttachmentView>();
+    private List<NodeView> rejectTargetNodes = new ArrayList<NodeView>();
     private List<String> allowedActions = new ArrayList<String>();
+    private List<String> disabledActions = new ArrayList<String>();
 
     public WorkflowInstanceResponse getInstance() { return instance; }
     public void setInstance(WorkflowInstanceResponse instance) { this.instance = instance; }
@@ -37,8 +39,12 @@ public class WorkflowDetailResponse {
     public void setComments(List<CommentView> comments) { this.comments = comments; }
     public List<AttachmentView> getAttachments() { return attachments; }
     public void setAttachments(List<AttachmentView> attachments) { this.attachments = attachments; }
+    public List<NodeView> getRejectTargetNodes() { return rejectTargetNodes; }
+    public void setRejectTargetNodes(List<NodeView> rejectTargetNodes) { this.rejectTargetNodes = rejectTargetNodes; }
     public List<String> getAllowedActions() { return allowedActions; }
     public void setAllowedActions(List<String> allowedActions) { this.allowedActions = allowedActions; }
+    public List<String> getDisabledActions() { return disabledActions; }
+    public void setDisabledActions(List<String> disabledActions) { this.disabledActions = disabledActions; }
 
     public static class DefinitionView {
         private String processCode;

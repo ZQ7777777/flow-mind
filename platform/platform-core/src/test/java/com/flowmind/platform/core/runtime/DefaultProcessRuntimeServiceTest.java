@@ -211,7 +211,7 @@ class DefaultProcessRuntimeServiceTest {
         assertEquals(attachment, attachmentCaptor.getValue().getAttachment());
         verify(attachmentService).checkRequiredAttachments(any());
         verify(requestValidator).validateTaskAction(any(SubmitTaskRequest.class), any(ProcessInstanceEntity.class),
-                eq(applyTask), eq(starter));
+                eq(applyTask), eq(starter), eq(ActionTypeEnum.SEND));
         verify(activeTaskRepository).complete("task-apply", 0L);
         verify(historyTaskWriter).archiveCompletedTask(any(RuntimeTaskContext.class), eq(ActionTypeEnum.SEND), isNull(),
                 any(Map.class), eq(request.getOperationId()));
@@ -410,6 +410,24 @@ class DefaultProcessRuntimeServiceTest {
         verify(nodeAdvancer, never()).advanceToNode(any(ProcessInstanceEntity.class),
                 any(ProcessDefinitionDetailDTO.class), anyString(), any(), any(),
                 any(RuntimeAdvancePreparation.class));
+    }
+
+    @Test
+    void rejectTargetQueryLoadsTheBoundDefinitionAndDelegatesToEnhancedActions() {
+        ProcessActiveTaskEntity task = activeTask("task-manager", "instance-1", "manager");
+        ProcessInstanceEntity instance = runningInstance("instance-1");
+        ProcessDefinitionDetailDTO definition = definition(userTask("manager", ApproverRuleTypeEnum.ROLE));
+        ProcessNodeDTO target = userTask("apply", ApproverRuleTypeEnum.STARTER);
+        EnhancedTaskActionCoordinator coordinator = mock(EnhancedTaskActionCoordinator.class);
+        service.setEnhancedTaskActionCoordinator(coordinator);
+        when(activeTaskRepository.findById("task-manager")).thenReturn(task);
+        when(instanceRepository.findById("instance-1")).thenReturn(instance);
+        when(definitionLoader.loadForInstance(instance)).thenReturn(definition);
+        when(coordinator.getRejectTargetNodes(task, definition)).thenReturn(Collections.singletonList(target));
+
+        List<ProcessNodeDTO> targets = service.getRejectTargetNodes("task-manager");
+
+        assertEquals(Collections.singletonList(target), targets);
     }
 
     @Test

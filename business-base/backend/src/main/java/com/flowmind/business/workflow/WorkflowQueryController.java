@@ -7,13 +7,17 @@ import com.flowmind.business.workflow.dto.WorkflowListQuery;
 import com.flowmind.business.workflow.dto.WorkflowPageResponse;
 import com.flowmind.business.workflow.dto.WorkflowReadRecordResponse;
 import com.flowmind.business.workflow.dto.WorkflowTaskResponse;
+import com.flowmind.business.workflow.dto.WorkflowUserCandidateResponse;
 import com.flowmind.business.workflow.dto.WorkflowUserResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 通用流程查询接口，为业务前端提供用户列表、流程详情和已阅能力。
@@ -22,8 +26,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/workflow")
 public class WorkflowQueryController {
     private final WorkflowQueryService queryService;
+    private final WorkflowUserSearchService userSearchService;
 
-    public WorkflowQueryController(WorkflowQueryService queryService) { this.queryService = queryService; }
+    public WorkflowQueryController(WorkflowQueryService queryService, WorkflowUserSearchService userSearchService) {
+        this.queryService = queryService;
+        this.userSearchService = userSearchService;
+    }
 
     /**
      * 查询服务端可信上下文中的当前用户。
@@ -39,6 +47,18 @@ public class WorkflowQueryController {
      * @param query 分页和业务筛选条件，不包含可生效的用户身份
      * @return 当前用户待办任务分页结果
      */
+    /**
+     * 查询可作为转办、委托或加签目标的用户候选。
+     *
+     * @param keyword 用户 ID、姓名或部门关键字
+     * @param limit 最大返回数量
+     * @return 用户候选列表
+     */
+    @GetMapping("/users")
+    public List<WorkflowUserCandidateResponse> users(@RequestParam(required = false) String keyword,
+                                                     @RequestParam(required = false) Integer limit) {
+        return userSearchService.search(keyword, limit);
+    }
     @GetMapping("/tasks/todo")
     public WorkflowPageResponse<WorkflowTaskResponse> todo(@ModelAttribute WorkflowListQuery query) { return queryService.todo(query); }
 

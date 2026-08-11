@@ -5,13 +5,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 # Stops only the three local development ports documented by Agent Web.
-$ports = 8080, 3100, 5173
+$ports = 8081, 3100, 5173
 $listeners = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
     Where-Object { $_.LocalPort -in $ports } |
     Sort-Object LocalPort
 
 if (-not $listeners) {
-    Write-Host "No Flow Mind development service is listening on ports 8080, 3100, or 5173."
+    Write-Host "No Flow Mind development service is listening on ports 8081, 3100, or 5173."
     return
 }
 

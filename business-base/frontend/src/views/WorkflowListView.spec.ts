@@ -6,10 +6,11 @@ import WorkflowListView from "./WorkflowListView.vue";
 function emptyPage() {
   return new Response(
     JSON.stringify({
-      items: [],
+      records: [],
       pageNo: 1,
       pageSize: 20,
       total: 0,
+      totalPages: 0,
     }),
     { status: 200, headers: { "Content-Type": "application/json" } },
   );
@@ -41,13 +42,13 @@ describe("WorkflowListView", () => {
     });
     await flushPromises();
 
-    expect(fetchMock.mock.calls[0][0]).toContain("taskSource=OWN");
+    expect(fetchMock.mock.calls[0][0]).toContain("source=OWN");
     expect(wrapper.find('[data-test="todo-scope-own"]').classes()).toContain("active");
 
     await wrapper.find('[data-test="todo-scope-delegated"]').trigger("click");
     await flushPromises();
 
-    expect(fetchMock.mock.calls[1][0]).toContain("taskSource=DELEGATED");
+    expect(fetchMock.mock.calls[1][0]).toContain("source=DELEGATED");
     expect(wrapper.find('[data-test="todo-scope-delegated"]').classes()).toContain("active");
   });
 

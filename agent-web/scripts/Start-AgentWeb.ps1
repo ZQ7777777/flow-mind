@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipPlatform,
+    [Alias("SkipPlatform")]
+    [switch]$SkipBusinessBase,
     [switch]$WhatIf
 )
 
@@ -37,6 +38,29 @@ function Test-AgentBackendHealth {
     }
 }
 
+function Test-BusinessBaseHealth {
+    try {
+        $response = Invoke-WebRequest -Uri "http://127.0.0.1:8081/api/auth/me" -UseBasicParsing -TimeoutSec 2
+        return $response.StatusCode -eq 200
+    } catch {
+        $statusCode = $_.Exception.Response.StatusCode.value__
+        return $statusCode -eq 401
+    }
+}
+
+function Wait-BusinessBase([int]$TimeoutSeconds = 90) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-BusinessBaseHealth) {
+            Write-Host "Business Base authentication endpoint is ready."
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    throw "Business Base did not become ready within $TimeoutSeconds seconds. Check its PowerShell window for the startup error."
+}
+
 function Wait-AgentBackend([int]$TimeoutSeconds = 60) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -71,15 +95,28 @@ if ($WhatIf) {
     Write-Host "Shared contracts build completed."
 }
 
-$platform = @{ Name = "Flow Mind platform"; Port = 8080; WorkingDirectory = $repositoryRoot; Command = "mvn --% -Dmaven.repo.local=.m2-agent org.springframework.boot:spring-boot-maven-plugin:2.7.18:run -pl platform/platform-core" }
-if ($SkipPlatform) {
-    Write-Host "Skipping Flow Mind platform by request."
+$businessDatabase = Join-Path $repositoryRoot "data\business-flow-local.db"
+$businessBaseCommand = "`$env:FLOW_MIND_PLATFORM_SQLITE_PATH='$businessDatabase'; mvn --% -f business-base/backend/pom.xml -Dspring-boot.run.profiles=local org.springframework.boot:spring-boot-maven-plugin:2.7.18:run"
+$businessBase = @{ Name = "Business Base"; Port = 8081; WorkingDirectory = $repositoryRoot; Command = $businessBaseCommand }
+if ($SkipBusinessBase) {
+    Write-Host "Skipping Business Base by request."
 } else {
-    $existingProcessId = Get-ListeningProcessId $platform.Port
+    $existingProcessId = Get-ListeningProcessId $businessBase.Port
     if ($existingProcessId) {
-        Write-Host "$($platform.Name) is already listening on port $($platform.Port) (PID $existingProcessId); leaving it running."
+        if ($WhatIf) {
+            Write-Host "Would verify that the service on port $($businessBase.Port) (PID $existingProcessId) exposes Business Base authentication."
+        } elseif (-not (Test-BusinessBaseHealth)) {
+            throw "Port $($businessBase.Port) is already in use by PID $existingProcessId, but it is not a ready Business Base service."
+        } else {
+            Write-Host "$($businessBase.Name) is ready on port $($businessBase.Port) (PID $existingProcessId); leaving it running."
+        }
     } else {
-        Start-ServiceWindow $platform.Name $platform.WorkingDirectory $platform.Command
+        Start-ServiceWindow $businessBase.Name $businessBase.WorkingDirectory $businessBase.Command
+        if ($WhatIf) {
+            Write-Host "Would wait up to 90 seconds for Business Base authentication before starting Agent Web."
+        } else {
+            Wait-BusinessBase -TimeoutSeconds 90
+        }
     }
 }
 

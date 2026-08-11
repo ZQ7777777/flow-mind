@@ -5,7 +5,7 @@
 ## 环境
 
 - Node.js `>= 22.19.0`
-- 可访问的 Flow Mind 流程平台独立服务
+- 已安装 `platform-starter` 依赖并可启动的 `business-base/backend`
 - 真实对话模式需要 `PI_MODEL=provider/model` 和对应 Provider 服务端凭据
 
 复制 `.env.example` 中的配置到进程环境。`targetRoot` 在 M0-M2 可以留空，M3 启动生成时可补填，
@@ -41,14 +41,14 @@ npm run dev:frontend
 
 ## Windows 一键启动与停止
 
-`scripts` 子目录中的 PowerShell 脚本会分别打开流程平台、Agent 后端和前端的终端窗口；已占用
-`8080`、`3100` 或 `5173` 的服务会被保留，不会被脚本自动结束。
+`scripts` 子目录中的 PowerShell 脚本会分别打开 Business Base、Agent 后端和前端的终端窗口；已占用
+`8081`、`3100` 或 `5173` 的服务会先接受服务身份检查，通过后保留运行。
 
 真实对话的配置会从 `agent-web/.env` 自动读取。先复制 `.env.example` 为 `.env`，并仅在 `.env`
 中填写 API Key；`.env` 不应提交到仓库。
 
 ```powershell
-cd E:\0shixi\flow-mind\agent-web
+cd D:\flow-platform\flow-mind\agent-web
 Copy-Item .env.example .env
 # 编辑 .env，将 OPENAI_API_KEY= 替换为你的 OpenAI API Key
 .\scripts\Start-AgentWeb.ps1
@@ -58,10 +58,10 @@ Copy-Item .env.example .env
 构建成功后，脚本会启动 Agent 后端并等待 `http://127.0.0.1:3100/health/live` 返回 `UP`，随后
 才启动前端，避免前端首次加载用户列表时后端尚未就绪。
 
-若流程平台已经单独启动，可跳过它：
+若 Business Base 已经单独启动，可跳过它：
 
 ```powershell
-.\scripts\Start-AgentWeb.ps1 -SkipPlatform
+.\scripts\Start-AgentWeb.ps1 -SkipBusinessBase
 ```
 
 仅查看将执行的动作而不启动服务：
@@ -78,6 +78,13 @@ Copy-Item .env.example .env
 
 不需要确认时可使用 `-Force`。启动完成后访问 `http://127.0.0.1:5173`；可通过
 `http://127.0.0.1:3100/health/ready` 检查模型认证是否成功。
+
+Agent Web 使用 Business Base 的管理员 Session。访问页面后请使用管理员账号登录（本地 Mock 数据默认
+`admin01` / `123456`）；普通用户会收到 403，无法访问工作台。Agent 后端会把该 Session 转发给
+Business Base 内嵌的 `/api/platform/**`，流程定义因此写入 `./data/business-flow-local.db`，不再写入
+独立 Platform 的数据库。
+启动脚本会显式设置 `FLOW_MIND_PLATFORM_SQLITE_PATH` 为仓库根目录下的该文件，避免 Maven 与 IDE
+工作目录不同导致生成第二份同名数据库。
 
 如果共享契约构建失败，脚本会在打开任何服务窗口前停止，请先根据当前窗口中的 npm 错误修复
 依赖或 TypeScript 编译问题。如果后端在 60 秒内未通过存活检查，前端不会启动；请查看 Agent

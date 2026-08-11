@@ -42,5 +42,6 @@ class PlatformFacadeActionTest {
         AddSignRequest addSign = new AddSignRequest(); facade.execute("add-sign", addSign); verify(runtime).addSign(addSign);
         ClaimTaskRequest claim = new ClaimTaskRequest(); facade.execute("claim", claim); verify(runtime).claim(claim);
         UnclaimTaskRequest unclaim = new UnclaimTaskRequest(); facade.execute("unclaim", unclaim); verify(runtime).unclaim(unclaim);
+        facade.rejectTargetNodes("task-1"); verify(runtime).getRejectTargetNodes("task-1");
     }
 }

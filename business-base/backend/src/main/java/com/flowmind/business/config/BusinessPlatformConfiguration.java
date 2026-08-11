@@ -5,6 +5,9 @@ import com.flowmind.business.security.CurrentBusinessUserProvider;
 import com.flowmind.business.security.PlatformCurrentUserAdapter;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.core.definition.ProcessAttachmentTemplateManager;
+import com.flowmind.platform.core.validation.ProcessAttachmentTemplateValidator;
+import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -34,5 +37,19 @@ public class BusinessPlatformConfiguration {
     @ConditionalOnMissingBean(BusinessAuthorizationProvider.class)
     public BusinessAuthorizationProvider businessAuthorizationProvider() {
         return userId -> false;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ProcessAttachmentTemplateValidator.class)
+    public ProcessAttachmentTemplateValidator processAttachmentTemplateValidator() {
+        return new ProcessAttachmentTemplateValidator();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ProcessAttachmentTemplateManager.class)
+    public ProcessAttachmentTemplateManager processAttachmentTemplateManager(
+            ProcessAttachmentTemplateRepository repository,
+            ProcessAttachmentTemplateValidator validator) {
+        return new ProcessAttachmentTemplateManager(repository, validator);
     }
 }

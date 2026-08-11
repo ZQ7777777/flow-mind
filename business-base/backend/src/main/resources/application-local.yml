@@ -6,20 +6,8 @@ flow-mind:
     mock:
       enabled: true
     sqlite:
-      path: ./data/business-flow-local.db
+      path: ${FLOW_MIND_PLATFORM_SQLITE_PATH:./data/business-flow-local.db}
     callback:
       async-enabled: false
     timeout-scan:
       enabled: false
-  business:
-    local-user:
-      default-user-id: u_sales_01
-      users:
-        u_sales_01: dept_sales
-        u_group_leader_01: dept_sales
-        u_dept_manager_01: dept_sales
-        u_dept_manager_02: dept_finance
-        u_finance_01: dept_finance
-        u_finance_02: dept_finance
-        u_ceo_01: mock-dept
-        u_admin_01: mock-dept

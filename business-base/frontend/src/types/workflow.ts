@@ -13,72 +13,126 @@ export type TaskActionCode =
   | "CLAIM"
   | "UNCLAIM";
 
-export interface PageRequest {
+export interface WorkflowListQuery {
   pageNo: number;
   pageSize: number;
-  keyword?: string;
-  taskSource?: "OWN" | "DELEGATED" | "ALL" | string;
+  processCode?: string;
   processName?: string;
-  title?: string;
-  nodeName?: string;
+  instanceTitle?: string;
+  starterUserId?: string;
+  nodeCode?: string;
   status?: string;
-  action?: string;
+  source?: "OWN" | "DELEGATED" | "ALL" | string;
+  actionType?: string;
+  businessKey?: string;
+  currentNodeCode?: string;
+  instanceId?: string;
+  sortBy?: string;
+  sortDirection?: string;
+  from?: string;
+  to?: string;
 }
 
-export interface PageResponse<T> {
-  items: T[];
+export interface WorkflowPageResponse<T> {
+  records: T[];
   pageNo: number;
   pageSize: number;
   total: number;
+  totalPages: number;
 }
 
-export interface WorkflowListItem {
-  id: string;
-  instanceId?: string;
-  taskId?: string;
-  title: string;
-  processName?: string;
-  nodeName?: string;
-  starterName?: string;
-  taskSource?: "OWN" | "DELEGATED" | string;
-  claimed?: boolean;
-  status?: string;
-  action?: string;
-  createdAt?: string;
-  dueAt?: string;
-  completedAt?: string;
-  endedAt?: string;
-  readAt?: string;
-}
-
-export interface CurrentBusinessUser {
+export interface WorkflowUserResponse {
   userId: string;
-  displayName: string;
+  userName: string;
   departmentId?: string;
   departmentName?: string;
 }
 
-export interface WorkflowInstanceSummary {
+export interface WorkflowUserCandidateResponse {
+  userId: string;
+  userName: string;
+  departmentId?: string;
+  departmentName?: string;
+}
+export interface WorkflowTaskResponse {
+  taskId: string;
+  instanceId: string;
+  processCode?: string;
+  processName?: string;
+  instanceTitle: string;
+  starterUserId?: string;
+  starterUserName?: string;
+  nodeCode: string;
+  nodeName?: string;
+  candidateUserIds: string[];
+  assigneeUserId?: string;
+  assigneeUserName?: string;
+  delegateFromUserId?: string;
+  delegateFromUserName?: string;
+  taskStatus?: string;
+  taskVersion: number;
+  createdAt?: string;
+  dueAt?: string;
+}
+
+export interface WorkflowHistoryTaskResponse {
+  historyTaskId: string;
+  instanceId: string;
+  activeTaskId?: string;
+  processCode?: string;
+  processName?: string;
+  instanceTitle: string;
+  nodeCode?: string;
+  nodeName?: string;
+  assigneeUserId?: string;
+  assigneeUserName?: string;
+  delegateFromUserId?: string;
+  delegateFromUserName?: string;
+  handleType?: string;
+  actionType?: string;
+  comment?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface WorkflowInstanceResponse {
   instanceId: string;
   definitionId?: string;
-  processName: string;
-  title: string;
-  starterName?: string;
-  status: string;
-  currentNodeName?: string;
+  processCode?: string;
+  processName?: string;
   version?: number;
+  instanceTitle: string;
+  starterUserId?: string;
+  starterUserName?: string;
+  starterDepartmentId?: string;
+  instanceStatus?: string;
+  currentNodeCodes: string[];
+  variables: Record<string, unknown>;
   startedAt?: string;
   endedAt?: string;
 }
 
-export interface WorkflowTaskSummary {
-  taskId: string;
-  taskName: string;
-  nodeCode: string;
-  nodeName: string;
-  taskVersion: number;
-  assigneeName?: string;
-  allowedActions: TaskActionCode[];
+export interface WorkflowReadRecordResponse {
+  readRecordId: string;
+  instanceId: string;
+  taskId?: string;
+  processCode?: string;
+  processName?: string;
+  instanceTitle: string;
+  instanceStatus?: string;
+  readAt?: string;
+}
+
+export type WorkflowListRecord =
+  | WorkflowTaskResponse
+  | WorkflowHistoryTaskResponse
+  | WorkflowInstanceResponse
+  | WorkflowReadRecordResponse;
+
+export interface WorkflowDefinitionView {
+  processCode?: string;
+  processName?: string;
+  version?: number;
 }
 
 export interface WorkflowFormField {
@@ -86,70 +140,66 @@ export interface WorkflowFormField {
   fieldName: string;
   fieldType?: string;
   controlType?: string;
+  required?: boolean;
+  validationRule?: string;
   sortOrder?: number;
-  validationRule?: unknown;
 }
 
-export interface WorkflowGraphNode {
+export interface WorkflowNodeView {
   nodeCode: string;
   nodeName: string;
+  nodeType?: string;
+  positionX?: number;
+  positionY?: number;
   sortOrder?: number;
-  x?: number;
-  y?: number;
 }
 
-export interface WorkflowGraphEdge {
+export interface WorkflowEdgeView {
+  edgeCode?: string;
   sourceNodeCode: string;
   targetNodeCode: string;
-  label?: string;
+  defaultEdge?: boolean;
+  sortOrder?: number;
 }
 
-export interface WorkflowGraph {
-  nodes: WorkflowGraphNode[];
-  edges: WorkflowGraphEdge[];
-  currentNodeCodes?: string[];
-}
-
-export interface WorkflowAttachment {
-  attachmentId: string;
-  fileName: string;
-  fileSize?: number;
-  contentType?: string;
-  fieldCode?: string;
-  templateCode?: string;
-  scope?: "INSTANCE" | "TASK" | string;
-  createdAt?: string;
-  canDelete?: boolean;
-  canDownload?: boolean;
-}
-
-export interface WorkflowComment {
+export interface WorkflowCommentView {
   commentId?: string;
-  taskName?: string;
-  action?: string;
-  operatorName?: string;
-  content?: string;
-  completedAt?: string;
+  taskId?: string;
+  nodeCode?: string;
+  operatorUserId?: string;
+  operatorUserName?: string;
+  comment?: string;
+  createdAt?: string;
 }
 
-export interface WorkflowTimelineItem {
-  id: string;
-  nodeName?: string;
-  action?: string;
-  operatorName?: string;
-  happenedAt?: string;
-  comment?: string;
+export interface WorkflowAttachmentView {
+  attachmentId: string;
+  instanceId?: string;
+  taskId?: string;
+  ownerType?: "INSTANCE" | "TASK" | string;
+  attachmentCode?: string;
+  fieldCode?: string;
+  fileName: string;
+  contentType?: string;
+  sizeBytes?: number;
+  uploadedBy?: string;
+  uploadedAt?: string;
 }
 
 export interface WorkflowDetailResponse {
-  instance: WorkflowInstanceSummary;
-  currentTask?: WorkflowTaskSummary;
+  instance: WorkflowInstanceResponse;
+  definition?: WorkflowDefinitionView;
   formFields: WorkflowFormField[];
-  variables: Record<string, unknown>;
-  graph?: WorkflowGraph;
-  attachments: WorkflowAttachment[];
-  comments: WorkflowComment[];
-  timeline: WorkflowTimelineItem[];
+  nodes: WorkflowNodeView[];
+  edges: WorkflowEdgeView[];
+  currentTask?: WorkflowTaskResponse;
+  activeTasks: WorkflowTaskResponse[];
+  historyTasks: WorkflowHistoryTaskResponse[];
+  comments: WorkflowCommentView[];
+  attachments: WorkflowAttachmentView[];
+  rejectTargetNodes: WorkflowNodeView[];
+  allowedActions: TaskActionCode[];
+  disabledActions: TaskActionCode[];
 }
 
 export interface TaskActionPayload {
@@ -159,21 +209,23 @@ export interface TaskActionPayload {
   targetUserId?: string;
   targetUserName?: string;
   addSignUserIds?: string[];
-  variables?: Record<string, unknown>;
   idempotencyKey: string;
 }
 
-export interface TaskActionResult {
+export interface WorkflowTaskActionResponse {
+  operationId?: string;
+  instance?: WorkflowInstanceResponse;
+  archivedTasks: WorkflowHistoryTaskResponse[];
+  createdTasks: WorkflowTaskResponse[];
+  updatedTasks: WorkflowTaskResponse[];
   replayed: boolean;
-  instance?: WorkflowInstanceSummary;
-  archivedTask?: WorkflowTaskSummary;
-  newTasks?: WorkflowTaskSummary[];
-  updatedTask?: WorkflowTaskSummary;
 }
 
 export interface AttachmentUploadPayload {
   file: File;
+  attachmentCode?: string;
   fieldCode?: string;
-  templateCode?: string;
+  sourceTaskId?: string;
+  expectedTaskVersion?: number;
   idempotencyKey: string;
 }

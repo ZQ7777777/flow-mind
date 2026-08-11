@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { WorkflowTimelineItem } from "../../types/workflow";
+import type { WorkflowHistoryTaskResponse } from "../../types/workflow";
 import { formatDateTime } from "../../utils/format";
 
 defineProps<{
-  items: WorkflowTimelineItem[];
+  items: WorkflowHistoryTaskResponse[];
 }>();
 </script>
 
@@ -13,13 +13,13 @@ defineProps<{
       <h2 id="timeline-heading">流程轨迹</h2>
     </div>
     <ol v-if="items.length" class="timeline">
-      <li v-for="item in items" :key="item.id">
+      <li v-for="item in items" :key="item.historyTaskId">
         <span class="marker" aria-hidden="true" />
         <div>
           <strong>{{ item.nodeName ?? "--" }}</strong>
-          <span>{{ item.action ?? "--" }}</span>
-          <span>{{ item.operatorName ?? "--" }}</span>
-          <time>{{ formatDateTime(item.happenedAt) }}</time>
+          <span>{{ item.actionType ?? item.handleType ?? "--" }}</span>
+          <span>{{ item.assigneeUserName ?? "--" }}</span>
+          <time>{{ formatDateTime(item.completedAt ?? item.startedAt) }}</time>
         </div>
         <p v-if="item.comment">{{ item.comment }}</p>
       </li>

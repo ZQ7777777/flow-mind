@@ -3,6 +3,7 @@ package com.flowmind.platform.api.service;
 import com.flowmind.platform.api.dto.OperationResult;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
+import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.request.AddSignRequest;
@@ -20,6 +21,8 @@ import com.flowmind.platform.api.request.TransferTaskRequest;
 import com.flowmind.platform.api.request.UnclaimTaskRequest;
 import com.flowmind.platform.api.request.UpdateVariablesRequest;
 import com.flowmind.platform.api.request.WithdrawTaskRequest;
+
+import java.util.List;
 
 /**
  * 流程运行时服务。
@@ -100,6 +103,14 @@ public interface ProcessRuntimeService {
      * @return 直送上下文
      */
     DirectSendContextDTO getDirectSendContext(String taskId);
+
+    /**
+     * Queries reject targets allowed by the node rule, instance history, and current branch conditions.
+     *
+     * @param taskId active task ID
+     * @return eligible user-task nodes in configured order
+     */
+    List<ProcessNodeDTO> getRejectTargetNodes(String taskId);
 
     /**
      * 转办任务。

@@ -2,6 +2,7 @@ package com.flowmind.platform.core.runtime;
 
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.UserDTO;
+import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
@@ -148,8 +149,15 @@ public class RuntimeRequestValidator {
     public UserContext validateTaskAction(TaskOperationRequest request,
                                           ProcessInstanceEntity instance,
                                           ProcessActiveTaskEntity task) {
+        return validateTaskAction(request, instance, task, (ActionTypeEnum) null);
+    }
+
+    public UserContext validateTaskAction(TaskOperationRequest request,
+                                          ProcessInstanceEntity instance,
+                                          ProcessActiveTaskEntity task,
+                                          ActionTypeEnum actionType) {
         UserContext currentUser = validateTaskIdentity(request);
-        validateTaskAction(request, instance, task, currentUser);
+        validateTaskAction(request, instance, task, currentUser, actionType);
         return currentUser;
     }
 
@@ -187,6 +195,14 @@ public class RuntimeRequestValidator {
                                    ProcessInstanceEntity instance,
                                    ProcessActiveTaskEntity task,
                                    UserContext currentUser) {
+        validateTaskAction(request, instance, task, currentUser, null);
+    }
+
+    public void validateTaskAction(TaskOperationRequest request,
+                                   ProcessInstanceEntity instance,
+                                   ProcessActiveTaskEntity task,
+                                   UserContext currentUser,
+                                   ActionTypeEnum actionType) {
         if (currentUser == null) {
             throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "current user is required");
         }
@@ -207,7 +223,7 @@ public class RuntimeRequestValidator {
             throw new RuntimeStateException(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
                     "expectedTaskVersion does not match active task");
         }
-        assertTaskPermission(task, currentUser.getUserId());
+        assertTaskPermission(task, currentUser.getUserId(), actionType);
     }
 
     /**
@@ -264,7 +280,7 @@ public class RuntimeRequestValidator {
     }
 
     /** 校验 ACTIVE 使用候选人权限、CLAIMED 使用受理人权限。 */
-    private void assertTaskPermission(ProcessActiveTaskEntity task, String userId) {
+    private void assertTaskPermission(ProcessActiveTaskEntity task, String userId, ActionTypeEnum actionType) {
         if (TaskStatusEnum.CLAIMED.name().equals(task.getTaskStatus())) {
             if (userId.equals(task.getAssigneeUserId())) {
                 return;
@@ -282,6 +298,10 @@ public class RuntimeRequestValidator {
         try {
             List<String> candidates = RuntimeJsonCodec.readStringList(task.getCandidateUserIds());
             if (candidates.contains(userId)) {
+                if (requiresClaimBeforeAction(task, candidates, actionType)) {
+                    throw new RuntimeValidationException(RuntimeErrorCodes.TASK_PERMISSION_DENIED,
+                            "task must be claimed before action");
+                }
                 return;
             }
             throw new RuntimeValidationException(RuntimeErrorCodes.TASK_PERMISSION_DENIED,
@@ -295,6 +315,30 @@ public class RuntimeRequestValidator {
         }
     }
 
+    private boolean requiresClaimBeforeAction(ProcessActiveTaskEntity task,
+                                              List<String> candidates,
+                                              ActionTypeEnum actionType) {
+        return actionType != null
+                && !ActionTypeEnum.CLAIM.equals(actionType)
+                && TaskStatusEnum.ACTIVE.name().equals(task.getTaskStatus())
+                && !hasText(task.getAssigneeUserId())
+                && hasMultipleCandidates(candidates);
+    }
+
+    private boolean hasMultipleCandidates(List<String> candidates) {
+        String first = null;
+        for (String candidate : candidates) {
+            if (!hasText(candidate)) {
+                continue;
+            }
+            if (first == null) {
+                first = candidate;
+            } else if (!first.equals(candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
     private void requireOperationId(OperationRequest request) {
         if (request == null) {
             throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "operation request is required");

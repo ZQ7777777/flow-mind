@@ -28,8 +28,13 @@ export class AppController {
   ) {}
 
   @Get("/api/agent/mock-users")
-  listUsers() {
-    return this.identity.listUsers();
+  listUsers(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return loadConfig().platformAuthMode === "session"
+      ? [this.identity.resolve(userId, userName)]
+      : this.identity.listUsers();
   }
 
   @Get("/api/agent/config")

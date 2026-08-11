@@ -1,5 +1,7 @@
 import type { RouteRecordRaw } from "vue-router";
-import { describe, expect, it } from "vitest";
+import { createMemoryHistory } from "vue-router";
+import { createPinia, setActivePinia } from "pinia";
+import { describe, expect, it, vi } from "vitest";
 import { baseRoutes, createBusinessRouter } from "./index";
 
 describe("business router", () => {
@@ -14,6 +16,23 @@ describe("business router", () => {
         "/workflow/instances/:instanceId",
       ]),
     );
+
+    const readRoute = baseRoutes.find((route) => route.path === "/workflow/read");
+    expect(readRoute?.props).toEqual({ type: "read", title: "我的已阅" });
+  });
+
+  it("redirects anonymous protected navigation to login", async () => {
+    setActivePinia(createPinia());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "BUSINESS_AUTHENTICATION_REQUIRED", message: "请先登录",
+    }), { status: 401, headers: { "Content-Type": "application/json" } })));
+    const router = createBusinessRouter([], createMemoryHistory());
+
+    await router.push("/workflow/todo");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toBe("/login");
+    expect(router.currentRoute.value.query.redirect).toBe("/workflow/todo");
   });
 
   it("statically merges generated routes into the application router", () => {

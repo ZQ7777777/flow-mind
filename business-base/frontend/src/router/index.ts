@@ -1,11 +1,19 @@
 import { createRouter, createWebHistory } from "vue-router";
-import type { RouteRecordRaw } from "vue-router";
+import type { RouteRecordRaw, RouterHistory } from "vue-router";
+import { useAuthStore } from "../stores/auth";
+import LoginView from "../views/LoginView.vue";
 import WorkflowDetailView from "../views/WorkflowDetailView.vue";
 import WorkflowListView from "../views/WorkflowListView.vue";
 import { generatedRoutes } from "./generated-routes";
 
 export const baseRoutes: RouteRecordRaw[] = [
   { path: "/", redirect: "/workflow/todo" },
+  {
+    path: "/login",
+    name: "login",
+    component: LoginView,
+    meta: { public: true },
+  },
   {
     path: "/workflow/todo",
     name: "workflow-todo",
@@ -28,7 +36,7 @@ export const baseRoutes: RouteRecordRaw[] = [
     path: "/workflow/read",
     name: "workflow-read",
     component: WorkflowListView,
-    props: { type: "read", title: "已阅" },
+    props: { type: "read", title: "我的已阅" },
   },
   {
     path: "/workflow/tasks/:taskId",
@@ -44,11 +52,33 @@ export const baseRoutes: RouteRecordRaw[] = [
   },
 ];
 
-export function createBusinessRouter(extraGeneratedRoutes: RouteRecordRaw[] = generatedRoutes) {
-  return createRouter({
-    history: createWebHistory(import.meta.env.BASE_URL),
+export function createBusinessRouter(
+  extraGeneratedRoutes: RouteRecordRaw[] = generatedRoutes,
+  history: RouterHistory = createWebHistory(import.meta.env.BASE_URL),
+) {
+  const router = createRouter({
+    history,
     routes: [...baseRoutes, ...extraGeneratedRoutes],
   });
+
+  router.beforeEach(async (to) => {
+    const auth = useAuthStore();
+    if (to.meta.public === true) {
+      return to.path === "/login" && auth.initialized && auth.authenticated
+        ? "/workflow/todo"
+        : true;
+    }
+
+    try {
+      if (await auth.ensureAuthenticated()) return true;
+    } catch {
+      auth.clear();
+    }
+
+    return { path: "/login", query: { redirect: to.fullPath } };
+  });
+
+  return router;
 }
 
 const router = createBusinessRouter();

@@ -332,7 +332,7 @@ public class ActiveTaskRepository {
         params.add(currentUserId);
         sql.append("UNION ALL ");
         appendTodoSourceSelect(sql, "2");
-        sql.append(" WHERE t.task_status = 'ACTIVE' AND t.candidate_user_ids IS NOT NULL "
+        sql.append(" WHERE t.task_status = 'ACTIVE' AND t.assignee_user_id IS NULL AND t.candidate_user_ids IS NOT NULL "
                 + "AND EXISTS (SELECT 1 FROM json_each(t.candidate_user_ids) c WHERE c.value = ?) "
                 + "AND NOT EXISTS (SELECT 1 FROM process_active_task s "
                 + "JOIN process_task_group g ON g.id = s.task_group_id "

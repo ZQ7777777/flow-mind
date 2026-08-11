@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { WorkflowComment } from "../../types/workflow";
+import type { WorkflowCommentView } from "../../types/workflow";
 import { formatDateTime } from "../../utils/format";
 
 defineProps<{
-  comments: WorkflowComment[];
+  comments: WorkflowCommentView[];
 }>();
 </script>
 
@@ -15,11 +15,11 @@ defineProps<{
     <ul v-if="comments.length" class="comment-list">
       <li v-for="(comment, index) in comments" :key="comment.commentId ?? index">
         <div>
-          <strong>{{ comment.operatorName ?? "--" }}</strong>
-          <span>{{ comment.action ?? "--" }}</span>
-          <span>{{ formatDateTime(comment.completedAt) }}</span>
+          <strong>{{ comment.operatorUserName ?? "--" }}</strong>
+          <span>{{ comment.nodeCode ?? "--" }}</span>
+          <span>{{ formatDateTime(comment.createdAt) }}</span>
         </div>
-        <p>{{ comment.content || "--" }}</p>
+        <p>{{ comment.comment || "--" }}</p>
       </li>
     </ul>
     <p v-else class="empty-state">暂无审批意见</p>

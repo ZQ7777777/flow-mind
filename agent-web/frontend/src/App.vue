@@ -6,11 +6,15 @@ import ProcessPreview from "./components/ProcessPreview.vue";
 import CodeGenerationPanel from "./components/CodeGenerationPanel.vue";
 import GenerationProgress from "./components/GenerationProgress.vue";
 import ManagementLists from "./components/ManagementLists.vue";
+import AdminLogin from "./components/AdminLogin.vue";
 import { useResizablePanels } from "./composables/useResizablePanels";
+import { AUTHENTICATION_REQUIRED_EVENT } from "./api";
+import { useAuthStore } from "./stores/auth";
 import { useWorkflowStore } from "./stores/workflow";
 import { isResetSessionDisabled, nextStepMessage } from "./workflow-presentation";
 
 const store = useWorkflowStore();
+const auth = useAuthStore();
 const targetRoot = ref("");
 const message = ref("");
 const activeTab = ref("requirement");
@@ -45,6 +49,17 @@ const stepIndex = computed(() => {
 });
 const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING", "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING", "WRITING_ARTIFACTS"].includes(store.state || ""));
 
+watch(() => auth.user, async (user) => {
+  if (!user) {
+    store.clearForAuthentication();
+    return;
+  }
+  try {
+    await store.initialize(user);
+  } catch (cause) {
+    store.error = cause instanceof Error ? cause.message : "工作台初始化失败";
+  }
+});
 watch(() => store.snapshot?.targetRoot, (value) => { if (value) generationTargetRoot.value = value; }, { immediate: true });
 watch(() => store.defaultTargetRoot, (value) => { if (value && !targetRoot.value) targetRoot.value = value; }, { immediate: true });
 watch(() => store.state, (value) => { if (["CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING", "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "COMPLETED"].includes(value || "")) activeTab.value = "code"; });
@@ -62,8 +77,24 @@ watch(() => store.lastCompaction, (compaction) => {
 });
 
 
-onMounted(() => void store.initialize());
-onBeforeUnmount(() => store.disconnect());
+function handleAuthenticationRequired(): void {
+  auth.clear();
+  store.clearForAuthentication();
+}
+
+onMounted(() => {
+  window.addEventListener(AUTHENTICATION_REQUIRED_EVENT, handleAuthenticationRequired);
+  void auth.initialize();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener(AUTHENTICATION_REQUIRED_EVENT, handleAuthenticationRequired);
+  store.disconnect();
+});
+
+async function logout(): Promise<void> {
+  await auth.logout();
+  store.clearForAuthentication();
+}
 
 async function createSession(): Promise<void> {
   try { await store.createSession(targetRoot.value); } catch { /* store exposes error */ }
@@ -102,7 +133,9 @@ function formatTokens(value: number | undefined): string {
 </script>
 
 <template>
-  <div class="app-shell">
+  <AdminLogin v-if="auth.initialized && !auth.authenticated" />
+  <main v-else-if="!auth.initialized" class="auth-loading" aria-live="polite">正在验证管理员身份...</main>
+  <div v-else class="app-shell">
     <header class="topbar">
       <div class="brand">
         <div class="brand-mark">FM</div>
@@ -114,18 +147,11 @@ function formatTokens(value: number | undefined): string {
       <div class="user-tools">
         <span :class="['connection-dot', { online: store.connected }]"></span>
         <span class="connection-text">{{ store.connected ? "实时连接" : "连接中" }}</span>
-        <el-select
-          :model-value="store.currentUser?.userId"
-          placeholder="选择演示用户"
-          @change="store.selectUser"
-        >
-          <el-option
-            v-for="user in store.users"
-            :key="user.userId"
-            :label="`${user.userName} · ${user.userId}`"
-            :value="user.userId"
-          />
-        </el-select>
+        <div class="authenticated-user">
+          <strong>{{ auth.user?.realName }}</strong>
+          <span>{{ auth.user?.departmentName }} · {{ auth.user?.username }}</span>
+        </div>
+        <el-button text class="logout-button" @click="logout">退出</el-button>
       </div>
     </header>
 
@@ -144,7 +170,7 @@ function formatTokens(value: number | undefined): string {
           开始采集需求
         </el-button>
         <el-button
-          v-if="store.currentUser?.userId === 'user_tester'"
+          v-if="store.currentUser?.userId === 'u_admin_01'"
           type="warning"
           plain
           size="large"
@@ -338,6 +364,11 @@ function formatTokens(value: number | undefined): string {
 </template>
 
 <style scoped>
+.auth-loading { min-height: 100vh; display: grid; place-items: center; color: var(--muted); background: #f3f5f8; }
+.authenticated-user { display: grid; gap: 2px; padding-left: 12px; border-left: 1px solid rgba(255, 255, 255, .22); text-align: right; }
+.authenticated-user strong { font-size: 13px; }
+.authenticated-user span { color: #aeb7ca; font-size: 11px; }
+.logout-button { color: #dce3f2; }
 .target-root-input { width: min(460px, 42vw); }
 .compaction-summary-card {
   display: flex;

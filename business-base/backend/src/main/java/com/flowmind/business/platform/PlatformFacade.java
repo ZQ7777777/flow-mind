@@ -10,6 +10,7 @@ import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
+import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ReadRecordDTO;
 import com.flowmind.platform.api.dto.ReadRecordQuery;
 import com.flowmind.platform.api.dto.StartedInstanceQuery;
@@ -120,6 +121,13 @@ public class PlatformFacade {
      * 查询直送上下文，仅用于前端展示可选动作，最终权限仍由平台动作接口校验。
      */
     public DirectSendContextDTO directSendContext(String taskId) { return runtimeService.getDirectSendContext(taskId); }
+
+    /**
+     * Queries platform-validated reject targets for an active task.
+     */
+    public List<ProcessNodeDTO> rejectTargetNodes(String taskId) {
+        return runtimeService.getRejectTargetNodes(taskId);
+    }
 
     /**
      * 查询实例附件元数据；B2/B3 只展示脱敏元数据，上传下载留给后续阶段。

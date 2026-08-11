@@ -15,7 +15,15 @@ describe("ManagementLists", () => {
     });
     expect(load).not.toHaveBeenCalled();
 
-    store.currentUser = { userId: "user_sales", userName: "Sales User" };
+    store.currentUser = {
+      userId: "u_admin_01",
+      username: "admin01",
+      realName: "系统管理员一",
+      departmentId: "dept_company",
+      departmentName: "总公司",
+      userType: "ADMIN",
+      administrator: true,
+    };
     await nextTick();
 
     expect(load).toHaveBeenCalledTimes(1);

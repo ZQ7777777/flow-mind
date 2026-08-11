@@ -132,12 +132,14 @@ class DefaultTaskQueryServiceTest {
                 LocalDateTime.of(2026, 7, 22, 9, 0));
         insertTask("task-candidate", null, null, null, "ACTIVE", "[\"operator-001\",\"other\"]",
                 LocalDateTime.of(2026, 7, 22, 9, 1));
+        insertTask("task-assigned-other-candidate-current-user", "finance-001", "Finance One", null, "ACTIVE",
+                "[\"operator-001\",\"finance-001\"]", LocalDateTime.of(2026, 7, 22, 9, 2));
         insertTask("task-delegate", "operator-001", "Operator", "principal-001", "ACTIVE", null,
-                LocalDateTime.of(2026, 7, 22, 9, 2));
-        insertTask("task-u10", null, null, null, "ACTIVE", "[\"operator-0010\"]",
                 LocalDateTime.of(2026, 7, 22, 9, 3));
-        insertTask("task-completed", "operator-001", "Operator", null, "COMPLETED", null,
+        insertTask("task-u10", null, null, null, "ACTIVE", "[\"operator-0010\"]",
                 LocalDateTime.of(2026, 7, 22, 9, 4));
+        insertTask("task-completed", "operator-001", "Operator", null, "COMPLETED", null,
+                LocalDateTime.of(2026, 7, 22, 9, 5));
 
         PageResult<TaskDTO> result = taskQueryService.queryTodoTasks(new TodoTaskQuery());
 

@@ -29,6 +29,7 @@ import com.flowmind.platform.api.spi.AttachmentAccessProvider;
 import com.flowmind.platform.api.spi.ApproverResolver;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.ConditionExpressionEvaluator;
+import com.flowmind.platform.api.spi.DelegateProvider;
 import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.api.spi.OrganizationProvider;
@@ -60,7 +61,9 @@ import com.flowmind.platform.core.monitor.TimeoutPolicyReader;
 import com.flowmind.platform.core.monitor.TimeoutDueDateCalculator;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.runtime.ApproverResolveRequestFactory;
+import com.flowmind.platform.core.runtime.CountersignTaskCoordinator;
 import com.flowmind.platform.core.runtime.DefaultProcessRuntimeService;
+import com.flowmind.platform.core.runtime.EnhancedTaskActionCoordinator;
 import com.flowmind.platform.core.runtime.InstanceTaskCancellationService;
 import com.flowmind.platform.core.runtime.RuntimeDefinitionLoader;
 import com.flowmind.platform.core.runtime.RuntimeNodeAdvancer;
@@ -71,6 +74,7 @@ import com.flowmind.platform.core.runtime.AdminPermissionGuard;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
 import com.flowmind.platform.core.runtime.RuntimeRequestValidator;
 import com.flowmind.platform.core.runtime.RuntimeTransactionExecutor;
+import com.flowmind.platform.core.runtime.TaskClaimCoordinator;
 import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.core.validation.ProcessDefinitionAttachmentConfigValidator;
 import com.flowmind.platform.core.validation.ProcessFormFieldValidator;
@@ -461,6 +465,52 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public EnhancedTaskActionCoordinator enhancedTaskActionCoordinator(
+            ProcessInstanceRepository instanceRepository,
+            ActiveTaskRepository activeTaskRepository,
+            ProcessHistoryTaskRepository historyTaskRepository,
+            TaskGroupRepository taskGroupRepository,
+            RuntimeDefinitionLoader definitionLoader,
+            RuntimeRequestValidator requestValidator,
+            RuntimeOperationExecutor operationExecutor,
+            RuntimeNodeAdvancer nodeAdvancer,
+            RuntimeStateValidator stateValidator,
+            HistoryTaskWriter historyTaskWriter,
+            RuntimeTransactionExecutor transactionExecutor,
+            CallbackService callbackService,
+            ObjectProvider<OrganizationProvider> organizationProvider,
+            AuditLogWriter auditLogWriter) {
+        return new EnhancedTaskActionCoordinator(instanceRepository, activeTaskRepository, historyTaskRepository,
+                taskGroupRepository, definitionLoader, requestValidator, operationExecutor, nodeAdvancer,
+                stateValidator, historyTaskWriter, transactionExecutor, callbackService, organizationProvider,
+                auditLogWriter);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TaskClaimCoordinator taskClaimCoordinator(
+            ProcessInstanceRepository instanceRepository,
+            ActiveTaskRepository activeTaskRepository,
+            RuntimeRequestValidator requestValidator,
+            RuntimeOperationExecutor operationExecutor,
+            RuntimeTransactionExecutor transactionExecutor,
+            AuditLogWriter auditLogWriter,
+            CallbackService callbackService,
+            ObjectProvider<DelegateProvider> delegateProvider) {
+        return new TaskClaimCoordinator(instanceRepository, activeTaskRepository, requestValidator,
+                operationExecutor, transactionExecutor, auditLogWriter, callbackService,
+                delegateProvider.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CountersignTaskCoordinator countersignTaskCoordinator(TaskGroupRepository taskGroupRepository,
+                                                                 RuntimeNodeAdvancer nodeAdvancer) {
+        return new CountersignTaskCoordinator(taskGroupRepository, nodeAdvancer);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public ProcessRuntimeService processRuntimeService(
             ProcessInstanceRepository instanceRepository,
             ActiveTaskRepository activeTaskRepository,
@@ -478,12 +528,20 @@ public class PlatformAutoConfiguration {
             ProcessInstanceDeletionRepository deletionRepository,
             TaskGroupRepository taskGroupRepository,
             ProcessDefinitionRepository definitionRepository,
-            ObjectProvider<FileStorageProvider> fileStorageProvider) {
-        return new DefaultProcessRuntimeService(instanceRepository, activeTaskRepository, historyTaskRepository,
+            ObjectProvider<FileStorageProvider> fileStorageProvider,
+            EnhancedTaskActionCoordinator enhancedTaskActionCoordinator,
+            TaskClaimCoordinator taskClaimCoordinator,
+            CountersignTaskCoordinator countersignTaskCoordinator) {
+        DefaultProcessRuntimeService runtimeService = new DefaultProcessRuntimeService(
+                instanceRepository, activeTaskRepository, historyTaskRepository,
                 definitionLoader, requestValidator, operationExecutor, nodeAdvancer, attachmentService.getIfAvailable(),
                 callbackService, runtimeStateValidator, historyTaskWriter, transactionExecutor,
                 cancellationService, deletionRepository, taskGroupRepository, definitionRepository,
                 fileStorageProvider.getIfAvailable());
+        runtimeService.setEnhancedTaskActionCoordinator(enhancedTaskActionCoordinator);
+        runtimeService.setTaskClaimCoordinator(taskClaimCoordinator);
+        runtimeService.setCountersignTaskCoordinator(countersignTaskCoordinator);
+        return runtimeService;
     }
 
     @Bean

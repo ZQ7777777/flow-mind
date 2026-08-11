@@ -412,6 +412,57 @@ public class EnhancedTaskActionCoordinator {
         return directSendContextResolver.toDto(task == null ? null : task.getId(), resolution);
     }
 
+    /**
+     * Returns reject targets allowed by the node rule, already visited by the instance,
+     * and reachable under the instance's current branch conditions.
+     */
+    public List<ProcessNodeDTO> getRejectTargetNodes(ProcessActiveTaskEntity task,
+                                                     ProcessDefinitionDetailDTO definition) {
+        if (task == null || definition == null || isBlank(task.getInstanceId()) || isBlank(task.getNodeCode())) {
+            return Collections.emptyList();
+        }
+        ProcessInstanceEntity instance = instanceRepository.findById(task.getInstanceId());
+        if (instance == null) {
+            return Collections.emptyList();
+        }
+
+        TaskActionRules rules;
+        try {
+            rules = actionRules(definition, task.getNodeCode());
+        } catch (RuntimeException exception) {
+            return Collections.emptyList();
+        }
+        if (!rules.isRejectEnabled()) {
+            return Collections.emptyList();
+        }
+
+        Set<String> historicalNodeCodes = new LinkedHashSet<String>();
+        for (ProcessHistoryTaskEntity history : historyRepository.findByInstanceId(instance.getId())) {
+            if (history != null && !isBlank(history.getNodeCode())) {
+                historicalNodeCodes.add(history.getNodeCode());
+            }
+        }
+        Set<String> reachableNodeCodes = nodeAdvancer.reachableUserTaskNodeCodes(instance, definition);
+        Map<String, ProcessNodeDTO> nodesByCode = new LinkedHashMap<String, ProcessNodeDTO>();
+        if (definition.getNodes() != null) {
+            for (ProcessNodeDTO node : definition.getNodes()) {
+                if (node != null && !isBlank(node.getNodeCode())) {
+                    nodesByCode.put(node.getNodeCode(), node);
+                }
+            }
+        }
+
+        List<ProcessNodeDTO> targets = new ArrayList<ProcessNodeDTO>();
+        for (String nodeCode : rules.getRejectTargetNodeCodes()) {
+            ProcessNodeDTO node = nodesByCode.get(nodeCode);
+            if (node != null && NodeTypeEnum.USER_TASK.equals(node.getNodeType())
+                    && historicalNodeCodes.contains(nodeCode) && reachableNodeCodes.contains(nodeCode)) {
+                targets.add(node);
+            }
+        }
+        return targets;
+    }
+
     private void applyDirectSendVariables(EnhancedActionContext context, DirectSendRequest request) {
         if (request.getVariables() == null || request.getVariables().isEmpty()) {
             return;
@@ -608,7 +659,7 @@ public class EnhancedTaskActionCoordinator {
         if (ActionTypeEnum.WITHDRAW.equals(action)) {
             validateWithdrawContext(request, instance, task);
         } else {
-            requestValidator.validateTaskAction(request, instance, task, operator);
+            requestValidator.validateTaskAction(request, instance, task, operator, action);
         }
         operationExecutor.bindTarget(request.getOperationId(), instance.getId(), task.getId());
         return new EnhancedActionContext(instance, task, definitionLoader.loadForInstance(instance), operator);
@@ -938,9 +989,10 @@ public class EnhancedTaskActionCoordinator {
         task.setDefinitionId(context.instance.getDefinitionId());
         task.setNodeCode(readText(snapshot, "sourceNodeCode"));
         task.setCandidateUserIds(readText(snapshot, "sourceCandidateUserIds"));
-        task.setAssigneeUserId(optionalText(snapshot, "sourceAssigneeUserId"));
+        String sourceAssigneeUserId = optionalText(snapshot, "sourceAssigneeUserId");
+        task.setAssigneeUserId(sourceAssigneeUserId);
         task.setAssigneeUserName(optionalText(snapshot, "sourceAssigneeUserName"));
-        task.setTaskStatus("ACTIVE");
+        task.setTaskStatus(isBlank(sourceAssigneeUserId) ? "ACTIVE" : "CLAIMED");
         task.setLockVersion(Long.valueOf(0));
         task.setCreatedAt(LocalDateTime.now());
         if (activeTaskRepository.insert(task) != 1) {

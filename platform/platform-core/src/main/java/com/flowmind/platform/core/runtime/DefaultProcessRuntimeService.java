@@ -503,6 +503,24 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         return enhancedTaskActionCoordinator.getDirectSendContext(task, definition);
     }
 
+    /** {@inheritDoc} */
+    @Override
+    public List<ProcessNodeDTO> getRejectTargetNodes(String taskId) {
+        if (isBlank(taskId)) {
+            throw new RuntimeValidationException(RuntimeErrorCodes.INVALID_ACTION, "taskId is required");
+        }
+        ProcessActiveTaskEntity task = activeTaskRepository.findById(taskId);
+        if (task == null || enhancedTaskActionCoordinator == null) {
+            return Collections.emptyList();
+        }
+        ProcessInstanceEntity instance = instanceRepository.findById(task.getInstanceId());
+        if (instance == null) {
+            return Collections.emptyList();
+        }
+        ProcessDefinitionDetailDTO definition = definitionLoader.loadForInstance(instance);
+        return enhancedTaskActionCoordinator.getRejectTargetNodes(task, definition);
+    }
+
     /** M5 起提供转办能力。 */
     @Override
     public TaskActionResult transfer(TransferTaskRequest request) {
@@ -679,7 +697,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
             task = activeTaskRepository.findById(request.getTaskId());
             instance = task == null ? null : instanceRepository.findById(task.getInstanceId());
         }
-        requestValidator.validateTaskAction(request, instance, task, operator);
+        requestValidator.validateTaskAction(request, instance, task, operator, actionType);
         operationExecutor.bindTarget(request.getOperationId(), instance.getId(), task.getId());
 
         ProcessDefinitionDetailDTO definition = definitionLoader.loadForInstance(instance);
@@ -1157,7 +1175,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         submitRequest.setTaskId(task.getId());
         submitRequest.setExpectedTaskVersion(task.getLockVersion());
         submitRequest.setOperatorUserId(starter.getUserId());
-        requestValidator.validateTaskAction(submitRequest, instance, task, starter);
+        requestValidator.validateTaskAction(submitRequest, instance, task, starter, ActionTypeEnum.SEND);
     }
 
     private ProcessInstanceDTO toInstanceResult(String instanceId, List<TaskDTO> createdTasks) {

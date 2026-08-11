@@ -6,21 +6,22 @@ import {
   performTaskAction,
 } from "../api/workflow";
 import type {
-  PageRequest,
-  PageResponse,
+  WorkflowListQuery,
+  WorkflowPageResponse,
   TaskActionCode,
   TaskActionPayload,
-  TaskActionResult,
+  WorkflowTaskActionResponse,
   WorkflowDetailResponse,
-  WorkflowListItem,
+  WorkflowListRecord,
   WorkflowListType,
 } from "../types/workflow";
 
 interface ListState {
   type: WorkflowListType;
-  params: PageRequest;
-  items: WorkflowListItem[];
+  params: WorkflowListQuery;
+  records: WorkflowListRecord[];
   total: number;
+  totalPages: number;
   loading: boolean;
   error: string;
 }
@@ -35,17 +36,19 @@ interface WorkflowState {
   list: ListState;
   detail: DetailState;
   actionSubmitting: boolean;
+  actionError: string;
 }
 
-const defaultPage: PageRequest = { pageNo: 1, pageSize: 20 };
+const defaultPage: WorkflowListQuery = { pageNo: 1, pageSize: 20 };
 
 export const useWorkflowStore = defineStore("workflow", {
   state: (): WorkflowState => ({
     list: {
       type: "todo",
       params: { ...defaultPage },
-      items: [],
+      records: [],
       total: 0,
+      totalPages: 0,
       loading: false,
       error: "",
     },
@@ -55,9 +58,10 @@ export const useWorkflowStore = defineStore("workflow", {
       error: "",
     },
     actionSubmitting: false,
+    actionError: "",
   }),
   actions: {
-    async loadList(type: WorkflowListType, params: PageRequest): Promise<void> {
+    async loadList(type: WorkflowListType, params: WorkflowListQuery): Promise<void> {
       const requestId = nextRequestId();
       this.list.type = type;
       this.list.params = { ...params };
@@ -66,13 +70,14 @@ export const useWorkflowStore = defineStore("workflow", {
       latestListRequestId = requestId;
 
       try {
-        const page: PageResponse<WorkflowListItem> = await fetchWorkflowList(type, params);
+        const page: WorkflowPageResponse<WorkflowListRecord> = await fetchWorkflowList(type, params);
         if (latestListRequestId !== requestId) {
           return;
         }
-        this.list.items = page.items;
+        this.list.records = page.records;
         this.list.total = page.total;
-        this.list.params = { pageNo: page.pageNo, pageSize: page.pageSize };
+        this.list.totalPages = page.totalPages;
+        this.list.params = { ...params, pageNo: page.pageNo, pageSize: page.pageSize };
       } catch (error) {
         if (latestListRequestId === requestId) {
           this.list.error = error instanceof Error ? error.message : "列表加载失败";
@@ -96,10 +101,14 @@ export const useWorkflowStore = defineStore("workflow", {
       taskId: string,
       action: TaskActionCode,
       payload: TaskActionPayload,
-    ): Promise<TaskActionResult> {
+    ): Promise<WorkflowTaskActionResponse> {
       this.actionSubmitting = true;
+      this.actionError = "";
       try {
         return await performTaskAction(taskId, action, payload);
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : "任务办理失败";
+        throw error;
       } finally {
         this.actionSubmitting = false;
       }

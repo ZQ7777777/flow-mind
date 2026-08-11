@@ -2,6 +2,7 @@ package com.flowmind.platform.core.runtime;
 
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.dto.UserDTO;
+import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
@@ -78,6 +79,23 @@ class RuntimeRequestValidatorTest {
         assertEquals("Principal", task.getDelegateFromUserName());
     }
 
+    @Test
+    void multiCandidateTaskRequiresClaimBeforeFlowAction() {
+        TaskOperationRequest request = taskRequest(Long.valueOf(4));
+        ProcessActiveTaskEntity task = activeTask();
+        task.setCandidateUserIds("[\"user-1\",\"user-2\"]");
+
+        RuntimeValidationException blocked = assertThrows(RuntimeValidationException.class,
+                () -> validator.validateTaskAction(request, runningInstance(), task, ActionTypeEnum.APPROVE));
+        assertEquals(RuntimeErrorCodes.TASK_PERMISSION_DENIED, blocked.getErrorCode());
+    }
+
+    @Test
+    void singleCandidateTaskCanFlowWithoutClaim() {
+        TaskOperationRequest request = taskRequest(Long.valueOf(4));
+
+        validator.validateTaskAction(request, runningInstance(), activeTask(), ActionTypeEnum.APPROVE);
+    }
     @Test
     void variableUpdateRejectsTerminalInstanceAndForgedOperator() {
         UpdateVariablesRequest request = new UpdateVariablesRequest();

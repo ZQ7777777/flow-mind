@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useWorkflowStore } from "../stores/workflow";
-import type { WorkflowListItem, WorkflowListType } from "../types/workflow";
+import type {
+  WorkflowHistoryTaskResponse,
+  WorkflowInstanceResponse,
+  WorkflowListRecord,
+  WorkflowListType,
+  WorkflowReadRecordResponse,
+  WorkflowTaskResponse,
+} from "../types/workflow";
 import { formatDateTime } from "../utils/format";
 
 const props = defineProps<{
@@ -11,7 +18,11 @@ const props = defineProps<{
 
 const store = useWorkflowStore();
 const filters = reactive({
-  keyword: "",
+  processName: "",
+  instanceTitle: "",
+  nodeCode: "",
+  status: "",
+  actionType: "",
   pageNo: 1,
   pageSize: 20,
 });
@@ -21,15 +32,15 @@ const isTodoList = computed(() => props.type === "todo");
 
 const columns = computed(() => {
   if (props.type === "completed") {
-    return ["processName", "nodeName", "action", "completedAt"];
+    return ["processName", "nodeName", "actionType", "comment", "completedAt"];
   }
   if (props.type === "started") {
-    return ["processName", "status", "nodeName", "createdAt"];
+    return ["processName", "instanceStatus", "currentNodeCodes", "startedAt", "endedAt"];
   }
   if (props.type === "read") {
-    return ["processName", "status", "readAt", "createdAt"];
+    return ["processName", "instanceStatus", "readAt"];
   }
-  return ["processName", "nodeName", "taskSource", "createdAt"];
+  return ["processName", "nodeName", "source", "starterUserName", "createdAt", "dueAt"];
 });
 
 onMounted(() => {
@@ -48,8 +59,12 @@ async function load(): Promise<void> {
   await store.loadList(props.type, {
     pageNo: filters.pageNo,
     pageSize: filters.pageSize,
-    keyword: filters.keyword.trim() || undefined,
-    taskSource: isTodoList.value ? todoTaskSource() : undefined,
+    processName: filters.processName.trim() || undefined,
+    instanceTitle: filters.instanceTitle.trim() || undefined,
+    nodeCode: filters.nodeCode.trim() || undefined,
+    status: filters.status.trim() || undefined,
+    actionType: filters.actionType.trim() || undefined,
+    source: isTodoList.value ? todoTaskSource() : undefined,
   });
 }
 
@@ -66,44 +81,75 @@ function todoTaskSource(): "OWN" | "DELEGATED" {
   return todoScope.value === "delegated" ? "DELEGATED" : "OWN";
 }
 
-function detailPath(row: WorkflowListItem): string {
-  if (row.taskId) {
+function detailPath(row: WorkflowListRecord): string {
+  if (isTask(row)) {
     return `/workflow/tasks/${encodeURIComponent(row.taskId)}`;
   }
-  return `/workflow/instances/${encodeURIComponent(row.instanceId ?? row.id)}`;
+  return `/workflow/instances/${encodeURIComponent(row.instanceId)}`;
+}
+
+function rowKey(row: WorkflowListRecord): string {
+  if (isTask(row)) return row.taskId;
+  if (isHistoryTask(row)) return row.historyTaskId;
+  if (isReadRecord(row)) return row.readRecordId;
+  return row.instanceId;
+}
+
+function isTask(row: WorkflowListRecord): row is WorkflowTaskResponse {
+  return "taskVersion" in row;
+}
+
+function isHistoryTask(row: WorkflowListRecord): row is WorkflowHistoryTaskResponse {
+  return "historyTaskId" in row;
+}
+
+function isReadRecord(row: WorkflowListRecord): row is WorkflowReadRecordResponse {
+  return "readRecordId" in row;
+}
+
+function isInstance(row: WorkflowListRecord): row is WorkflowInstanceResponse {
+  return "variables" in row;
 }
 
 function columnLabel(column: string): string {
   const labels: Record<string, string> = {
     processName: "流程",
     nodeName: "节点",
-    taskSource: "来源",
-    action: "动作",
-    status: "状态",
+    source: "任务来源",
+    actionType: "办理动作",
+    comment: "办理意见",
+    instanceStatus: "状态",
+    currentNodeCodes: "当前节点",
+    starterUserName: "发起人",
     createdAt: "创建时间",
+    dueAt: "到期时间",
+    startedAt: "发起时间",
+    endedAt: "结束时间",
     completedAt: "完成时间",
     readAt: "阅读时间",
   };
   return labels[column] ?? column;
 }
 
-function columnValue(row: WorkflowListItem, column: string): string {
-  const value = row[column as keyof WorkflowListItem];
+function columnValue(row: WorkflowListRecord, column: string): string {
+  if (column === "source" && isTask(row)) {
+    return row.delegateFromUserId ? "委托代办任务" : "自己的任务";
+  }
+  if (column === "currentNodeCodes" && isInstance(row)) {
+    return row.currentNodeCodes.length ? row.currentNodeCodes.join("、") : "--";
+  }
+  const value = (row as unknown as Record<string, unknown>)[column];
   if (column.endsWith("At")) {
     return formatDateTime(value as string | undefined);
   }
   if (typeof value === "boolean") {
     return value ? "是" : "否";
   }
-  if (column === "taskSource") {
-    if (value === "DELEGATED") {
-      return "委托代办任务";
-    }
-    if (value === "OWN") {
-      return "自己的任务";
-    }
-  }
   return value == null || value === "" ? "--" : String(value);
+}
+
+function starterName(row: WorkflowListRecord): string | undefined {
+  return "starterUserName" in row ? row.starterUserName : undefined;
 }
 </script>
 
@@ -138,8 +184,24 @@ function columnValue(row: WorkflowListItem, column: string): string {
 
     <form class="filter-grid" @submit.prevent="load">
       <label>
-        关键词
-        <input v-model="filters.keyword" type="search" autocomplete="off" />
+        流程名称
+        <input v-model="filters.processName" type="search" autocomplete="off" />
+      </label>
+      <label>
+        标题
+        <input v-model="filters.instanceTitle" type="search" autocomplete="off" />
+      </label>
+      <label v-if="type === 'todo' || type === 'completed'">
+        节点编码
+        <input v-model="filters.nodeCode" type="search" autocomplete="off" />
+      </label>
+      <label v-if="type === 'started' || type === 'read'">
+        状态
+        <input v-model="filters.status" type="search" autocomplete="off" />
+      </label>
+      <label v-if="type === 'completed'">
+        办理动作
+        <input v-model="filters.actionType" type="search" autocomplete="off" />
       </label>
       <div class="filter-actions">
         <button type="submit">查询</button>
@@ -166,13 +228,16 @@ function columnValue(row: WorkflowListItem, column: string): string {
               {{ store.list.error }}
             </td>
           </tr>
-          <tr v-else-if="store.list.items.length === 0">
+          <tr v-else-if="store.list.records.length === 0">
             <td :colspan="columns.length + 2" class="empty-cell">暂无记录</td>
           </tr>
-          <tr v-for="row in store.list.loading || store.list.error ? [] : store.list.items" :key="row.id">
+          <tr
+            v-for="row in store.list.loading || store.list.error ? [] : store.list.records"
+            :key="rowKey(row)"
+          >
             <td>
-              <strong>{{ row.title }}</strong>
-              <span v-if="row.starterName">发起人：{{ row.starterName }}</span>
+              <strong>{{ row.instanceTitle }}</strong>
+              <span v-if="starterName(row)">发起人：{{ starterName(row) }}</span>
             </td>
             <td v-for="column in columns" :key="column">{{ columnValue(row, column) }}</td>
             <td class="table-actions">
@@ -194,7 +259,7 @@ function columnValue(row: WorkflowListItem, column: string): string {
       <span>第 {{ filters.pageNo }} 页 / 共 {{ store.list.total }} 条</span>
       <button
         type="button"
-        :disabled="store.list.items.length < filters.pageSize || store.list.loading"
+        :disabled="filters.pageNo >= store.list.totalPages || store.list.loading"
         @click="filters.pageNo += 1; load()"
       >
         下一页
@@ -235,7 +300,7 @@ h1 {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
   align-items: end;
   margin-bottom: 14px;

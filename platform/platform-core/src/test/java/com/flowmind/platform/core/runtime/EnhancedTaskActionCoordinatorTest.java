@@ -13,6 +13,7 @@ import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.request.AddSignRequest;
+import com.flowmind.platform.api.request.ApproveTaskRequest;
 import com.flowmind.platform.api.request.DelegateTaskRequest;
 import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
@@ -753,6 +754,52 @@ class EnhancedTaskActionCoordinatorTest {
         verify(fixture.tasks).cancel("task-1", 3L);
         verify(fixture.groups).insert(any(ProcessTaskGroupEntity.class));
         verify(fixture.tasks).insert(any(ProcessActiveTaskEntity.class));
+    }
+
+    @Test
+    void approveAddSignRestoresSourceTaskToPreviousAssigneeOnly() {
+        Fixture fixture = fixture(ActionTypeEnum.APPROVE);
+        fixture.task.setTaskGroupId("add-sign-group-1");
+        ApproveTaskRequest request = taskRequest(new ApproveTaskRequest(), "op-approve-add-sign",
+                fixture.task, fixture.operator);
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("add-sign-group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("COUNTERSIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setCompletedCount(Integer.valueOf(0));
+        group.setTotalCount(Integer.valueOf(1));
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{\"schemaVersion\":1,\"purpose\":\"ADD_SIGN\","
+                + "\"sourceTaskId\":\"task-1\",\"sourceNodeCode\":\"manager\","
+                + "\"sourceCandidateUserIds\":\"[\\\"finance01\\\",\\\"finance02\\\",\\\"finance03\\\"]\","
+                + "\"sourceAssigneeUserId\":\"finance01\",\"sourceAssigneeUserName\":\"Finance 01\"}");
+        ProcessTaskGroupEntity completedGroup = new ProcessTaskGroupEntity();
+        completedGroup.setId(group.getId());
+        completedGroup.setInstanceId(group.getInstanceId());
+        completedGroup.setGroupType(group.getGroupType());
+        completedGroup.setGroupStatus("COMPLETED");
+        completedGroup.setBranchStateJson(group.getBranchStateJson());
+        completedGroup.setLockVersion(Long.valueOf(3));
+        when(fixture.groups.findById("add-sign-group-1")).thenReturn(group, completedGroup);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.incrementCompletedCount("add-sign-group-1", 2L)).thenReturn(1);
+        when(fixture.tasks.insert(any(ProcessActiveTaskEntity.class))).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("add-sign-approve-history", "operation01", "manager",
+                        ActionTypeEnum.APPROVE.name(), "{}"));
+
+        fixture.coordinator.approveAddSign(request);
+
+        org.mockito.ArgumentCaptor<ProcessActiveTaskEntity> restoredTask =
+                org.mockito.ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        verify(fixture.tasks).insert(restoredTask.capture());
+        assertEquals("[\"finance01\",\"finance02\",\"finance03\"]",
+                restoredTask.getValue().getCandidateUserIds());
+        assertEquals("finance01", restoredTask.getValue().getAssigneeUserId());
+        assertEquals("Finance 01", restoredTask.getValue().getAssigneeUserName());
+        assertEquals("CLAIMED", restoredTask.getValue().getTaskStatus());
     }
 
     @Test

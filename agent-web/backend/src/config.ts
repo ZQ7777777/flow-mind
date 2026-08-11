@@ -6,6 +6,7 @@ export interface AgentConfig {
   port: number;
   dataDir: string;
   platformBaseUrl: string;
+  platformAuthMode: "session" | "trusted-header";
   piModel: string;
   thinkingLevel: string;
   fakePi: boolean;
@@ -17,11 +18,13 @@ export interface AgentConfig {
 
 export function loadConfig(): AgentConfig {
   const dataDir = resolve(process.cwd(), process.env.AGENT_DATA_DIR || "../data/agent-web");
+  const platformAuthMode = resolvePlatformAuthMode();
   return {
     bindHost: process.env.AGENT_BIND_HOST || "127.0.0.1",
     port: Number(process.env.AGENT_PORT || 3100),
     dataDir,
     platformBaseUrl: (process.env.FLOW_PLATFORM_BASE_URL || "http://127.0.0.1:8080").replace(/\/$/, ""),
+    platformAuthMode,
     piModel: process.env.PI_MODEL || "",
     thinkingLevel: process.env.PI_THINKING_LEVEL || "medium",
     fakePi: process.env.NODE_ENV === "test" || process.env.AGENT_FAKE_PI === "true",
@@ -59,4 +62,11 @@ export function loadConfig(): AgentConfig {
       },
     ],
   };
+}
+
+function resolvePlatformAuthMode(): "session" | "trusted-header" {
+  const configured = process.env.FLOW_PLATFORM_AUTH_MODE?.trim();
+  if (!configured) return process.env.NODE_ENV === "test" ? "trusted-header" : "session";
+  if (configured === "session" || configured === "trusted-header") return configured;
+  throw new Error("FLOW_PLATFORM_AUTH_MODE must be session or trusted-header");
 }

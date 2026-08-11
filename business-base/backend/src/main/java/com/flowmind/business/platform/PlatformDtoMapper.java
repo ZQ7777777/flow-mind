@@ -182,7 +182,9 @@ public class PlatformDtoMapper {
                                            List<HistoryTaskDTO> historyTasks,
                                            List<ProcessCommentDTO> comments,
                                            List<AttachmentDTO> attachments,
-                                           List<String> allowedActions) {
+                                           List<ProcessNodeDTO> rejectTargetNodes,
+                                           List<String> allowedActions,
+                                           List<String> disabledActions) {
         WorkflowDetailResponse target = new WorkflowDetailResponse();
         List<ProcessFormFieldDTO> fields = new ArrayList<ProcessFormFieldDTO>(safe(definition.getFormFields()));
         Collections.sort(fields, Comparator.comparing(ProcessFormFieldDTO::getSortOrder,
@@ -212,7 +214,9 @@ public class PlatformDtoMapper {
         target.setHistoryTasks(histories(historyTasks));
         target.setComments(comments(comments));
         target.setAttachments(attachments(attachments));
+        target.setRejectTargetNodes(targetNodes(rejectTargetNodes));
         target.setAllowedActions(allowedActions == null ? new ArrayList<String>() : allowedActions);
+        target.setDisabledActions(disabledActions == null ? new ArrayList<String>() : disabledActions);
         return target;
     }
 
@@ -261,6 +265,19 @@ public class PlatformDtoMapper {
             target.setNodeCode(source.getNodeCode()); target.setNodeName(source.getNodeName());
             target.setNodeType(name(source.getNodeType())); target.setPositionX(source.getPositionX());
             target.setPositionY(source.getPositionY()); target.setSortOrder(source.getSortOrder());
+            targets.add(target);
+        }
+        return targets;
+    }
+
+    /** Maps trusted action targets without changing the platform's configured order. */
+    private List<WorkflowDetailResponse.NodeView> targetNodes(List<ProcessNodeDTO> sources) {
+        List<WorkflowDetailResponse.NodeView> targets = new ArrayList<WorkflowDetailResponse.NodeView>();
+        for (ProcessNodeDTO source : safe(sources)) {
+            WorkflowDetailResponse.NodeView target = new WorkflowDetailResponse.NodeView();
+            target.setNodeCode(source.getNodeCode());
+            target.setNodeName(source.getNodeName());
+            target.setNodeType(name(source.getNodeType()));
             targets.add(target);
         }
         return targets;

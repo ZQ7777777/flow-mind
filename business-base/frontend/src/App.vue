@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { generatedRoutes } from "./router/generated-routes";
+import { useAuthStore } from "./stores/auth";
 
-const generatedBusinessLabels: Record<string, string> = {
-  "entry-application": "入金申请",
-};
+const route = useRoute();
+const router = useRouter();
+const auth = useAuthStore();
+const publicLayout = computed(() => route.meta.public === true);
 
 const generatedEntryRoutes = computed(() =>
   generatedRoutes.map((route, index) => ({
@@ -21,7 +24,7 @@ function labelGeneratedRoute(route: (typeof generatedRoutes)[number], index: num
     const businessCode = route.name
       .replace(/^generated-/, "")
       .replace(/-apply$/, "");
-    return generatedBusinessLabels[businessCode] ?? readableGeneratedLabel(businessCode);
+    return readableGeneratedLabel(businessCode);
   }
   return `生成录入 ${index + 1}`;
 }
@@ -33,18 +36,29 @@ function readableGeneratedLabel(value: string): string {
     .map((part) => part[0].toUpperCase() + part.slice(1))
     .join(" ");
 }
+
+async function logout(): Promise<void> {
+  await auth.logout();
+  await router.replace("/login");
+}
 </script>
 
 <template>
-  <div class="business-app-shell">
+  <RouterView v-if="publicLayout" />
+  <div v-else class="business-app-shell">
     <header class="topbar">
       <div>
         <p class="eyebrow">Flow Mind</p>
         <h1>业务流程办理</h1>
       </div>
-      <div class="context-panel" aria-label="业务上下文">
-        <span class="context-badge">业务端</span>
-        <span class="context-badge">通用办理</span>
+      <div class="user-panel" aria-label="当前用户">
+        <div class="user-summary">
+          <strong>{{ auth.user?.realName }}</strong>
+          <span>{{ auth.user?.departmentName }}</span>
+        </div>
+        <button class="logout-button" data-test="logout" type="button" @click="logout">
+          退出登录
+        </button>
       </div>
     </header>
 
@@ -67,6 +81,7 @@ function readableGeneratedLabel(value: string): string {
         <RouterLink class="nav-link" to="/workflow/started">我发起的</RouterLink>
         <RouterLink class="nav-link" to="/workflow/todo">我的待办</RouterLink>
         <RouterLink class="nav-link" to="/workflow/completed">我的已办</RouterLink>
+        <RouterLink class="nav-link" to="/workflow/read">我的已阅</RouterLink>
       </nav>
 
       <main class="main-panel">
@@ -124,24 +139,45 @@ function readableGeneratedLabel(value: string): string {
   text-transform: uppercase;
 }
 
-.context-panel {
+.user-panel {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
+  align-items: center;
+  gap: 14px;
 }
 
-.context-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  border: 1px solid #99f6e4;
-  border-radius: 999px;
-  padding: 2px 10px;
-  background: #ccfbf1;
-  color: var(--teal);
+.user-summary {
+  display: grid;
+  gap: 2px;
+  min-width: 100px;
+  text-align: right;
+}
+
+.user-summary strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.user-summary span {
+  color: var(--muted);
   font-size: 12px;
+}
+
+.logout-button {
+  min-height: 32px;
+  border: 1px solid #b9c2cf;
+  border-radius: 5px;
+  padding: 5px 11px;
+  background: #fff;
+  color: #374151;
+  font: inherit;
+  font-size: 13px;
   font-weight: 700;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  border-color: var(--teal);
+  color: var(--teal);
 }
 
 .status-bar {
@@ -232,8 +268,12 @@ function readableGeneratedLabel(value: string): string {
     flex-direction: column;
   }
 
-  .context-panel {
-    justify-content: flex-start;
+  .user-panel {
+    justify-content: space-between;
+  }
+
+  .user-summary {
+    text-align: left;
   }
 
   .workspace {

@@ -1,26 +1,26 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { WorkflowAttachment } from "../../types/workflow";
+import type { WorkflowAttachmentView } from "../../types/workflow";
 import { formatDateTime, formatFileSize } from "../../utils/format";
 
 const props = defineProps<{
-  attachments: WorkflowAttachment[];
+  attachments: WorkflowAttachmentView[];
   canUpload?: boolean;
 }>();
 
 const emit = defineEmits<{
-  upload: [payload: { file: File; fieldCode: string; templateCode: string }];
-  download: [attachment: WorkflowAttachment];
-  delete: [attachment: WorkflowAttachment];
+  upload: [payload: { file: File; fieldCode: string; attachmentCode: string }];
+  download: [attachment: WorkflowAttachmentView];
+  delete: [attachment: WorkflowAttachmentView];
 }>();
 
 const selectedFile = ref<File | null>(null);
 const fieldCode = ref("");
-const templateCode = ref("");
+const attachmentCode = ref("");
 
 const grouped = computed(() => ({
-  instance: props.attachments.filter((item) => item.scope !== "TASK"),
-  task: props.attachments.filter((item) => item.scope === "TASK"),
+  instance: props.attachments.filter((item) => item.ownerType !== "TASK"),
+  task: props.attachments.filter((item) => item.ownerType === "TASK"),
 }));
 
 function onFileChange(event: Event): void {
@@ -35,7 +35,7 @@ function submitUpload(): void {
   emit("upload", {
     file: selectedFile.value,
     fieldCode: fieldCode.value.trim(),
-    templateCode: templateCode.value.trim(),
+    attachmentCode: attachmentCode.value.trim(),
   });
   selectedFile.value = null;
 }
@@ -57,8 +57,8 @@ function submitUpload(): void {
         <input v-model="fieldCode" type="text" autocomplete="off" />
       </label>
       <label>
-        <span>模板编码</span>
-        <input v-model="templateCode" type="text" autocomplete="off" />
+        <span>附件编码</span>
+        <input v-model="attachmentCode" type="text" autocomplete="off" />
       </label>
       <button type="submit" :disabled="!selectedFile">上传</button>
     </form>
@@ -69,20 +69,12 @@ function submitUpload(): void {
         <ul v-if="grouped.instance.length" class="attachment-list">
           <li v-for="attachment in grouped.instance" :key="attachment.attachmentId">
             <span class="file-name">{{ attachment.fileName }}</span>
-            <span>{{ formatFileSize(attachment.fileSize) }}</span>
-            <span>{{ formatDateTime(attachment.createdAt) }}</span>
-            <button
-              type="button"
-              :disabled="attachment.canDownload === false"
-              @click="emit('download', attachment)"
-            >
+            <span>{{ formatFileSize(attachment.sizeBytes) }}</span>
+            <span>{{ formatDateTime(attachment.uploadedAt) }}</span>
+            <button type="button" @click="emit('download', attachment)">
               下载
             </button>
-            <button
-              type="button"
-              :disabled="attachment.canDelete !== true"
-              @click="emit('delete', attachment)"
-            >
+            <button type="button" @click="emit('delete', attachment)">
               删除
             </button>
           </li>
@@ -95,20 +87,12 @@ function submitUpload(): void {
         <ul v-if="grouped.task.length" class="attachment-list">
           <li v-for="attachment in grouped.task" :key="attachment.attachmentId">
             <span class="file-name">{{ attachment.fileName }}</span>
-            <span>{{ formatFileSize(attachment.fileSize) }}</span>
-            <span>{{ formatDateTime(attachment.createdAt) }}</span>
-            <button
-              type="button"
-              :disabled="attachment.canDownload === false"
-              @click="emit('download', attachment)"
-            >
+            <span>{{ formatFileSize(attachment.sizeBytes) }}</span>
+            <span>{{ formatDateTime(attachment.uploadedAt) }}</span>
+            <button type="button" @click="emit('download', attachment)">
               下载
             </button>
-            <button
-              type="button"
-              :disabled="attachment.canDelete !== true"
-              @click="emit('delete', attachment)"
-            >
+            <button type="button" @click="emit('delete', attachment)">
               删除
             </button>
           </li>

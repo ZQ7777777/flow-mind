@@ -6,6 +6,8 @@ import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.enums.NodeTypeEnum;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -32,16 +34,25 @@ class PlatformDtoMapperTest {
         AttachmentDTO attachment = new AttachmentDTO();
         attachment.setAttachmentId("attachment-1"); attachment.setFileName("receipt.pdf");
         attachment.setStorageKey("must-not-leak"); attachment.setDeleted(Boolean.FALSE);
+        ProcessNodeDTO rejectTarget = new ProcessNodeDTO();
+        rejectTarget.setNodeCode("apply"); rejectTarget.setNodeName("鐢宠");
+        rejectTarget.setNodeType(NodeTypeEnum.USER_TASK);
+        rejectTarget.setListenerConfig("must-not-leak");
 
         WorkflowDetailResponse result = new PlatformDtoMapper().detail(instance, definition, null,
                 Collections.emptyList(), Collections.singletonList(history), Collections.emptyList(),
-                Collections.singletonList(attachment), Collections.emptyList());
+                Collections.singletonList(attachment), Collections.singletonList(rejectTarget),
+                Collections.emptyList(), Collections.emptyList());
 
         assertThat(result.getFormFields()).extracting(WorkflowDetailResponse.FormFieldView::getFieldCode)
                 .containsExactly("amount", "currency");
         assertThat(result.getInstance().getVariables()).containsOnlyKeys("amount", "currency");
         assertThat(result.getAttachments()).extracting(WorkflowDetailResponse.AttachmentView::getFileName)
                 .containsExactly("receipt.pdf");
+        assertThat(result.getRejectTargetNodes()).extracting(WorkflowDetailResponse.NodeView::getNodeCode)
+                .containsExactly("apply");
+        assertThat(result.getRejectTargetNodes()).extracting(WorkflowDetailResponse.NodeView::getNodeName)
+                .containsExactly("鐢宠");
         assertThat(WorkflowDetailResponse.AttachmentView.class.getDeclaredFields())
                 .noneMatch(field -> field.getName().equals("storageKey"));
         assertThat(com.flowmind.business.workflow.dto.WorkflowHistoryTaskResponse.class.getDeclaredFields())

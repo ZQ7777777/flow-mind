@@ -14,10 +14,11 @@ function deferredPage(title: string) {
       resolve(
         new Response(
           JSON.stringify({
-            items: [{ id: title, title }],
+            records: [{ taskId: title, instanceTitle: title }],
             pageNo: 1,
             pageSize: 20,
             total: 1,
+            totalPages: 1,
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
@@ -48,7 +49,7 @@ describe("workflow store", () => {
     slow.resolve();
     await firstLoad;
 
-    expect(store.list.items).toEqual([{ id: "newer", title: "newer" }]);
+    expect(store.list.records).toEqual([{ taskId: "newer", instanceTitle: "newer" }]);
     expect(store.list.loading).toBe(false);
   });
 });

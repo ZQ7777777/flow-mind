@@ -2,8 +2,8 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import type {
   AgentPublicConfig,
+  AgentAuthenticatedUser,
   BusinessRequirement,
-  MockUser,
   RequirementRevision,
   WorkflowSnapshot,
   GeneratedFileContent,
@@ -81,9 +81,8 @@ function initialVerifyStages(): VerifyStageEntry[] {
 }
 
 export const useWorkflowStore = defineStore("workflow", () => {
-  const users = ref<MockUser[]>([]);
   const defaultTargetRoot = ref("");
-  const currentUser = ref<MockUser>();
+  const currentUser = ref<AgentAuthenticatedUser>();
   const snapshot = ref<WorkflowSnapshot>();
   const busy = ref(false);
   const error = ref("");
@@ -107,18 +106,12 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const state = computed(() => snapshot.value?.state);
   const allowedActions = computed(() => snapshot.value?.allowedActions || []);
 
-  async function initialize(): Promise<void> {
-    const [publicConfig, availableUsers] = await Promise.all([
-      apiRequest<AgentPublicConfig>("/api/agent/config"),
-      apiRequest<MockUser[]>("/api/agent/mock-users"),
-    ]);
+  async function initialize(authenticatedUser: AgentAuthenticatedUser): Promise<void> {
+    currentUser.value = authenticatedUser;
+    const publicConfig = await apiRequest<AgentPublicConfig>("/api/agent/config");
     defaultTargetRoot.value = publicConfig.defaultTargetRoot;
-    users.value = availableUsers;
-    const storedUser = localStorage.getItem("flowmind.agent.user");
-    currentUser.value = users.value.find((user) => user.userId === storedUser) || users.value[0];
-    if (currentUser.value) localStorage.setItem("flowmind.agent.user", currentUser.value.userId);
     const sessionId = localStorage.getItem(sessionStorageKey());
-    if (sessionId && currentUser.value) {
+    if (sessionId) {
       try {
         await refresh(sessionId);
         connect();
@@ -128,29 +121,10 @@ export const useWorkflowStore = defineStore("workflow", () => {
     }
   }
 
-  async function selectUser(userId: string): Promise<void> {
-    disconnect();
-    currentUser.value = users.value.find((user) => user.userId === userId);
-    snapshot.value = undefined;
-    error.value = "";
-    generationLog.value = [];
-    verifyStages.value = initialVerifyStages();
-    qualityLog.value = [];
-    qualityStream.value = "";
-    reasoningText.value = "";
-    if (currentUser.value) {
-      localStorage.setItem("flowmind.agent.user", userId);
-      const sessionId = localStorage.getItem(sessionStorageKey());
-      if (sessionId) {
-        try { await refresh(sessionId); connect(); } catch { localStorage.removeItem(sessionStorageKey()); }
-      }
-    }
-  }
-
   async function createSession(targetRoot?: string): Promise<void> {
     if (!currentUser.value) return;
     await run(async () => {
-      const createdSnapshot = await apiRequest<WorkflowSnapshot>("/api/agent/sessions", currentUser.value, {
+      const createdSnapshot = await apiRequest<WorkflowSnapshot>("/api/agent/sessions", {
         method: "POST",
         body: JSON.stringify({ targetRoot: targetRoot?.trim() || undefined }),
       });
@@ -161,9 +135,9 @@ export const useWorkflowStore = defineStore("workflow", () => {
   }
 
   async function createQualityGateFixture(targetRoot?: string): Promise<void> {
-    if (!currentUser.value || currentUser.value.userId !== "user_tester") return;
+    if (!currentUser.value || currentUser.value.userId !== "u_admin_01") return;
     await run(async () => {
-      const created = await apiRequest<{ sessionId: string }>("/api/agent/test-fixtures/quality-gate", currentUser.value!, {
+      const created = await apiRequest<{ sessionId: string }>("/api/agent/test-fixtures/quality-gate", {
         method: "POST",
         body: JSON.stringify({ targetRoot: targetRoot?.trim() || undefined }),
       });
@@ -175,13 +149,13 @@ export const useWorkflowStore = defineStore("workflow", () => {
 
   async function refresh(sessionId = snapshot.value?.sessionId): Promise<void> {
     if (!currentUser.value || !sessionId) return;
-    applySnapshot(await apiRequest<WorkflowSnapshot>(`/api/agent/sessions/${sessionId}`, currentUser.value));
+    applySnapshot(await apiRequest<WorkflowSnapshot>(`/api/agent/sessions/${sessionId}`));
   }
 
   async function sendMessage(content: string): Promise<void> {
     if (!snapshot.value || !currentUser.value) return;
     await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/messages`, currentUser.value, {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/messages`, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         body: JSON.stringify({ content }),
@@ -194,7 +168,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     await run(async () => {
       const revision = await apiRequest<RequirementRevision>(
         `/api/agent/sessions/${snapshot.value!.sessionId}/requirement`,
-        currentUser.value,
         {
           method: "PUT",
           rowVersion: snapshot.value!.rowVersion,
@@ -209,7 +182,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
   async function confirmRequirement(): Promise<void> {
     if (!snapshot.value?.requirement || !currentUser.value) return;
     await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/requirement/confirm`, currentUser.value, {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/requirement/confirm`, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: crypto.randomUUID(),
@@ -231,7 +204,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
       await run(async () => {
         const resetSnapshot = await apiRequest<WorkflowSnapshot>(
           `/api/agent/sessions/${snapshot.value!.sessionId}/reset`,
-          currentUser.value!,
           { method: "POST", rowVersion: snapshot.value!.rowVersion, body: JSON.stringify({}) },
         );
         streamingText.value = "";
@@ -245,7 +217,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
   async function confirmProcess(): Promise<void> {
     if (!snapshot.value?.processPreview || !snapshot.value.requirement || !currentUser.value) return;
     await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/process/confirm`, currentUser.value, {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/process/confirm`, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: crypto.randomUUID(),
@@ -266,7 +238,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
   async function startGeneration(targetRoot?: string): Promise<void> {
     if (!snapshot.value || !currentUser.value) return;
     await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations`, currentUser.value, {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations`, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: crypto.randomUUID(),
@@ -283,8 +255,8 @@ export const useWorkflowStore = defineStore("workflow", () => {
     const base = `/api/agent/sessions/${snapshot.value.sessionId}/code-generations/${generation.generationId}`;
     await run(async () => {
       const [file, diff] = await Promise.all([
-        apiRequest<GeneratedFileContent>(`${base}/files/${path}`, currentUser.value!),
-        apiRequest<GeneratedFileDiff>(`${base}/diff/${path}`, currentUser.value!),
+        apiRequest<GeneratedFileContent>(`${base}/files/${path}`),
+        apiRequest<GeneratedFileDiff>(`${base}/diff/${path}`),
       ]);
       generatedFile.value = file;
       generatedDiff.value = diff;
@@ -317,7 +289,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     return runWithResult(async () => {
       const manifest = await apiRequest<ArtifactManifest>(
         `/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/files/${encodePath(relativePath)}`,
-        currentUser.value!,
         { method: "PUT", body: JSON.stringify({ content, generationRevision: generation.generationRevision }) },
       );
       await refresh();
@@ -336,7 +307,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     const generation = snapshot.value?.activeGeneration;
     if (!snapshot.value || !currentUser.value || !generation) return;
     await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/regenerate`, currentUser.value!, {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/regenerate`, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: crypto.randomUUID(),
@@ -354,7 +325,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     if (!snapshot.value || !currentUser.value || !generation) return;
     qualityReport.value = await apiRequest<GenerationQualityReport>(
       `/api/agent/sessions/${snapshot.value.sessionId}/code-generations/${generation.generationId}/quality`,
-      currentUser.value,
     );
   }
 
@@ -362,7 +332,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     const generation = snapshot.value?.activeGeneration;
     if (!snapshot.value || !currentUser.value || !generation) return;
     await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/reverify`, currentUser.value!, {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/reverify`, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: crypto.randomUUID(),
@@ -377,7 +347,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     const generation = snapshot.value?.activeGeneration;
     if (!snapshot.value || !currentUser.value || !generation) return;
     await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/quality/start`, currentUser.value!, {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/quality/start`, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: crypto.randomUUID(),
@@ -397,7 +367,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     await run(async () => {
       qualityReport.value = await apiRequest<GenerationQualityReport>(
         `/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/quality-override`,
-        currentUser.value!,
         {
           method: "POST",
           rowVersion: snapshot.value!.rowVersion,
@@ -413,7 +382,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     const generation = snapshot.value?.activeGeneration;
     if (!snapshot.value || !currentUser.value || !generation?.manifest) return;
     await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/confirm-write`, currentUser.value!, {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/confirm-write`, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: crypto.randomUUID(),
@@ -429,8 +398,8 @@ export const useWorkflowStore = defineStore("workflow", () => {
   async function loadManagementLists(): Promise<void> {
     if (!currentUser.value) return;
     const [definitions, generations] = await Promise.all([
-      apiRequest<ManagedDefinition[]>("/api/agent/management/process-definitions", currentUser.value),
-      apiRequest<ManagedGeneration[]>("/api/agent/management/code-generations", currentUser.value),
+      apiRequest<ManagedDefinition[]>("/api/agent/management/process-definitions"),
+      apiRequest<ManagedGeneration[]>("/api/agent/management/code-generations"),
     ]);
     managedDefinitions.value = definitions;
     managedGenerations.value = generations;
@@ -439,7 +408,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
   async function command(path: string, idempotent: boolean): Promise<void> {
     if (!snapshot.value || !currentUser.value) return;
     await run(async () => {
-      await apiRequest(path, currentUser.value, {
+      await apiRequest(path, {
         method: "POST",
         rowVersion: snapshot.value!.rowVersion,
         idempotencyKey: idempotent ? crypto.randomUUID() : undefined,
@@ -457,7 +426,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     const sessionId = snapshot.value.sessionId;
     void streamEvents(
       `/api/agent/sessions/${sessionId}/events`,
-      currentUser.value,
       controller.signal,
       handleEvent,
     ).then(() => {
@@ -561,6 +529,25 @@ export const useWorkflowStore = defineStore("workflow", () => {
     connected.value = false;
   }
 
+  function clearForAuthentication(): void {
+    disconnect();
+    currentUser.value = undefined;
+    snapshot.value = undefined;
+    error.value = "";
+    streamingText.value = "";
+    reasoningText.value = "";
+    generatedFile.value = undefined;
+    generatedDiff.value = undefined;
+    qualityReport.value = undefined;
+    managedDefinitions.value = [];
+    managedGenerations.value = [];
+    lastCompaction.value = undefined;
+    generationLog.value = [];
+    qualityLog.value = [];
+    qualityStream.value = "";
+    verifyStages.value = initialVerifyStages();
+  }
+
   async function run(operation: () => Promise<void>, refreshOnConflict = true): Promise<void> {
     busy.value = true;
     error.value = "";
@@ -589,7 +576,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
   }
 
   return {
-    users,
     defaultTargetRoot,
     currentUser,
     snapshot,
@@ -612,7 +598,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     qualityStream,
     reasoningText,
     initialize,
-    selectUser,
     createSession,
     createQualityGateFixture,
     refresh,
@@ -636,6 +621,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     confirmGenerationWrite,
     loadManagementLists,
     disconnect,
+    clearForAuthentication,
   };
 });
 

@@ -27,6 +27,21 @@ export interface MockUser {
   departmentName?: string;
 }
 
+export interface AgentAuthenticatedUser {
+  userId: string;
+  username: string;
+  realName: string;
+  departmentId: string;
+  departmentName: string;
+  userType: "ADMIN" | "USER";
+  administrator: boolean;
+}
+
+export interface AgentLoginCredentials {
+  username: string;
+  password: string;
+}
+
 export interface AgentPublicConfig {
   defaultTargetRoot: string;
 }

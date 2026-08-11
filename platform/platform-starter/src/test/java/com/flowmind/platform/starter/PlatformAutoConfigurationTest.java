@@ -43,6 +43,10 @@ import com.flowmind.platform.core.monitor.TimeoutScanScheduler;
 import com.flowmind.platform.core.query.DefaultTaskQueryService;
 import com.flowmind.platform.core.runtime.DefaultApproverResolver;
 import com.flowmind.platform.core.runtime.AdminPermissionGuard;
+import com.flowmind.platform.core.runtime.CountersignTaskCoordinator;
+import com.flowmind.platform.core.runtime.DefaultProcessRuntimeService;
+import com.flowmind.platform.core.runtime.EnhancedTaskActionCoordinator;
+import com.flowmind.platform.core.runtime.TaskClaimCoordinator;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.mock.InMemoryFileStorageProvider;
 import com.flowmind.platform.mock.InMemoryOrganizationProvider;
@@ -65,6 +69,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
@@ -102,6 +107,17 @@ class PlatformAutoConfigurationTest {
             assertThat(context).hasSingleBean(ReadRecordService.class);
             assertThat(context).hasSingleBean(ProcessDefinitionService.class);
             assertThat(context).hasSingleBean(ProcessRuntimeService.class);
+            assertThat(context).hasSingleBean(EnhancedTaskActionCoordinator.class);
+            assertThat(context).hasSingleBean(TaskClaimCoordinator.class);
+            assertThat(context).hasSingleBean(CountersignTaskCoordinator.class);
+            DefaultProcessRuntimeService runtimeService =
+                    (DefaultProcessRuntimeService) context.getBean(ProcessRuntimeService.class);
+            assertThat(ReflectionTestUtils.getField(runtimeService, "enhancedTaskActionCoordinator"))
+                    .isSameAs(context.getBean(EnhancedTaskActionCoordinator.class));
+            assertThat(ReflectionTestUtils.getField(runtimeService, "taskClaimCoordinator"))
+                    .isSameAs(context.getBean(TaskClaimCoordinator.class));
+            assertThat(ReflectionTestUtils.getField(runtimeService, "countersignTaskCoordinator"))
+                    .isSameAs(context.getBean(CountersignTaskCoordinator.class));
             assertThat(context.getBean(TaskQueryService.class)).isInstanceOf(DefaultTaskQueryService.class);
             assertThat(context).hasSingleBean(AttachmentService.class);
             assertThat(context).hasSingleBean(CallbackService.class);

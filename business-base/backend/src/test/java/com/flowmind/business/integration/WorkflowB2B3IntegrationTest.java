@@ -29,6 +29,10 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -48,8 +52,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @Import(WorkflowB2B3IntegrationTest.AttachmentAccessTestConfiguration.class)
 class WorkflowB2B3IntegrationTest {
-    private static final String USER_HEADER = "X-FlowMind-Local-User";
-
     @Autowired private ProcessDefinitionService definitionService;
     @Autowired private ProcessRuntimeService runtimeService;
     @Autowired private MockMvc mockMvc;
@@ -57,45 +59,84 @@ class WorkflowB2B3IntegrationTest {
 
     @Test
     void generatedInitiationAndGenericActionsCompleteARealWorkflow() throws Exception {
+        MockHttpSession salesSession = login("sales01");
+        bindSession(salesSession);
         String suffix = UUID.randomUUID().toString().replace("-", "");
         String processCode = "entry_e2e_" + suffix;
         ProcessDefinitionDTO definition = createDefinition(processCode, suffix);
         ProcessInstanceDTO instance = start(processCode, suffix);
 
-        TaskView manager = todo("u_dept_manager_01", processCode);
+        MockHttpSession managerSession = login("manager_sales");
+        TaskView manager = todo(managerSession, processCode);
         mockMvc.perform(post("/api/workflow/tasks/{taskId}/approve", manager.taskId)
-                        .header(USER_HEADER, "u_dept_manager_01").header("Idempotency-Key", "manager-" + suffix)
+                        .session(managerSession).header("Idempotency-Key", "manager-" + suffix)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"expectedTaskVersion\":" + manager.version + ",\"comment\":\"经理同意\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.replayed").value(false));
 
-        TaskView finance = todo("u_finance_01", processCode);
+        MockHttpSession financeSession = login("finance01");
+        TaskView finance = todo(financeSession, processCode);
         mockMvc.perform(post("/api/workflow/tasks/{taskId}/approve", finance.taskId)
-                        .header(USER_HEADER, "u_finance_01").header("Idempotency-Key", "finance-" + suffix)
+                        .session(financeSession).header("Idempotency-Key", "finance-" + suffix)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"expectedTaskVersion\":" + finance.version + ",\"comment\":\"财务确认\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.instance.instanceStatus").value("COMPLETED"));
 
-        mockMvc.perform(get("/api/workflow/instances/{instanceId}", instance.getInstanceId()))
+        mockMvc.perform(get("/api/workflow/instances/{instanceId}", instance.getInstanceId()).session(salesSession))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.definition.processCode").value(processCode))
                 .andExpect(jsonPath("$.instance.variables.amount").value(1000))
                 .andExpect(jsonPath("$.instance.variables.internalApprover").doesNotExist())
                 .andExpect(jsonPath("$.historyTasks.length()").value(3))
                 .andExpect(jsonPath("$.comments.length()").value(2));
-        mockMvc.perform(get("/api/workflow/read-records").param("instanceId", instance.getInstanceId()))
+        mockMvc.perform(get("/api/workflow/read-records").session(salesSession)
+                        .param("instanceId", instance.getInstanceId()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1));
         assertThat(runtimeService.getInstance(instance.getInstanceId()).getDefinitionId()).isEqualTo(definition.getId());
     }
 
-    private TaskView todo(String userId, String processCode) throws Exception {
+    @Test
+    void agentGeneratedUppercaseRoleCodesCanSubmitApplication() throws Exception {
+        MockHttpSession salesSession = login("sales01");
+        bindSession(salesSession);
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        String processCode = "entry_agent_roles_" + suffix;
+        createAgentRoleDefinition(processCode, suffix);
+        start(processCode, suffix);
+
+        MockHttpSession managerSession = login("manager_sales");
+        TaskView manager = todo(managerSession, processCode);
+        mockMvc.perform(post("/api/workflow/tasks/{taskId}/approve", manager.taskId)
+                        .session(managerSession).header("Idempotency-Key", "manager-role-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedTaskVersion\":" + manager.version + ",\"comment\":\"经理同意\"}"))
+                .andExpect(status().isOk());
+
+        MockHttpSession financeSession = login("finance01");
+        todo(financeSession, processCode);
+    }
+
+    private TaskView todo(MockHttpSession session, String processCode) throws Exception {
         String body = mockMvc.perform(get("/api/workflow/tasks/todo")
-                        .header(USER_HEADER, userId).param("processCode", processCode).param("source", "ALL"))
+                        .session(session).param("processCode", processCode).param("source", "ALL"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(1))
                 .andReturn().getResponse().getContentAsString();
         JsonNode task = objectMapper.readTree(body).path("records").get(0);
         return new TaskView(task.path("taskId").asText(), task.path("taskVersion").asLong());
+    }
+
+    private MockHttpSession login(String username) throws Exception {
+        return (MockHttpSession) mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"" + username + "\",\"password\":\"123456\"}"))
+                .andExpect(status().isOk()).andReturn().getRequest().getSession(false);
+    }
+
+    private void bindSession(MockHttpSession session) {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setSession(session);
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
     }
 
     private ProcessDefinitionDTO createDefinition(String processCode, String suffix) {
@@ -122,6 +163,32 @@ class WorkflowB2B3IntegrationTest {
         return definition;
     }
 
+    private ProcessDefinitionDTO createAgentRoleDefinition(String processCode, String suffix) {
+        CreateProcessDefinitionRequest create = new CreateProcessDefinitionRequest();
+        create.setOperationId("create-agent-role-" + suffix); create.setOperatorUserId("u_sales_01");
+        create.setProcessCode(processCode); create.setProcessName("Agent 角色码入金申请"); create.setSystemCode("business-base");
+        ProcessDefinitionDTO definition = definitionService.createDefinition(create);
+        SaveProcessGraphRequest graph = new SaveProcessGraphRequest();
+        graph.setOperationId("graph-agent-role-" + suffix); graph.setOperatorUserId("u_sales_01");
+        graph.setNodes(Arrays.asList(
+                node("start", "开始", NodeTypeEnum.START, null, null, 10),
+                node("apply", "申请", NodeTypeEnum.USER_TASK, ApproverRuleTypeEnum.STARTER, null, 20),
+                ruleNode("dept_approve", "部门经理审批", ApproverRuleTypeEnum.ROLE_IN_DEPARTMENT,
+                        "{\"roleCode\":\"DEPARTMENT_MANAGER\",\"departmentFrom\":\"starter\"}", 30),
+                ruleNode("finance_confirm", "财务确认", ApproverRuleTypeEnum.ROLE,
+                        "{\"roleCode\":\"FINANCE\"}", 40),
+                node("end", "结束", NodeTypeEnum.END, null, null, 50)));
+        graph.setEdges(Arrays.asList(edge("e1", "start", "apply", 10), edge("e2", "apply", "dept_approve", 20),
+                edge("e3", "dept_approve", "finance_confirm", 30), edge("e4", "finance_confirm", "end", 40)));
+        graph.setFormFields(Arrays.asList(field("applicationNo", "申请编号", "string", 10),
+                field("amount", "金额", "number", 20), field("currency", "币种", "string", 30)));
+        graph.setAttachmentConfigs(Collections.emptyList());
+        definitionService.saveGraph(definition.getId(), graph);
+        definitionService.publish(lifecycle(definition.getId(), "publish-agent-role-" + suffix));
+        definitionService.activate(lifecycle(definition.getId(), "activate-agent-role-" + suffix));
+        return definition;
+    }
+
     private ProcessInstanceDTO start(String processCode, String suffix) {
         StartProcessRequest request = new StartProcessRequest();
         request.setOperationId("start-" + suffix); request.setProcessCode(processCode);
@@ -142,6 +209,12 @@ class WorkflowB2B3IntegrationTest {
             node.setApproverRuleType(rule); node.setMultiInstanceMode(MultiInstanceModeEnum.SINGLE);
             if (userId != null) node.setApproverRuleConfig("{\"userIds\":[\"" + userId + "\"]}");
         }
+        return node;
+    }
+
+    private ProcessNodeDTO ruleNode(String code, String name, ApproverRuleTypeEnum rule, String config, int order) {
+        ProcessNodeDTO node = node(code, name, NodeTypeEnum.USER_TASK, rule, null, order);
+        node.setApproverRuleConfig(config);
         return node;
     }
 

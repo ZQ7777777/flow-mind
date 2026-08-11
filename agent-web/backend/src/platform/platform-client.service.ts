@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from "@nestjs/common";
+import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import type {
   AttachmentRequirement,
   BusinessRequirement,
@@ -8,6 +8,7 @@ import type {
 } from "@flowmind/agent-contracts";
 import { loadConfig } from "../config.js";
 import { AgentError } from "../common/agent-error.js";
+import { PlatformSessionRegistry } from "../auth/platform-session-registry.service.js";
 
 export interface PlatformOperations {
   createOperationId: string;
@@ -19,6 +20,10 @@ export interface PlatformOperations {
 @Injectable()
 export class PlatformClientService {
   private readonly config = loadConfig();
+
+  constructor(
+    @Inject(PlatformSessionRegistry) private readonly sessions: PlatformSessionRegistry = new PlatformSessionRegistry(),
+  ) {}
 
   async ping(): Promise<void> {
     await this.request("GET", "/api/platform/definitions?pageNo=1&pageSize=1", undefined, {
@@ -179,16 +184,21 @@ export class PlatformClientService {
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
-          "X-Flow-User-Id": user.userId,
-          "X-Flow-User-Name": user.userName,
-          ...(user.departmentId ? { "X-Flow-Dept-Id": user.departmentId } : {}),
-          ...(user.departmentName ? { "X-Flow-Dept-Name": user.departmentName } : {}),
+          ...this.authenticationHeaders(user),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const text = await response.text();
       const payload = text ? safeJson(text) : undefined;
       if (!response.ok) {
+        if (response.status === HttpStatus.UNAUTHORIZED && this.config.platformAuthMode === "session") {
+          this.sessions.delete(user.userId);
+          throw new AgentError(
+            HttpStatus.UNAUTHORIZED,
+            "FLOW_PLATFORM_AUTHENTICATION_REQUIRED",
+            "管理员会话已失效，请重新登录",
+          );
+        }
         throw new AgentError(
           response.status >= 500 ? HttpStatus.BAD_GATEWAY : response.status,
           "FLOW_PLATFORM_ERROR",
@@ -207,6 +217,26 @@ export class PlatformClientService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private authenticationHeaders(user: MockUser): Record<string, string> {
+    if (this.config.platformAuthMode === "session") {
+      const cookie = this.sessions.get(user.userId);
+      if (!cookie) {
+        throw new AgentError(
+          HttpStatus.UNAUTHORIZED,
+          "FLOW_PLATFORM_AUTHENTICATION_REQUIRED",
+          "缺少有效的管理员会话，请重新登录",
+        );
+      }
+      return { Cookie: cookie };
+    }
+    return {
+      "X-Flow-User-Id": user.userId,
+      "X-Flow-User-Name": user.userName,
+      ...(user.departmentId ? { "X-Flow-Dept-Id": user.departmentId } : {}),
+      ...(user.departmentName ? { "X-Flow-Dept-Name": user.departmentName } : {}),
+    };
   }
 }
 

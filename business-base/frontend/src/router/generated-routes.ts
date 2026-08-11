@@ -8,6 +8,7 @@ export const generatedRoutes: RouteRecordRaw[] = [
   {
     path: "/generated/entry-application/apply",
     name: "generated-entry-application-apply",
+    meta: { title: "入金申请" },
     component: () => import("../modules/generated/entry-application/EntryApplicationApply.vue"),
   },
 ];

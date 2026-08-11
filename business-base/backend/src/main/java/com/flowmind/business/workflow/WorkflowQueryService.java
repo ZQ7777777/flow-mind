@@ -11,9 +11,11 @@ import com.flowmind.business.workflow.dto.WorkflowPageResponse;
 import com.flowmind.business.workflow.dto.WorkflowReadRecordResponse;
 import com.flowmind.business.workflow.dto.WorkflowTaskResponse;
 import com.flowmind.business.workflow.dto.WorkflowUserResponse;
+import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
+import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.ReadRecordDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserContext;
@@ -21,7 +23,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -58,8 +63,38 @@ public class WorkflowQueryService {
      * @param query 不含用户身份的查询条件
      * @return 待办分页结果
      */
-    public WorkflowPageResponse<WorkflowTaskResponse> todo(WorkflowListQuery query) { return mapper.taskPage(platformFacade.todo(query)); }
+    public WorkflowPageResponse<WorkflowTaskResponse> todo(WorkflowListQuery query) {
+        PageResult<TaskDTO> page = platformFacade.todo(query);
+        UserContext user = platformFacade.currentUser();
+        return mapper.taskPage(filterExecutableTodos(page, user.getUserId()));
+    }
 
+    private PageResult<TaskDTO> filterExecutableTodos(PageResult<TaskDTO> source, String userId) {
+        List<TaskDTO> sourceRecords = source.getRecords() == null
+                ? Collections.<TaskDTO>emptyList() : source.getRecords();
+        List<TaskDTO> visibleRecords = new ArrayList<TaskDTO>();
+        for (TaskDTO task : sourceRecords) {
+            if (!allowedActionResolver.resolve(task, null, sourceRecords,
+                    Collections.<com.flowmind.platform.api.dto.HistoryTaskDTO>emptyList(), userId).isEmpty()) {
+                visibleRecords.add(task);
+            }
+        }
+        if (visibleRecords.size() == sourceRecords.size()) return source;
+        PageResult<TaskDTO> filtered = new PageResult<TaskDTO>();
+        filtered.setPageNo(source.getPageNo());
+        filtered.setPageSize(source.getPageSize());
+        filtered.setRecords(visibleRecords);
+        long hiddenOnPage = sourceRecords.size() - visibleRecords.size();
+        long total = Math.max(0L, (source.getTotal() == null ? sourceRecords.size() : source.getTotal()) - hiddenOnPage);
+        filtered.setTotal(Long.valueOf(total));
+        filtered.setTotalPages(totalPages(total, source.getPageSize()));
+        return filtered;
+    }
+
+    private Integer totalPages(long total, Integer pageSize) {
+        if (pageSize == null || pageSize.intValue() <= 0) return Integer.valueOf(0);
+        return Integer.valueOf((int) ((total + pageSize.longValue() - 1L) / pageSize.longValue()));
+    }
     /**
      * 查询当前用户已办并移除平台内部历史字段。
      *
@@ -157,9 +192,16 @@ public class WorkflowQueryService {
         ProcessDefinitionDetailDTO definition = platformFacade.getDefinition(instance.getDefinitionId());
         java.util.List<String> actions = allowedActionResolver.resolve(currentTask, definition,
                 instance.getActiveTasks(), instance.getHistoryTasks(), user.getUserId());
+        List<ProcessNodeDTO> rejectTargetNodes = currentTask == null || !actions.contains("REJECT")
+                ? Collections.<ProcessNodeDTO>emptyList()
+                : platformFacade.rejectTargetNodes(currentTask.getTaskId());
+        if (actions.contains("REJECT") && rejectTargetNodes.isEmpty()) {
+            actions.remove("REJECT");
+        }
+        java.util.List<String> disabledActions = allowedActionResolver.resolveDisabled(currentTask, actions, user.getUserId());
         WorkflowDetailResponse response = mapper.detail(instance, definition, currentTask,
                 instance.getActiveTasks(), instance.getHistoryTasks(), instance.getComments(),
-                platformFacade.attachments(instanceId), actions);
+                platformFacade.attachments(instanceId), rejectTargetNodes, actions, disabledActions);
         try {
             platformFacade.markRead(instanceId);
         } catch (RuntimeException exception) {

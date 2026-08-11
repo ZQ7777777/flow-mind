@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import AttachmentPanel from "../components/workflow/AttachmentPanel.vue";
 import CommentPanel from "../components/workflow/CommentPanel.vue";
@@ -13,8 +13,9 @@ import {
   uploadInstanceAttachment,
   uploadTaskAttachment,
 } from "../api/workflow";
+import { WorkflowApiError } from "../api/http";
 import { useWorkflowStore } from "../stores/workflow";
-import type { TaskActionCode, WorkflowAttachment } from "../types/workflow";
+import type { TaskActionCode, WorkflowAttachmentView } from "../types/workflow";
 import { formatDateTime } from "../utils/format";
 import { createIdempotencyKey } from "../utils/idempotency";
 
@@ -28,6 +29,15 @@ const store = useWorkflowStore();
 const detail = computed(() => store.detail.data);
 const instanceId = computed(() => String(route.params.instanceId ?? ""));
 const taskId = computed(() => String(route.params.taskId ?? ""));
+const currentNodeNames = computed(() => {
+  if (!detail.value) return "--";
+  const names = detail.value.instance.currentNodeCodes.map((code) =>
+    detail.value?.nodes.find((node) => node.nodeCode === code)?.nodeName ?? code,
+  );
+  return names.length ? names.join("、") : "--";
+});
+const actionKeys = new Map<TaskActionCode, string>();
+const attachmentError = ref("");
 
 onMounted(() => {
   void loadDetail();
@@ -56,53 +66,84 @@ async function submitAction(payload: {
   comment: string;
   targetNodeCode?: string;
   targetUserId?: string;
+  targetUserName?: string;
+  addSignUserIds?: string[];
 }): Promise<void> {
   if (!taskId.value) {
     return;
   }
-  await store.submitAction(taskId.value, payload.action, {
-    expectedTaskVersion: payload.expectedTaskVersion,
-    comment: payload.comment,
-    targetNodeCode: payload.targetNodeCode,
-    targetUserId: payload.targetUserId,
-    idempotencyKey: createIdempotencyKey(`workflow:${payload.action.toLowerCase()}`),
-  });
-  await loadDetail();
+  const idempotencyKey = actionKeys.get(payload.action)
+    ?? createIdempotencyKey(`workflow:${payload.action.toLowerCase()}`);
+  actionKeys.set(payload.action, idempotencyKey);
+  try {
+    await store.submitAction(taskId.value, payload.action, {
+      expectedTaskVersion: payload.expectedTaskVersion,
+      comment: payload.comment,
+      targetNodeCode: payload.targetNodeCode,
+      targetUserId: payload.targetUserId,
+      targetUserName: payload.targetUserName,
+      addSignUserIds: payload.addSignUserIds,
+      idempotencyKey,
+    });
+    actionKeys.delete(payload.action);
+    await loadDetail();
+  } catch (error) {
+    if (error instanceof WorkflowApiError && error.status === 409) {
+      await loadDetail();
+    }
+  }
 }
 
 async function uploadAttachment(payload: {
   file: File;
   fieldCode: string;
-  templateCode: string;
+  attachmentCode: string;
 }): Promise<void> {
+  attachmentError.value = "";
   const uploadPayload = {
     ...payload,
+    sourceTaskId: detail.value?.currentTask?.taskId,
+    expectedTaskVersion: detail.value?.currentTask?.taskVersion,
     idempotencyKey: createIdempotencyKey("workflow:attachment-upload"),
   };
-  if (detail.value?.currentTask?.taskId) {
-    await uploadTaskAttachment(detail.value.currentTask.taskId, uploadPayload);
-  } else if (detail.value?.instance.instanceId) {
-    await uploadInstanceAttachment(detail.value.instance.instanceId, uploadPayload);
+  try {
+    if (detail.value?.currentTask?.taskId) {
+      await uploadTaskAttachment(detail.value.currentTask.taskId, uploadPayload);
+    } else if (detail.value?.instance.instanceId) {
+      await uploadInstanceAttachment(detail.value.instance.instanceId, uploadPayload);
+    }
+    await loadDetail();
+  } catch (error) {
+    attachmentError.value = error instanceof Error ? error.message : "附件上传失败";
   }
-  await loadDetail();
 }
 
-async function download(item: WorkflowAttachment): Promise<void> {
-  const blob = await downloadAttachment(item.attachmentId);
-  const href = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = href;
-  anchor.download = item.fileName;
-  anchor.click();
-  URL.revokeObjectURL(href);
+async function download(item: WorkflowAttachmentView): Promise<void> {
+  attachmentError.value = "";
+  try {
+    const blob = await downloadAttachment(item.attachmentId);
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = item.fileName;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  } catch (error) {
+    attachmentError.value = error instanceof Error ? error.message : "附件下载失败";
+  }
 }
 
-async function remove(item: WorkflowAttachment): Promise<void> {
-  await deleteAttachment(
-    item.attachmentId,
-    createIdempotencyKey("workflow:attachment-delete"),
-  );
-  await loadDetail();
+async function remove(item: WorkflowAttachmentView): Promise<void> {
+  attachmentError.value = "";
+  try {
+    await deleteAttachment(
+      item.attachmentId,
+      createIdempotencyKey("workflow:attachment-delete"),
+    );
+    await loadDetail();
+  } catch (error) {
+    attachmentError.value = error instanceof Error ? error.message : "附件删除失败";
+  }
 }
 </script>
 
@@ -115,16 +156,16 @@ async function remove(item: WorkflowAttachment): Promise<void> {
     <template v-else-if="detail">
       <header class="detail-header">
         <div>
-          <h1 id="detail-heading">{{ detail.instance.title }}</h1>
+          <h1 id="detail-heading">{{ detail.instance.instanceTitle }}</h1>
           <p>
-            {{ detail.instance.processName }} / {{ detail.instance.status }} /
-            {{ detail.instance.currentNodeName ?? "--" }}
+            {{ detail.instance.processName ?? "--" }} / {{ detail.instance.instanceStatus ?? "--" }} /
+            {{ currentNodeNames }}
           </p>
         </div>
         <dl class="summary-grid">
           <div>
             <dt>发起人</dt>
-            <dd>{{ detail.instance.starterName ?? "--" }}</dd>
+            <dd>{{ detail.instance.starterUserName ?? "--" }}</dd>
           </div>
           <div>
             <dt>发起时间</dt>
@@ -137,8 +178,12 @@ async function remove(item: WorkflowAttachment): Promise<void> {
         </dl>
       </header>
 
-      <ProcessGraph :graph="detail.graph" />
-      <VariableFormReadonly :fields="detail.formFields" :variables="detail.variables" />
+      <ProcessGraph
+        :nodes="detail.nodes"
+        :edges="detail.edges"
+        :current-node-codes="detail.instance.currentNodeCodes"
+      />
+      <VariableFormReadonly :fields="detail.formFields" :variables="detail.instance.variables" />
       <AttachmentPanel
         :attachments="detail.attachments"
         :can-upload="Boolean(detail.currentTask)"
@@ -146,12 +191,16 @@ async function remove(item: WorkflowAttachment): Promise<void> {
         @download="download"
         @delete="remove"
       />
+      <p v-if="attachmentError" class="action-error" role="alert">{{ attachmentError }}</p>
       <CommentPanel :comments="detail.comments" />
-      <ProcessTimeline :items="detail.timeline" />
+      <ProcessTimeline :items="detail.historyTasks" />
+      <p v-if="store.actionError" class="action-error" role="alert">{{ store.actionError }}</p>
       <TaskActionPanel
         v-if="detail.currentTask"
         :task-version="detail.currentTask.taskVersion"
-        :allowed-actions="detail.currentTask.allowedActions"
+        :allowed-actions="detail.allowedActions"
+        :disabled-actions="detail.disabledActions"
+        :reject-target-nodes="detail.rejectTargetNodes"
         :submitting="store.actionSubmitting"
         @submit="submitAction"
       />
@@ -219,6 +268,15 @@ dd {
 
 .is-error {
   border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.action-error {
+  margin: 0;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 10px 12px;
   background: #fef2f2;
   color: #b91c1c;
 }

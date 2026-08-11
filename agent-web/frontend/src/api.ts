@@ -1,28 +1,26 @@
-import type { MockUser } from "@flowmind/agent-contracts";
-
 export class ApiError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) {
     super(message);
   }
 }
 
+export const AUTHENTICATION_REQUIRED_EVENT = "flowmind:agent-authentication-required";
+
 export async function apiRequest<T>(
   path: string,
-  user?: MockUser,
   init: RequestInit & { rowVersion?: number; idempotencyKey?: string } = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
-  if (user) {
-    headers.set("X-Agent-User-Id", user.userId);
-    headers.set("X-Agent-User-Name", user.userName);
-  }
   if (init.rowVersion !== undefined) headers.set("If-Match", String(init.rowVersion));
   if (init.idempotencyKey) headers.set("Idempotency-Key", init.idempotencyKey);
-  const response = await fetch(path, { ...init, headers });
+  const response = await fetch(path, { ...init, credentials: init.credentials ?? "same-origin", headers });
   const text = await response.text();
   const body = text ? JSON.parse(text) : undefined;
-  if (!response.ok) throw new ApiError(response.status, body?.code || "HTTP_ERROR", body?.message || response.statusText);
+  if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event(AUTHENTICATION_REQUIRED_EVENT));
+    throw new ApiError(response.status, body?.code || "HTTP_ERROR", body?.message || response.statusText);
+  }
   return body as T;
 }
 
@@ -33,19 +31,20 @@ export interface SseMessage {
 
 export async function streamEvents(
   url: string,
-  user: MockUser,
   signal: AbortSignal,
   onMessage: (message: SseMessage) => void,
 ): Promise<void> {
   const response = await fetch(url, {
     signal,
+    credentials: "same-origin",
     headers: {
       Accept: "text/event-stream",
-      "X-Agent-User-Id": user.userId,
-      "X-Agent-User-Name": user.userName,
     },
   });
-  if (!response.ok || !response.body) throw new Error(`SSE connection failed: ${response.status}`);
+  if (!response.ok || !response.body) {
+    if (response.status === 401) window.dispatchEvent(new Event(AUTHENTICATION_REQUIRED_EVENT));
+    throw new ApiError(response.status, "SSE_CONNECTION_FAILED", `SSE connection failed: ${response.status}`);
+  }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";

@@ -35,12 +35,12 @@ public class WorkflowAllowedActionResolver {
                                 List<TaskDTO> activeTasks, List<HistoryTaskDTO> histories, String userId) {
         if (task == null) return Collections.emptyList();
         List<String> actions = new ArrayList<String>();
-        boolean assignee = userId.equals(task.getAssigneeUserId());
-        boolean candidate = safe(task.getCandidateUserIds()).contains(userId);
-        boolean canHandle = assignee || candidate;
-        if (TaskStatusEnum.ACTIVE.equals(task.getTaskStatus()) && candidate && !hasText(task.getAssigneeUserId())) {
-            actions.add("CLAIM");
-        }
+        List<String> candidates = safe(task.getCandidateUserIds());
+        boolean assigned = hasText(task.getAssigneeUserId());
+        boolean assignee = userId != null && userId.equals(task.getAssigneeUserId());
+        boolean candidate = candidates.contains(userId);
+        boolean canHandle = assigned ? assignee : candidate;
+        if (requiresClaim(task, userId)) actions.add("CLAIM");
         if (TaskStatusEnum.CLAIMED.equals(task.getTaskStatus()) && assignee) actions.add("UNCLAIM");
         ProcessNodeDTO node = findNode(definition, task.getNodeCode());
         if (canHandle) {
@@ -57,6 +57,15 @@ public class WorkflowAllowedActionResolver {
         }
         if (safe(activeTasks).size() == 1 && isPreviousHandler(histories, task.getTaskId(), userId)) actions.add("WITHDRAW");
         return actions;
+    }
+
+    public List<String> resolveDisabled(TaskDTO task, List<String> allowedActions, String userId) {
+        if (!requiresClaim(task, userId)) return Collections.emptyList();
+        List<String> disabled = new ArrayList<String>();
+        for (String action : safe(allowedActions)) {
+            if (!"CLAIM".equals(action)) disabled.add(action);
+        }
+        return disabled;
     }
 
     /**
@@ -84,7 +93,7 @@ public class WorkflowAllowedActionResolver {
             String action = history.getActionType() == null ? null : history.getActionType().name();
             if ("SEND".equals(action) || "APPROVE".equals(action) || "REJECT".equals(action)
                     || "RETURN".equals(action) || "DIRECT_SEND".equals(action)) {
-                return userId.equals(history.getAssigneeUserId());
+                return userId != null && userId.equals(history.getAssigneeUserId());
             }
         }
         return false;
@@ -98,6 +107,25 @@ public class WorkflowAllowedActionResolver {
             if (nodeCode.equals(node.getNodeCode())) return node;
         }
         return null;
+    }
+
+    private boolean requiresClaim(TaskDTO task, String userId) {
+        if (task == null || !TaskStatusEnum.ACTIVE.equals(task.getTaskStatus())
+                || hasText(task.getAssigneeUserId())) {
+            return false;
+        }
+        List<String> candidates = safe(task.getCandidateUserIds());
+        return candidates.contains(userId) && hasMultipleCandidates(candidates);
+    }
+
+    private boolean hasMultipleCandidates(List<String> candidates) {
+        String first = null;
+        for (String candidate : candidates) {
+            if (!hasText(candidate)) continue;
+            if (first == null) first = candidate;
+            else if (!first.equals(candidate)) return true;
+        }
+        return false;
     }
 
     /**

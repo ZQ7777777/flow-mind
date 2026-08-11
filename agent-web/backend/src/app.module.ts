@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
 import { AppController } from "./app.controller.js";
 import { HealthController } from "./health.controller.js";
 import { IdentityService } from "./identity/identity.service.js";
@@ -16,9 +17,13 @@ import { ReviewerService } from "./review/reviewer.service.js";
 import { QualityPipelineService } from "./verification/quality-pipeline.service.js";
 import { ArtifactWriterService } from "./artifact/artifact-writer.service.js";
 import { RepairCoordinatorService } from "./repair/repair-coordinator.service.js";
+import { BusinessAuthClient } from "./auth/business-auth-client.service.js";
+import { PlatformSessionRegistry } from "./auth/platform-session-registry.service.js";
+import { AgentAdminGuard } from "./auth/agent-admin.guard.js";
+import { AgentAuthController } from "./auth/agent-auth.controller.js";
 
 @Module({
-  controllers: [AppController, HealthController],
+  controllers: [AppController, HealthController, AgentAuthController],
   providers: [
     IdentityService,
     DatabaseService,
@@ -35,6 +40,10 @@ import { RepairCoordinatorService } from "./repair/repair-coordinator.service.js
     QualityPipelineService,
     ArtifactWriterService,
     RepairCoordinatorService,
+    BusinessAuthClient,
+    PlatformSessionRegistry,
+    AgentAdminGuard,
+    { provide: APP_GUARD, useExisting: AgentAdminGuard },
   ],
 })
 export class AppModule {}

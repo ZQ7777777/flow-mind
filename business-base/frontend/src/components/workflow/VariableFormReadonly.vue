@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { WorkflowFormField } from "../../types/workflow";
-import { formatUnknown } from "../../utils/format";
+import { formatDateTime, formatUnknown } from "../../utils/format";
 
 const props = defineProps<{
   fields: WorkflowFormField[];
@@ -14,10 +14,37 @@ const sortedFields = computed(() =>
 
 function displayValue(field: WorkflowFormField): string {
   const value = props.variables[field.fieldCode];
-  if (field.fieldType === "date" || field.controlType === "datePicker") {
-    return typeof value === "string" ? value : formatUnknown(value);
+  const optionLabel = findOptionLabel(field.validationRule, value);
+  if (optionLabel) {
+    return optionLabel;
+  }
+  if (field.fieldType?.toLowerCase().includes("date") || field.controlType?.toLowerCase().includes("date")) {
+    return typeof value === "string" ? formatDateTime(value) : formatUnknown(value);
   }
   return formatUnknown(value);
+}
+
+function findOptionLabel(rule: string | undefined, value: unknown): string | undefined {
+  if (!rule) return undefined;
+  try {
+    const parsed = JSON.parse(rule) as unknown;
+    const options = Array.isArray(parsed)
+      ? parsed
+      : typeof parsed === "object" && parsed !== null && "options" in parsed
+        ? (parsed as { options?: unknown }).options
+        : undefined;
+    if (!Array.isArray(options)) return undefined;
+    const option = options.find((item) =>
+      typeof item === "object" && item !== null && "value" in item
+        ? String((item as { value: unknown }).value) === String(value)
+        : false,
+    );
+    return typeof option === "object" && option !== null && "label" in option
+      ? String((option as { label: unknown }).label)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 </script>
 

@@ -1,15 +1,16 @@
 import { buildQuery, requestBlob, requestJson } from "./http";
 import type {
   AttachmentUploadPayload,
-  CurrentBusinessUser,
-  PageRequest,
-  PageResponse,
+  WorkflowListQuery,
+  WorkflowPageResponse,
   TaskActionPayload,
-  TaskActionResult,
-  WorkflowAttachment,
+  WorkflowTaskActionResponse,
+  WorkflowAttachmentView,
   WorkflowDetailResponse,
-  WorkflowListItem,
+  WorkflowListRecord,
   WorkflowListType,
+  WorkflowUserResponse,
+  WorkflowUserCandidateResponse,
 } from "../types/workflow";
 
 const WORKFLOW_BASE = "/api/workflow";
@@ -35,15 +36,23 @@ const actionEndpointByCode = {
   UNCLAIM: "unclaim",
 } as const;
 
-export async function fetchCurrentUser(): Promise<CurrentBusinessUser> {
-  return requestJson<CurrentBusinessUser>(`${WORKFLOW_BASE}/me`);
+export async function fetchCurrentUser(): Promise<WorkflowUserResponse> {
+  return requestJson<WorkflowUserResponse>(`${WORKFLOW_BASE}/me`);
 }
 
+export async function fetchWorkflowUsers(
+  keyword: string,
+  limit = 20,
+): Promise<WorkflowUserCandidateResponse[]> {
+  return requestJson<WorkflowUserCandidateResponse[]>(
+    `${WORKFLOW_BASE}/users${buildQuery({ keyword, limit })}`,
+  );
+}
 export async function fetchWorkflowList(
   type: WorkflowListType,
-  params: PageRequest,
-): Promise<PageResponse<WorkflowListItem>> {
-  return requestJson<PageResponse<WorkflowListItem>>(
+  params: WorkflowListQuery,
+): Promise<WorkflowPageResponse<WorkflowListRecord>> {
+  return requestJson<WorkflowPageResponse<WorkflowListRecord>>(
     `${listEndpointByType[type]}${buildQuery(params)}`,
   );
 }
@@ -71,9 +80,9 @@ export async function performTaskAction(
   taskId: string,
   action: keyof typeof actionEndpointByCode,
   payload: TaskActionPayload,
-): Promise<TaskActionResult> {
+): Promise<WorkflowTaskActionResponse> {
   const { idempotencyKey, ...body } = payload;
-  return requestJson<TaskActionResult>(
+  return requestJson<WorkflowTaskActionResponse>(
     `${WORKFLOW_BASE}/tasks/${encodeURIComponent(taskId)}/${actionEndpointByCode[action]}`,
     {
       method: "POST",
@@ -86,15 +95,15 @@ export async function performTaskAction(
 export async function approveTask(
   taskId: string,
   payload: Pick<TaskActionPayload, "expectedTaskVersion" | "comment" | "idempotencyKey">,
-): Promise<TaskActionResult> {
+): Promise<WorkflowTaskActionResponse> {
   return performTaskAction(taskId, "APPROVE", payload);
 }
 
 export async function fetchAttachments(params: {
   instanceId?: string;
   taskId?: string;
-}): Promise<WorkflowAttachment[]> {
-  return requestJson<WorkflowAttachment[]>(
+}): Promise<WorkflowAttachmentView[]> {
+  return requestJson<WorkflowAttachmentView[]>(
     `${WORKFLOW_BASE}/attachments${buildQuery(params)}`,
   );
 }
@@ -102,7 +111,7 @@ export async function fetchAttachments(params: {
 export async function uploadInstanceAttachment(
   instanceId: string,
   payload: AttachmentUploadPayload,
-): Promise<WorkflowAttachment> {
+): Promise<WorkflowAttachmentView> {
   return uploadAttachment(
     `${WORKFLOW_BASE}/instances/${encodeURIComponent(instanceId)}/attachments`,
     payload,
@@ -112,7 +121,7 @@ export async function uploadInstanceAttachment(
 export async function uploadTaskAttachment(
   taskId: string,
   payload: AttachmentUploadPayload,
-): Promise<WorkflowAttachment> {
+): Promise<WorkflowAttachmentView> {
   return uploadAttachment(
     `${WORKFLOW_BASE}/tasks/${encodeURIComponent(taskId)}/attachments`,
     payload,
@@ -141,17 +150,21 @@ export async function deleteAttachment(
 async function uploadAttachment(
   url: string,
   payload: AttachmentUploadPayload,
-): Promise<WorkflowAttachment> {
+): Promise<WorkflowAttachmentView> {
   const formData = new FormData();
   formData.append("file", payload.file, payload.file.name);
   if (payload.fieldCode) {
     formData.append("fieldCode", payload.fieldCode);
   }
-  if (payload.templateCode) {
-    formData.append("templateCode", payload.templateCode);
+  if (payload.attachmentCode) {
+    formData.append("attachmentCode", payload.attachmentCode);
+  }
+  if (payload.sourceTaskId) formData.append("sourceTaskId", payload.sourceTaskId);
+  if (payload.expectedTaskVersion != null) {
+    formData.append("expectedTaskVersion", String(payload.expectedTaskVersion));
   }
 
-  return requestJson<WorkflowAttachment>(url, {
+  return requestJson<WorkflowAttachmentView>(url, {
     method: "POST",
     headers: { "Idempotency-Key": payload.idempotencyKey },
     body: formData,

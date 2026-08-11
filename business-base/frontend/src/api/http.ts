@@ -4,6 +4,14 @@ export interface ApiErrorBody {
   requestId?: string;
 }
 
+export const AUTHENTICATION_REQUIRED_EVENT = "flowmind:authentication-required";
+
+export function notifyAuthenticationRequired(status: number): void {
+  if (status === 401) {
+    window.dispatchEvent(new Event(AUTHENTICATION_REQUIRED_EVENT));
+  }
+}
+
 export class WorkflowApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -32,6 +40,7 @@ export function buildQuery(params: object): string {
 export async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...init,
+    credentials: init.credentials ?? "same-origin",
     headers: {
       Accept: "application/json",
       ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
@@ -41,6 +50,7 @@ export async function requestJson<T>(url: string, init: RequestInit = {}): Promi
 
   const body = await response.json().catch(() => null);
   if (!response.ok) {
+    notifyAuthenticationRequired(response.status);
     throw new WorkflowApiError(response.status, (body ?? {}) as ApiErrorBody);
   }
   return body as T;
@@ -49,6 +59,7 @@ export async function requestJson<T>(url: string, init: RequestInit = {}): Promi
 export async function requestBlob(url: string, init: RequestInit = {}): Promise<Blob> {
   const response = await fetch(url, {
     ...init,
+    credentials: init.credentials ?? "same-origin",
     headers: {
       Accept: "application/octet-stream",
       ...(init.headers ?? {}),
@@ -57,6 +68,7 @@ export async function requestBlob(url: string, init: RequestInit = {}): Promise<
 
   if (!response.ok) {
     const body = await response.json().catch(() => null);
+    notifyAuthenticationRequired(response.status);
     throw new WorkflowApiError(response.status, (body ?? {}) as ApiErrorBody);
   }
   return response.blob();
