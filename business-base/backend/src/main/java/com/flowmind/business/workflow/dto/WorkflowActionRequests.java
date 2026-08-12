@@ -27,12 +27,7 @@ public final class WorkflowActionRequests {
         public void setTargetNodeCode(String targetNodeCode) { this.targetNodeCode = targetNodeCode; }
     }
 
-    public static class DirectSend extends Basic {
-        @NotBlank
-        private String targetNodeCode;
-        public String getTargetNodeCode() { return targetNodeCode; }
-        public void setTargetNodeCode(String targetNodeCode) { this.targetNodeCode = targetNodeCode; }
-    }
+    public static class DirectSend extends Basic { }
 
     public static class Transfer extends Basic {
         @NotBlank

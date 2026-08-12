@@ -245,7 +245,7 @@ class M5RestAcceptanceTest {
         performAction("/api/platform/runtime/tasks/reject", common + ",\"targetNodeCode\":\"apply\"}");
         performAction("/api/platform/runtime/tasks/return", common + "}");
         performAction("/api/platform/runtime/tasks/withdraw", common + "}");
-        performAction("/api/platform/runtime/tasks/direct-send", common + ",\"targetNodeCode\":\"review\"}");
+        performAction("/api/platform/runtime/tasks/direct-send", common + "}");
         performAction("/api/platform/runtime/tasks/transfer", common + ",\"targetUserId\":\"receiver\"}");
         performAction("/api/platform/runtime/tasks/add-sign", common + ",\"addSignUserIds\":[\"receiver\"]}");
         performAction("/api/platform/runtime/tasks/claim", common + "}");
@@ -259,7 +259,7 @@ class M5RestAcceptanceTest {
         verify(runtimeService).withdraw(any(WithdrawTaskRequest.class));
         ArgumentCaptor<DirectSendRequest> directSend = ArgumentCaptor.forClass(DirectSendRequest.class);
         verify(runtimeService).directSend(directSend.capture());
-        assertEquals("review", directSend.getValue().getTargetNodeCode());
+        assertEquals(null, directSend.getValue().getTargetNodeCode());
         ArgumentCaptor<TransferTaskRequest> transfer = ArgumentCaptor.forClass(TransferTaskRequest.class);
         verify(runtimeService).transfer(transfer.capture());
         assertEquals("receiver", transfer.getValue().getTargetUserId());

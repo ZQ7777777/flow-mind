@@ -50,7 +50,7 @@ class WorkflowActionServiceTest {
         actions.put("approve", basic()); actions.put("submit", basic()); actions.put("return", basic());
         actions.put("withdraw", basic()); actions.put("claim", basic()); actions.put("unclaim", basic());
         WorkflowActionRequests.Reject reject = new WorkflowActionRequests.Reject(); copy(reject); reject.setTargetNodeCode("apply"); actions.put("reject", reject);
-        WorkflowActionRequests.DirectSend direct = new WorkflowActionRequests.DirectSend(); copy(direct); direct.setTargetNodeCode("review"); actions.put("direct-send", direct);
+        WorkflowActionRequests.DirectSend direct = new WorkflowActionRequests.DirectSend(); copy(direct); actions.put("direct-send", direct);
         WorkflowActionRequests.Transfer transfer = new WorkflowActionRequests.Transfer(); copy(transfer); transfer.setTargetUserId("user-2"); actions.put("transfer", transfer);
         WorkflowActionRequests.Delegate delegate = new WorkflowActionRequests.Delegate(); copy(delegate); delegate.setTargetUserId("user-3"); delegate.setTargetUserName("User 3"); actions.put("delegate", delegate);
         WorkflowActionRequests.AddSign addSign = new WorkflowActionRequests.AddSign(); copy(addSign); addSign.setAddSignUserIds(Arrays.asList("user-4", "user-4", "user-5")); actions.put("add-sign", addSign);
@@ -72,11 +72,12 @@ class WorkflowActionServiceTest {
 
     @Test
     void mapsOnlyFrozenActionSpecificFieldsAndDoesNotExposeVariables() {
-        WorkflowActionRequests.DirectSend direct = new WorkflowActionRequests.DirectSend(); copy(direct); direct.setTargetNodeCode("review");
+        WorkflowActionRequests.DirectSend direct = new WorkflowActionRequests.DirectSend(); copy(direct);
         service.execute("direct-send", "task-1", "key", direct);
         ArgumentCaptor<TaskOperationRequest> directCaptor = ArgumentCaptor.forClass(TaskOperationRequest.class);
         verify(facade).execute(eq("direct-send"), directCaptor.capture());
         assertThat(((DirectSendRequest) directCaptor.getValue()).getVariables()).isNull();
+        assertThat(((DirectSendRequest) directCaptor.getValue()).getTargetNodeCode()).isNull();
 
         WorkflowActionRequests.AddSign addSign = new WorkflowActionRequests.AddSign(); copy(addSign);
         addSign.setAddSignUserIds(Arrays.asList("a", "a", "b"));

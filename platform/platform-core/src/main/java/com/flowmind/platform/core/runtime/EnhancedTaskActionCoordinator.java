@@ -377,7 +377,6 @@ public class EnhancedTaskActionCoordinator {
         return execute(request, ActionTypeEnum.DIRECT_SEND, new ActionWork() {
             @Override public TaskActionResult run(EnhancedActionContext context) {
                 requireSerial(context.task);
-                requireText(request.getTargetNodeCode(), "targetNodeCode");
                 DirectSendContextResolver.Resolution resolution =
                         directSendContextResolver.resolve(context.task, context.definition);
                 if (resolution == null) {
@@ -385,10 +384,6 @@ public class EnhancedTaskActionCoordinator {
                 }
                 ProcessHistoryTaskEntity source = resolution.getRejectHistory();
                 String sourceNodeCode = resolution.getTargetNode().getNodeCode();
-                if (!request.getTargetNodeCode().equals(sourceNodeCode)) {
-                    throw validation(RuntimeErrorCodes.DIRECT_SEND_SOURCE_NOT_FOUND,
-                            "direct send target must be the reject source node");
-                }
                 applyDirectSendVariables(context, request);
                 checkDirectSendAttachments(context);
                 RuntimeAdvancePreparation preparation = nodeAdvancer.prepareAdvance(context.instance, context.definition,

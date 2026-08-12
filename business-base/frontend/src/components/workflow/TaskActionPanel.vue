@@ -35,7 +35,6 @@ const emit = defineEmits<{
 
 const comment = ref("");
 const rejectTargetNodeCode = ref("");
-const directSendTargetNodeCode = ref("");
 const targetUserKeyword = ref("");
 const targetUserOptions = ref<WorkflowUserCandidateResponse[]>([]);
 const selectedTargetUser = ref<WorkflowUserCandidateResponse | null>(null);
@@ -48,15 +47,14 @@ const actionConfig: Array<{
   code: TaskActionCode;
   label: string;
   kind: "primary" | "neutral" | "danger";
-  requiresTargetNode?: boolean;
   requiresTargetUser?: boolean;
 }> = [
   { code: "APPROVE", label: "通过", kind: "primary" },
   { code: "SUBMIT", label: "提交", kind: "primary" },
-  { code: "REJECT", label: "驳回", kind: "danger", requiresTargetNode: true },
+  { code: "REJECT", label: "驳回", kind: "danger" },
   { code: "RETURN", label: "退回", kind: "danger" },
   { code: "WITHDRAW", label: "撤回", kind: "danger" },
-  { code: "DIRECT_SEND", label: "直送", kind: "neutral", requiresTargetNode: true },
+  { code: "DIRECT_SEND", label: "直送", kind: "neutral" },
   { code: "TRANSFER", label: "转办", kind: "neutral", requiresTargetUser: true },
   { code: "DELEGATE", label: "委托", kind: "neutral", requiresTargetUser: true },
   { code: "ADD_SIGN", label: "加签", kind: "neutral" },
@@ -68,7 +66,6 @@ const visibleActions = computed(() =>
   actionConfig.filter((action) => props.allowedActions.includes(action.code)),
 );
 const needsRejectTarget = computed(() => props.allowedActions.includes("REJECT"));
-const needsDirectSendTarget = computed(() => props.allowedActions.includes("DIRECT_SEND"));
 const needsTargetUser = computed(() =>
   props.allowedActions.some((action) => action === "TRANSFER" || action === "DELEGATE"),
 );
@@ -156,12 +153,6 @@ function submit(action: (typeof actionConfig)[number]): void {
       return;
     }
     payload.targetNodeCode = rejectTargetNodeCode.value;
-  } else if (action.requiresTargetNode) {
-    if (!directSendTargetNodeCode.value.trim()) {
-      validationError.value = "请输入目标节点编码";
-      return;
-    }
-    payload.targetNodeCode = directSendTargetNodeCode.value.trim();
   }
   if (action.requiresTargetUser) {
     if (!selectedTargetUser.value) {
@@ -208,10 +199,6 @@ function submit(action: (typeof actionConfig)[number]): void {
               {{ node.nodeName || node.nodeCode }}
             </option>
           </select>
-        </label>
-        <label v-if="needsDirectSendTarget" class="field">
-          <span>目标节点</span>
-          <input v-model="directSendTargetNodeCode" type="text" autocomplete="off" />
         </label>
         <div v-if="needsTargetUser" class="field user-picker">
           <span>目标用户</span>

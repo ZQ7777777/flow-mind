@@ -82,9 +82,7 @@ public class WorkflowActionService {
             return request;
         }
         if ("direct-send".equals(action)) {
-            DirectSendRequest request = new DirectSendRequest();
-            request.setTargetNodeCode(((WorkflowActionRequests.DirectSend) input).getTargetNodeCode());
-            return request;
+            return new DirectSendRequest();
         }
         if ("transfer".equals(action)) {
             TransferTaskRequest request = new TransferTaskRequest();
