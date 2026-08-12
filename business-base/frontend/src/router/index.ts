@@ -50,6 +50,18 @@ export const baseRoutes: RouteRecordRaw[] = [
     component: WorkflowDetailView,
     props: { mode: "instance" },
   },
+  {
+    path: "/admin/process-definitions",
+    name: "admin-process-definitions",
+    component: () => import("../views/admin/AdminProcessDefinitionsView.vue"),
+    meta: { requiresAdmin: true },
+  },
+  {
+    path: "/admin/process-instances",
+    name: "admin-process-instances",
+    component: () => import("../views/admin/AdminProcessInstancesView.vue"),
+    meta: { requiresAdmin: true },
+  },
 ];
 
 export function createBusinessRouter(
@@ -70,7 +82,12 @@ export function createBusinessRouter(
     }
 
     try {
-      if (await auth.ensureAuthenticated()) return true;
+      if (await auth.ensureAuthenticated()) {
+        if (to.meta.requiresAdmin === true && !auth.user?.administrator) {
+          return "/workflow/todo";
+        }
+        return true;
+      }
     } catch {
       auth.clear();
     }

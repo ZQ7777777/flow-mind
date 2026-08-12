@@ -43,4 +43,22 @@ describe("App navigation", () => {
     expect(wrapper.text()).toContain("业务一部");
     expect(wrapper.find('[data-test="logout"]').exists()).toBe(true);
   });
+
+  it("shows both administrator navigation entries only to administrators", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.user = {
+      userId: "u_admin_01", username: "admin01", realName: "管理员",
+      departmentId: "dept_company", departmentName: "公司",
+      userType: "ADMIN", administrator: true,
+    };
+    auth.initialized = true;
+    const router = createBusinessRouter([], createMemoryHistory());
+    await router.push("/workflow/todo");
+    const wrapper = mount(App, { global: { plugins: [pinia, router], stubs: { RouterLink: { props: ["to"], template: '<a class="nav-link" :href="to"><slot /></a>' }, RouterView: true } } });
+    const labels = wrapper.findAll(".nav-link").map((link) => link.text());
+    expect(labels).toContain("流程定义");
+    expect(labels).toContain("流程实例");
+  });
 });

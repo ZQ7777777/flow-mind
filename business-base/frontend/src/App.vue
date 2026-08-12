@@ -82,6 +82,11 @@ async function logout(): Promise<void> {
         <RouterLink class="nav-link" to="/workflow/todo">我的待办</RouterLink>
         <RouterLink class="nav-link" to="/workflow/completed">我的已办</RouterLink>
         <RouterLink class="nav-link" to="/workflow/read">我的已阅</RouterLink>
+        <template v-if="auth.user?.administrator">
+          <div class="nav-divider" aria-hidden="true"></div>
+          <RouterLink class="nav-link" to="/admin/process-definitions">流程定义</RouterLink>
+          <RouterLink class="nav-link" to="/admin/process-instances">流程实例</RouterLink>
+        </template>
       </nav>
 
       <main class="main-panel">
@@ -244,6 +249,12 @@ async function logout(): Promise<void> {
   border-color: var(--teal);
   background: #1f2937;
   color: #fff;
+}
+
+.nav-divider {
+  height: 1px;
+  margin: 8px 4px;
+  background: #374151;
 }
 
 .main-panel {

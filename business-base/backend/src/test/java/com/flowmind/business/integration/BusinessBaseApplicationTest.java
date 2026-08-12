@@ -85,6 +85,28 @@ class BusinessBaseApplicationTest {
                 .andExpect(jsonPath("$.records").isArray());
     }
 
+    @Test
+    void adminConsoleApisRequireAuthenticationAndAdministratorRole() throws Exception {
+        mockMvc.perform(get("/api/admin/process-definitions?pageNo=1&pageSize=10"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("BUSINESS_AUTHENTICATION_REQUIRED"));
+
+        mockMvc.perform(get("/api/admin/process-definitions?pageNo=1&pageSize=10")
+                        .session(login("sales01")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("BUSINESS_ACCESS_DENIED"));
+
+        mockMvc.perform(get("/api/admin/process-definitions?pageNo=1&pageSize=10")
+                        .session(login("admin01")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records").isArray());
+
+        mockMvc.perform(get("/api/admin/process-instances?pageNo=1&pageSize=10")
+                        .session(login("admin01")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records").isArray());
+    }
+
     private MockHttpSession login() throws Exception {
         return login("sales01");
     }
