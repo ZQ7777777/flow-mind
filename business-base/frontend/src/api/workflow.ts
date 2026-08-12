@@ -179,6 +179,7 @@ async function uploadAttachment(
   if (payload.attachmentCode) {
     formData.append("attachmentCode", payload.attachmentCode);
   }
+  if (payload.instanceId) formData.append("instanceId", payload.instanceId);
   if (payload.sourceTaskId) formData.append("sourceTaskId", payload.sourceTaskId);
   if (payload.expectedTaskVersion != null) {
     formData.append("expectedTaskVersion", String(payload.expectedTaskVersion));

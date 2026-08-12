@@ -36,11 +36,7 @@ public final class WorkflowActionRequests {
     }
 
     public static class DirectSend extends Basic {
-        @NotBlank
-        private String targetNodeCode;
         private Map<String, Object> variables;
-        public String getTargetNodeCode() { return targetNodeCode; }
-        public void setTargetNodeCode(String targetNodeCode) { this.targetNodeCode = targetNodeCode; }
         public Map<String, Object> getVariables() { return variables; }
         public void setVariables(Map<String, Object> variables) { this.variables = variables; }
     }

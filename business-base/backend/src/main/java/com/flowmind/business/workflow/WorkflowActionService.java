@@ -99,7 +99,6 @@ public class WorkflowActionService {
         if ("direct-send".equals(action)) {
             DirectSendRequest request = new DirectSendRequest();
             WorkflowActionRequests.DirectSend source = (WorkflowActionRequests.DirectSend) input;
-            request.setTargetNodeCode(source.getTargetNodeCode());
             if (source.getVariables() != null) {
                 request.setVariables(validatedVariables(taskId, instance, source.getVariables()));
             }

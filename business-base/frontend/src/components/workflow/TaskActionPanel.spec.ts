@@ -134,4 +134,21 @@ describe("TaskActionPanel", () => {
       targetNodeCode: "initial-review",
     });
   });
+
+  it("submits direct send without asking for or emitting a target node code", async () => {
+    const wrapper = mount(TaskActionPanel, {
+      props: { taskVersion: 8, allowedActions: ["DIRECT_SEND"] },
+    });
+
+    expect(wrapper.find('input[type="text"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("目标节点");
+
+    await wrapper.get('[data-test="action-direct-send"]').trigger("click");
+
+    expect(wrapper.emitted("submit")?.[0]).toEqual([{
+      action: "DIRECT_SEND",
+      expectedTaskVersion: 8,
+      comment: "",
+    }]);
+  });
 });

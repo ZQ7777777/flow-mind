@@ -3,11 +3,16 @@ package com.flowmind.business.workflow;
 import com.flowmind.business.common.OperationIdFactory;
 import com.flowmind.business.platform.PlatformDtoMapper;
 import com.flowmind.business.platform.PlatformFacade;
+import com.flowmind.business.workflow.dto.WorkflowDetailResponse;
 import com.flowmind.platform.api.dto.AttachmentDTO;
+import com.flowmind.platform.api.dto.AttachmentDownloadDTO;
+import com.flowmind.platform.api.dto.AttachmentQuery;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum;
 import com.flowmind.platform.api.request.ReplaceInstanceAttachmentRequest;
+import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
+import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
@@ -67,6 +72,73 @@ class WorkflowAttachmentServiceTest {
         assertThatThrownBy(() -> service.replace("apply-task", "task-att", 1L,
                 new MockMultipartFile("file", new byte[0]), "key"))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("不能为空");
+    }
+
+    @Test
+    void uploadsInstanceAndTaskAttachmentsWithTrustedRequests() {
+        PlatformFacade facade = facade();
+        when(facade.saveInstanceAttachment(any(SaveInstanceAttachmentRequest.class)))
+                .thenReturn(attachment("instance-att", AttachmentOwnerTypeEnum.INSTANCE));
+        when(facade.saveTaskAttachment(any(SaveTaskAttachmentRequest.class)))
+                .thenReturn(attachment("task-att", AttachmentOwnerTypeEnum.TASK));
+        WorkflowAttachmentService service = service(facade);
+
+        WorkflowDetailResponse.AttachmentView instanceResult = service.uploadInstance("instance-1",
+                new MockMultipartFile("file", "../receipt.txt", "text/plain", "content".getBytes()),
+                "receipt", "proof", "task-1", 4L, "instance-key");
+        service.uploadTask("task-2",
+                new MockMultipartFile("file", "note.txt", null, "content".getBytes()),
+                "instance-1", "note", null, 8L, "task-key");
+
+        ArgumentCaptor<SaveInstanceAttachmentRequest> instanceCaptor =
+                ArgumentCaptor.forClass(SaveInstanceAttachmentRequest.class);
+        verify(facade).saveInstanceAttachment(instanceCaptor.capture());
+        assertThat(instanceCaptor.getValue().getSourceTaskId()).isEqualTo("task-1");
+        assertThat(instanceCaptor.getValue().getAttachment().getFileName()).isEqualTo("receipt.txt");
+        assertThat(instanceResult.getAttachmentId()).isEqualTo("instance-att");
+
+        ArgumentCaptor<SaveTaskAttachmentRequest> taskCaptor =
+                ArgumentCaptor.forClass(SaveTaskAttachmentRequest.class);
+        verify(facade).saveTaskAttachment(taskCaptor.capture());
+        assertThat(taskCaptor.getValue().getTaskId()).isEqualTo("task-2");
+        assertThat(taskCaptor.getValue().getAttachment().getContentType())
+                .isEqualTo("application/octet-stream");
+    }
+
+    @Test
+    void queriesDownloadsAndDeletesThroughTrustedFacade() {
+        PlatformFacade facade = facade();
+        AttachmentDTO visible = attachment("visible", AttachmentOwnerTypeEnum.INSTANCE);
+        AttachmentDTO deleted = attachment("deleted", AttachmentOwnerTypeEnum.INSTANCE);
+        deleted.setDeleted(Boolean.TRUE);
+        when(facade.queryAttachments(any(AttachmentQuery.class)))
+                .thenReturn(java.util.Arrays.asList(visible, deleted));
+        AttachmentDTO metadata = attachment("visible", AttachmentOwnerTypeEnum.INSTANCE);
+        metadata.setFileName("..\\bad\r\nname.pdf"); metadata.setContentType(null);
+        AttachmentDownloadDTO download = new AttachmentDownloadDTO();
+        download.setAttachment(metadata); download.setContent(new byte[] {1, 2, 3});
+        when(facade.downloadAttachment("visible")).thenReturn(download);
+        WorkflowAttachmentService service = service(facade);
+
+        assertThat(service.query("instance-1", null, null, null))
+                .extracting(WorkflowDetailResponse.AttachmentView::getAttachmentId)
+                .containsExactly("visible");
+        WorkflowAttachmentService.AttachmentContent content = service.download("visible");
+        assertThat(content.getFileName()).isEqualTo("bad__name.pdf");
+        assertThat(content.getContentType()).isEqualTo("application/octet-stream");
+        service.delete("visible", "delete-key");
+        verify(facade).deleteAttachment(any(com.flowmind.platform.api.request.DeleteAttachmentRequest.class));
+    }
+
+    private PlatformFacade facade() {
+        PlatformFacade facade = mock(PlatformFacade.class);
+        when(facade.currentUser()).thenReturn(new UserContext("user-1", "User", null, null));
+        return facade;
+    }
+
+    private WorkflowAttachmentService service(PlatformFacade facade) {
+        return new WorkflowAttachmentService(facade, new PlatformDtoMapper(), new OperationIdFactory(),
+                mock(WorkflowQueryService.class));
     }
 
     private AttachmentDTO attachment(String id, AttachmentOwnerTypeEnum ownerType) {

@@ -610,7 +610,7 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
-    void directSendRejectsForgedTargetAndGroupedContextIsUnavailable() {
+    void directSendIgnoresClientTargetAndGroupedContextIsUnavailable() {
         Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
         DirectSendRequest request = taskRequest(new DirectSendRequest(), "op-direct-forged",
                 fixture.task, fixture.operator);
@@ -622,11 +622,17 @@ class EnhancedTaskActionCoordinatorTest {
                 .thenReturn(java.util.Collections.singletonList(history("reject-source", "finance-user",
                         "finance", ActionTypeEnum.REJECT.name(),
                         "{\"schemaVersion\":1,\"sourceNodeCode\":\"finance\",\"createdTaskIds\":[\"task-1\"]}")));
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("direct-history", "user-a", "manager", ActionTypeEnum.DIRECT_SEND.name(), "{}"));
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
 
-        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
-                () -> fixture.coordinator.directSend(request));
-        assertEquals(RuntimeErrorCodes.DIRECT_SEND_SOURCE_NOT_FOUND, error.getErrorCode());
-        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+        fixture.coordinator.directSend(request);
+
+        verify(fixture.tasks).complete("task-1", 3L);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null));
 
         fixture.task.setTaskGroupId("group-1");
         assertEquals(false, fixture.coordinator.getDirectSendContext(fixture.task, fixture.definition).isAllowed());
@@ -649,7 +655,6 @@ class EnhancedTaskActionCoordinatorTest {
     void directSendConsumesRejectSourceAndAdvancesBackToSourceNode() {
         Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
         DirectSendRequest request = taskRequest(new DirectSendRequest(), "op-direct-success", fixture.task, fixture.operator);
-        request.setTargetNodeCode("manager");
         fixture.definition.setNodes(java.util.Collections.singletonList(userNode("manager",
                 "{\"taskActionRules\":{\"directSend\":{\"enabled\":true,\"targetMode\":\"REJECT_SOURCE\"}}}")));
         ProcessHistoryTaskEntity source = history("reject-source", "user-a", "manager", ActionTypeEnum.REJECT.name(),
