@@ -15,7 +15,11 @@ import {
 } from "../api/workflow";
 import { WorkflowApiError } from "../api/http";
 import { useWorkflowStore } from "../stores/workflow";
-import type { TaskActionCode, WorkflowAttachmentView } from "../types/workflow";
+import type {
+  TaskActionCode,
+  WorkflowAttachmentView,
+  WorkflowUploadableAttachmentView,
+} from "../types/workflow";
 import { formatDateTime } from "../utils/format";
 import { createIdempotencyKey } from "../utils/idempotency";
 
@@ -96,21 +100,37 @@ async function submitAction(payload: {
 
 async function uploadAttachment(payload: {
   file: File;
-  fieldCode: string;
-  attachmentCode: string;
+  ownerType: "INSTANCE" | "TASK";
+  template: WorkflowUploadableAttachmentView;
 }): Promise<void> {
   attachmentError.value = "";
-  const uploadPayload = {
-    ...payload,
-    sourceTaskId: detail.value?.currentTask?.taskId,
-    expectedTaskVersion: detail.value?.currentTask?.taskVersion,
-    idempotencyKey: createIdempotencyKey("workflow:attachment-upload"),
-  };
+  const currentTask = detail.value?.currentTask;
+  const currentInstanceId = detail.value?.instance.instanceId;
+  if (!currentTask || !currentInstanceId) {
+    attachmentError.value = "当前详情不可上传附件";
+    return;
+  }
   try {
-    if (detail.value?.currentTask?.taskId) {
-      await uploadTaskAttachment(detail.value.currentTask.taskId, uploadPayload);
-    } else if (detail.value?.instance.instanceId) {
-      await uploadInstanceAttachment(detail.value.instance.instanceId, uploadPayload);
+    if (payload.ownerType === "TASK") {
+      await uploadTaskAttachment(currentTask.taskId, {
+        file: payload.file,
+        ownerType: payload.ownerType,
+        attachmentCode: payload.template.attachmentCode,
+        fieldCode: payload.template.fieldCode,
+        instanceId: currentInstanceId,
+        expectedTaskVersion: currentTask.taskVersion,
+        idempotencyKey: createIdempotencyKey("workflow:attachment-upload-task"),
+      });
+    } else {
+      await uploadInstanceAttachment(currentInstanceId, {
+        file: payload.file,
+        ownerType: payload.ownerType,
+        attachmentCode: payload.template.attachmentCode,
+        fieldCode: payload.template.fieldCode,
+        sourceTaskId: currentTask.taskId,
+        expectedTaskVersion: currentTask.taskVersion,
+        idempotencyKey: createIdempotencyKey("workflow:attachment-upload-instance"),
+      });
     }
     await loadDetail();
   } catch (error) {
@@ -187,6 +207,7 @@ async function remove(item: WorkflowAttachmentView): Promise<void> {
       <AttachmentPanel
         :attachments="detail.attachments"
         :can-upload="Boolean(detail.currentTask)"
+        :uploadable-attachments="detail.uploadableAttachments"
         @upload="uploadAttachment"
         @download="download"
         @delete="remove"

@@ -3,7 +3,9 @@ import {
   approveTask,
   fetchWorkflowList,
   fetchWorkflowUsers,
+  downloadAttachment,
   uploadInstanceAttachment,
+  uploadTaskAttachment,
 } from "./workflow";
 
 describe("workflow api", () => {
@@ -118,5 +120,45 @@ describe("workflow api", () => {
     expect(body.get("expectedTaskVersion")).toBe("4");
     expect(body.has("storageKey")).toBe(false);
     expect(body.has("uploaderUserId")).toBe(false);
+  });
+
+  it("uploads task attachments with instance id and task version", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ attachmentId: "att-task" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const file = new File(["note"], "note.txt", { type: "text/plain" });
+    await uploadTaskAttachment("task-1", {
+      file,
+      instanceId: "instance-1",
+      attachmentCode: "approvalNote",
+      expectedTaskVersion: 9,
+      idempotencyKey: "idem-task-upload",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = init.body as FormData;
+    expect(url).toContain("/api/workflow/tasks/task-1/attachments");
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-task-upload");
+    expect(body.get("instanceId")).toBe("instance-1");
+    expect(body.get("attachmentCode")).toBe("approvalNote");
+    expect(body.get("expectedTaskVersion")).toBe("9");
+    expect(body.has("sourceTaskId")).toBe(false);
+  });
+
+  it("downloads attachment content from the common workflow namespace", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("file-content", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const blob = await downloadAttachment("att-1");
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/workflow/attachments/att-1/content");
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.size).toBe("file-content".length);
   });
 });

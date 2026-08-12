@@ -11,6 +11,7 @@ import com.flowmind.business.workflow.dto.WorkflowUserResponse;
 import com.flowmind.platform.api.dto.AttachmentDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
+import com.flowmind.platform.api.dto.ProcessAttachmentTemplateDTO;
 import com.flowmind.platform.api.dto.ProcessCommentDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
@@ -214,6 +215,7 @@ public class PlatformDtoMapper {
         target.setHistoryTasks(histories(historyTasks));
         target.setComments(comments(comments));
         target.setAttachments(attachments(attachments));
+        target.setUploadableAttachments(uploadableAttachments(definition.getAttachmentTemplates(), currentTask));
         target.setRejectTargetNodes(targetNodes(rejectTargetNodes));
         target.setAllowedActions(allowedActions == null ? new ArrayList<String>() : allowedActions);
         target.setDisabledActions(disabledActions == null ? new ArrayList<String>() : disabledActions);
@@ -318,7 +320,7 @@ public class PlatformDtoMapper {
     /**
      * 映射附件元数据，并过滤已删除附件和底层存储键。
      */
-    private List<WorkflowDetailResponse.AttachmentView> attachments(List<AttachmentDTO> sources) {
+    public List<WorkflowDetailResponse.AttachmentView> attachments(List<AttachmentDTO> sources) {
         List<WorkflowDetailResponse.AttachmentView> targets = new ArrayList<WorkflowDetailResponse.AttachmentView>();
         for (AttachmentDTO source : safe(sources)) {
             if (Boolean.TRUE.equals(source.getDeleted())) continue;
@@ -329,6 +331,42 @@ public class PlatformDtoMapper {
             target.setFileName(source.getFileName()); target.setContentType(source.getContentType());
             target.setSizeBytes(source.getSizeBytes()); target.setUploadedBy(source.getUploadedBy());
             target.setUploadedAt(source.getUploadedAt()); targets.add(target);
+        }
+        return targets;
+    }
+
+    /**
+     * 只输出当前任务节点适用的附件模板，供前端显示业务材料名称并自动带编码上传。
+     */
+    private List<WorkflowDetailResponse.UploadableAttachmentView> uploadableAttachments(
+            List<ProcessAttachmentTemplateDTO> sources, TaskDTO currentTask) {
+        if (currentTask == null || currentTask.getNodeCode() == null) {
+            return new ArrayList<WorkflowDetailResponse.UploadableAttachmentView>();
+        }
+        List<ProcessAttachmentTemplateDTO> sorted = new ArrayList<ProcessAttachmentTemplateDTO>(safe(sources));
+        Collections.sort(sorted, Comparator.comparing(ProcessAttachmentTemplateDTO::getSortOrder,
+                Comparator.nullsLast(Integer::compareTo)).thenComparing(ProcessAttachmentTemplateDTO::getAttachmentCode,
+                Comparator.nullsLast(String::compareTo)));
+        List<WorkflowDetailResponse.UploadableAttachmentView> targets =
+                new ArrayList<WorkflowDetailResponse.UploadableAttachmentView>();
+        for (ProcessAttachmentTemplateDTO source : sorted) {
+            if (source == null || source.getAttachmentCode() == null) continue;
+            if (!safe(source.getApplicableNodeCodes()).contains(currentTask.getNodeCode())) continue;
+            WorkflowDetailResponse.UploadableAttachmentView target =
+                    new WorkflowDetailResponse.UploadableAttachmentView();
+            target.setAttachmentCode(source.getAttachmentCode());
+            target.setAttachmentName(source.getAttachmentName());
+            target.setDescription(source.getDescription());
+            target.setFieldCode(null);
+            target.setOwnerType("TASK");
+            target.setRequired(source.getRequired());
+            target.setMinCount(source.getMinCount());
+            target.setMaxCount(source.getMaxCount());
+            target.setMaxSizeBytes(source.getMaxSizeBytes());
+            target.setAllowedExtensions(source.getAllowedExtensions() == null
+                    ? new ArrayList<String>() : new ArrayList<String>(source.getAllowedExtensions()));
+            target.setSortOrder(source.getSortOrder());
+            targets.add(target);
         }
         return targets;
     }

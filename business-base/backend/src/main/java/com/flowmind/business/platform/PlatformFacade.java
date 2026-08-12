@@ -2,6 +2,7 @@ package com.flowmind.business.platform;
 
 import com.flowmind.business.workflow.dto.WorkflowListQuery;
 import com.flowmind.platform.api.dto.AttachmentDTO;
+import com.flowmind.platform.api.dto.AttachmentDownloadDTO;
 import com.flowmind.platform.api.dto.AttachmentQuery;
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
 import com.flowmind.platform.api.dto.DirectSendContextDTO;
@@ -19,6 +20,10 @@ import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.request.TaskOperationRequest;
+import com.flowmind.platform.api.request.DeleteAttachmentRequest;
+import com.flowmind.platform.api.request.DownloadAttachmentRequest;
+import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
+import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.ProcessDefinitionService;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
@@ -137,6 +142,48 @@ public class PlatformFacade {
         query.setInstanceId(instanceId);
         query.setOperatorUserId(currentUser().getUserId());
         return attachmentService.queryAttachments(query);
+    }
+
+    /**
+     * 按业务侧查询条件读取附件元数据，并强制绑定当前可信用户。
+     */
+    public List<AttachmentDTO> queryAttachments(AttachmentQuery query) {
+        query.setOperatorUserId(currentUser().getUserId());
+        return attachmentService.queryAttachments(query);
+    }
+
+    /**
+     * 保存实例级附件，上传人由业务端可信上下文填充。
+     */
+    public AttachmentDTO saveInstanceAttachment(SaveInstanceAttachmentRequest request) {
+        request.setOperatorUserId(currentUser().getUserId());
+        return attachmentService.saveInstanceAttachment(request);
+    }
+
+    /**
+     * 保存任务级附件，实际办理人由业务端可信上下文填充。
+     */
+    public AttachmentDTO saveTaskAttachment(SaveTaskAttachmentRequest request) {
+        request.setOperatorUserId(currentUser().getUserId());
+        return attachmentService.saveTaskAttachment(request);
+    }
+
+    /**
+     * 下载附件内容，下载人由业务端可信上下文填充。
+     */
+    public AttachmentDownloadDTO downloadAttachment(String attachmentId) {
+        DownloadAttachmentRequest request = new DownloadAttachmentRequest();
+        request.setAttachmentId(attachmentId);
+        request.setOperatorUserId(currentUser().getUserId());
+        return attachmentService.downloadAttachment(request);
+    }
+
+    /**
+     * 删除附件，删除人由业务端可信上下文填充。
+     */
+    public void deleteAttachment(DeleteAttachmentRequest request) {
+        request.setOperatorUserId(currentUser().getUserId());
+        attachmentService.deleteAttachment(request);
     }
 
     /**

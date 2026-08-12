@@ -15,6 +15,7 @@ public class WorkflowDetailResponse {
     private List<WorkflowHistoryTaskResponse> historyTasks = new ArrayList<WorkflowHistoryTaskResponse>();
     private List<CommentView> comments = new ArrayList<CommentView>();
     private List<AttachmentView> attachments = new ArrayList<AttachmentView>();
+    private List<UploadableAttachmentView> uploadableAttachments = new ArrayList<UploadableAttachmentView>();
     private List<NodeView> rejectTargetNodes = new ArrayList<NodeView>();
     private List<String> allowedActions = new ArrayList<String>();
     private List<String> disabledActions = new ArrayList<String>();
@@ -39,6 +40,8 @@ public class WorkflowDetailResponse {
     public void setComments(List<CommentView> comments) { this.comments = comments; }
     public List<AttachmentView> getAttachments() { return attachments; }
     public void setAttachments(List<AttachmentView> attachments) { this.attachments = attachments; }
+    public List<UploadableAttachmentView> getUploadableAttachments() { return uploadableAttachments; }
+    public void setUploadableAttachments(List<UploadableAttachmentView> uploadableAttachments) { this.uploadableAttachments = uploadableAttachments; }
     public List<NodeView> getRejectTargetNodes() { return rejectTargetNodes; }
     public void setRejectTargetNodes(List<NodeView> rejectTargetNodes) { this.rejectTargetNodes = rejectTargetNodes; }
     public List<String> getAllowedActions() { return allowedActions; }
@@ -179,5 +182,42 @@ public class WorkflowDetailResponse {
         public void setUploadedBy(String uploadedBy) { this.uploadedBy = uploadedBy; }
         public LocalDateTime getUploadedAt() { return uploadedAt; }
         public void setUploadedAt(LocalDateTime uploadedAt) { this.uploadedAt = uploadedAt; }
+    }
+
+    public static class UploadableAttachmentView {
+        private String attachmentCode;
+        private String attachmentName;
+        private String description;
+        private String fieldCode;
+        private String ownerType;
+        private Boolean required;
+        private Integer minCount;
+        private Integer maxCount;
+        private Long maxSizeBytes;
+        private List<String> allowedExtensions = new ArrayList<String>();
+        private Integer sortOrder;
+
+        public String getAttachmentCode() { return attachmentCode; }
+        public void setAttachmentCode(String attachmentCode) { this.attachmentCode = attachmentCode; }
+        public String getAttachmentName() { return attachmentName; }
+        public void setAttachmentName(String attachmentName) { this.attachmentName = attachmentName; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public String getFieldCode() { return fieldCode; }
+        public void setFieldCode(String fieldCode) { this.fieldCode = fieldCode; }
+        public String getOwnerType() { return ownerType; }
+        public void setOwnerType(String ownerType) { this.ownerType = ownerType; }
+        public Boolean getRequired() { return required; }
+        public void setRequired(Boolean required) { this.required = required; }
+        public Integer getMinCount() { return minCount; }
+        public void setMinCount(Integer minCount) { this.minCount = minCount; }
+        public Integer getMaxCount() { return maxCount; }
+        public void setMaxCount(Integer maxCount) { this.maxCount = maxCount; }
+        public Long getMaxSizeBytes() { return maxSizeBytes; }
+        public void setMaxSizeBytes(Long maxSizeBytes) { this.maxSizeBytes = maxSizeBytes; }
+        public List<String> getAllowedExtensions() { return allowedExtensions; }
+        public void setAllowedExtensions(List<String> allowedExtensions) { this.allowedExtensions = allowedExtensions; }
+        public Integer getSortOrder() { return sortOrder; }
+        public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     }
 }

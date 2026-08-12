@@ -186,6 +186,20 @@ export interface WorkflowAttachmentView {
   uploadedAt?: string;
 }
 
+export interface WorkflowUploadableAttachmentView {
+  attachmentCode: string;
+  attachmentName?: string;
+  description?: string;
+  fieldCode?: string;
+  ownerType?: "INSTANCE" | "TASK" | string;
+  required?: boolean;
+  minCount?: number;
+  maxCount?: number;
+  maxSizeBytes?: number;
+  allowedExtensions: string[];
+  sortOrder?: number;
+}
+
 export interface WorkflowDetailResponse {
   instance: WorkflowInstanceResponse;
   definition?: WorkflowDefinitionView;
@@ -197,6 +211,7 @@ export interface WorkflowDetailResponse {
   historyTasks: WorkflowHistoryTaskResponse[];
   comments: WorkflowCommentView[];
   attachments: WorkflowAttachmentView[];
+  uploadableAttachments: WorkflowUploadableAttachmentView[];
   rejectTargetNodes: WorkflowNodeView[];
   allowedActions: TaskActionCode[];
   disabledActions: TaskActionCode[];
@@ -223,8 +238,10 @@ export interface WorkflowTaskActionResponse {
 
 export interface AttachmentUploadPayload {
   file: File;
+  ownerType?: "INSTANCE" | "TASK";
   attachmentCode?: string;
   fieldCode?: string;
+  instanceId?: string;
   sourceTaskId?: string;
   expectedTaskVersion?: number;
   idempotencyKey: string;
