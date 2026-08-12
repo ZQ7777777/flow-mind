@@ -145,6 +145,35 @@ export class StaticValidatorService {
 
     const servicePath = input.spec.paths.service;
     const service = input.files.get(servicePath) || "";
+    const instanceTitleIssue = inspectInstanceTitleAssignment(service);
+    if (instanceTitleIssue) {
+      const location = lineAndColumn(service, instanceTitleIssue.offset);
+      const actual = instanceTitleIssue.kind === "MISSING"
+        ? "No setInstanceTitle call was found before startAndSubmit."
+        : instanceTitleIssue.kind === "AFTER_RUNTIME_CALL"
+          ? "setInstanceTitle is called only after startAndSubmit."
+          : "setInstanceTitle is passed a blank or null value.";
+      diagnostics.push(diagnostic(
+        "INSTANCE_TITLE_REQUIRED",
+        "Generated backend must set a non-blank instance title before startAndSubmit.",
+        servicePath,
+        location.line,
+        location.column,
+        {
+          actual,
+          expected: "Call StartProcessRequest.setInstanceTitle with a non-blank server-derived value before startAndSubmit.",
+          repairHint: "Derive the title from the confirmed business name, appending the required applicationNo only when that exact field exists; never accept it from the client.",
+          acceptedForms: [
+            'request.setInstanceTitle("Confirmed business name")',
+            'request.setInstanceTitle("Confirmed business name - " + input.getApplicationNo())',
+          ],
+          unsupportedForms: [
+            'request.setInstanceTitle("")',
+            "Calling setInstanceTitle only after startAndSubmit",
+          ],
+        },
+      ));
+    }
     const productionSource = productionEntries.map(([path]) => input.files.get(path) || "").join("\n");
     const accessorType = input.contract.backend.trustedUserContext.accessorType.split(".").pop()!;
     const requiredApiSymbols = [
@@ -733,6 +762,41 @@ function stripJavaComments(source: string): string {
   return result;
 }
 
+type InstanceTitleIssue = {
+  kind: "MISSING" | "BLANK" | "AFTER_RUNTIME_CALL";
+  offset: number;
+};
+
+function inspectInstanceTitleAssignment(source: string): InstanceTitleIssue | undefined {
+  const content = stripJavaComments(source);
+  const runtimeCall = /\.\s*startAndSubmit\s*\(/.exec(content);
+  const assignmentPattern = /\.\s*setInstanceTitle\s*\(\s*([\s\S]*?)\s*\)\s*;/g;
+  const assignments = [...content.matchAll(assignmentPattern)];
+  const beforeRuntime = assignments.filter((match) =>
+    runtimeCall === null || (match.index || 0) < runtimeCall.index,
+  );
+
+  if (!beforeRuntime.length) {
+    const offset = assignments[0]?.index ?? runtimeCall?.index ?? 0;
+    return {
+      kind: assignments.length ? "AFTER_RUNTIME_CALL" : "MISSING",
+      offset,
+    };
+  }
+
+  const assignment = beforeRuntime[beforeRuntime.length - 1];
+  const argument = assignment[1].trim();
+  const literal = /^"([\s\S]*)"$/.exec(argument);
+  const literalContent = literal?.[1]
+    .replace(/\\u[0-9a-fA-F]{4}/g, "")
+    .replace(/\\[btnfr]/g, "")
+    .trim();
+  if (argument === "null" || (literal && !literalContent)) {
+    return { kind: "BLANK", offset: assignment.index || 0 };
+  }
+  return undefined;
+}
+
 function javaValidationSourceBeforeRuntimeCall(source: string): string {
   const runtimeCall = /\.\s*startAndSubmit\s*\(/.exec(source);
   const prefix = runtimeCall ? source.slice(0, runtimeCall.index) : source;
@@ -971,9 +1035,11 @@ function hasAllowedExtensionCollection(source: string, extensions: string[], fil
 
   // Form 3: an inline collection literal covering the allowed extensions,
   // checked immediately, e.g. Arrays.asList("pdf").contains(...) / List.of(...).
-  for (const match of source.matchAll(/\b(?:Arrays\.asList|List\.of)\s*\(\s*([^)]*)\)\s*\.\s*contains\s*\(/g)) {
+  for (const match of source.matchAll(/\b(?:Arrays\.asList|List\.of)\s*\(\s*([^)]*)\)\s*\.\s*contains\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/g)) {
     const literals = [...match[1].matchAll(/"([^"]+)"/g)].map((literal) => literal[1].toLowerCase());
-    if (literals.length && lowered.every((extension) => literals.includes(extension))) return true;
+    if (literals.length
+      && lowered.every((extension) => literals.includes(extension))
+      && derivedNames.includes(match[2])) return true;
   }
   return false;
 }

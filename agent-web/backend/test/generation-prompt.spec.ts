@@ -28,6 +28,9 @@ describe("generation prompt", () => {
     expect(prompt).toContain("drive ElUpload through update:fileList");
     expect(prompt).toContain("Do not read or mutate the root wrapper.vm");
     expect(prompt).toContain("reject a missing required attachment before startAndSubmit");
+    expect(prompt).toContain("Set a non-blank instanceTitle before startAndSubmit");
+    expect(prompt).toContain("required field whose exact fieldCode is applicationNo");
+    expect(prompt).toContain("otherwise use the literal business name");
     expect(prompt).toContain("Do not mock enum types");
     expect(prompt).toContain("Uint8Array(size)");
     expect(prompt).toContain("Frontend visual contract - match the platform flow-test UI");

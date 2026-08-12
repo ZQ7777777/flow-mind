@@ -52,7 +52,7 @@
   "protectedFiles": [
     {
       "path": "backend/pom.xml",
-      "sha256": "388a8d076a685881e19e5d1d7958b1c5e2df50b1c4fb51a896bf939b5e65138a"
+      "sha256": "51700eee2b7a8cf0b3cc6ecc54c004671da1779896154b4ebc08a290a0219fa0"
     },
     {
       "path": "frontend/package.json",
@@ -60,7 +60,7 @@
     },
     {
       "path": ".flowmind/references/platform-starter-0.1.0.md",
-      "sha256": "9466af701bb2d9798a29442cf786750353cd68ce9e37de5f3721a34e691a0704"
+      "sha256": "a8a1e64ee7cae22ee63e3e6d655ae8ed7656ee35d5d59d6efaf552dbecbe09d7"
     },
     {
       "path": "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java",

@@ -62,6 +62,58 @@ describe("static generated-code validation", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("rejects a missing instance title assignment", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!.replace(/^\s*request\.setInstanceTitle\([^\n]+\);\r?\n/m, ""),
+    );
+
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({
+      code: "INSTANCE_TITLE_REQUIRED",
+      relativePath: path,
+      actual: expect.stringContaining("No setInstanceTitle call"),
+    }));
+  });
+
+  it("rejects a blank instance title assignment", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    input.files.set(
+      path,
+      input.files.get(path)!.replace(/^\s*request\.setInstanceTitle\([^\n]+\);/m, '        request.setInstanceTitle("   ");'),
+    );
+
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({
+      code: "INSTANCE_TITLE_REQUIRED",
+      relativePath: path,
+      actual: expect.stringContaining("blank or null"),
+    }));
+  });
+
+  it("rejects an instance title assignment placed after startAndSubmit", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
+    const service = input.files.get(path)!;
+    const titleLine = service.match(/^\s*request\.setInstanceTitle\([^\n]+\);/m)![0];
+    input.files.set(
+      path,
+      service
+        .replace(`${titleLine}\n`, "")
+        .replace(
+          "ProcessInstanceDTO result = runtimeService.startAndSubmit(request);",
+          `ProcessInstanceDTO result = runtimeService.startAndSubmit(request);\n${titleLine}`,
+        ),
+    );
+
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({
+      code: "INSTANCE_TITLE_REQUIRED",
+      relativePath: path,
+      actual: expect.stringContaining("only after startAndSubmit"),
+    }));
+  });
+
   it("accepts an attachment mapping that uses a static final string constant", () => {
     const input = validInput();
     const path = input.spec.paths.service;

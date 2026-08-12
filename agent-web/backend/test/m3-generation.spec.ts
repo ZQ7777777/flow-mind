@@ -57,6 +57,7 @@ describe("M3 user-defined business generation", () => {
     const service = generation.readFile("session-m3", started.generationId, spec.paths.service, user);
     expect(service.content.match(/startAndSubmit\(/g)).toHaveLength(1);
     expect(service.content).toContain('request.setProcessCode("travel_expense_2026")');
+    expect(service.content).toContain('request.setInstanceTitle("差旅报销")');
     expect(service.content).toContain('variables.put("tripDays"');
     expect(generation.readFile("session-m3", started.generationId, spec.paths.requestDto, user).content).toContain('@DecimalMin("1")');
     expect(service.content).toContain('item.setAttachmentCode("receipts")');
@@ -110,6 +111,29 @@ describe("M3 user-defined business generation", () => {
     expect(service).not.toContain("bankReceipt");
     expect(view).toContain("请假原因");
     expect(view).not.toContain('type="file"');
+  });
+
+  it("appends a required application number to the generated instance title", async () => {
+    const target = createGenerationTarget(parent);
+    const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    requirement.businessCode = "numbered_request";
+    requirement.businessName = "编号申请";
+    requirement.formFields = [
+      { fieldCode: "description", fieldName: "说明", fieldType: "string", controlType: "textarea", required: true, validation: {}, sortOrder: 1 },
+      { fieldCode: "applicationNo", fieldName: "申请单号", fieldType: "string", controlType: "input", required: true, validation: {}, sortOrder: 2 },
+    ];
+    requirement.attachments = [];
+    seedActiveWorkflow(database, "session-numbered", null, "user_sales", requirement);
+
+    const started = generation.start("session-numbered", user, 0, "start-numbered", target);
+    await waitForReview(started.generationId, "session-numbered");
+
+    const spec = deriveGenerationSpec(requirement, readContract(target));
+    const service = generation.readFile("session-numbered", started.generationId, spec.paths.service, user).content;
+    const serviceTest = generation.readFile("session-numbered", started.generationId, spec.paths.serviceTest, user).content;
+    expect(service).toContain('request.setInstanceTitle("编号申请 - " + input.getApplicationNo())');
+    expect(serviceTest).toContain('request.setApplicationNo("value")');
+    expect(serviceTest).toContain('"编号申请 - value".equals(value.getInstanceTitle())');
   });
 
   it("generates initiation code when apply enters a parallel split gateway", async () => {

@@ -81,6 +81,10 @@ function serviceSource(
 ): string {
   const accessorType = simpleName(accessorImport);
   const variables = fields.map((field) => `        variables.put("${field.fieldCode}", input.${getter(field.fieldCode)}());`).join("\n");
+  const applicationNo = fields.find((field) => field.required && field.fieldCode === "applicationNo");
+  const instanceTitle = applicationNo
+    ? `"${escapeJava(spec.businessName)} - " + input.${getter(applicationNo.fieldCode)}()`
+    : `"${escapeJava(spec.businessName)}"`;
   const attachmentBlocks = spec.applyAttachments.map((attachment) => `
         java.util.List<MultipartFile> ${attachment.attachmentCode}Files = files.get("${attachment.attachmentCode}");
         int ${attachment.attachmentCode}Count = ${attachment.attachmentCode}Files == null ? 0 : ${attachment.attachmentCode}Files.size();
@@ -139,6 +143,7 @@ ${variables || "        // This confirmed process has no initiation form fields.
         List<AttachmentUploadItem> attachments = new ArrayList<AttachmentUploadItem>();${attachmentBlocks}
         StartProcessRequest request = new StartProcessRequest();
         request.setProcessCode("${escapeJava(spec.processCode)}");
+        request.setInstanceTitle(${instanceTitle});
         request.setStarterUserId(user.${userIdGetter}());
         request.setStarterDeptId(user.${departmentIdGetter}());
         request.setOperationId(operationId(user.${userIdGetter}(), idempotencyKey));
@@ -255,7 +260,16 @@ class ${spec.classPrefix}ControllerTest {
 function serviceTestSource(spec: GenerationSpec, fields: FormFieldRequirement[], accessorImport: string, accessorMethod: string): string {
   const accessorType = simpleName(accessorImport);
   const firstField = fields[0];
-  const setterLine = firstField ? `request.${setter(firstField.fieldCode)}(${javaTestValue(firstField)});` : "";
+  const applicationNo = fields.find((field) => field.required && field.fieldCode === "applicationNo");
+  const setterLines = [
+    firstField ? `request.${setter(firstField.fieldCode)}(${javaTestValue(firstField)});` : "",
+    applicationNo && applicationNo !== firstField
+      ? `request.${setter(applicationNo.fieldCode)}(${javaTestValue(applicationNo)});`
+      : "",
+  ].filter(Boolean).join("\n        ");
+  const expectedInstanceTitle = applicationNo
+    ? `${escapeJava(spec.businessName)} - ${javaTestValue(applicationNo).replace(/^"|"$/g, "")}`
+    : escapeJava(spec.businessName);
   const attachmentSetup = spec.applyAttachments.map((attachment) =>
     `        files.add("${escapeJava(attachment.attachmentCode)}", new MockMultipartFile("${escapeJava(attachment.attachmentCode)}", "proof.pdf", "application/pdf", new byte[] { 1 }));`,
   ).join("\n");
@@ -276,11 +290,13 @@ class ${spec.classPrefix}ServiceTest {
         when(users.${accessorMethod}()).thenReturn(new ${accessorType}.BusinessUser("u1", "d1"));
         when(runtime.startAndSubmit(any())).thenReturn(new ProcessInstanceDTO());
         ${spec.classPrefix}SubmitRequest request = new ${spec.classPrefix}SubmitRequest();
-        ${setterLine}
+        ${setterLines}
         LinkedMultiValueMap<String, MultipartFile> files = new LinkedMultiValueMap<>();
 ${attachmentSetup}
         new ${spec.classPrefix}Service(runtime, users).submit(request, files, "key");
-        verify(runtime, times(1)).startAndSubmit(argThat(value -> "${escapeJava(spec.processCode)}".equals(value.getProcessCode())));
+        verify(runtime, times(1)).startAndSubmit(argThat(value ->
+                "${escapeJava(spec.processCode)}".equals(value.getProcessCode())
+                        && "${expectedInstanceTitle}".equals(value.getInstanceTitle())));
     }
 }
 `;

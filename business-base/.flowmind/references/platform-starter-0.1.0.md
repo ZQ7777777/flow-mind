@@ -15,7 +15,7 @@ This file is authoritative for generated Java imports and calls. Do not infer al
 
 ## Exact request and response methods
 
-- `StartProcessRequest`: `setProcessCode`, `setStarterUserId`, `setStarterDeptId`, `setOperationId`, `setVariables`, `setAttachments`
+- `StartProcessRequest`: `setProcessCode`, `setInstanceTitle`, `setStarterUserId`, `setStarterDeptId`, `setOperationId`, `setVariables`, `setAttachments`
 - `AttachmentUploadItem`: `setAttachmentCode`, `setOwnerType`, `setFileName`, `setContentType`, `setSizeBytes`, `setContent`
 - Use `AttachmentOwnerTypeEnum.INSTANCE` for initiation attachments.
 - `ProcessInstanceDTO`: `getInstanceId`, `getInstanceStatus`, `getCreatedTasks`
@@ -33,6 +33,7 @@ import com.flowmind.platform.api.service.ProcessRuntimeService;
 
 StartProcessRequest request = new StartProcessRequest();
 request.setProcessCode("confirmed_process_code");
+request.setInstanceTitle("Confirmed business name");
 request.setStarterUserId(user.getUserId());
 request.setStarterDeptId(user.getDepartmentId());
 request.setOperationId(operationId);
