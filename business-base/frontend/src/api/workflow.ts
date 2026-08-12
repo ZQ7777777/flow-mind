@@ -147,6 +147,26 @@ export async function deleteAttachment(
   );
 }
 
+export async function replaceInstanceAttachment(
+  taskId: string,
+  attachmentId: string,
+  file: File,
+  expectedTaskVersion: number,
+  idempotencyKey: string,
+): Promise<WorkflowAttachmentView> {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+  formData.append("expectedTaskVersion", String(expectedTaskVersion));
+  return requestJson<WorkflowAttachmentView>(
+    `${WORKFLOW_BASE}/tasks/${encodeURIComponent(taskId)}/instance-attachments/${encodeURIComponent(attachmentId)}`,
+    {
+      method: "PUT",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: formData,
+    },
+  );
+}
+
 async function uploadAttachment(
   url: string,
   payload: AttachmentUploadPayload,

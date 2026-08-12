@@ -32,4 +32,27 @@ describe("AttachmentPanel", () => {
       attachmentCode: "proofAttachment",
     });
   });
+
+  it("offers atomic replacement only for existing instance attachments", async () => {
+    const wrapper = mount(AttachmentPanel, {
+      props: {
+        canReplace: true,
+        attachments: [
+          { attachmentId: "a1", ownerType: "INSTANCE", fileName: "old.pdf" },
+          { attachmentId: "a2", ownerType: "TASK", fileName: "task.txt" },
+        ],
+      },
+    });
+    const replacement = new File(["new"], "new.pdf", { type: "application/pdf" });
+    const input = wrapper.get('input[aria-label="替换 old.pdf"]');
+    Object.defineProperty(input.element, "files", { value: [replacement] });
+    await input.trigger("change");
+
+    expect(wrapper.emitted("replace")?.[0]?.[0]).toEqual({
+      attachment: expect.objectContaining({ attachmentId: "a1" }),
+      file: replacement,
+    });
+    expect(wrapper.find('input[aria-label="替换 task.txt"]').exists()).toBe(false);
+    expect(wrapper.find("form").exists()).toBe(false);
+  });
 });

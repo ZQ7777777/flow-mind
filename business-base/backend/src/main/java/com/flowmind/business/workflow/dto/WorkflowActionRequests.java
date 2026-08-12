@@ -5,6 +5,7 @@ import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
 import javax.validation.constraints.PositiveOrZero;
 import java.util.List;
+import java.util.Map;
 
 public final class WorkflowActionRequests {
     private WorkflowActionRequests() { }
@@ -27,11 +28,21 @@ public final class WorkflowActionRequests {
         public void setTargetNodeCode(String targetNodeCode) { this.targetNodeCode = targetNodeCode; }
     }
 
+    public static class Submit extends Basic {
+        @NotNull
+        private Map<String, Object> variables;
+        public Map<String, Object> getVariables() { return variables; }
+        public void setVariables(Map<String, Object> variables) { this.variables = variables; }
+    }
+
     public static class DirectSend extends Basic {
         @NotBlank
         private String targetNodeCode;
+        private Map<String, Object> variables;
         public String getTargetNodeCode() { return targetNodeCode; }
         public void setTargetNodeCode(String targetNodeCode) { this.targetNodeCode = targetNodeCode; }
+        public Map<String, Object> getVariables() { return variables; }
+        public void setVariables(Map<String, Object> variables) { this.variables = variables; }
     }
 
     public static class Transfer extends Basic {

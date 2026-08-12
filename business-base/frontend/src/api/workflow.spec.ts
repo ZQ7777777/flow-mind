@@ -4,6 +4,7 @@ import {
   fetchWorkflowList,
   fetchWorkflowUsers,
   uploadInstanceAttachment,
+  replaceInstanceAttachment,
 } from "./workflow";
 
 describe("workflow api", () => {
@@ -118,5 +119,22 @@ describe("workflow api", () => {
     expect(body.get("expectedTaskVersion")).toBe("4");
     expect(body.has("storageKey")).toBe(false);
     expect(body.has("uploaderUserId")).toBe(false);
+  });
+
+  it("replaces an instance attachment through the current starter task", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ attachmentId: "new-att" }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["new"], "new.pdf", { type: "application/pdf" });
+
+    await replaceInstanceAttachment("apply-task", "old-att", file, 4, "replace-key");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/workflow/tasks/apply-task/instance-attachments/old-att");
+    expect(init.method).toBe("PUT");
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("replace-key");
+    expect((init.body as FormData).get("expectedTaskVersion")).toBe("4");
+    expect(((init.body as FormData).get("file") as File).name).toBe("new.pdf");
   });
 });

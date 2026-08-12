@@ -117,6 +117,71 @@ class WorkflowB2B3IntegrationTest {
         todo(financeSession, processCode);
     }
 
+    @Test
+    void completedListWithdrawsToEditableApplyAndResubmitsVariables() throws Exception {
+        MockHttpSession salesSession = login("sales01");
+        bindSession(salesSession);
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        String processCode = "entry_withdraw_" + suffix;
+        createDefinition(processCode, suffix);
+        ProcessInstanceDTO started = start(processCode, suffix);
+
+        String completedBody = mockMvc.perform(get("/api/workflow/tasks/completed")
+                        .session(salesSession).param("processCode", processCode))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records[0].withdrawContext.targetNodeCode").value("apply"))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode withdrawContext = objectMapper.readTree(completedBody).path("records").get(0).path("withdrawContext");
+        String managerTaskId = withdrawContext.path("taskId").asText();
+        long managerTaskVersion = withdrawContext.path("expectedTaskVersion").asLong();
+
+        mockMvc.perform(post("/api/workflow/tasks/{taskId}/withdraw", managerTaskId)
+                        .session(salesSession).header("Idempotency-Key", "withdraw-conflict-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedTaskVersion\":" + (managerTaskVersion + 1) + "}"))
+                .andExpect(status().isConflict());
+
+        mockMvc.perform(post("/api/workflow/tasks/{taskId}/withdraw", managerTaskId)
+                        .session(salesSession).header("Idempotency-Key", "withdraw-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedTaskVersion\":" + managerTaskVersion + ",\"comment\":\"主动撤回\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.createdTasks[0].nodeCode").value("apply"));
+
+        mockMvc.perform(post("/api/workflow/tasks/{taskId}/withdraw", managerTaskId)
+                        .session(salesSession).header("Idempotency-Key", "withdraw-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedTaskVersion\":" + managerTaskVersion
+                                + ",\"comment\":\"主动撤回\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.replayed").value(true))
+                .andExpect(jsonPath("$.createdTasks.length()").value(1));
+
+        mockMvc.perform(get("/api/workflow/tasks/completed").session(salesSession)
+                        .param("processCode", processCode))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records[0].withdrawContext").doesNotExist());
+
+        TaskView apply = todo(salesSession, processCode);
+        mockMvc.perform(get("/api/workflow/tasks/{taskId}", apply.taskId).session(salesSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.allowedActions").isArray())
+                .andExpect(jsonPath("$.allowedActions[0]").value("SUBMIT"));
+        mockMvc.perform(post("/api/workflow/tasks/{taskId}/submit", apply.taskId)
+                        .session(salesSession).header("Idempotency-Key", "resubmit-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedTaskVersion\":" + apply.version
+                                + ",\"comment\":\"修改后重提\",\"variables\":{"
+                                + "\"applicationNo\":\"" + suffix.substring(0, 8) + "\","
+                                + "\"amount\":2000,\"currency\":\"CNY\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.createdTasks[0].nodeCode").value("manager"));
+
+        bindSession(salesSession);
+        assertThat(runtimeService.getInstance(started.getInstanceId()).getVariables().get("amount"))
+                .isEqualTo(2000);
+    }
+
     private TaskView todo(MockHttpSession session, String processCode) throws Exception {
         String body = mockMvc.perform(get("/api/workflow/tasks/todo")
                         .session(session).param("processCode", processCode).param("source", "ALL"))

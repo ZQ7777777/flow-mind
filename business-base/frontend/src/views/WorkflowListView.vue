@@ -10,6 +10,9 @@ import type {
   WorkflowTaskResponse,
 } from "../types/workflow";
 import { formatDateTime } from "../utils/format";
+import { performTaskAction } from "../api/workflow";
+import { WorkflowApiError } from "../api/http";
+import { createIdempotencyKey } from "../utils/idempotency";
 
 const props = defineProps<{
   type: WorkflowListType;
@@ -27,6 +30,10 @@ const filters = reactive({
   pageSize: 20,
 });
 const todoScope = ref<"own" | "delegated">("own");
+const withdrawingHistoryId = ref("");
+const operationError = ref("");
+const operationSuccess = ref("");
+const withdrawKeys = new Map<string, string>();
 
 const isTodoList = computed(() => props.type === "todo");
 
@@ -66,6 +73,36 @@ async function load(): Promise<void> {
     actionType: filters.actionType.trim() || undefined,
     source: isTodoList.value ? todoTaskSource() : undefined,
   });
+}
+
+async function withdraw(row: WorkflowHistoryTaskResponse): Promise<void> {
+  const context = row.withdrawContext;
+  if (!context || withdrawingHistoryId.value) return;
+  const target = context.targetNodeName || context.targetNodeCode || "上一节点";
+  if (!window.confirm(`确认撤回至 ${target}？当前下游任务将被取消。`)) return;
+  operationError.value = "";
+  operationSuccess.value = "";
+  withdrawingHistoryId.value = row.historyTaskId;
+  const key = withdrawKeys.get(row.historyTaskId) ?? createIdempotencyKey("workflow:withdraw");
+  withdrawKeys.set(row.historyTaskId, key);
+  try {
+    await performTaskAction(context.taskId, "WITHDRAW", {
+      expectedTaskVersion: context.expectedTaskVersion,
+      comment: "",
+      idempotencyKey: key,
+    });
+    withdrawKeys.delete(row.historyTaskId);
+    operationSuccess.value = `已撤回至 ${target}`;
+    await load();
+  } catch (error) {
+    operationError.value = error instanceof Error ? error.message : "撤回失败";
+    if (error instanceof WorkflowApiError) {
+      withdrawKeys.delete(row.historyTaskId);
+      if (error.status === 409) await load();
+    }
+  } finally {
+    withdrawingHistoryId.value = "";
+  }
 }
 
 function setTodoScope(scope: "own" | "delegated"): void {
@@ -208,6 +245,13 @@ function starterName(row: WorkflowListRecord): string | undefined {
       </div>
     </form>
 
+    <p v-if="operationSuccess" class="operation-message is-success" role="status">
+      {{ operationSuccess }}
+    </p>
+    <p v-if="operationError" class="operation-message is-error" role="alert">
+      {{ operationError }}
+    </p>
+
     <div class="table-wrap">
       <table>
         <thead>
@@ -242,6 +286,16 @@ function starterName(row: WorkflowListRecord): string | undefined {
             <td v-for="column in columns" :key="column">{{ columnValue(row, column) }}</td>
             <td class="table-actions">
               <RouterLink class="table-link" :to="detailPath(row)">详情</RouterLink>
+              <button
+                v-if="isHistoryTask(row) && row.withdrawContext"
+                type="button"
+                class="withdraw-button"
+                data-test="withdraw-completed-task"
+                :disabled="Boolean(withdrawingHistoryId)"
+                @click="withdraw(row)"
+              >
+                {{ withdrawingHistoryId === row.historyTaskId ? "撤回中..." : "撤回" }}
+              </button>
             </td>
           </tr>
         </tbody>
@@ -424,6 +478,25 @@ td {
 .state-cell.is-error {
   background: #fff1f2;
   color: #be123c;
+}
+
+.operation-message {
+  margin: 0 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 9px 11px;
+}
+
+.operation-message.is-success {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.operation-message.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 tbody tr:hover {

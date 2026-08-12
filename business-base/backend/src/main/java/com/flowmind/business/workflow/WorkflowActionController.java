@@ -31,7 +31,7 @@ public class WorkflowActionController {
     /** 提交或发送当前任务，不开放审批阶段变量编辑。 */
     @PostMapping("/submit")
     public WorkflowTaskActionResponse submit(@PathVariable String taskId,
-            @RequestHeader("Idempotency-Key") String key, @Valid @RequestBody WorkflowActionRequests.Basic body) {
+            @RequestHeader("Idempotency-Key") String key, @Valid @RequestBody WorkflowActionRequests.Submit body) {
         return actionService.execute("submit", taskId, key, body);
     }
 

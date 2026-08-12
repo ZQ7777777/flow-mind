@@ -7,6 +7,7 @@ import com.flowmind.platform.api.dto.DirectSendContextDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
@@ -20,6 +21,7 @@ import java.util.List;
 public class WorkflowAllowedActionResolver {
     private final ObjectMapper objectMapper;
     private final PlatformFacade platformFacade;
+    private final WorkflowWithdrawContextResolver withdrawContextResolver = new WorkflowWithdrawContextResolver();
 
     public WorkflowAllowedActionResolver(ObjectMapper objectMapper, PlatformFacade platformFacade) {
         this.objectMapper = objectMapper;
@@ -33,6 +35,12 @@ public class WorkflowAllowedActionResolver {
      */
     public List<String> resolve(TaskDTO task, ProcessDefinitionDetailDTO definition,
                                 List<TaskDTO> activeTasks, List<HistoryTaskDTO> histories, String userId) {
+        return resolve(task, definition, null, activeTasks, histories, userId);
+    }
+
+    public List<String> resolve(TaskDTO task, ProcessDefinitionDetailDTO definition,
+                                ProcessInstanceDetailDTO instance, List<TaskDTO> activeTasks,
+                                List<HistoryTaskDTO> histories, String userId) {
         if (task == null) return Collections.emptyList();
         List<String> actions = new ArrayList<String>();
         List<String> candidates = safe(task.getCandidateUserIds());
@@ -55,7 +63,9 @@ public class WorkflowAllowedActionResolver {
                 // Capability discovery is advisory; the action endpoint remains authoritative.
             }
         }
-        if (safe(activeTasks).size() == 1 && isPreviousHandler(histories, task.getTaskId(), userId)) actions.add("WITHDRAW");
+        WorkflowWithdrawContextResolver.Resolution withdraw = withdrawContextResolver.resolve(instance, userId);
+        if (withdraw != null && withdraw.getActiveTask() != null
+                && task.getTaskId().equals(withdraw.getActiveTask().getTaskId())) actions.add("WITHDRAW");
         return actions;
     }
 
@@ -80,23 +90,6 @@ public class WorkflowAllowedActionResolver {
         } catch (Exception ignored) {
             return false;
         }
-    }
-
-    /**
-     * 判断当前用户是否是上一有效办理人，用于保守展示撤回动作。
-     */
-    private boolean isPreviousHandler(List<HistoryTaskDTO> histories, String currentTaskId, String userId) {
-        List<HistoryTaskDTO> values = safe(histories);
-        for (int i = values.size() - 1; i >= 0; i--) {
-            HistoryTaskDTO history = values.get(i);
-            if (currentTaskId.equals(history.getActiveTaskId())) continue;
-            String action = history.getActionType() == null ? null : history.getActionType().name();
-            if ("SEND".equals(action) || "APPROVE".equals(action) || "REJECT".equals(action)
-                    || "RETURN".equals(action) || "DIRECT_SEND".equals(action)) {
-                return userId != null && userId.equals(history.getAssigneeUserId());
-            }
-        }
-        return false;
     }
 
     /**

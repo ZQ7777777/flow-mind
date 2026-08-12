@@ -20,6 +20,7 @@ public class WorkflowHistoryTaskResponse {
     private String comment;
     private LocalDateTime startedAt;
     private LocalDateTime completedAt;
+    private WithdrawContext withdrawContext;
 
     public String getHistoryTaskId() { return historyTaskId; }
     public void setHistoryTaskId(String historyTaskId) { this.historyTaskId = historyTaskId; }
@@ -55,4 +56,25 @@ public class WorkflowHistoryTaskResponse {
     public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
     public LocalDateTime getCompletedAt() { return completedAt; }
     public void setCompletedAt(LocalDateTime completedAt) { this.completedAt = completedAt; }
+    public WithdrawContext getWithdrawContext() { return withdrawContext; }
+    public void setWithdrawContext(WithdrawContext withdrawContext) { this.withdrawContext = withdrawContext; }
+
+    /**
+     * 当前已办记录可撤回时所需的可信活动任务快照。
+     */
+    public static class WithdrawContext {
+        private String taskId;
+        private Long expectedTaskVersion;
+        private String targetNodeCode;
+        private String targetNodeName;
+
+        public String getTaskId() { return taskId; }
+        public void setTaskId(String taskId) { this.taskId = taskId; }
+        public Long getExpectedTaskVersion() { return expectedTaskVersion; }
+        public void setExpectedTaskVersion(Long expectedTaskVersion) { this.expectedTaskVersion = expectedTaskVersion; }
+        public String getTargetNodeCode() { return targetNodeCode; }
+        public void setTargetNodeCode(String targetNodeCode) { this.targetNodeCode = targetNodeCode; }
+        public String getTargetNodeName() { return targetNodeName; }
+        public void setTargetNodeName(String targetNodeName) { this.targetNodeName = targetNodeName; }
+    }
 }

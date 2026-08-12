@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import AttachmentPanel from "../components/workflow/AttachmentPanel.vue";
 import CommentPanel from "../components/workflow/CommentPanel.vue";
 import ProcessGraph from "../components/workflow/ProcessGraph.vue";
@@ -12,6 +12,7 @@ import {
   downloadAttachment,
   uploadInstanceAttachment,
   uploadTaskAttachment,
+  replaceInstanceAttachment,
 } from "../api/workflow";
 import { WorkflowApiError } from "../api/http";
 import { useWorkflowStore } from "../stores/workflow";
@@ -24,6 +25,7 @@ const props = defineProps<{
 }>();
 
 const route = useRoute();
+const router = useRouter();
 const store = useWorkflowStore();
 
 const detail = computed(() => store.detail.data);
@@ -38,6 +40,16 @@ const currentNodeNames = computed(() => {
 });
 const actionKeys = new Map<TaskActionCode, string>();
 const attachmentError = ref("");
+const attachmentStatus = ref("");
+const formError = ref("");
+const variableFormRef = ref<InstanceType<typeof VariableFormReadonly> | null>(null);
+const formVariables = ref<Record<string, unknown>>({});
+const pendingReplacements = ref<Record<string, {
+  attachment: WorkflowAttachmentView;
+  file: File;
+  idempotencyKey: string;
+}>>({});
+const isEditableApply = computed(() => Boolean(detail.value?.allowedActions.includes("SUBMIT")));
 
 onMounted(() => {
   void loadDetail();
@@ -51,13 +63,29 @@ watch(
 );
 
 async function loadDetail(): Promise<void> {
+  pendingReplacements.value = {};
+  attachmentStatus.value = "";
   if (props.mode === "task" && taskId.value) {
     await store.loadTaskDetail(taskId.value);
+    formVariables.value = definitionVariables();
     return;
   }
   if (instanceId.value) {
     await store.loadInstanceDetail(instanceId.value);
+    formVariables.value = definitionVariables();
   }
+}
+
+function definitionVariables(): Record<string, unknown> {
+  const loaded = store.detail.data;
+  if (!loaded) return {};
+  const values: Record<string, unknown> = {};
+  for (const field of loaded.formFields) {
+    if (Object.prototype.hasOwnProperty.call(loaded.instance.variables, field.fieldCode)) {
+      values[field.fieldCode] = loaded.instance.variables[field.fieldCode];
+    }
+  }
+  return values;
 }
 
 async function submitAction(payload: {
@@ -69,27 +97,94 @@ async function submitAction(payload: {
   targetUserName?: string;
   addSignUserIds?: string[];
 }): Promise<void> {
-  if (!taskId.value) {
+  const actionTaskId = detail.value?.currentTask?.taskId || taskId.value;
+  if (!actionTaskId) {
     return;
+  }
+  formError.value = "";
+  if ((payload.action === "SUBMIT" || payload.action === "DIRECT_SEND") && isEditableApply.value) {
+    if (!variableFormRef.value?.validate()) {
+      formError.value = "请修正表单字段后再提交";
+      return;
+    }
+    try {
+      await savePendingReplacements();
+    } catch {
+      return;
+    }
   }
   const idempotencyKey = actionKeys.get(payload.action)
     ?? createIdempotencyKey(`workflow:${payload.action.toLowerCase()}`);
   actionKeys.set(payload.action, idempotencyKey);
   try {
-    await store.submitAction(taskId.value, payload.action, {
+    await store.submitAction(actionTaskId, payload.action, {
       expectedTaskVersion: payload.expectedTaskVersion,
       comment: payload.comment,
       targetNodeCode: payload.targetNodeCode,
       targetUserId: payload.targetUserId,
       targetUserName: payload.targetUserName,
       addSignUserIds: payload.addSignUserIds,
+      variables: isEditableApply.value
+        && (payload.action === "SUBMIT" || payload.action === "DIRECT_SEND")
+        ? { ...formVariables.value }
+        : undefined,
       idempotencyKey,
     });
     actionKeys.delete(payload.action);
+    if ((payload.action === "SUBMIT" || payload.action === "DIRECT_SEND")
+        && detail.value?.instance.instanceId) {
+      await router.replace({
+        name: "workflow-instance-detail",
+        params: { instanceId: detail.value.instance.instanceId },
+      });
+      return;
+    }
     await loadDetail();
   } catch (error) {
     if (error instanceof WorkflowApiError && error.status === 409) {
       await loadDetail();
+    }
+  }
+}
+
+function stageReplacement(payload: { attachment: WorkflowAttachmentView; file: File }): void {
+  pendingReplacements.value = {
+    ...pendingReplacements.value,
+    [payload.attachment.attachmentId]: {
+      attachment: payload.attachment,
+      file: payload.file,
+      idempotencyKey: createIdempotencyKey("workflow:attachment-replace"),
+    },
+  };
+  attachmentError.value = "";
+  attachmentStatus.value = `已选择 ${payload.file.name}，将在提交前替换`;
+}
+
+async function savePendingReplacements(): Promise<void> {
+  const task = detail.value?.currentTask;
+  if (!task) return;
+  attachmentError.value = "";
+  attachmentStatus.value = "";
+  for (const replacement of Object.values(pendingReplacements.value)) {
+    try {
+      const saved = await replaceInstanceAttachment(
+        task.taskId,
+        replacement.attachment.attachmentId,
+        replacement.file,
+        task.taskVersion,
+        replacement.idempotencyKey,
+      );
+      if (detail.value) {
+        detail.value.attachments = detail.value.attachments.map((item) =>
+          item.attachmentId === replacement.attachment.attachmentId ? saved : item,
+        );
+      }
+      const next = { ...pendingReplacements.value };
+      delete next[replacement.attachment.attachmentId];
+      pendingReplacements.value = next;
+    } catch (error) {
+      attachmentError.value = error instanceof Error ? error.message : "附件替换失败";
+      throw error;
     }
   }
 }
@@ -183,15 +278,26 @@ async function remove(item: WorkflowAttachmentView): Promise<void> {
         :edges="detail.edges"
         :current-node-codes="detail.instance.currentNodeCodes"
       />
-      <VariableFormReadonly :fields="detail.formFields" :variables="detail.instance.variables" />
+      <VariableFormReadonly
+        ref="variableFormRef"
+        :fields="detail.formFields"
+        :variables="formVariables"
+        :editable="isEditableApply"
+        @update:variables="formVariables = $event"
+      />
+      <p v-if="formError" class="action-error" role="alert">{{ formError }}</p>
       <AttachmentPanel
         :attachments="detail.attachments"
-        :can-upload="Boolean(detail.currentTask)"
+        :can-upload="Boolean(detail.currentTask) && !isEditableApply"
+        :can-replace="isEditableApply"
+        :can-delete="!isEditableApply"
         @upload="uploadAttachment"
+        @replace="stageReplacement"
         @download="download"
         @delete="remove"
       />
       <p v-if="attachmentError" class="action-error" role="alert">{{ attachmentError }}</p>
+      <p v-if="attachmentStatus" class="action-status" role="status">{{ attachmentStatus }}</p>
       <CommentPanel :comments="detail.comments" />
       <ProcessTimeline :items="detail.historyTasks" />
       <p v-if="store.actionError" class="action-error" role="alert">{{ store.actionError }}</p>
@@ -279,5 +385,14 @@ dd {
   padding: 10px 12px;
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.action-status {
+  margin: 0;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 </style>

@@ -17,6 +17,9 @@ import com.flowmind.platform.api.request.TaskOperationRequest;
 import com.flowmind.platform.api.request.TransferTaskRequest;
 import com.flowmind.platform.api.request.UnclaimTaskRequest;
 import com.flowmind.platform.api.request.WithdrawTaskRequest;
+import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
+import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
+import com.flowmind.platform.api.dto.TaskDTO;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -33,13 +36,16 @@ public class WorkflowActionService {
     private final PlatformDtoMapper mapper;
     private final OperationIdFactory operationIdFactory;
     private final WorkflowQueryService queryService;
+    private final WorkflowFormValueValidator formValueValidator;
 
     public WorkflowActionService(PlatformFacade platformFacade, PlatformDtoMapper mapper,
-                                 OperationIdFactory operationIdFactory, WorkflowQueryService queryService) {
+                                 OperationIdFactory operationIdFactory, WorkflowQueryService queryService,
+                                 WorkflowFormValueValidator formValueValidator) {
         this.platformFacade = platformFacade;
         this.mapper = mapper;
         this.operationIdFactory = operationIdFactory;
         this.queryService = queryService;
+        this.formValueValidator = formValueValidator;
     }
 
     /**
@@ -54,9 +60,12 @@ public class WorkflowActionService {
      */
     public WorkflowTaskActionResponse execute(String action, String taskId, String idempotencyKey,
                                                WorkflowActionRequests.Basic input) {
-        queryService.authorizedTaskInstance(taskId);
+        // 撤回必须允许 Platform 在原任务已归档后重放同一幂等请求，因此不能先依赖活动任务查询。
+        // 可信操作者仍由服务端注入，撤回资格与目标任务由 Platform 最终裁决。
+        ProcessInstanceDetailDTO instance = "withdraw".equals(action)
+                ? null : queryService.authorizedTaskInstance(taskId);
         String userId = platformFacade.currentUser().getUserId();
-        TaskOperationRequest request = request(action, input);
+        TaskOperationRequest request = request(action, taskId, instance, input);
         request.setTaskId(taskId);
         request.setExpectedTaskVersion(input.getExpectedTaskVersion());
         request.setOperatorUserId(userId);
@@ -69,9 +78,15 @@ public class WorkflowActionService {
      * 将通用动作编码和业务请求转换为对应的平台请求类型。
      * 审批阶段不映射任意流程变量，加签用户列表会保持顺序并去重。
      */
-    private TaskOperationRequest request(String action, WorkflowActionRequests.Basic input) {
+    private TaskOperationRequest request(String action, String taskId, ProcessInstanceDetailDTO instance,
+                                         WorkflowActionRequests.Basic input) {
         if ("approve".equals(action)) return new ApproveTaskRequest();
-        if ("submit".equals(action)) return new SubmitTaskRequest();
+        if ("submit".equals(action)) {
+            SubmitTaskRequest request = new SubmitTaskRequest();
+            request.setVariables(validatedVariables(taskId, instance,
+                    ((WorkflowActionRequests.Submit) input).getVariables()));
+            return request;
+        }
         if ("return".equals(action)) return new ReturnTaskRequest();
         if ("withdraw".equals(action)) return new WithdrawTaskRequest();
         if ("claim".equals(action)) return new ClaimTaskRequest();
@@ -83,7 +98,11 @@ public class WorkflowActionService {
         }
         if ("direct-send".equals(action)) {
             DirectSendRequest request = new DirectSendRequest();
-            request.setTargetNodeCode(((WorkflowActionRequests.DirectSend) input).getTargetNodeCode());
+            WorkflowActionRequests.DirectSend source = (WorkflowActionRequests.DirectSend) input;
+            request.setTargetNodeCode(source.getTargetNodeCode());
+            if (source.getVariables() != null) {
+                request.setVariables(validatedVariables(taskId, instance, source.getVariables()));
+            }
             return request;
         }
         if ("transfer".equals(action)) {
@@ -104,5 +123,13 @@ public class WorkflowActionService {
             return request;
         }
         throw new IllegalArgumentException("unsupported workflow action");
+    }
+
+    private java.util.Map<String, Object> validatedVariables(String taskId,
+                                                              ProcessInstanceDetailDTO instance,
+                                                              java.util.Map<String, Object> variables) {
+        TaskDTO task = platformFacade.getTask(taskId);
+        ProcessDefinitionDetailDTO definition = platformFacade.getDefinition(instance.getDefinitionId());
+        return formValueValidator.validate(definition, task, variables);
     }
 }

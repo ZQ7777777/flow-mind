@@ -16,6 +16,7 @@ import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.ReadRecordDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserContext;
@@ -28,6 +29,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 
 /**
  * 通用流程查询服务，负责可信身份校验、详情聚合、字段脱敏和已阅写入。
@@ -40,6 +42,7 @@ public class WorkflowQueryService {
     private final PlatformDtoMapper mapper;
     private final WorkflowAccessGuard accessGuard;
     private final WorkflowAllowedActionResolver allowedActionResolver;
+    private final WorkflowWithdrawContextResolver withdrawContextResolver = new WorkflowWithdrawContextResolver();
 
     public WorkflowQueryService(PlatformFacade platformFacade, PlatformDtoMapper mapper,
                                 WorkflowAccessGuard accessGuard,
@@ -101,7 +104,44 @@ public class WorkflowQueryService {
      * @param query 不含用户身份的查询条件
      * @return 已办分页结果
      */
-    public WorkflowPageResponse<WorkflowHistoryTaskResponse> completed(WorkflowListQuery query) { return mapper.historyPage(platformFacade.completed(query)); }
+    public WorkflowPageResponse<WorkflowHistoryTaskResponse> completed(WorkflowListQuery query) {
+        PageResult<HistoryTaskDTO> source = platformFacade.completed(query);
+        WorkflowPageResponse<WorkflowHistoryTaskResponse> response = mapper.historyPage(source);
+        enrichWithdrawContexts(response.getRecords(), platformFacade.currentUser().getUserId());
+        return response;
+    }
+
+    /**
+     * 每个实例仅加载一次运行详情，并且只给 Platform 认定的上一有效办理历史行附加撤回上下文。
+     */
+    private void enrichWithdrawContexts(List<WorkflowHistoryTaskResponse> records, String userId) {
+        Map<String, WorkflowWithdrawContextResolver.Resolution> resolutions =
+                new HashMap<String, WorkflowWithdrawContextResolver.Resolution>();
+        for (WorkflowHistoryTaskResponse record : records == null
+                ? Collections.<WorkflowHistoryTaskResponse>emptyList() : records) {
+            String instanceId = record.getInstanceId();
+            if (!resolutions.containsKey(instanceId)) {
+                WorkflowWithdrawContextResolver.Resolution resolution = null;
+                try {
+                    resolution = withdrawContextResolver.resolve(platformFacade.getInstance(instanceId), userId);
+                } catch (RuntimeException exception) {
+                    LOGGER.warn("Could not resolve withdraw context for instanceId={}", instanceId);
+                }
+                resolutions.put(instanceId, resolution);
+            }
+            WorkflowWithdrawContextResolver.Resolution resolution = resolutions.get(instanceId);
+            if (resolution == null || resolution.getSourceHistory() == null
+                    || !record.getHistoryTaskId().equals(resolution.getSourceHistory().getHistoryTaskId())) continue;
+            TaskDTO task = resolution.getActiveTask();
+            WorkflowHistoryTaskResponse.WithdrawContext context =
+                    new WorkflowHistoryTaskResponse.WithdrawContext();
+            context.setTaskId(task.getTaskId());
+            context.setExpectedTaskVersion(task.getTaskVersion());
+            context.setTargetNodeCode(record.getNodeCode());
+            context.setTargetNodeName(record.getNodeName());
+            record.setWithdrawContext(context);
+        }
+    }
 
     /**
      * 查询当前用户发起的流程实例。
@@ -190,7 +230,7 @@ public class WorkflowQueryService {
         UserContext user = platformFacade.currentUser();
         accessGuard.check(instance, instance.getActiveTasks(), instance.getHistoryTasks(), user.getUserId());
         ProcessDefinitionDetailDTO definition = platformFacade.getDefinition(instance.getDefinitionId());
-        java.util.List<String> actions = allowedActionResolver.resolve(currentTask, definition,
+        java.util.List<String> actions = allowedActionResolver.resolve(currentTask, definition, instance,
                 instance.getActiveTasks(), instance.getHistoryTasks(), user.getUserId());
         List<ProcessNodeDTO> rejectTargetNodes = currentTask == null || !actions.contains("REJECT")
                 ? Collections.<ProcessNodeDTO>emptyList()

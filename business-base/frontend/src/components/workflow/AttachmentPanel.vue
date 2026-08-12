@@ -6,12 +6,15 @@ import { formatDateTime, formatFileSize } from "../../utils/format";
 const props = defineProps<{
   attachments: WorkflowAttachmentView[];
   canUpload?: boolean;
+  canReplace?: boolean;
+  canDelete?: boolean;
 }>();
 
 const emit = defineEmits<{
   upload: [payload: { file: File; fieldCode: string; attachmentCode: string }];
   download: [attachment: WorkflowAttachmentView];
   delete: [attachment: WorkflowAttachmentView];
+  replace: [payload: { attachment: WorkflowAttachmentView; file: File }];
 }>();
 
 const selectedFile = ref<File | null>(null);
@@ -38,6 +41,13 @@ function submitUpload(): void {
     attachmentCode: attachmentCode.value.trim(),
   });
   selectedFile.value = null;
+}
+
+function selectReplacement(attachment: WorkflowAttachmentView, event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) emit("replace", { attachment, file });
+  input.value = "";
 }
 </script>
 
@@ -74,7 +84,15 @@ function submitUpload(): void {
             <button type="button" @click="emit('download', attachment)">
               下载
             </button>
-            <button type="button" @click="emit('delete', attachment)">
+            <label v-if="canReplace" class="replace-control">
+              <span>替换</span>
+              <input
+                type="file"
+                :aria-label="`替换 ${attachment.fileName}`"
+                @change="selectReplacement(attachment, $event)"
+              />
+            </label>
+            <button v-if="canDelete" type="button" @click="emit('delete', attachment)">
               删除
             </button>
           </li>
@@ -92,7 +110,7 @@ function submitUpload(): void {
             <button type="button" @click="emit('download', attachment)">
               下载
             </button>
-            <button type="button" @click="emit('delete', attachment)">
+            <button v-if="canDelete" type="button" @click="emit('delete', attachment)">
               删除
             </button>
           </li>
@@ -202,6 +220,28 @@ button:focus-visible {
   overflow-wrap: anywhere;
   color: #111827;
   font-weight: 600;
+}
+
+.replace-control {
+  display: inline-flex;
+  position: relative;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 0 12px;
+  background: #fff;
+  color: #111827;
+  cursor: pointer;
+}
+
+.replace-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
 }
 
 .empty-state {

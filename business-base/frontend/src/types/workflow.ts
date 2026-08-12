@@ -93,6 +93,14 @@ export interface WorkflowHistoryTaskResponse {
   comment?: string;
   startedAt?: string;
   completedAt?: string;
+  withdrawContext?: WorkflowWithdrawContext;
+}
+
+export interface WorkflowWithdrawContext {
+  taskId: string;
+  expectedTaskVersion: number;
+  targetNodeCode: string;
+  targetNodeName?: string;
 }
 
 export interface WorkflowInstanceResponse {
@@ -209,6 +217,7 @@ export interface TaskActionPayload {
   targetUserId?: string;
   targetUserName?: string;
   addSignUserIds?: string[];
+  variables?: Record<string, unknown>;
   idempotencyKey: string;
 }
 

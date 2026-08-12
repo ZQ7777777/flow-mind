@@ -73,4 +73,74 @@ describe("WorkflowListView", () => {
     expect(wrapper.find("thead").text()).toContain("状态");
     expect(wrapper.find("tbody").text()).toContain("加载中");
   });
+
+  it("withdraws only an eligible completed row and refreshes in place", async () => {
+    const eligiblePage = new Response(JSON.stringify({
+      records: [{
+        historyTaskId: "history-1",
+        instanceId: "instance-1",
+        instanceTitle: "申请单",
+        processName: "入金",
+        actionType: "SEND",
+        withdrawContext: {
+          taskId: "manager-task",
+          expectedTaskVersion: 3,
+          targetNodeCode: "apply",
+          targetNodeName: "申请",
+        },
+      }],
+      pageNo: 1, pageSize: 20, total: 1, totalPages: 1,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(eligiblePage)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ replayed: false }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(emptyPage());
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    const wrapper = mount(WorkflowListView, {
+      props: { type: "completed", title: "我的已办" },
+      global: {
+        plugins: [createPinia()],
+        stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get('[data-test="withdraw-completed-task"]').trigger("click");
+    await flushPromises();
+
+    expect(fetchMock.mock.calls[1][0]).toContain("/api/workflow/tasks/manager-task/withdraw");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toMatchObject({
+      expectedTaskVersion: 3,
+      comment: "",
+    });
+    expect(fetchMock.mock.calls[2][0]).toContain("/api/workflow/tasks/completed");
+    expect(wrapper.text()).toContain("已撤回至 申请");
+  });
+
+  it("does not request withdrawal when confirmation is cancelled", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      records: [{
+        historyTaskId: "history-1", instanceId: "instance-1", instanceTitle: "申请单",
+        withdrawContext: { taskId: "manager-task", expectedTaskVersion: 3, targetNodeCode: "apply" },
+      }],
+      pageNo: 1, pageSize: 20, total: 1, totalPages: 1,
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    vi.stubGlobal("confirm", vi.fn(() => false));
+    const wrapper = mount(WorkflowListView, {
+      props: { type: "completed", title: "我的已办" },
+      global: {
+        plugins: [createPinia()],
+        stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get('[data-test="withdraw-completed-task"]').trigger("click");
+    await flushPromises();
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
 });

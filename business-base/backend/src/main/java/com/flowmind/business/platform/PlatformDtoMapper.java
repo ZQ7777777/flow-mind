@@ -322,15 +322,21 @@ public class PlatformDtoMapper {
         List<WorkflowDetailResponse.AttachmentView> targets = new ArrayList<WorkflowDetailResponse.AttachmentView>();
         for (AttachmentDTO source : safe(sources)) {
             if (Boolean.TRUE.equals(source.getDeleted())) continue;
-            WorkflowDetailResponse.AttachmentView target = new WorkflowDetailResponse.AttachmentView();
-            target.setAttachmentId(source.getAttachmentId()); target.setInstanceId(source.getInstanceId());
-            target.setTaskId(source.getTaskId()); target.setOwnerType(name(source.getOwnerType()));
-            target.setAttachmentCode(source.getAttachmentCode()); target.setFieldCode(source.getFieldCode());
-            target.setFileName(source.getFileName()); target.setContentType(source.getContentType());
-            target.setSizeBytes(source.getSizeBytes()); target.setUploadedBy(source.getUploadedBy());
-            target.setUploadedAt(source.getUploadedAt()); targets.add(target);
+            targets.add(attachment(source));
         }
         return targets;
+    }
+
+    /** 将单个附件映射为不暴露 storageKey 的业务响应。 */
+    public WorkflowDetailResponse.AttachmentView attachment(AttachmentDTO source) {
+        WorkflowDetailResponse.AttachmentView target = new WorkflowDetailResponse.AttachmentView();
+        target.setAttachmentId(source.getAttachmentId()); target.setInstanceId(source.getInstanceId());
+        target.setTaskId(source.getTaskId()); target.setOwnerType(name(source.getOwnerType()));
+        target.setAttachmentCode(source.getAttachmentCode()); target.setFieldCode(source.getFieldCode());
+        target.setFileName(source.getFileName()); target.setContentType(source.getContentType());
+        target.setSizeBytes(source.getSizeBytes()); target.setUploadedBy(source.getUploadedBy());
+        target.setUploadedAt(source.getUploadedAt());
+        return target;
     }
 
     /**

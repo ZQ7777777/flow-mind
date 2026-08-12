@@ -5,6 +5,9 @@ import com.flowmind.business.platform.PlatformDtoMapper;
 import com.flowmind.business.platform.PlatformFacade;
 import com.flowmind.business.workflow.dto.WorkflowActionRequests;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
+import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
+import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.request.AddSignRequest;
@@ -13,6 +16,7 @@ import com.flowmind.platform.api.request.DirectSendRequest;
 import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.TaskOperationRequest;
 import com.flowmind.platform.api.request.TransferTaskRequest;
+import com.flowmind.platform.api.request.SubmitTaskRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -32,13 +36,23 @@ class WorkflowActionServiceTest {
     private PlatformFacade facade;
     private WorkflowQueryService queryService;
     private WorkflowActionService service;
+    private WorkflowFormValueValidator formValueValidator;
 
     @BeforeEach
     void setUp() {
         facade = mock(PlatformFacade.class);
         queryService = mock(WorkflowQueryService.class);
-        service = new WorkflowActionService(facade, new PlatformDtoMapper(), new OperationIdFactory(), queryService);
+        formValueValidator = mock(WorkflowFormValueValidator.class);
+        service = new WorkflowActionService(facade, new PlatformDtoMapper(), new OperationIdFactory(), queryService,
+                formValueValidator);
         when(facade.currentUser()).thenReturn(new UserContext("manager-1", "Manager", "dept-1", "Dept"));
+        ProcessInstanceDetailDTO instance = new ProcessInstanceDetailDTO();
+        instance.setDefinitionId("definition-1");
+        when(queryService.authorizedTaskInstance("task-1")).thenReturn(instance);
+        when(facade.getTask("task-1")).thenReturn(new TaskDTO());
+        when(facade.getDefinition("definition-1")).thenReturn(new ProcessDefinitionDetailDTO());
+        when(formValueValidator.validate(any(ProcessDefinitionDetailDTO.class), any(TaskDTO.class),
+                any(Map.class))).thenAnswer(invocation -> invocation.getArgument(2));
         TaskActionResult result = new TaskActionResult();
         result.setInstance(new ProcessInstanceDTO());
         when(facade.execute(any(String.class), any(TaskOperationRequest.class))).thenReturn(result);
@@ -47,7 +61,10 @@ class WorkflowActionServiceTest {
     @Test
     void everyActionCarriesTrustedIdentityVersionAndActionIsolatedOperationId() {
         Map<String, WorkflowActionRequests.Basic> actions = new LinkedHashMap<String, WorkflowActionRequests.Basic>();
-        actions.put("approve", basic()); actions.put("submit", basic()); actions.put("return", basic());
+        actions.put("approve", basic());
+        WorkflowActionRequests.Submit submit = new WorkflowActionRequests.Submit(); copy(submit);
+        submit.setVariables(new LinkedHashMap<String, Object>()); actions.put("submit", submit);
+        actions.put("return", basic());
         actions.put("withdraw", basic()); actions.put("claim", basic()); actions.put("unclaim", basic());
         WorkflowActionRequests.Reject reject = new WorkflowActionRequests.Reject(); copy(reject); reject.setTargetNodeCode("apply"); actions.put("reject", reject);
         WorkflowActionRequests.DirectSend direct = new WorkflowActionRequests.DirectSend(); copy(direct); direct.setTargetNodeCode("review"); actions.put("direct-send", direct);
@@ -67,7 +84,7 @@ class WorkflowActionServiceTest {
             operationIds.put(entry.getKey(), request.getOperationId());
         }
         assertThat(operationIds.values()).doesNotHaveDuplicates();
-        verify(queryService, org.mockito.Mockito.times(actions.size())).authorizedTaskInstance("task-1");
+        verify(queryService, org.mockito.Mockito.times(actions.size() - 1)).authorizedTaskInstance("task-1");
     }
 
     @Test
@@ -87,6 +104,24 @@ class WorkflowActionServiceTest {
         assertThat(RejectTaskRequest.class.getMethods()).anyMatch(method -> method.getName().equals("getTargetNodeCode"));
         assertThat(TransferTaskRequest.class.getMethods()).anyMatch(method -> method.getName().equals("getTargetUserId"));
         assertThat(DelegateTaskRequest.class.getMethods()).anyMatch(method -> method.getName().equals("getTargetUserName"));
+    }
+
+    @Test
+    void mapsValidatedVariablesOnlyForStarterSubmitAndDirectSend() {
+        Map<String, Object> variables = new LinkedHashMap<String, Object>(); variables.put("amount", 2000);
+        WorkflowActionRequests.Submit submit = new WorkflowActionRequests.Submit(); copy(submit);
+        submit.setVariables(variables);
+        service.execute("submit", "task-1", "submit-key", submit);
+        ArgumentCaptor<TaskOperationRequest> submitCaptor = ArgumentCaptor.forClass(TaskOperationRequest.class);
+        verify(facade).execute(eq("submit"), submitCaptor.capture());
+        assertThat(((SubmitTaskRequest) submitCaptor.getValue()).getVariables()).containsEntry("amount", 2000);
+
+        WorkflowActionRequests.DirectSend direct = new WorkflowActionRequests.DirectSend(); copy(direct);
+        direct.setTargetNodeCode("manager"); direct.setVariables(variables);
+        service.execute("direct-send", "task-1", "direct-key", direct);
+        ArgumentCaptor<TaskOperationRequest> directCaptor = ArgumentCaptor.forClass(TaskOperationRequest.class);
+        verify(facade).execute(eq("direct-send"), directCaptor.capture());
+        assertThat(((DirectSendRequest) directCaptor.getValue()).getVariables()).containsEntry("amount", 2000);
     }
 
     private WorkflowActionRequests.Basic basic() { WorkflowActionRequests.Basic value = new WorkflowActionRequests.Basic(); copy(value); return value; }

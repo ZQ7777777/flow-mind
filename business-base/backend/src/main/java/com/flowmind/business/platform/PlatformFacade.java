@@ -19,6 +19,7 @@ import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.request.TaskOperationRequest;
+import com.flowmind.platform.api.request.ReplaceInstanceAttachmentRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.ProcessDefinitionService;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
@@ -137,6 +138,11 @@ public class PlatformFacade {
         query.setInstanceId(instanceId);
         query.setOperatorUserId(currentUser().getUserId());
         return attachmentService.queryAttachments(query);
+    }
+
+    /** 使用当前申请返工任务原子替换已有实例附件。 */
+    public AttachmentDTO replaceInstanceAttachment(ReplaceInstanceAttachmentRequest request) {
+        return attachmentService.replaceInstanceAttachment(request);
     }
 
     /**
