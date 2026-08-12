@@ -6,6 +6,7 @@ import com.flowmind.platform.core.runtime.RuntimeValidationException;
 import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.Map;
 
 /** Reads the minimal M6 reminder policy JSON. */
@@ -26,6 +27,15 @@ public class ReminderPolicyReader {
         }
         policy.setEnabled(Boolean.TRUE.equals(config.get("enabled"))
                 || "true".equalsIgnoreCase(String.valueOf(config.get("enabled"))));
+        Object beforeDueMinutes = config.get("beforeDueMinutes");
+        if (beforeDueMinutes != null) {
+            int value = number(beforeDueMinutes, "beforeDueMinutes");
+            if (value <= 0) {
+                throw new RuntimeValidationException(RuntimeErrorCodes.NODE_CONFIG_INVALID,
+                        "reminder beforeDueMinutes must be positive");
+            }
+            policy.setBeforeDueMinutes(Integer.valueOf(value));
+        }
         Object maxCount = config.get("maxCount");
         if (maxCount != null) {
             int value = number(maxCount, "maxCount");
@@ -43,14 +53,11 @@ public class ReminderPolicyReader {
     }
 
     private int number(Object value, String fieldName) {
-        if (value instanceof Number) {
-            return ((Number) value).intValue();
-        }
         try {
-            return Integer.parseInt(String.valueOf(value));
-        } catch (NumberFormatException ex) {
+            return new BigDecimal(String.valueOf(value)).intValueExact();
+        } catch (NumberFormatException | ArithmeticException ex) {
             throw new RuntimeValidationException(RuntimeErrorCodes.NODE_CONFIG_INVALID,
-                    fieldName + " must be a number");
+                    fieldName + " must be an integer");
         }
     }
 }

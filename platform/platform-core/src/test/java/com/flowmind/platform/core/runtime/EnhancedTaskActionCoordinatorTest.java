@@ -80,6 +80,8 @@ class EnhancedTaskActionCoordinatorTest {
         fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}"),
                 userNode("finance", null)));
+        fixture.definition.setEdges(java.util.Collections.singletonList(
+                edge("finance-manager", "finance", "manager")));
         when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
                 history("manager-history", "user-a", "manager", ActionTypeEnum.APPROVE.name(), null)));
 
@@ -93,6 +95,31 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void rejectRejectsPreviouslyVisitedDownstreamTargetBeforeCompletingTask() {
+        Fixture fixture = fixture(ActionTypeEnum.REJECT);
+        RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-reject-downstream",
+                fixture.task, fixture.operator);
+        request.setTargetNodeCode("downstream");
+        fixture.definition.setNodes(java.util.Arrays.asList(
+                userNode("manager", "{\"taskActionRules\":{\"reject\":{\"enabled\":true,"
+                        + "\"targetNodeCodes\":[\"downstream\"]}}}"),
+                userNode("downstream", null)));
+        fixture.definition.setEdges(java.util.Collections.singletonList(
+                edge("manager-downstream", "manager", "downstream")));
+        when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
+                history("downstream-history", "downstream-user", "downstream", ActionTypeEnum.APPROVE.name(), null)));
+        allowReachable(fixture, "downstream");
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.reject(request));
+
+        assertEquals(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, error.getErrorCode());
+        assertEquals("reject target must precede the current node", error.getMessage());
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+        verify(fixture.historyWriter, never()).archive(any(HistoryArchiveCommand.class));
+    }
+
+    @Test
     void rejectCompletesSourceArchivesRelationAndCreatesTargetTasks() {
         Fixture fixture = fixture(ActionTypeEnum.REJECT);
         RejectTaskRequest request = taskRequest(new RejectTaskRequest(), "op-reject-success", fixture.task, fixture.operator);
@@ -100,6 +127,8 @@ class EnhancedTaskActionCoordinatorTest {
         fixture.definition.setNodes(java.util.Arrays.asList(userNode("manager",
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}"),
                 userNode("finance", null)));
+        fixture.definition.setEdges(java.util.Collections.singletonList(
+                edge("finance-manager", "finance", "manager")));
         ProcessHistoryTaskEntity archived = history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}");
         when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
                 history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
@@ -177,6 +206,7 @@ class EnhancedTaskActionCoordinatorTest {
                         "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"starter\"]}}}"),
                 userNode("other", null)));
         fixture.definition.setEdges(java.util.Arrays.asList(
+                edge("starter-split", "starter", "split"),
                 edge("branch-a", "split", "manager"),
                 edge("manager-join", "manager", "join"),
                 edge("branch-b", "split", "other"),
@@ -223,7 +253,7 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
-    void parallelRejectToAnotherBranchReentersParallelGatewayAfterCancelingGroup() {
+    void parallelRejectToAnotherBranchIsRejectedAsNonPrecedingTarget() {
         Fixture fixture = fixture(ActionTypeEnum.REJECT);
         fixture.task.setTaskGroupId("parallel-1");
         fixture.task.setBranchKey("branch-a");
@@ -244,28 +274,14 @@ class EnhancedTaskActionCoordinatorTest {
         when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
                 history("other-history", "other-user", "other", ActionTypeEnum.APPROVE.name(), null)));
         allowReachable(fixture, "other");
-        ProcessTaskGroupEntity parallel = parallelGroup("parallel-1");
-        when(fixture.groups.findById("parallel-1")).thenReturn(parallel);
-        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
-        when(fixture.groups.cancel("parallel-1", 2L)).thenReturn(1);
-        when(fixture.groups.findActiveChildren("parallel-1"))
-                .thenReturn(java.util.Collections.<ProcessTaskGroupEntity>emptyList());
-        when(fixture.tasks.findOpenByParallelContext("parallel-1", "task-1"))
-                .thenReturn(java.util.Collections.<ProcessActiveTaskEntity>emptyList());
-        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
-                .thenReturn(history("reject-history", "user-a", "manager", ActionTypeEnum.REJECT.name(), "{}"));
-        when(fixture.histories.updateExtraJson(eq("reject-history"), any(String.class))).thenReturn(1);
-        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
-                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
 
-        TaskActionResult result = fixture.coordinator.reject(request);
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.reject(request));
 
-        assertNotNull(result);
-        verify(fixture.groups).cancel("parallel-1", 2L);
-        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("split"),
-                eq(null), eq(null), eq(null));
-        verify(fixture.advancer, never()).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("other"),
-                any(String.class), any(String.class), any(RuntimeAdvancePreparation.class));
+        assertEquals(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, error.getErrorCode());
+        assertEquals("reject target must precede the current node", error.getMessage());
+        verify(fixture.tasks, never()).complete(any(String.class), any(Long.class));
+        verify(fixture.groups, never()).cancel(any(String.class), any(Long.class));
     }
 
     @Test
@@ -285,7 +301,8 @@ class EnhancedTaskActionCoordinatorTest {
                 edge("branch-a", "split", "parallel-review"),
                 edge("review-join", "parallel-review", "join"),
                 edge("branch-b", "split", "parallel-finance"),
-                edge("finance-join", "parallel-finance", "join")));
+                edge("finance-join", "parallel-finance", "join"),
+                edge("join-manager", "join", "manager")));
         when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
                 history("parallel-review-history", "review-user", "parallel-review",
                         ActionTypeEnum.APPROVE.name(), null)));
@@ -339,6 +356,8 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        fixture.definition.setEdges(java.util.Collections.singletonList(
+                edge("finance-manager", "finance", "manager")));
         when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
                 history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
         allowReachable(fixture, "finance");
@@ -385,6 +404,8 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        fixture.definition.setEdges(java.util.Collections.singletonList(
+                edge("finance-manager", "finance", "manager")));
         when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
                 history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
         allowReachable(fixture, "finance");
@@ -434,6 +455,8 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        fixture.definition.setEdges(java.util.Collections.singletonList(
+                edge("finance-manager", "finance", "manager")));
         when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
                 history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
         allowReachable(fixture, "finance");
@@ -467,6 +490,8 @@ class EnhancedTaskActionCoordinatorTest {
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"finance\"]}}}");
         manager.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
         fixture.definition.setNodes(java.util.Arrays.asList(manager, userNode("finance", null)));
+        fixture.definition.setEdges(java.util.Collections.singletonList(
+                edge("finance-manager", "finance", "manager")));
         when(fixture.histories.findByInstanceId("instance-1")).thenReturn(java.util.Collections.singletonList(
                 history("finance-history", "finance-user", "finance", ActionTypeEnum.APPROVE.name(), null)));
         allowReachable(fixture, "finance");

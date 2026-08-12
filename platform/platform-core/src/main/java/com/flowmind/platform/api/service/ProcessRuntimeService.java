@@ -105,7 +105,8 @@ public interface ProcessRuntimeService {
     DirectSendContextDTO getDirectSendContext(String taskId);
 
     /**
-     * Queries reject targets allowed by the node rule, instance history, and current branch conditions.
+     * Queries reject targets allowed by the node rule, instance history, current branch conditions,
+     * and the definition-graph predecessors of the current task node.
      *
      * @param taskId active task ID
      * @return eligible user-task nodes in configured order

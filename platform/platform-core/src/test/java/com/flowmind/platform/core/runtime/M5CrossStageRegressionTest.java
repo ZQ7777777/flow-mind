@@ -3,6 +3,7 @@ package com.flowmind.platform.core.runtime;
 import com.flowmind.platform.api.dto.AuditLogQuery;
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
+import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TodoTaskQuery;
 import com.flowmind.platform.api.dto.UserContext;
@@ -248,7 +249,11 @@ class M5CrossStageRegressionTest {
         ProcessNodeDTO review = node("review", ApproverRuleTypeEnum.USER,
                 "{\"taskActionRules\":{\"reject\":{\"enabled\":true,\"targetNodeCodes\":[\"apply\"]}}}");
         definition.setNodes(Arrays.asList(apply, review));
-        definition.setEdges(Collections.emptyList());
+        ProcessEdgeDTO applyToReview = new ProcessEdgeDTO();
+        applyToReview.setEdgeCode("apply-review");
+        applyToReview.setSourceNodeCode("apply");
+        applyToReview.setTargetNodeCode("review");
+        definition.setEdges(Collections.singletonList(applyToReview));
         return definition;
     }
 

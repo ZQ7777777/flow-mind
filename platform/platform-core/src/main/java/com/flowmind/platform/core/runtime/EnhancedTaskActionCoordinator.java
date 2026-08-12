@@ -143,6 +143,7 @@ public class EnhancedTaskActionCoordinator {
                 assertRejectRule(context.definition, context.task.getNodeCode(), request.getTargetNodeCode());
                 assertRejectTargetPassedByInstance(context, request.getTargetNodeCode());
                 assertRejectTargetReachableByCurrentConditions(context, request.getTargetNodeCode());
+                assertRejectTargetPrecedesCurrentNode(context, request.getTargetNodeCode());
                 ParallelRejectContext currentParallel = resolveCurrentParallelContext(context);
                 ParallelTargetContext targetParallel = resolveTargetParallelContext(context.definition,
                         request.getTargetNodeCode());
@@ -414,7 +415,7 @@ public class EnhancedTaskActionCoordinator {
 
     /**
      * Returns reject targets allowed by the node rule, already visited by the instance,
-     * and reachable under the instance's current branch conditions.
+     * reachable under the instance's current branch conditions, and preceding the current node.
      */
     public List<ProcessNodeDTO> getRejectTargetNodes(ProcessActiveTaskEntity task,
                                                      ProcessDefinitionDetailDTO definition) {
@@ -443,6 +444,7 @@ public class EnhancedTaskActionCoordinator {
             }
         }
         Set<String> reachableNodeCodes = nodeAdvancer.reachableUserTaskNodeCodes(instance, definition);
+        Set<String> precedingNodeCodes = precedingUserTaskNodeCodes(definition, task.getNodeCode());
         Map<String, ProcessNodeDTO> nodesByCode = new LinkedHashMap<String, ProcessNodeDTO>();
         if (definition.getNodes() != null) {
             for (ProcessNodeDTO node : definition.getNodes()) {
@@ -456,7 +458,8 @@ public class EnhancedTaskActionCoordinator {
         for (String nodeCode : rules.getRejectTargetNodeCodes()) {
             ProcessNodeDTO node = nodesByCode.get(nodeCode);
             if (node != null && NodeTypeEnum.USER_TASK.equals(node.getNodeType())
-                    && historicalNodeCodes.contains(nodeCode) && reachableNodeCodes.contains(nodeCode)) {
+                    && historicalNodeCodes.contains(nodeCode) && reachableNodeCodes.contains(nodeCode)
+                    && precedingNodeCodes.contains(nodeCode)) {
                 targets.add(node);
             }
         }
@@ -912,6 +915,46 @@ public class EnhancedTaskActionCoordinator {
         if (!nodeAdvancer.reachableUserTaskNodeCodes(context.instance, context.definition).contains(targetNodeCode)) {
             throw validation(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED, "驳回目标节点当前条件不可达，请重新选择");
         }
+    }
+
+    private void assertRejectTargetPrecedesCurrentNode(EnhancedActionContext context, String targetNodeCode) {
+        if (!precedingUserTaskNodeCodes(context.definition, context.task.getNodeCode()).contains(targetNodeCode)) {
+            throw validation(RuntimeErrorCodes.REJECT_TARGET_NOT_ALLOWED,
+                    "reject target must precede the current node");
+        }
+    }
+
+    /** Collects user tasks that can reach the current node by following definition edges. */
+    private Set<String> precedingUserTaskNodeCodes(ProcessDefinitionDetailDTO definition, String currentNodeCode) {
+        DefinitionGraphIndex graph = DefinitionGraphIndex.from(definition);
+        Set<String> preceding = new LinkedHashSet<String>();
+        Set<String> visited = new LinkedHashSet<String>();
+        ArrayDeque<String> pending = new ArrayDeque<String>();
+        visited.add(currentNodeCode);
+        for (ProcessEdgeDTO edge : graph.getIncomingEdges(currentNodeCode)) {
+            if (!isBlank(edge.getSourceNodeCode())) {
+                pending.addLast(edge.getSourceNodeCode());
+            }
+        }
+        while (!pending.isEmpty()) {
+            String nodeCode = pending.removeFirst();
+            if (!visited.add(nodeCode)) {
+                continue;
+            }
+            ProcessNodeDTO node = graph.getNode(nodeCode);
+            if (node == null) {
+                continue;
+            }
+            if (NodeTypeEnum.USER_TASK.equals(node.getNodeType())) {
+                preceding.add(nodeCode);
+            }
+            for (ProcessEdgeDTO edge : graph.getIncomingEdges(nodeCode)) {
+                if (!isBlank(edge.getSourceNodeCode())) {
+                    pending.addLast(edge.getSourceNodeCode());
+                }
+            }
+        }
+        return preceding;
     }
 
     private void assertDirectSendRule(ProcessDefinitionDetailDTO definition, String sourceNodeCode) {

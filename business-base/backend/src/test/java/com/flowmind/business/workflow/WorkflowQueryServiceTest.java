@@ -4,16 +4,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flowmind.business.platform.PlatformDtoMapper;
 import com.flowmind.business.platform.PlatformFacade;
 import com.flowmind.business.security.WorkflowAccessGuard;
+import com.flowmind.business.workflow.dto.WorkflowDetailResponse;
 import com.flowmind.business.workflow.dto.WorkflowListQuery;
 import com.flowmind.business.workflow.dto.WorkflowPageResponse;
 import com.flowmind.business.workflow.dto.WorkflowTaskResponse;
 import com.flowmind.platform.api.dto.PageResult;
+import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
+import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.enums.ActionTypeEnum;
+import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
+import com.flowmind.platform.api.enums.NodeTypeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +31,47 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class WorkflowQueryServiceTest {
+
+    @Test
+    void taskDetailRemovesRejectWhenPlatformReturnsNoEligibleTargets() {
+        PlatformFacade facade = mock(PlatformFacade.class);
+        WorkflowAccessGuard accessGuard = mock(WorkflowAccessGuard.class);
+        WorkflowQueryService service = new WorkflowQueryService(facade, new PlatformDtoMapper(), accessGuard,
+                new WorkflowAllowedActionResolver(new ObjectMapper(), facade));
+        UserContext user = new UserContext("manager01", "Manager", "dept-manager", "Management");
+        TaskDTO currentTask = task("task-manager", null, Collections.singletonList("manager01"));
+        currentTask.setNodeCode("manager");
+
+        ProcessNodeDTO manager = new ProcessNodeDTO();
+        manager.setNodeCode("manager");
+        manager.setNodeName("Manager Review");
+        manager.setNodeType(NodeTypeEnum.USER_TASK);
+        manager.setApproverRuleType(ApproverRuleTypeEnum.ROLE);
+        manager.setListenerConfig("{\"taskActionRules\":{\"reject\":{\"enabled\":true,"
+                + "\"targetNodeCodes\":[\"apply\"]}}}");
+        ProcessDefinitionDetailDTO definition = new ProcessDefinitionDetailDTO();
+        definition.setId("definition-1");
+        definition.setNodes(Collections.singletonList(manager));
+        definition.setEdges(Collections.emptyList());
+
+        ProcessInstanceDetailDTO instance = new ProcessInstanceDetailDTO();
+        instance.setInstanceId("instance-1");
+        instance.setDefinitionId("definition-1");
+        instance.setActiveTasks(Collections.singletonList(currentTask));
+        instance.setHistoryTasks(Collections.<HistoryTaskDTO>emptyList());
+        instance.setComments(Collections.emptyList());
+        when(facade.getTask("task-manager")).thenReturn(currentTask);
+        when(facade.getInstance("instance-1")).thenReturn(instance);
+        when(facade.currentUser()).thenReturn(user);
+        when(facade.getDefinition("definition-1")).thenReturn(definition);
+        when(facade.rejectTargetNodes("task-manager")).thenReturn(Collections.<ProcessNodeDTO>emptyList());
+        when(facade.attachments("instance-1")).thenReturn(Collections.emptyList());
+
+        WorkflowDetailResponse result = service.taskDetail("task-manager");
+
+        assertThat(result.getRejectTargetNodes()).isEmpty();
+        assertThat(result.getAllowedActions()).doesNotContain("REJECT");
+    }
 
     @Test
     void completedAddsWithdrawContextOnlyToLatestEligibleHistoryRow() {

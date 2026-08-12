@@ -4,6 +4,8 @@ package com.flowmind.platform.core.monitor;
 public class ReminderPolicy {
 
     private boolean enabled;
+    /** 到期前触发自动提醒的分钟数，默认 30 分钟。 */
+    private Integer beforeDueMinutes = Integer.valueOf(30);
     private Integer maxCount = Integer.valueOf(1);
     private String messageTemplate;
 
@@ -13,6 +15,14 @@ public class ReminderPolicy {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public Integer getBeforeDueMinutes() {
+        return beforeDueMinutes;
+    }
+
+    public void setBeforeDueMinutes(Integer beforeDueMinutes) {
+        this.beforeDueMinutes = beforeDueMinutes;
     }
 
     public Integer getMaxCount() {
