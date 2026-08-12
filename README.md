@@ -14,3 +14,51 @@
 Agent Web M0-M2 实现位于 `agent-web/`，提供需求对话、结构化需求门禁、流程平台草稿落地、流程预览、发布和激活能力。运行说明见 [agent-web/README.md](agent-web/README.md)。
 
 本地环境配置说明见 [doc/本地技术环境配置.md](doc/本地技术环境配置.md)。
+
+## 一键启动与停止
+
+在仓库根目录使用 PowerShell 执行：
+
+```powershell
+.\scripts\start.ps1
+```
+
+启动脚本会依次执行以下操作：
+
+1. 停止占用 `8081`、`3100`、`5173`、`5174` 的旧开发服务，确保正在运行的 JVM 不会继续加载旧 JAR。
+2. 在仓库根目录执行 `mvn -U --no-transfer-progress -DskipTests clean install`，重新构建整个 Maven reactor，并将最新的 `platform-core`、`platform-starter` 和 Business Base SNAPSHOT 安装到仓库内的 `.m2/repository`。
+3. 调用 `agent-web/scripts/Start-AgentWeb.ps1`，构建共享契约并启动 Business Base 后端、Agent 后端和 Agent 前端。
+4. 在 `business-base/frontend` 下启动 Business Base 前端，并等待两个前端端口就绪。
+
+启动完成后可访问：
+
+- Agent Web：`http://127.0.0.1:5173`
+- Business Base：`http://127.0.0.1:5174`
+
+只预览脚本将执行的动作，不停止、构建或启动任何进程：
+
+```powershell
+.\scripts\start.ps1 -WhatIf
+```
+
+如果 Maven 源码和依赖没有变化，可以跳过全量 Maven 更新以更快启动：
+
+```powershell
+.\scripts\start.ps1 -SkipMavenUpdate
+```
+
+也可以使用等价的短参数 `-Fast`。快速模式仍会完整重启项目，但会直接使用 `.m2/repository` 中已有的 Maven 包；修改过 `platform`、Business Base 后端或 Maven 依赖后，请使用不带该参数的默认启动方式，避免加载旧包。
+
+停止整个项目：
+
+```powershell
+.\scripts\end.ps1
+```
+
+`end.ps1` 默认会要求确认；需要跳过确认时执行：
+
+```powershell
+.\scripts\end.ps1 -Force
+```
+
+首次运行前请确保已安装 Java 8、Maven、Node.js `>= 22.19.0` 和 npm，并已分别在 `agent-web`、`business-base/frontend` 安装 npm 依赖。真实对话模式还需按 [Agent Web 运行说明](agent-web/README.md) 配置 `agent-web/.env`。
