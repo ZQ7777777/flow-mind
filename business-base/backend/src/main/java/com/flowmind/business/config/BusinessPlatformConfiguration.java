@@ -5,9 +5,28 @@ import com.flowmind.business.security.CurrentBusinessUserProvider;
 import com.flowmind.business.security.PlatformCurrentUserAdapter;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
 import com.flowmind.platform.api.spi.OrganizationProvider;
+import com.flowmind.platform.api.service.AdminProcessService;
+import com.flowmind.platform.api.service.CallbackService;
+import com.flowmind.platform.core.audit.AuditLogWriter;
 import com.flowmind.platform.core.definition.ProcessAttachmentTemplateManager;
+import com.flowmind.platform.core.monitor.ActionExceptionAlertWriter;
+import com.flowmind.platform.core.query.RuntimeQueryAssembler;
+import com.flowmind.platform.core.runtime.AdminPermissionGuard;
+import com.flowmind.platform.core.runtime.DefaultAdminProcessService;
+import com.flowmind.platform.core.runtime.InstanceTaskCancellationService;
+import com.flowmind.platform.core.runtime.RuntimeDefinitionLoader;
+import com.flowmind.platform.core.runtime.RuntimeNodeAdvancer;
+import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
+import com.flowmind.platform.core.runtime.RuntimeRequestValidator;
+import com.flowmind.platform.core.runtime.RuntimeTransactionExecutor;
 import com.flowmind.platform.core.validation.ProcessAttachmentTemplateValidator;
+import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
+import com.flowmind.platform.persistence.repository.ProcessAuditLogRepository;
 import com.flowmind.platform.persistence.repository.ProcessAttachmentTemplateRepository;
+import com.flowmind.platform.persistence.repository.ProcessDefinitionRepository;
+import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
+import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.TaskGroupRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -51,5 +70,33 @@ public class BusinessPlatformConfiguration {
             ProcessAttachmentTemplateRepository repository,
             ProcessAttachmentTemplateValidator validator) {
         return new ProcessAttachmentTemplateManager(repository, validator);
+    }
+
+    /** Exposes the platform administrator service through Starter dependencies without enabling platform Web MVC. */
+    @Bean
+    @ConditionalOnMissingBean(AdminProcessService.class)
+    public AdminProcessService adminProcessService(
+            ProcessInstanceRepository instanceRepository,
+            RuntimeDefinitionLoader definitionLoader,
+            RuntimeRequestValidator requestValidator,
+            RuntimeOperationExecutor operationExecutor,
+            RuntimeNodeAdvancer nodeAdvancer,
+            InstanceTaskCancellationService taskCancellationService,
+            ProcessDefinitionRepository definitionRepository,
+            CallbackService callbackService,
+            RuntimeTransactionExecutor transactionExecutor,
+            ProcessAuditLogRepository auditLogRepository,
+            ActiveTaskRepository activeTaskRepository,
+            ProcessHistoryTaskRepository historyTaskRepository,
+            TaskGroupRepository taskGroupRepository,
+            RuntimeQueryAssembler queryAssembler,
+            AuditLogWriter auditLogWriter,
+            AdminPermissionGuard adminPermissionGuard,
+            ActionExceptionAlertWriter actionExceptionAlertWriter) {
+        return new DefaultAdminProcessService(instanceRepository, definitionLoader, requestValidator,
+                operationExecutor, nodeAdvancer, taskCancellationService, definitionRepository,
+                callbackService, transactionExecutor, auditLogRepository, activeTaskRepository,
+                historyTaskRepository, taskGroupRepository, queryAssembler, auditLogWriter,
+                adminPermissionGuard, actionExceptionAlertWriter);
     }
 }
