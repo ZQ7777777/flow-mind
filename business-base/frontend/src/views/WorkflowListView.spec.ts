@@ -52,6 +52,30 @@ describe("WorkflowListView", () => {
     expect(wrapper.find('[data-test="todo-scope-delegated"]').classes()).toContain("active");
   });
 
+  it("uses a todo-specific empty state", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(emptyPage())));
+
+    const todo = mount(WorkflowListView, {
+      props: { type: "todo", title: "我的待办" },
+      global: {
+        plugins: [createPinia()],
+        stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
+      },
+    });
+    await flushPromises();
+    expect(todo.find(".empty-cell").text()).toBe("暂无代办");
+
+    const completed = mount(WorkflowListView, {
+      props: { type: "completed", title: "我的已办" },
+      global: {
+        plugins: [createPinia()],
+        stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
+      },
+    });
+    await flushPromises();
+    expect(completed.find(".empty-cell").text()).toBe("暂无记录");
+  });
+
   it("keeps the list headers visible while data is loading", async () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
 

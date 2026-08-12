@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { WorkflowApiError } from "../api/http";
 import {
   fetchInstanceDetail,
   fetchTaskDetail,
@@ -30,6 +31,7 @@ interface DetailState {
   data: WorkflowDetailResponse | null;
   loading: boolean;
   error: string;
+  errorCode: string;
 }
 
 interface WorkflowState {
@@ -56,6 +58,7 @@ export const useWorkflowStore = defineStore("workflow", {
       data: null,
       loading: false,
       error: "",
+      errorCode: "",
     },
     actionSubmitting: false,
     actionError: "",
@@ -117,10 +120,12 @@ export const useWorkflowStore = defineStore("workflow", {
     async loadDetail(loader: () => Promise<WorkflowDetailResponse>): Promise<void> {
       this.detail.loading = true;
       this.detail.error = "";
+      this.detail.errorCode = "";
       try {
         this.detail.data = await loader();
       } catch (error) {
         this.detail.error = error instanceof Error ? error.message : "详情加载失败";
+        this.detail.errorCode = error instanceof WorkflowApiError ? error.code : "";
       } finally {
         this.detail.loading = false;
       }

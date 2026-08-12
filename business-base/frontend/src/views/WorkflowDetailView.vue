@@ -43,6 +43,17 @@ const currentNodeNames = computed(() => {
   return names.length ? names.join("、") : "--";
 });
 const actionKeys = new Map<TaskActionCode, string>();
+const actionsThatLeaveCurrentTask = new Set<TaskActionCode>([
+  "APPROVE",
+  "SUBMIT",
+  "REJECT",
+  "RETURN",
+  "WITHDRAW",
+  "DIRECT_SEND",
+  "TRANSFER",
+  "DELEGATE",
+  "ADD_SIGN",
+]);
 const attachmentError = ref("");
 const attachmentStatus = ref("");
 const formError = ref("");
@@ -71,6 +82,10 @@ async function loadDetail(): Promise<void> {
   attachmentStatus.value = "";
   if (props.mode === "task" && taskId.value) {
     await store.loadTaskDetail(taskId.value);
+    if (store.detail.errorCode === "FLOW_TASK_NOT_FOUND") {
+      await router.replace({ name: "workflow-todo" });
+      return;
+    }
     formVariables.value = definitionVariables();
     return;
   }
@@ -135,12 +150,8 @@ async function submitAction(payload: {
       idempotencyKey,
     });
     actionKeys.delete(payload.action);
-    if ((payload.action === "SUBMIT" || payload.action === "DIRECT_SEND")
-        && detail.value?.instance.instanceId) {
-      await router.replace({
-        name: "workflow-instance-detail",
-        params: { instanceId: detail.value.instance.instanceId },
-      });
+    if (actionsThatLeaveCurrentTask.has(payload.action)) {
+      await router.replace({ name: "workflow-todo" });
       return;
     }
     await loadDetail();

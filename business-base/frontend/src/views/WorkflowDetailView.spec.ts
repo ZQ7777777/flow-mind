@@ -8,6 +8,18 @@ import WorkflowDetailView from "./WorkflowDetailView.vue";
 describe("WorkflowDetailView", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  const leavingActions = [
+    "APPROVE",
+    "SUBMIT",
+    "REJECT",
+    "RETURN",
+    "WITHDRAW",
+    "DIRECT_SEND",
+    "TRANSFER",
+    "DELEGATE",
+    "ADD_SIGN",
+  ] as const;
+
   it("renders a detail response using backend DTO field names", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       instance: {
@@ -48,6 +60,8 @@ describe("WorkflowDetailView", () => {
       routes: [
         { path: "/workflow/tasks/:taskId", component: WorkflowDetailView, props: { mode: "task" } },
         { path: "/workflow/instances/:instanceId", name: "workflow-instance-detail",
+          component: defineComponent({ template: "<div />" }) },
+        { path: "/workflow/todo", name: "workflow-todo",
           component: defineComponent({ template: "<div />" }) },
       ],
     });
@@ -109,6 +123,8 @@ describe("WorkflowDetailView", () => {
         { path: "/workflow/tasks/:taskId", component: WorkflowDetailView, props: { mode: "task" } },
         { path: "/workflow/instances/:instanceId", name: "workflow-instance-detail",
           component: defineComponent({ template: "<div />" }) },
+        { path: "/workflow/todo", name: "workflow-todo",
+          component: defineComponent({ template: "<div />" }) },
       ],
     });
     await router.push("/workflow/tasks/apply-task");
@@ -133,7 +149,158 @@ describe("WorkflowDetailView", () => {
     expect(submitIndex).toBeGreaterThan(replaceIndex);
     const actionBody = JSON.parse(fetchMock.mock.calls[submitIndex][1]?.body as string);
     expect(actionBody.variables).toEqual({ amount: 250 });
-    expect(router.currentRoute.value.fullPath).toBe("/workflow/instances/instance-1");
+    expect(router.currentRoute.value.fullPath).toBe("/workflow/todo");
+  });
+
+  it.each(leavingActions)("returns to todo after %s succeeds", async (action) => {
+    const detail = {
+      instance: {
+        instanceId: "instance-1", instanceTitle: "申请", instanceStatus: "RUNNING",
+        currentNodeCodes: ["manager"], variables: {},
+      },
+      formFields: [], nodes: [], edges: [],
+      currentTask: {
+        taskId: "task-1", instanceId: "instance-1", instanceTitle: "申请",
+        nodeCode: "manager", taskVersion: 3, candidateUserIds: ["manager01"],
+      },
+      activeTasks: [], historyTasks: [], comments: [], attachments: [],
+      rejectTargetNodes: [], allowedActions: [action], disabledActions: [],
+    };
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes(`/api/workflow/tasks/task-1/`) && !url.endsWith("/task-1")) {
+        return new Response(JSON.stringify({ archivedTasks: [], createdTasks: [], updatedTasks: [] }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(detail), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/workflow/tasks/:taskId", component: WorkflowDetailView, props: { mode: "task" } },
+        { path: "/workflow/todo", name: "workflow-todo",
+          component: defineComponent({ template: "<div />" }) },
+      ],
+    });
+    await router.push("/workflow/tasks/task-1");
+    await router.isReady();
+    const wrapper = mount(WorkflowDetailView, {
+      props: { mode: "task" },
+      global: {
+        plugins: [createPinia(), router],
+        stubs: {
+          TaskActionPanel: defineComponent({
+            props: { allowedActions: { type: Array, required: true } },
+            emits: ["submit"],
+            template: `<button data-test="submit-stub" @click="$emit('submit', {
+              action: allowedActions[0], expectedTaskVersion: 3, comment: '',
+              targetNodeCode: 'apply', targetUserId: 'user-2', targetUserName: '李四',
+              addSignUserIds: ['user-2']
+            })">submit</button>`,
+          }),
+        },
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get('[data-test="submit-stub"]').trigger("click");
+    await flushPromises();
+
+    expect(router.currentRoute.value.fullPath).toBe("/workflow/todo");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["CLAIM", "UNCLAIM"] as const)("refreshes the current detail after %s succeeds", async (action) => {
+    const detail = {
+      instance: {
+        instanceId: "instance-1", instanceTitle: "申请", instanceStatus: "RUNNING",
+        currentNodeCodes: ["manager"], variables: {},
+      },
+      formFields: [], nodes: [], edges: [],
+      currentTask: {
+        taskId: "task-1", instanceId: "instance-1", instanceTitle: "申请",
+        nodeCode: "manager", taskVersion: 3, candidateUserIds: ["manager01"],
+      },
+      activeTasks: [], historyTasks: [], comments: [], attachments: [],
+      rejectTargetNodes: [], allowedActions: [action], disabledActions: [],
+    };
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith(`/${action.toLowerCase()}`)) {
+        return new Response(JSON.stringify({ archivedTasks: [], createdTasks: [], updatedTasks: [] }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(detail), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/workflow/tasks/:taskId", component: WorkflowDetailView, props: { mode: "task" } }],
+    });
+    await router.push("/workflow/tasks/task-1");
+    await router.isReady();
+    const wrapper = mount(WorkflowDetailView, {
+      props: { mode: "task" }, global: { plugins: [createPinia(), router] },
+    });
+    await flushPromises();
+
+    await wrapper.get(`[data-test="action-${action.toLowerCase()}"]`).trigger("click");
+    await flushPromises();
+
+    expect(router.currentRoute.value.fullPath).toBe("/workflow/tasks/task-1");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("redirects a stale task link to todo only for FLOW_TASK_NOT_FOUND", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "FLOW_TASK_NOT_FOUND", message: "active task does not exist",
+    }), { status: 404, headers: { "Content-Type": "application/json" } })));
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/workflow/tasks/:taskId", component: WorkflowDetailView, props: { mode: "task" } },
+        { path: "/workflow/todo", name: "workflow-todo",
+          component: defineComponent({ template: "<div />" }) },
+      ],
+    });
+    await router.push("/workflow/tasks/stale-task");
+    await router.isReady();
+    mount(WorkflowDetailView, {
+      props: { mode: "task" }, global: { plugins: [createPinia(), router] },
+    });
+    await flushPromises();
+
+    expect(router.currentRoute.value.fullPath).toBe("/workflow/todo");
+  });
+
+  it("keeps non-task-not-found detail errors visible", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "BUSINESS_ACCESS_DENIED", message: "无权查看该任务",
+    }), { status: 403, headers: { "Content-Type": "application/json" } })));
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/workflow/tasks/:taskId", component: WorkflowDetailView, props: { mode: "task" } },
+        { path: "/workflow/todo", name: "workflow-todo",
+          component: defineComponent({ template: "<div />" }) },
+      ],
+    });
+    await router.push("/workflow/tasks/forbidden-task");
+    await router.isReady();
+    const wrapper = mount(WorkflowDetailView, {
+      props: { mode: "task" }, global: { plugins: [createPinia(), router] },
+    });
+    await flushPromises();
+
+    expect(router.currentRoute.value.fullPath).toBe("/workflow/tasks/forbidden-task");
+    expect(wrapper.get('[role="alert"]').text()).toContain("无权查看该任务");
   });
 
   it("blocks submit when a staged attachment replacement fails", async () => {

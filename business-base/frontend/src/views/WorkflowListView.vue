@@ -273,7 +273,9 @@ function starterName(row: WorkflowListRecord): string | undefined {
             </td>
           </tr>
           <tr v-else-if="store.list.records.length === 0">
-            <td :colspan="columns.length + 2" class="empty-cell">暂无记录</td>
+            <td :colspan="columns.length + 2" class="empty-cell">
+              {{ isTodoList ? "暂无代办" : "暂无记录" }}
+            </td>
           </tr>
           <tr
             v-for="row in store.list.loading || store.list.error ? [] : store.list.records"
