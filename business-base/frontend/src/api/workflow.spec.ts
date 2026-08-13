@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   approveTask,
   remindTask,
+  fetchEntryApplicationProcess,
   fetchWorkflowList,
   fetchWorkflowUsers,
   downloadAttachment,
@@ -60,6 +61,21 @@ describe("workflow api", () => {
     expect(url).toContain("/api/workflow/users");
     expect(url).toContain("keyword=operation");
     expect(url).toContain("limit=20");
+  });
+
+  it("loads the startable entry application process metadata", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ processCode: "entry_application", processName: "客户入金" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchEntryApplicationProcess();
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/workflow/startable-processes/entry-application");
+    expect(result.processName).toBe("客户入金");
   });
   it("sends task actions with the expected task version and idempotency key", async () => {
     const fetchMock = vi.fn().mockResolvedValue(

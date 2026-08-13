@@ -56,6 +56,11 @@ export interface WorkflowUserCandidateResponse {
   departmentId?: string;
   departmentName?: string;
 }
+
+export interface WorkflowStartableProcessResponse {
+  processCode: string;
+  processName: string;
+}
 export interface WorkflowTaskResponse {
   taskId: string;
   instanceId: string;

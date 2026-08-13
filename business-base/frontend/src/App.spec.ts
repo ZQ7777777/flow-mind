@@ -47,6 +47,8 @@ describe("App navigation", () => {
 
   beforeEach(() => {
     pinia = createPinia();
+  it("shows the primary navigation and the authenticated user in the business shell", async () => {
+    const pinia = createPinia();
     setActivePinia(pinia);
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal(
@@ -86,7 +88,6 @@ describe("App navigation", () => {
     const { wrapper } = mountApp(false);
 
     expect(wrapper.findAll(".nav-link").map((link) => link.text())).toEqual([
-      "入金申请",
       "我发起的",
       "我的待办",
       "我的已办",

@@ -9,6 +9,7 @@ import type {
   WorkflowDetailResponse,
   WorkflowListRecord,
   WorkflowListType,
+  WorkflowStartableProcessResponse,
   WorkflowUserResponse,
   WorkflowUserCandidateResponse,
 } from "../types/workflow";
@@ -46,6 +47,12 @@ export async function fetchWorkflowUsers(
 ): Promise<WorkflowUserCandidateResponse[]> {
   return requestJson<WorkflowUserCandidateResponse[]>(
     `${WORKFLOW_BASE}/users${buildQuery({ keyword, limit })}`,
+  );
+}
+
+export async function fetchEntryApplicationProcess(): Promise<WorkflowStartableProcessResponse> {
+  return requestJson<WorkflowStartableProcessResponse>(
+    `${WORKFLOW_BASE}/startable-processes/entry-application`,
   );
 }
 export async function fetchWorkflowList(

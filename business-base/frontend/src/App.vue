@@ -98,14 +98,6 @@ async function logout(): Promise<void> {
 
     <div class="workspace">
       <nav class="side-nav" aria-label="功能导航">
-        <RouterLink
-          v-for="route in generatedEntryRoutes"
-          :key="route.path"
-          class="nav-link"
-          :to="route.path"
-        >
-          {{ route.label }}
-        </RouterLink>
         <RouterLink class="nav-link" to="/workflow/started">我发起的</RouterLink>
         <RouterLink class="nav-link" to="/workflow/todo">我的待办</RouterLink>
         <RouterLink class="nav-link" to="/workflow/completed">我的已办</RouterLink>

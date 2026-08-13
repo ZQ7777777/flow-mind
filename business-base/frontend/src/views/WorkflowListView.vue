@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useWorkflowStore } from "../stores/workflow";
 import type {
   WorkflowHistoryTaskResponse,
@@ -10,9 +10,11 @@ import type {
   WorkflowTaskResponse,
 } from "../types/workflow";
 import { formatDateTime } from "../utils/format";
-import { performTaskAction } from "../api/workflow";
+import { fetchEntryApplicationProcess, performTaskAction } from "../api/workflow";
 import { WorkflowApiError } from "../api/http";
 import { createIdempotencyKey } from "../utils/idempotency";
+import EntryApplicationApply from "../modules/generated/entry-application/EntryApplicationApply.vue";
+import { generatedRoutes } from "../router/generated-routes";
 
 const props = defineProps<{
   type: WorkflowListType;
@@ -33,9 +35,15 @@ const todoScope = ref<"own" | "delegated">("own");
 const withdrawingHistoryId = ref("");
 const operationError = ref("");
 const operationSuccess = ref("");
+const entryDrawerOpen = ref(false);
+const entryDrawerContent = ref<HTMLElement | null>(null);
+const entryProcessName = ref(fallbackEntryProcessName());
 const withdrawKeys = new Map<string, string>();
+let entrySuccessObserver: MutationObserver | null = null;
 
 const isTodoList = computed(() => props.type === "todo");
+const isStartedList = computed(() => props.type === "started");
+const entryActionLabel = computed(() => `发起${entryProcessName.value}`);
 
 const columns = computed(() => {
   if (props.type === "completed") {
@@ -52,6 +60,9 @@ const columns = computed(() => {
 
 onMounted(() => {
   void load();
+  if (isStartedList.value) {
+    void loadEntryProcessName();
+  }
 });
 
 watch(
@@ -59,6 +70,9 @@ watch(
   () => {
     filters.pageNo = 1;
     void load();
+    if (isStartedList.value) {
+      void loadEntryProcessName();
+    }
   },
 );
 
@@ -73,6 +87,17 @@ async function load(): Promise<void> {
     actionType: filters.actionType.trim() || undefined,
     source: isTodoList.value ? todoTaskSource() : undefined,
   });
+}
+
+async function loadEntryProcessName(): Promise<void> {
+  try {
+    const process = await fetchEntryApplicationProcess();
+    if (process.processName?.trim()) {
+      entryProcessName.value = process.processName.trim();
+    }
+  } catch {
+    entryProcessName.value = fallbackEntryProcessName();
+  }
 }
 
 async function withdraw(row: WorkflowHistoryTaskResponse): Promise<void> {
@@ -117,6 +142,59 @@ function setTodoScope(scope: "own" | "delegated"): void {
 function todoTaskSource(): "OWN" | "DELEGATED" {
   return todoScope.value === "delegated" ? "DELEGATED" : "OWN";
 }
+
+function openEntryDrawer(): void {
+  operationError.value = "";
+  operationSuccess.value = "";
+  entryDrawerOpen.value = true;
+  void watchEntrySubmissionSuccess();
+}
+
+async function closeEntryDrawer(): Promise<void> {
+  entryDrawerOpen.value = false;
+  stopWatchingEntrySubmissionSuccess();
+  if (isStartedList.value) {
+    await load();
+  }
+}
+
+async function watchEntrySubmissionSuccess(): Promise<void> {
+  await nextTick();
+  stopWatchingEntrySubmissionSuccess();
+  const content = entryDrawerContent.value;
+  if (!content) return;
+  if (content.querySelector('[data-test="success-text"]')) {
+    await handleEntrySubmitted();
+    return;
+  }
+  entrySuccessObserver = new MutationObserver(() => {
+    if (content.querySelector('[data-test="success-text"]')) {
+      void handleEntrySubmitted();
+    }
+  });
+  entrySuccessObserver.observe(content, { childList: true, subtree: true, characterData: true });
+}
+
+function stopWatchingEntrySubmissionSuccess(): void {
+  entrySuccessObserver?.disconnect();
+  entrySuccessObserver = null;
+}
+
+async function handleEntrySubmitted(): Promise<void> {
+  stopWatchingEntrySubmissionSuccess();
+  operationSuccess.value = `${entryProcessName.value}已提交`;
+  entryDrawerOpen.value = false;
+  await load();
+}
+
+function fallbackEntryProcessName(): string {
+  const route = generatedRoutes.find((item) => item.name === "generated-entry-application-apply");
+  return typeof route?.meta?.title === "string" ? route.meta.title : "入金申请";
+}
+
+onBeforeUnmount(() => {
+  stopWatchingEntrySubmissionSuccess();
+});
 
 function detailPath(row: WorkflowListRecord): string {
   if (isTask(row)) {
@@ -213,8 +291,33 @@ function starterName(row: WorkflowListRecord): string | undefined {
         <p class="eyebrow">Workflow</p>
         <h1 :id="`${type}-heading`">{{ title }}</h1>
       </div>
-      <button type="button" @click="load">刷新</button>
+      <div class="heading-actions">
+        <button
+          v-if="isStartedList"
+          type="button"
+          class="primary-action"
+          data-test="open-entry-application"
+          @click="openEntryDrawer"
+        >
+          {{ entryActionLabel }}
+        </button>
+        <button type="button" @click="load">刷新</button>
+      </div>
     </header>
+
+    <el-drawer
+      v-model="entryDrawerOpen"
+      :title="entryActionLabel"
+      direction="rtl"
+      size="520px"
+      class="entry-application-drawer"
+      data-test="entry-application-drawer"
+      @closed="closeEntryDrawer"
+    >
+      <div ref="entryDrawerContent" class="entry-application-drawer-body">
+        <EntryApplicationApply v-if="entryDrawerOpen" />
+      </div>
+    </el-drawer>
 
     <div v-if="isTodoList" class="scope-tabs todo-segmented" aria-label="待办任务范围">
       <button
@@ -361,6 +464,41 @@ function starterName(row: WorkflowListRecord): string | undefined {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.primary-action {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.primary-action:hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  color: #fff;
+}
+
+.entry-application-drawer-body {
+  display: block;
+}
+
+.entry-application-drawer-body :deep(.entry-application-apply h2) {
+  display: none;
+}
+
+.entry-application-drawer-body :deep(.el-form-item) {
+  margin-bottom: 16px;
+}
+
+.entry-application-drawer-body :deep(.el-input-number) {
+  width: 100%;
 }
 
 .eyebrow {
@@ -572,6 +710,18 @@ td span {
     align-items: stretch;
     flex-direction: column;
     grid-template-columns: 1fr;
+  }
+
+  .heading-actions {
+    justify-content: stretch;
+  }
+
+  .heading-actions button {
+    flex: 1 1 140px;
+  }
+
+  :deep(.entry-application-drawer) {
+    width: min(100vw, 520px) !important;
   }
 }
 </style>
