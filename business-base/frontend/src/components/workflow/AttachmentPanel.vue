@@ -11,7 +11,6 @@ const props = defineProps<{
   uploadableAttachments?: WorkflowUploadableAttachmentView[];
   canUpload?: boolean;
   canReplace?: boolean;
-  canDelete?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -21,7 +20,6 @@ const emit = defineEmits<{
     template: WorkflowUploadableAttachmentView;
   }];
   download: [attachment: WorkflowAttachmentView];
-  delete: [attachment: WorkflowAttachmentView];
   replace: [payload: { attachment: WorkflowAttachmentView; file: File }];
 }>();
 
@@ -120,9 +118,6 @@ function selectReplacement(attachment: WorkflowAttachmentView, event: Event): vo
                 @change="selectReplacement(attachment, $event)"
               />
             </label>
-            <button v-if="canDelete" type="button" @click="emit('delete', attachment)">
-              删除
-            </button>
           </li>
         </ul>
         <p v-else class="empty-state">暂无实例附件</p>
@@ -137,9 +132,6 @@ function selectReplacement(attachment: WorkflowAttachmentView, event: Event): vo
             <span>{{ formatDateTime(attachment.uploadedAt) }}</span>
             <button type="button" @click="emit('download', attachment)">
               下载
-            </button>
-            <button v-if="canDelete" type="button" @click="emit('delete', attachment)">
-              删除
             </button>
           </li>
         </ul>

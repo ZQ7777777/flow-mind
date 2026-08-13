@@ -8,7 +8,6 @@ import ProcessTimeline from "../components/workflow/ProcessTimeline.vue";
 import TaskActionPanel from "../components/workflow/TaskActionPanel.vue";
 import VariableFormReadonly from "../components/workflow/VariableFormReadonly.vue";
 import {
-  deleteAttachment,
   downloadAttachment,
   uploadInstanceAttachment,
   uploadTaskAttachment,
@@ -298,18 +297,6 @@ async function download(item: WorkflowAttachmentView): Promise<void> {
   }
 }
 
-async function remove(item: WorkflowAttachmentView): Promise<void> {
-  attachmentError.value = "";
-  try {
-    await deleteAttachment(
-      item.attachmentId,
-      createIdempotencyKey("workflow:attachment-delete"),
-    );
-    await loadDetail();
-  } catch (error) {
-    attachmentError.value = error instanceof Error ? error.message : "附件删除失败";
-  }
-}
 </script>
 
 <template>
@@ -381,12 +368,10 @@ async function remove(item: WorkflowAttachmentView): Promise<void> {
         :attachments="detail.attachments"
         :can-upload="Boolean(detail.currentTask) && !isEditableApply"
         :can-replace="isEditableApply"
-        :can-delete="!isEditableApply"
         :uploadable-attachments="detail.uploadableAttachments"
         @upload="uploadAttachment"
         @replace="stageReplacement"
         @download="download"
-        @delete="remove"
       />
       <p v-if="attachmentError" class="action-error" role="alert">{{ attachmentError }}</p>
       <p v-if="attachmentStatus" class="action-status" role="status">{{ attachmentStatus }}</p>
