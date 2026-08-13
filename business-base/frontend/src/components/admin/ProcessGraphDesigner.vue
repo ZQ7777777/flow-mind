@@ -89,7 +89,9 @@ function loadNodeEditor(node: ProcessNode): void {
     editor.selectedDepartmentId = typeof approver.departmentId === "string" ? approver.departmentId : "";
     editor.selectedRoleCode = typeof approver.roleCode === "string" ? approver.roleCode : "";
     editor.selectedRoleDepartmentId = editor.selectedDepartmentId;
-    editor.selectedRoleDepartmentMode = editor.selectedRoleDepartmentId ? "FIXED" : "STARTER";
+    const departmentFrom = typeof approver.departmentFrom === "string" ? approver.departmentFrom.toLowerCase() : "";
+    editor.selectedRoleDepartmentMode = departmentFrom === "fixed" || (!departmentFrom && editor.selectedRoleDepartmentId)
+      ? "FIXED" : "STARTER";
     editor.approverExpression = typeof approver.expression === "string" ? approver.expression : "";
   }
   if (timeout) {
@@ -153,16 +155,22 @@ function addNode(type = "USER_TASK"): void {
 function syncApprover(): void {
   const node = selectedNode.value;
   if (!node) return;
-  let config: Record<string, unknown> = {};
+  const parsed = parseObject(node.approverRuleConfig, "审批人配置");
+  if (!parsed) return;
+  const config: Record<string, unknown> = { ...parsed };
+  for (const key of ["userIds", "departmentId", "roleCode", "departmentFrom", "expression"]) delete config[key];
   switch (node.approverRuleType) {
-    case "USER": config = { userIds: editor.selectedApproverIds }; break;
-    case "DEPARTMENT": config = { departmentId: editor.selectedDepartmentId }; break;
-    case "ROLE": config = { roleCode: editor.selectedRoleCode }; break;
+    case "USER": config.userIds = editor.selectedApproverIds; break;
+    case "DEPARTMENT": config.departmentId = editor.selectedDepartmentId; break;
+    case "ROLE": config.roleCode = editor.selectedRoleCode; break;
     case "ROLE_IN_DEPARTMENT":
-      config = { roleCode: editor.selectedRoleCode };
-      if (editor.selectedRoleDepartmentMode === "FIXED") config.departmentId = editor.selectedRoleDepartmentId;
+      config.roleCode = editor.selectedRoleCode;
+      config.departmentFrom = editor.selectedRoleDepartmentMode === "FIXED" ? "fixed" : "starter";
+      if (editor.selectedRoleDepartmentMode === "FIXED") {
+        config.departmentId = editor.selectedRoleDepartmentId;
+      }
       break;
-    case "APPROVER_EXPRESSION": config = { expression: editor.approverExpression }; break;
+    case "APPROVER_EXPRESSION": config.expression = editor.approverExpression; break;
     case "STARTER": node.multiInstanceMode = "SINGLE"; break;
   }
   node.approverRuleConfig = JSON.stringify(config);
@@ -202,7 +210,12 @@ function syncListener(): void {
   const rules = root.taskActionRules && typeof root.taskActionRules === "object" && !Array.isArray(root.taskActionRules)
     ? { ...(root.taskActionRules as Record<string, unknown>) } : {};
   rules.reject = { enabled: editor.rejectEnabled, targetNodeCodes: editor.rejectTargetNodeCodes };
-  rules.directSend = { enabled: editor.directSendEnabled };
+  const directSend = rules.directSend && typeof rules.directSend === "object" && !Array.isArray(rules.directSend)
+    ? { ...(rules.directSend as Record<string, unknown>) } : {};
+  rules.directSend = editor.directSendEnabled
+    ? { ...directSend, enabled: true, targetMode: "REJECT_SOURCE" }
+    : { ...directSend, enabled: false };
+  if (!editor.directSendEnabled) delete (rules.directSend as Record<string, unknown>).targetMode;
   root.taskActionRules = rules;
   node.listenerConfig = JSON.stringify(root);
   configError.value = "";

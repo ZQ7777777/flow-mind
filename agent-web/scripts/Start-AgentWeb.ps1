@@ -135,7 +135,7 @@ if ($backendProcessId) {
     if ($WhatIf) {
         Write-Host "Would wait up to 60 seconds for http://127.0.0.1:3100/health/live before starting the frontend."
     } else {
-        Wait-AgentBackend -TimeoutSeconds 60
+        Wait-AgentBackend -TimeoutSeconds 120
     }
 }
 

@@ -8,6 +8,12 @@ function button(wrapper: ReturnType<typeof mount>, label: string) {
   return found;
 }
 
+function field(wrapper: ReturnType<typeof mount>, label: string) {
+  const found = wrapper.findAll("label").find((item) => item.text().startsWith(label));
+  if (!found) throw new Error(`field not found: ${label}`);
+  return found;
+}
+
 describe("ProcessGraphDesigner", () => {
   const graph = {
     nodes: [
@@ -57,7 +63,36 @@ describe("ProcessGraphDesigner", () => {
     await directSend!.find("input").setValue(true);
     const listener = JSON.parse((wrapper.props("nodes") as typeof graph.nodes)[1].listenerConfig!);
     expect(listener.listeners).toEqual([{ event: "TASK_CREATED", handler: "audit" }]);
-    expect(listener.taskActionRules.directSend.enabled).toBe(true);
+    expect(listener.taskActionRules.directSend).toEqual({ enabled: true, targetMode: "REJECT_SOURCE" });
+  });
+
+  it("writes departmentFrom and supports legacy role department configuration", async () => {
+    const legacyGraph = structuredClone(graph);
+    legacyGraph.nodes[1].approverRuleType = "ROLE_IN_DEPARTMENT";
+    legacyGraph.nodes[1].approverRuleConfig = '{"roleCode":"manager","departmentId":"d1","custom":"kept"}';
+    const wrapper = mount(ProcessGraphDesigner, {
+      props: {
+        ...legacyGraph,
+        options: {
+          users: [],
+          departments: [{ departmentId: "d1", departmentName: "财务部" }],
+          roles: [{ roleCode: "manager", roleName: "部门经理" }],
+        },
+      },
+    });
+
+    await wrapper.findAll(".designer-node")[1].trigger("pointerdown", { clientX: 230, clientY: 30, pointerId: 1, button: 0 });
+    const departmentFrom = field(wrapper, "部门来源").find("select");
+    expect((departmentFrom.element as HTMLSelectElement).value).toBe("FIXED");
+
+    await departmentFrom.setValue("STARTER");
+    let config = JSON.parse((wrapper.props("nodes") as typeof graph.nodes)[1].approverRuleConfig!);
+    expect(config).toEqual({ roleCode: "manager", departmentFrom: "starter", custom: "kept" });
+
+    await departmentFrom.setValue("FIXED");
+    await field(wrapper, "指定部门").find("select").setValue("d1");
+    config = JSON.parse((wrapper.props("nodes") as typeof graph.nodes)[1].approverRuleConfig!);
+    expect(config).toEqual({ roleCode: "manager", departmentFrom: "fixed", departmentId: "d1", custom: "kept" });
   });
 
   it("auto-layouts nodes and exposes zoom controls", async () => {
