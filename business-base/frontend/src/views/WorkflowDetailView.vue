@@ -69,6 +69,9 @@ const pendingReplacements = ref<Record<string, {
 const isEditableApply = computed(() => Boolean(detail.value?.allowedActions.includes("SUBMIT")));
 const reminderSuccess = ref("");
 const currentTask = computed(() => detail.value?.currentTask ?? null);
+const activeTask = computed(
+    () => detail.value?.activeTasks?.[0] ?? null,
+);
 const deadlineWarning = computed(() => {
   const task = currentTask.value;
   if (!task) return null;
@@ -77,7 +80,11 @@ const deadlineWarning = computed(() => {
   return null;
 });
 const canRemindCurrentTask = computed(() =>
-  Boolean(currentTask.value?.taskId && authStore.user?.userId === detail.value?.instance.starterUserId),
+    Boolean(
+        props.mode === "instance" &&
+        activeTask.value?.taskId &&
+        authStore.user?.userId === detail.value?.instance.starterUserId
+    ),
 );
 
 onMounted(() => {
@@ -176,16 +183,18 @@ async function submitAction(payload: {
   }
 }
 
-
 async function remindCurrentTask(): Promise<void> {
-  if (!currentTask.value?.taskId) return;
+  if (!activeTask.value?.taskId) return;
+
   reminderSuccess.value = "";
+
   try {
-    await store.remindTask(currentTask.value.taskId, {
-      expectedTaskVersion: currentTask.value.taskVersion,
+    await store.remindTask(activeTask.value.taskId, {
+      expectedTaskVersion: activeTask.value.taskVersion,
       comment: "请尽快处理",
       idempotencyKey: createIdempotencyKey("workflow:remind"),
     });
+
     reminderSuccess.value = "催办已发送";
     await loadDetail();
   } catch {
@@ -310,13 +319,27 @@ async function remove(item: WorkflowAttachmentView): Promise<void> {
       {{ store.detail.error }}
     </div>
     <template v-else-if="detail">
+      <p v-if="reminderSuccess" class="action-success" role="status">{{ reminderSuccess }}</p>
+      <p v-if="store.reminderError" class="action-error" role="alert">{{ store.reminderError }}</p>
       <header class="detail-header">
-        <div>
-          <h1 id="detail-heading">{{ detail.instance.instanceTitle }}</h1>
-          <p>
-            {{ detail.instance.processName ?? "--" }} / {{ detail.instance.instanceStatus ?? "--" }} /
-            {{ currentNodeNames }}
-          </p>
+        <div class="detail-title-row">
+          <div>
+            <h1 id="detail-heading">{{ detail.instance.instanceTitle }}</h1>
+            <p>
+              {{ detail.instance.processName ?? "--" }} / {{ detail.instance.instanceStatus ?? "--" }} /
+              {{ currentNodeNames }}
+            </p>
+          </div>
+          <button
+            v-if="canRemindCurrentTask"
+            type="button"
+            class="remind-button"
+            data-test="remind-task"
+            :disabled="store.reminderSubmitting"
+            @click="remindCurrentTask"
+          >
+            {{ store.reminderSubmitting ? "发送中" : "发送催办" }}
+          </button>
         </div>
         <dl class="summary-grid">
           <div>
@@ -337,20 +360,9 @@ async function remove(item: WorkflowAttachmentView): Promise<void> {
       <div v-if="deadlineWarning" class="deadline-banner" data-test="deadline-banner">
         <div>
           <strong>{{ deadlineWarning }}</strong>
-          <span v-if="currentTask?.dueAt">到期时间：{{ formatDateTime(currentTask.dueAt) }}</span>
+          <span v-if="activeTask?.dueAt">到期时间：{{ formatDateTime(activeTask.dueAt) }}</span>
         </div>
-        <button
-          v-if="canRemindCurrentTask"
-          type="button"
-          data-test="remind-task"
-          :disabled="store.reminderSubmitting"
-          @click="remindCurrentTask"
-        >
-          {{ store.reminderSubmitting ? "发送中" : "发送催办" }}
-        </button>
       </div>
-      <p v-if="reminderSuccess" class="action-success" role="status">{{ reminderSuccess }}</p>
-      <p v-if="store.reminderError" class="action-error" role="alert">{{ store.reminderError }}</p>
 
       <ProcessGraph
         :nodes="detail.nodes"
@@ -495,6 +507,31 @@ dd {
 }
 
 .deadline-banner button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.detail-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.remind-button {
+  min-height: 34px;
+  border: 1px solid #2563eb;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  color: #2563eb;
+  cursor: pointer;
+  font: inherit;
+  flex-shrink: 0;
+  margin-top: 18px;
+}
+
+.remind-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }
