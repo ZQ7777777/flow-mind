@@ -190,7 +190,7 @@ async function remindCurrentTask(): Promise<void> {
   try {
     await store.remindTask(activeTask.value.taskId, {
       expectedTaskVersion: activeTask.value.taskVersion,
-      comment: "请尽快处理",
+      comment: "",
       idempotencyKey: createIdempotencyKey("workflow:remind"),
     });
 

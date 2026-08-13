@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useMessageStore } from "../stores/message";
 import { formatDateTime } from "../utils/format";
 import {
@@ -7,17 +7,22 @@ import {
   READ_STATUS_FILTERS,
   messageTypeLabel,
   readStatusLabel,
-  severityClass,
-  severityLabel,
 } from "../utils/message";
 import type { BusinessMessage } from "../types/message";
 
+const props = withDefaults(defineProps<{ variant?: "page" | "popup" }>(), {
+  variant: "page",
+});
+
 const store = useMessageStore();
+const selectedMessage = ref<BusinessMessage | null>(null);
 
 const filters = reactive({
   readStatus: "",
   messageType: "",
 });
+
+const isPopup = computed(() => props.variant === "popup");
 
 onMounted(() => {
   void store.loadMessages(1);
@@ -49,18 +54,15 @@ async function markAllRead(): Promise<void> {
   }
 }
 
-function detailPath(message: BusinessMessage): string | null {
-  const payload = message.payload;
-  if (!payload) return null;
-  const taskId = payload.taskId;
-  if (typeof taskId === "string" && taskId) {
-    return `/workflow/tasks/${encodeURIComponent(taskId)}`;
+async function openDetail(message: BusinessMessage): Promise<void> {
+  selectedMessage.value = message;
+  if (message.readStatus !== "READ") {
+    await markRead(message);
   }
-  const instanceId = payload.instanceId;
-  if (typeof instanceId === "string" && instanceId) {
-    return `/workflow/instances/${encodeURIComponent(instanceId)}`;
-  }
-  return null;
+}
+
+function closeDetail(): void {
+  selectedMessage.value = null;
 }
 
 function prevPage(): void {
@@ -72,13 +74,26 @@ function nextPage(): void {
   if (!store.hasMore || store.loading) return;
   void store.loadMessages(store.pageNo + 1);
 }
+
+function instanceTitle(message: BusinessMessage): string {
+  const payload = message.payload;
+  const title = payload?.instanceTitle;
+  if (typeof title === "string" && title.trim()) {
+    return title;
+  }
+  return message.title || messageTypeLabel(message.messageType);
+}
 </script>
 
 <template>
-  <section class="page-surface" aria-labelledby="messages-heading">
+  <section
+    class="page-surface message-center"
+    :class="{ 'is-popup': isPopup }"
+    aria-labelledby="messages-heading"
+  >
     <header class="section-heading">
       <div>
-        <p class="eyebrow">Inbox</p>
+        <p v-if="!isPopup" class="eyebrow">Inbox</p>
         <h1 id="messages-heading">
           消息中心
           <span class="unread-pill" data-test="unread-count">
@@ -101,7 +116,7 @@ function nextPage(): void {
       </div>
     </header>
 
-    <form class="filter-grid" @submit.prevent="applyFilters">
+    <form v-if="!isPopup" class="filter-grid" @submit.prevent="applyFilters">
       <label>
         已读状态
         <select v-model="filters.readStatus" data-test="messages-filter-readStatus">
@@ -124,72 +139,33 @@ function nextPage(): void {
       </div>
     </form>
 
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">标题</th>
-            <th scope="col">类型</th>
-            <th scope="col">级别</th>
-            <th scope="col">状态</th>
-            <th scope="col">时间</th>
-            <th scope="col">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="store.loading">
-            <td colspan="6" class="state-cell" role="status">加载中...</td>
-          </tr>
-          <tr v-else-if="store.error">
-            <td colspan="6" class="state-cell is-error" role="alert">{{ store.error }}</td>
-          </tr>
-          <tr v-else-if="store.records.length === 0">
-            <td colspan="6" class="empty-cell">暂无消息</td>
-          </tr>
-          <tr
-            v-for="message in store.loading || store.error ? [] : store.records"
-            v-else
-            :key="message.messageId"
-            :data-test="`message-row-${message.messageId}`"
-            :class="{ 'is-unread': message.readStatus !== 'READ' }"
-          >
-            <td>
-              <strong>{{ message.title || messageTypeLabel(message.messageType) }}</strong>
-              <span v-if="message.content">{{ message.content }}</span>
-            </td>
-            <td>{{ messageTypeLabel(message.messageType) }}</td>
-            <td>
-              <span class="severity-badge" :class="severityClass(message.severity)">
-                {{ severityLabel(message.severity) }}
-              </span>
-            </td>
-            <td>
-              <span class="read-badge" :class="{ 'is-unread': message.readStatus !== 'READ' }">
-                {{ readStatusLabel(message.readStatus) }}
-              </span>
-            </td>
-            <td>{{ formatDateTime(message.createdAt) }}</td>
-            <td class="table-actions">
-              <button
-                v-if="message.readStatus !== 'READ'"
-                type="button"
-                :data-test="`message-mark-read-${message.messageId}`"
-                @click="markRead(message)"
-              >
-                标记已读
-              </button>
-              <RouterLink
-                v-if="detailPath(message)"
-                class="table-link"
-                :data-test="`message-detail-${message.messageId}`"
-                :to="detailPath(message)!"
-              >
-                查看详情
-              </RouterLink>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <div class="message-list" role="list">
+      <p v-if="store.loading" class="state-cell" role="status">加载中...</p>
+      <p v-else-if="store.error" class="state-cell is-error" role="alert">{{ store.error }}</p>
+      <p v-else-if="store.records.length === 0" class="empty-cell">暂无消息</p>
+      <button
+        v-for="message in store.loading || store.error ? [] : store.records"
+        v-else
+        :key="message.messageId"
+        class="message-item"
+        :class="{ 'is-unread': message.readStatus !== 'READ' }"
+        type="button"
+        role="listitem"
+        :data-test="`message-row-${message.messageId}`"
+        @click="openDetail(message)"
+      >
+        <span class="message-avatar" aria-hidden="true"></span>
+        <span class="message-main">
+          <strong>{{ instanceTitle(message) }}</strong>
+          <span>{{ messageTypeLabel(message.messageType) }}</span>
+        </span>
+        <span class="message-side">
+          <time>{{ formatDateTime(message.createdAt) }}</time>
+          <span class="read-badge" :class="{ 'is-unread': message.readStatus !== 'READ' }">
+            {{ readStatusLabel(message.readStatus) }}
+          </span>
+        </span>
+      </button>
     </div>
 
     <footer class="pager">
@@ -201,12 +177,46 @@ function nextPage(): void {
         下一页
       </button>
     </footer>
+
+    <div v-if="selectedMessage" class="detail-backdrop" role="presentation" @click.self="closeDetail">
+      <article class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="message-detail-title">
+        <header class="detail-heading">
+          <h2 id="message-detail-title">消息详情</h2>
+          <button type="button" aria-label="关闭" @click="closeDetail">×</button>
+        </header>
+        <dl class="detail-fields">
+          <div>
+            <dt>流程实例标题</dt>
+            <dd>{{ instanceTitle(selectedMessage) }}</dd>
+          </div>
+          <div>
+            <dt>消息类型</dt>
+            <dd>{{ messageTypeLabel(selectedMessage.messageType) }}</dd>
+          </div>
+          <div>
+            <dt>消息内容</dt>
+            <dd>{{ selectedMessage.content || "--" }}</dd>
+          </div>
+          <div>
+            <dt>产生时间</dt>
+            <dd>{{ formatDateTime(selectedMessage.createdAt) }}</dd>
+          </div>
+        </dl>
+      </article>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .page-surface {
   display: block;
+}
+
+.message-center.is-popup {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
 }
 
 .section-heading {
@@ -225,12 +235,20 @@ function nextPage(): void {
   text-transform: uppercase;
 }
 
-h1 {
+h1,
+h2 {
   margin: 0;
   color: #17202a;
-  font-size: 24px;
   line-height: 1.2;
   font-weight: 700;
+}
+
+h1 {
+  font-size: 24px;
+}
+
+.is-popup h1 {
+  font-size: 18px;
 }
 
 .unread-pill {
@@ -243,7 +261,9 @@ h1 {
   font-weight: 600;
 }
 
-.header-actions {
+.header-actions,
+.filter-actions,
+.pager {
   display: flex;
   gap: 8px;
 }
@@ -256,11 +276,6 @@ h1 {
   margin-bottom: 14px;
 }
 
-.filter-actions {
-  display: flex;
-  gap: 8px;
-}
-
 label {
   display: grid;
   gap: 6px;
@@ -268,8 +283,7 @@ label {
   font-size: 13px;
 }
 
-select,
-input {
+select {
   width: 100%;
   min-height: 34px;
   border: 1px solid #d8dee8;
@@ -280,8 +294,7 @@ input {
   font: inherit;
 }
 
-button,
-.table-link {
+button {
   min-height: 34px;
   border: 1px solid #d8dee8;
   border-radius: 6px;
@@ -290,11 +303,9 @@ button,
   color: #17202a;
   cursor: pointer;
   font: inherit;
-  text-decoration: none;
 }
 
-button:hover:not(:disabled),
-.table-link:hover {
+button:hover:not(:disabled) {
   border-color: #2563eb;
   color: #2563eb;
 }
@@ -305,114 +316,83 @@ button:disabled {
 }
 
 select:focus,
-button:focus-visible,
-.table-link:focus-visible {
+button:focus-visible {
   outline: 3px solid #f59e0b;
   outline-offset: 2px;
 }
 
-.table-wrap {
-  overflow: auto;
+.message-list {
+  display: grid;
   border: 1px solid #d8dee8;
   border-radius: 8px;
+  overflow: hidden;
   background: #fff;
 }
 
-table {
+.is-popup .message-list {
+  max-height: 430px;
+  overflow: auto;
+}
+
+.message-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
   width: 100%;
-  min-width: 720px;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-
-th,
-td {
-  overflow-wrap: anywhere;
-  border-bottom: 1px solid #d8dee8;
-  padding: 9px 10px;
+  min-height: 68px;
+  border: 0;
+  border-bottom: 1px solid #edf1f6;
+  border-radius: 0;
+  padding: 10px 12px;
   text-align: left;
-  vertical-align: middle;
 }
 
-th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  height: 40px;
+.message-item:last-child {
+  border-bottom: 0;
+}
+
+.message-item:hover {
+  background: #eef6ff;
+}
+
+.message-item.is-unread {
   background: #f8fafc;
-  color: #344054;
-  font-size: 12px;
-  font-weight: 700;
 }
 
-td {
+.message-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #dbeafe;
+}
+
+.message-main,
+.message-side {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.message-main strong {
+  overflow: hidden;
   color: #17202a;
-  font-size: 13px;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.state-cell {
-  height: 64px;
-  background: #f8fafc;
-  color: #5d6978;
-  text-align: center;
-}
-
-.state-cell.is-error {
-  background: #fff1f2;
-  color: #be123c;
-}
-
-tbody tr:hover {
-  background: #eef6ff;
-}
-
-tbody tr.is-unread {
-  background: #f8fafc;
-}
-
-tbody tr.is-unread:hover {
-  background: #eef6ff;
-}
-
-td strong,
-td span {
-  display: block;
-}
-
-td span {
-  margin-top: 4px;
-  color: #5d6978;
-  font-size: 12px;
-}
-
+.message-main span,
+.message-side,
+.state-cell,
 .empty-cell {
-  padding: 20px;
   color: #5d6978;
-  text-align: center;
-  background: #f8fafc;
-}
-
-.severity-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
   font-size: 12px;
-  font-weight: 600;
 }
 
-.severity-badge.is-high {
-  background: #fff1f2;
-  color: #be123c;
-}
-
-.severity-badge.is-medium {
-  background: #fffbeb;
-  color: #b45309;
-}
-
-.severity-badge.is-normal {
-  background: #f1f5f9;
-  color: #475569;
+.message-side {
+  justify-items: end;
+  white-space: nowrap;
 }
 
 .read-badge.is-unread {
@@ -420,20 +400,83 @@ td span {
   font-weight: 600;
 }
 
-.table-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.state-cell,
+.empty-cell {
+  margin: 0;
+  padding: 22px;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.state-cell.is-error {
+  background: #fff1f2;
+  color: #be123c;
 }
 
 .pager {
-  display: flex;
   justify-content: flex-end;
-  gap: 10px;
   align-items: center;
   margin-top: 10px;
   color: #5d6978;
   font-size: 13px;
+}
+
+.detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.detail-dialog {
+  width: min(520px, 100%);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+}
+
+.detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #d8dee8;
+}
+
+.detail-heading button {
+  width: 34px;
+  padding: 0;
+  font-size: 20px;
+}
+
+.detail-fields {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 16px;
+}
+
+.detail-fields div {
+  display: grid;
+  gap: 5px;
+}
+
+.detail-fields dt {
+  color: #5d6978;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.detail-fields dd {
+  margin: 0;
+  color: #17202a;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 760px) {
@@ -443,6 +486,15 @@ td span {
     align-items: stretch;
     flex-direction: column;
     grid-template-columns: 1fr;
+  }
+
+  .message-item {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .message-side {
+    grid-column: 2;
+    justify-items: start;
   }
 }
 </style>

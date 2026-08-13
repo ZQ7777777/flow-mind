@@ -119,6 +119,47 @@ class DefaultProcessMonitorServiceTest {
         assertFalse(message.getPayload().containsKey("reminderType"));
     }
 
+    @Test
+    void timeoutJumpReminderUsesConfiguredTargetNodeName() {
+        ActiveTaskRepository activeTasks = mock(ActiveTaskRepository.class);
+        ProcessInstanceRepository instances = mock(ProcessInstanceRepository.class);
+        ReminderRecordRepository reminders = mock(ReminderRecordRepository.class);
+        AlertRecordRepository alerts = mock(AlertRecordRepository.class);
+        MessagePublisher publisher = mock(MessagePublisher.class);
+        ProcessNodeRepository nodes = mock(ProcessNodeRepository.class);
+        ReminderDeduplicationGuard deduplicationGuard = mock(ReminderDeduplicationGuard.class);
+        DefaultProcessMonitorService service = new DefaultProcessMonitorService(activeTasks, instances, reminders,
+                alerts, null, null, null, null, publisher, nodes, new TimeoutPolicyReader(), new ReminderPolicyReader(),
+                deduplicationGuard, null, null, null);
+        LocalDateTime scanAt = LocalDateTime.of(2026, 7, 28, 10, 0);
+        ProcessActiveTaskEntity timeoutTask = task();
+        timeoutTask.setCandidateUserIds("[\"approver-1\"]");
+        ProcessNodeEntity currentNode = timeoutJumpNode();
+        ProcessNodeEntity targetNode = new ProcessNodeEntity();
+        targetNode.setNodeName("财务复核");
+        when(activeTasks.findDueSoonOpenTasks(scanAt, 10))
+                .thenReturn(Collections.<ProcessActiveTaskEntity>emptyList());
+        when(activeTasks.findTimeoutOpenTasks(scanAt, 10)).thenReturn(Collections.singletonList(timeoutTask));
+        when(nodes.findByDefinitionIdAndNodeCode("definition-1", "approve")).thenReturn(currentNode);
+        when(nodes.findByDefinitionIdAndNodeCode("definition-1", "finance-review")).thenReturn(targetNode);
+        when(reminders.findLatestByTaskAndType("task-timeout", ReminderTypeEnum.TIMEOUT.name())).thenReturn(null);
+        when(reminders.insert(any(ProcessReminderRecordEntity.class))).thenReturn(Integer.valueOf(1));
+        when(reminders.markSent(anyString())).thenReturn(Integer.valueOf(1));
+        when(reminders.findById(anyString())).thenAnswer(invocation -> sentReminder(invocation.getArgument(0)));
+        when(deduplicationGuard.canCreate("task-timeout", ReminderTypeEnum.TIMEOUT, 1)).thenReturn(true);
+        when(instances.findById("instance-1")).thenReturn(instance());
+        TimeoutScanRequest request = new TimeoutScanRequest();
+        request.setScanAt(scanAt);
+        request.setLimit(Integer.valueOf(10));
+        request.setDryRun(Boolean.FALSE);
+
+        service.scanTimeoutTasks(request);
+
+        ArgumentCaptor<ProcessReminderRecordEntity> reminderCaptor = ArgumentCaptor.forClass(ProcessReminderRecordEntity.class);
+        verify(reminders).insert(reminderCaptor.capture());
+        assertTrue(reminderCaptor.getValue().getMessage().endsWith("系统将按配置流转至财务复核"));
+    }
+
     private DefaultProcessMonitorService service(ActiveTaskRepository activeTasks, AlertRecordRepository alerts) {
         return new DefaultProcessMonitorService(activeTasks, null, null, alerts, null, null, null, null, null);
     }
@@ -149,6 +190,13 @@ class DefaultProcessMonitorServiceTest {
         node.setDefinitionId("definition-1");
         node.setNodeCode("approve");
         node.setReminderConfig("{\"enabled\":true,\"beforeDueMinutes\":30}");
+        return node;
+    }
+
+    private ProcessNodeEntity timeoutJumpNode() {
+        ProcessNodeEntity node = reminderNode();
+        node.setTimeoutConfig("{\"enabled\":true,\"durationMinutes\":30,\"action\":\"JUMP\","
+                + "\"targetNodeCode\":\"finance-review\"}");
         return node;
     }
 

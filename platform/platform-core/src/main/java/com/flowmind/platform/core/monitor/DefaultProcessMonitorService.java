@@ -345,13 +345,16 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
     }
 
     private void createDueSoonReminder(ProcessActiveTaskEntity task, ReminderPolicy policy) {
+        ProcessInstanceEntity instance = findInstance(task.getInstanceId());
         createAutomaticReminder(task, policy, ReminderTypeEnum.DUE_SOON, "system_due_soon",
-                "Task due soon reminder: " + task.getNodeCode());
+                dueSoonMessage(instance, task));
     }
 
     private void createTimeoutReminder(ProcessActiveTaskEntity task, ReminderPolicy policy) {
+        ProcessInstanceEntity instance = findInstance(task.getInstanceId());
+        TimeoutPolicy timeoutPolicy = timeoutPolicy(task);
         createAutomaticReminder(task, policy, ReminderTypeEnum.TIMEOUT, "system_timeout",
-                "Task timeout reminder: " + task.getNodeCode());
+                timeoutMessage(instance, task, timeoutPolicy));
     }
 
     private void createAutomaticReminder(ProcessActiveTaskEntity task,
@@ -381,7 +384,8 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
         entity.setTaskId(task.getId());
         entity.setReminderType(reminderType.name());
         entity.setTargetUserIds(RuntimeJsonCodec.toJson(targets));
-        entity.setMessage(isBlank(policy.getMessageTemplate()) ? defaultMessage : policy.getMessageTemplate());
+        entity.setMessage(isFixedTemplateReminder(reminderType) || isBlank(policy.getMessageTemplate())
+                ? defaultMessage : policy.getMessageTemplate());
         entity.setReminderStatus(ReminderStatusEnum.PENDING.name());
         entity.setCreatedBy(createdBy);
         entity.setCreatedAt(LocalDateTime.now());
@@ -444,10 +448,39 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
     }
 
     private String message(RemindTaskRequest request, ProcessInstanceEntity instance, ProcessActiveTaskEntity task) {
-        if (!isBlank(request.getComment())) {
-            return request.getComment();
+        return remindMessage(instance, task);
+    }
+
+    private String remindMessage(ProcessInstanceEntity instance, ProcessActiveTaskEntity task) {
+        return "【催办提醒】流程“" + instanceTitle(instance) + "”中的任务“" + taskName(task)
+                + "”正在等待您处理，请及时办理。";
+    }
+
+    private String dueSoonMessage(ProcessInstanceEntity instance, ProcessActiveTaskEntity task) {
+        return "【即将超时提醒】流程“" + instanceTitle(instance) + "”中的任务“" + taskName(task)
+                + "”即将超过处理时限，请尽快办理。";
+    }
+
+    private String timeoutMessage(ProcessInstanceEntity instance, ProcessActiveTaskEntity task, TimeoutPolicy policy) {
+        String prefix = "【超时提醒】流程“" + instanceTitle(instance) + "”中的任务“" + taskName(task)
+                + "”已超过处理时限，";
+        if (policy != null && TimeoutPolicy.ACTION_REMIND.equals(policy.getAction())) {
+            return prefix + "请尽快办理。";
         }
-        return "Task reminder: " + instance.getInstanceTitle() + " / " + task.getNodeCode();
+        if (policy != null && TimeoutPolicy.ACTION_TERMINATE.equals(policy.getAction())) {
+            return prefix + "系统将按配置终止流程。";
+        }
+        if (policy != null && TimeoutPolicy.ACTION_FORCE_COMPLETE.equals(policy.getAction())) {
+            return prefix + "系统将按配置自动完成当前任务。";
+        }
+        if (policy != null && TimeoutPolicy.ACTION_JUMP.equals(policy.getAction())) {
+            return prefix + "系统将按配置流转至" + targetNodeName(task, policy);
+        }
+        return prefix + "请关注处理。";
+    }
+
+    private boolean isFixedTemplateReminder(ReminderTypeEnum reminderType) {
+        return ReminderTypeEnum.DUE_SOON.equals(reminderType) || ReminderTypeEnum.TIMEOUT.equals(reminderType);
     }
 
     private ReminderDTO publishAndUpdate(ProcessReminderRecordEntity reminder) {
@@ -486,10 +519,49 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
             payload.put("instanceTitle", instance.getInstanceTitle());
         }
         if (task != null) {
+            TimeoutPolicy timeoutPolicy = timeoutPolicy(task);
             payload.put("nodeCode", task.getNodeCode());
+            payload.put("taskName", taskName(task));
             payload.put("dueAt", task.getDueAt() == null ? null : task.getDueAt().toString());
+            payload.put("timeoutAction", timeoutPolicy.getAction());
+            payload.put("targetNodeCode", timeoutPolicy.getTargetNodeCode());
+            payload.put("targetNodeName", targetNodeName(task, timeoutPolicy));
         }
         return payload;
+    }
+
+    private String instanceTitle(ProcessInstanceEntity instance) {
+        if (instance != null && !isBlank(instance.getInstanceTitle())) {
+            return instance.getInstanceTitle();
+        }
+        return "--";
+    }
+
+    private String taskName(ProcessActiveTaskEntity task) {
+        if (task == null) {
+            return "--";
+        }
+        ProcessNodeEntity node = findNode(task.getDefinitionId(), task.getNodeCode());
+        if (node != null && !isBlank(node.getNodeName())) {
+            return node.getNodeName();
+        }
+        return task.getNodeCode();
+    }
+
+    private String targetNodeName(ProcessActiveTaskEntity task, TimeoutPolicy policy) {
+        if (task == null || policy == null || isBlank(policy.getTargetNodeCode())) {
+            return "--";
+        }
+        ProcessNodeEntity node = findNode(task.getDefinitionId(), policy.getTargetNodeCode());
+        if (node != null && !isBlank(node.getNodeName())) {
+            return node.getNodeName();
+        }
+        return policy.getTargetNodeCode();
+    }
+
+    private ProcessNodeEntity findNode(String definitionId, String nodeCode) {
+        return processNodeRepository == null || isBlank(definitionId) || isBlank(nodeCode) ? null
+                : processNodeRepository.findByDefinitionIdAndNodeCode(definitionId, nodeCode);
     }
 
     private String messageType(String reminderType) {

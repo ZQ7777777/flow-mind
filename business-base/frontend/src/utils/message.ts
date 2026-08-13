@@ -11,9 +11,9 @@ export interface MessageMeta {
 
 const MESSAGE_META: Record<string, MessageMeta> = {
   ALERT: { label: "告警", tone: "error", defaultTitle: "流程异常告警" },
-  TASK_TIMEOUT: { label: "任务超时", tone: "error", defaultTitle: "任务超时提醒" },
+  TASK_TIMEOUT: { label: "已超时", tone: "error", defaultTitle: "任务超时提醒" },
   TASK_DUE_SOON: { label: "即将超时", tone: "warning", defaultTitle: "任务即将超时" },
-  TASK_REMIND: { label: "催办", tone: "info", defaultTitle: "任务催办" },
+  TASK_REMIND: { label: "手动催办", tone: "info", defaultTitle: "任务催办" },
 };
 
 const DEFAULT_MESSAGE_META: MessageMeta = { label: "消息", tone: "info", defaultTitle: "新消息" };
@@ -92,9 +92,9 @@ export function alertStatusClass(status: AlertStatus | string | undefined | null
 export const MESSAGE_TYPE_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "", label: "全部类型" },
   { value: "ALERT", label: "告警" },
-  { value: "TASK_TIMEOUT", label: "任务超时" },
+  { value: "TASK_TIMEOUT", label: "已超时" },
   { value: "TASK_DUE_SOON", label: "即将超时" },
-  { value: "TASK_REMIND", label: "催办" },
+  { value: "TASK_REMIND", label: "手动催办" },
 ];
 
 export const READ_STATUS_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
@@ -105,7 +105,7 @@ export const READ_STATUS_FILTERS: ReadonlyArray<{ value: string; label: string }
 
 export const ALERT_TYPE_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "", label: "全部类型" },
-  { value: "TASK_TIMEOUT", label: "任务超时" },
+  { value: "TASK_TIMEOUT", label: "已超时" },
   { value: "CALLBACK_FAILED", label: "回调失败" },
   { value: "ACTION_EXCEPTION", label: "动作异常" },
 ];

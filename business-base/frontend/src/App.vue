@@ -1,15 +1,25 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ToastHost from "./components/ToastHost.vue";
 import { generatedRoutes } from "./router/generated-routes";
 import { useAuthStore } from "./stores/auth";
 import { useMessageStore } from "./stores/message";
+import MessageCenterView from "./views/MessageCenterView.vue";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const messageStore = useMessageStore();
+const messagePanelOpen = ref(false);
+const messagePanelSize = ref({ width: 420, height: 560 });
+const resizeState = ref<{
+  edge: string;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+} | null>(null);
 const publicLayout = computed(() => route.meta.public === true);
 const isAdmin = computed(() => auth.user?.administrator === true);
 
@@ -54,6 +64,64 @@ function readableGeneratedLabel(value: string): string {
     .join(" ");
 }
 
+const messagePanelStyle = computed(() => ({
+  width: `${messagePanelSize.value.width}px`,
+  height: `${messagePanelSize.value.height}px`,
+}));
+
+const resizeHandles = ["n", "e", "s", "w", "ne", "nw", "se", "sw"] as const;
+
+function toggleMessagePanel(): void {
+  messagePanelOpen.value = !messagePanelOpen.value;
+}
+
+function closeMessagePanel(): void {
+  messagePanelOpen.value = false;
+}
+
+function startResize(edge: string, event: PointerEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  resizeState.value = {
+    edge,
+    startX: event.clientX,
+    startY: event.clientY,
+    startWidth: messagePanelSize.value.width,
+    startHeight: messagePanelSize.value.height,
+  };
+  window.addEventListener("pointermove", resizeMessagePanel);
+  window.addEventListener("pointerup", stopResizeMessagePanel);
+}
+
+function resizeMessagePanel(event: PointerEvent): void {
+  const state = resizeState.value;
+  if (!state) return;
+  const deltaX = event.clientX - state.startX;
+  const deltaY = event.clientY - state.startY;
+  const maxWidth = Math.max(320, window.innerWidth - 32);
+  const maxHeight = Math.max(360, window.innerHeight - 96);
+  let width = state.startWidth;
+  let height = state.startHeight;
+  if (state.edge.includes("e")) width += deltaX;
+  if (state.edge.includes("w")) width -= deltaX;
+  if (state.edge.includes("s")) height += deltaY;
+  if (state.edge.includes("n")) height -= deltaY;
+  messagePanelSize.value = {
+    width: Math.min(Math.max(width, 320), maxWidth),
+    height: Math.min(Math.max(height, 360), maxHeight),
+  };
+}
+
+function stopResizeMessagePanel(): void {
+  resizeState.value = null;
+  window.removeEventListener("pointermove", resizeMessagePanel);
+  window.removeEventListener("pointerup", stopResizeMessagePanel);
+}
+
+onBeforeUnmount(() => {
+  stopResizeMessagePanel();
+});
+
 async function logout(): Promise<void> {
   await auth.logout();
   await router.replace("/login");
@@ -70,16 +138,48 @@ async function logout(): Promise<void> {
         <h1>业务流程办理</h1>
       </div>
       <div class="user-panel" aria-label="当前用户">
-        <RouterLink class="message-entry" data-test="messages-link" to="/messages">
-          消息
-          <span
-            v-if="messageStore.unreadCount > 0"
-            class="unread-badge"
-            data-test="unread-badge"
+        <div class="message-popover">
+          <button
+            class="message-entry"
+            data-test="messages-link"
+            type="button"
+            title="消息中心"
+            aria-label="消息中心"
+            :aria-expanded="messagePanelOpen"
+            @click="toggleMessagePanel"
           >
-            {{ messageStore.unreadCount }}
-          </span>
-        </RouterLink>
+            <span aria-hidden="true">✉</span>
+            <span
+              v-if="messageStore.unreadCount > 0"
+              class="unread-badge"
+              data-test="unread-badge"
+            >
+              {{ messageStore.unreadCount }}
+            </span>
+          </button>
+          <div
+            v-if="messagePanelOpen"
+            class="message-popover-backdrop"
+            data-test="messages-popover-backdrop"
+            @click="closeMessagePanel"
+          >
+            <div
+              class="message-popover-panel"
+              :style="messagePanelStyle"
+              @click.stop
+            >
+              <MessageCenterView variant="popup" />
+              <span
+                v-for="handle in resizeHandles"
+                :key="handle"
+                class="message-resize-handle"
+                :class="`is-${handle}`"
+                aria-hidden="true"
+                @pointerdown="startResize(handle, $event)"
+              ></span>
+            </div>
+          </div>
+        </div>
         <div class="user-summary">
           <strong>{{ auth.user?.realName }}</strong>
           <span>{{ auth.user?.departmentName }}</span>
@@ -171,16 +271,23 @@ async function logout(): Promise<void> {
   gap: 14px;
 }
 
-.message-entry {
+.message-popover {
   position: relative;
+}
+
+.message-entry {
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  width: 34px;
   min-height: 32px;
   border: 1px solid #b9c2cf;
   border-radius: 5px;
-  padding: 5px 14px;
+  padding: 0;
   background: #fff;
   color: #374151;
   font: inherit;
-  font-size: 13px;
+  font-size: 17px;
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
@@ -189,6 +296,99 @@ async function logout(): Promise<void> {
 .message-entry:hover {
   border-color: var(--teal);
   color: var(--teal);
+}
+
+.message-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.message-popover-panel {
+  position: absolute;
+  top: 70px;
+  right: 24px;
+  min-width: 320px;
+  min-height: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 96px);
+  overflow: visible;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18);
+}
+
+.message-popover-panel :deep(.message-center.is-popup) {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+
+.message-resize-handle {
+  position: absolute;
+  z-index: 2;
+}
+
+.message-resize-handle.is-n,
+.message-resize-handle.is-s {
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.message-resize-handle.is-e,
+.message-resize-handle.is-w {
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.message-resize-handle.is-n {
+  top: -4px;
+}
+
+.message-resize-handle.is-s {
+  bottom: -4px;
+}
+
+.message-resize-handle.is-e {
+  right: -4px;
+}
+
+.message-resize-handle.is-w {
+  left: -4px;
+}
+
+.message-resize-handle.is-ne,
+.message-resize-handle.is-nw,
+.message-resize-handle.is-se,
+.message-resize-handle.is-sw {
+  width: 14px;
+  height: 14px;
+}
+
+.message-resize-handle.is-ne {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+
+.message-resize-handle.is-nw {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+
+.message-resize-handle.is-se {
+  right: -5px;
+  bottom: -5px;
+  cursor: nwse-resize;
+}
+
+.message-resize-handle.is-sw {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
 }
 
 .unread-badge {
@@ -338,6 +538,11 @@ async function logout(): Promise<void> {
 
   .user-panel {
     justify-content: space-between;
+  }
+
+  .message-popover-panel {
+    left: 16px;
+    right: auto;
   }
 
   .user-summary {
