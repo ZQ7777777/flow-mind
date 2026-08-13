@@ -5,21 +5,11 @@ import com.flowmind.business.platform.PlatformDtoMapper;
 import com.flowmind.business.platform.PlatformFacade;
 import com.flowmind.business.workflow.dto.WorkflowActionRequests;
 import com.flowmind.business.workflow.dto.WorkflowTaskActionResponse;
-import com.flowmind.platform.api.request.AddSignRequest;
-import com.flowmind.platform.api.request.ApproveTaskRequest;
-import com.flowmind.platform.api.request.ClaimTaskRequest;
-import com.flowmind.platform.api.request.DelegateTaskRequest;
-import com.flowmind.platform.api.request.DirectSendRequest;
-import com.flowmind.platform.api.request.RejectTaskRequest;
-import com.flowmind.platform.api.request.ReturnTaskRequest;
-import com.flowmind.platform.api.request.SubmitTaskRequest;
-import com.flowmind.platform.api.request.TaskOperationRequest;
-import com.flowmind.platform.api.request.TransferTaskRequest;
-import com.flowmind.platform.api.request.UnclaimTaskRequest;
-import com.flowmind.platform.api.request.WithdrawTaskRequest;
+import com.flowmind.platform.api.request.*;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
+import com.flowmind.platform.api.service.ProcessMonitorService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -37,15 +27,17 @@ public class WorkflowActionService {
     private final OperationIdFactory operationIdFactory;
     private final WorkflowQueryService queryService;
     private final WorkflowFormValueValidator formValueValidator;
+    private final ProcessMonitorService monitorService;
 
     public WorkflowActionService(PlatformFacade platformFacade, PlatformDtoMapper mapper,
                                  OperationIdFactory operationIdFactory, WorkflowQueryService queryService,
-                                 WorkflowFormValueValidator formValueValidator) {
+                                 WorkflowFormValueValidator formValueValidator, ProcessMonitorService monitorService) {
         this.platformFacade = platformFacade;
         this.mapper = mapper;
         this.operationIdFactory = operationIdFactory;
         this.queryService = queryService;
         this.formValueValidator = formValueValidator;
+        this.monitorService = monitorService;
     }
 
     /**
@@ -78,6 +70,18 @@ public class WorkflowActionService {
      * 将通用动作编码和业务请求转换为对应的平台请求类型。
      * 审批阶段不映射任意流程变量，加签用户列表会保持顺序并去重。
      */
+    public void remind(String taskId, String idempotencyKey, WorkflowActionRequests.Remind input) {
+        String userId = platformFacade.currentUser().getUserId();
+        RemindTaskRequest request = new RemindTaskRequest();
+        request.setTaskId(taskId);
+        request.setExpectedTaskVersion(input.getExpectedTaskVersion());
+        request.setOperatorUserId(userId);
+        request.setComment(input.getComment());
+        request.setOperationId(operationIdFactory.create(DOMAIN, "remind", taskId, userId, idempotencyKey));
+
+        monitorService.remindTask(request);
+    }
+
     private TaskOperationRequest request(String action, String taskId, ProcessInstanceDetailDTO instance,
                                          WorkflowActionRequests.Basic input) {
         if ("approve".equals(action)) return new ApproveTaskRequest();

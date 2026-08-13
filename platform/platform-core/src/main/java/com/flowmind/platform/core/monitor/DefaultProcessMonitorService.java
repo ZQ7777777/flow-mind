@@ -195,7 +195,15 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
         int limit = request == null || request.getLimit() == null ? 50 : Math.max(1, request.getLimit().intValue());
         boolean dryRun = request == null || Boolean.TRUE.equals(request.getDryRun());
         List<TaskDTO> results = new ArrayList<TaskDTO>();
-        for (ProcessActiveTaskEntity task : activeTaskRepository.findTimeoutOpenTasks(scanAt, limit)) {
+        if (!dryRun) {
+            for (ProcessActiveTaskEntity task : safeList(activeTaskRepository.findDueSoonOpenTasks(scanAt, limit))) {
+                ReminderPolicy reminderPolicy = reminderPolicy(task);
+                if (reminderPolicy.isEnabled()) {
+                    createDueSoonReminder(task, reminderPolicy);
+                }
+            }
+        }
+        for (ProcessActiveTaskEntity task : safeList(activeTaskRepository.findTimeoutOpenTasks(scanAt, limit))) {
             results.add(RuntimeModelMapper.toDto(task, null, null));
             if (dryRun) {
                 continue;
@@ -336,10 +344,34 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
         return reminderPolicyReader.read(node);
     }
 
+    private void createDueSoonReminder(ProcessActiveTaskEntity task, ReminderPolicy policy) {
+        createAutomaticReminder(task, policy, ReminderTypeEnum.DUE_SOON, "system_due_soon",
+                "Task due soon reminder: " + task.getNodeCode());
+    }
+
     private void createTimeoutReminder(ProcessActiveTaskEntity task, ReminderPolicy policy) {
-        if (reminderRepository == null || reminderDeduplicationGuard == null || messagePublisher == null
-                || !reminderDeduplicationGuard.canCreate(task.getId(), ReminderTypeEnum.TIMEOUT,
-                policy.getMaxCount() == null ? 1 : policy.getMaxCount().intValue())) {
+        createAutomaticReminder(task, policy, ReminderTypeEnum.TIMEOUT, "system_timeout",
+                "Task timeout reminder: " + task.getNodeCode());
+    }
+
+    private void createAutomaticReminder(ProcessActiveTaskEntity task,
+                                         ReminderPolicy policy,
+                                         ReminderTypeEnum reminderType,
+                                         String createdBy,
+                                         String defaultMessage) {
+        if (reminderRepository == null || reminderDeduplicationGuard == null || messagePublisher == null) {
+            return;
+        }
+        ProcessReminderRecordEntity latest = reminderRepository.findLatestByTaskAndType(task.getId(),
+                reminderType.name());
+        if (latest != null) {
+            if (ReminderStatusEnum.FAILED.name().equals(latest.getReminderStatus())) {
+                publishAndUpdate(latest, task);
+            }
+            return;
+        }
+        int maxCount = policy.getMaxCount() == null ? 1 : policy.getMaxCount().intValue();
+        if (!reminderDeduplicationGuard.canCreate(task.getId(), reminderType, maxCount)) {
             return;
         }
         List<String> targets = resolveTargets(task);
@@ -347,16 +379,14 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
         entity.setId(UUID.randomUUID().toString());
         entity.setInstanceId(task.getInstanceId());
         entity.setTaskId(task.getId());
-        entity.setReminderType(ReminderTypeEnum.TIMEOUT.name());
+        entity.setReminderType(reminderType.name());
         entity.setTargetUserIds(RuntimeJsonCodec.toJson(targets));
-        entity.setMessage(isBlank(policy.getMessageTemplate())
-                ? "Task timeout reminder: " + task.getNodeCode()
-                : policy.getMessageTemplate());
+        entity.setMessage(isBlank(policy.getMessageTemplate()) ? defaultMessage : policy.getMessageTemplate());
         entity.setReminderStatus(ReminderStatusEnum.PENDING.name());
-        entity.setCreatedBy("system_timeout");
+        entity.setCreatedBy(createdBy);
         entity.setCreatedAt(LocalDateTime.now());
         reminderRepository.insert(entity);
-        publishAndUpdate(entity);
+        publishAndUpdate(entity, task);
     }
 
     private void applyTimeoutAction(ProcessActiveTaskEntity task,
@@ -421,18 +451,19 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
     }
 
     private ReminderDTO publishAndUpdate(ProcessReminderRecordEntity reminder) {
+        return publishAndUpdate(reminder, findTask(reminder.getTaskId()));
+    }
+
+    private ReminderDTO publishAndUpdate(ProcessReminderRecordEntity reminder, ProcessActiveTaskEntity task) {
         try {
+            ProcessInstanceEntity instance = findInstance(reminder.getInstanceId());
             ProcessMessage message = new ProcessMessage();
             message.setMessageId(reminder.getId());
-            message.setMessageType("REMIND");
-            message.setTitle("Process task reminder");
+            message.setMessageType(messageType(reminder.getReminderType()));
+            message.setTitle(messageTitle(reminder.getReminderType()));
             message.setContent(reminder.getMessage());
             message.setTargetUserIds(RuntimeJsonCodec.readStringList(reminder.getTargetUserIds()));
-            Map<String, Object> payload = new LinkedHashMap<String, Object>();
-            payload.put("instanceId", reminder.getInstanceId());
-            payload.put("taskId", reminder.getTaskId());
-            payload.put("reminderType", reminder.getReminderType());
-            message.setPayload(payload);
+            message.setPayload(reminderPayload(reminder, task, instance));
             message.setCreatedAt(LocalDateTime.now());
             messagePublisher.publish(message);
             reminderRepository.markSent(reminder.getId());
@@ -440,6 +471,59 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
             reminderRepository.markFailed(reminder.getId(), ex.getMessage());
         }
         return toReminderDTO(reminderRepository.findById(reminder.getId()));
+    }
+
+    private Map<String, Object> reminderPayload(ProcessReminderRecordEntity reminder,
+                                                ProcessActiveTaskEntity task,
+                                                ProcessInstanceEntity instance) {
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("instanceId", reminder.getInstanceId());
+        if (!isBlank(reminder.getTaskId())) {
+            payload.put("taskId", reminder.getTaskId());
+        }
+        if (instance != null) {
+            payload.put("processCode", instance.getProcessCode());
+            payload.put("instanceTitle", instance.getInstanceTitle());
+        }
+        if (task != null) {
+            payload.put("nodeCode", task.getNodeCode());
+            payload.put("dueAt", task.getDueAt() == null ? null : task.getDueAt().toString());
+        }
+        return payload;
+    }
+
+    private String messageType(String reminderType) {
+        if (ReminderTypeEnum.DUE_SOON.name().equals(reminderType)) {
+            return "TASK_DUE_SOON";
+        }
+        if (ReminderTypeEnum.TIMEOUT.name().equals(reminderType)) {
+            return "TASK_TIMEOUT";
+        }
+        return "TASK_REMIND";
+    }
+
+    private String messageTitle(String reminderType) {
+        if (ReminderTypeEnum.DUE_SOON.name().equals(reminderType)) {
+            return "任务即将超时";
+        }
+        if (ReminderTypeEnum.TIMEOUT.name().equals(reminderType)) {
+            return "任务已超时";
+        }
+        return "任务催办";
+    }
+
+    private ProcessActiveTaskEntity findTask(String taskId) {
+        if (activeTaskRepository == null || isBlank(taskId)) {
+            return null;
+        }
+        return activeTaskRepository.findById(taskId);
+    }
+
+    private ProcessInstanceEntity findInstance(String instanceId) {
+        if (instanceRepository == null || isBlank(instanceId)) {
+            return null;
+        }
+        return instanceRepository.findById(instanceId);
     }
 
     private void validateAlertRequest(HandleAlertRequest request) {
@@ -500,6 +584,10 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
         dto.setHandledAt(entity.getHandledAt());
         dto.setCreatedAt(entity.getCreatedAt());
         return dto;
+    }
+
+    private List<ProcessActiveTaskEntity> safeList(List<ProcessActiveTaskEntity> tasks) {
+        return tasks == null ? Collections.<ProcessActiveTaskEntity>emptyList() : tasks;
     }
 
     private <T> PageResult<T> page(List<T> records, int pageNo, int pageSize, long total) {

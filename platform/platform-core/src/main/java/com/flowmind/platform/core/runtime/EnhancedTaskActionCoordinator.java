@@ -37,6 +37,8 @@ import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecisionType;
 import com.flowmind.platform.core.definition.TaskActionRuleConfigReader;
 import com.flowmind.platform.core.definition.TaskActionRuleConfigReader.TaskActionRules;
+import com.flowmind.platform.core.monitor.TimeoutDueDateCalculator;
+import com.flowmind.platform.core.monitor.TimeoutPolicyReader;
 import com.flowmind.platform.core.task.HistoryArchiveCommand;
 import com.flowmind.platform.core.task.HistoryTaskWriter;
 import com.flowmind.platform.core.validation.DefinitionGraphIndex;
@@ -91,6 +93,8 @@ public class EnhancedTaskActionCoordinator {
     private final CallbackService callbackService;
     private final OrganizationProvider organizationProvider;
     private final TaskActionRuleConfigReader taskActionRuleConfigReader = new TaskActionRuleConfigReader();
+    /** 计算节点时限到期时间；加签恢复源任务时用于补全历史数据中缺失的 dueAt。 */
+    private final TimeoutDueDateCalculator timeoutDueDateCalculator = new TimeoutDueDateCalculator(new TimeoutPolicyReader());
     /** 直送查询和执行共用的可信驳回来源解析器。 */
     private final DirectSendContextResolver directSendContextResolver;
     /** 直送完成当前节点前校验实例绑定的附件要求。 */
@@ -565,11 +569,17 @@ public class EnhancedTaskActionCoordinator {
             @Override public TaskActionResult run(EnhancedActionContext context) {
                 requireSerial(context.task);
                 List<UserDTO> users = resolveAddSignUsers(request.getAddSignUserIds(), context.operator.getUserId());
+                // 加签不应重置节点时限：临时加签任务沿用源任务的到期时间；若源任务 dueAt 已丢失（历史数据），
+                // 则按节点 timeoutConfig 与源任务创建时间补全，避免加签后到期时间永久丢失。
+                ProcessNodeDTO sourceNode = DefinitionGraphIndex.from(context.definition)
+                        .getNodesByCode().get(context.task.getNodeCode());
+                LocalDateTime sourceDueAt = resolveDueAt(sourceNode, context.task.getDueAt(),
+                        context.task.getCreatedAt());
                 cancel(context.task, request);
-                ProcessTaskGroupEntity group = createAddSignGroup(context, request, users.size());
+                ProcessTaskGroupEntity group = createAddSignGroup(context, request, users.size(), sourceDueAt);
                 List<TaskDTO> created = new ArrayList<TaskDTO>();
                 for (UserDTO user : users) {
-                    ProcessActiveTaskEntity temporary = createTemporaryTask(context, group, user);
+                    ProcessActiveTaskEntity temporary = createTemporaryTask(context, group, user, sourceDueAt);
                     created.add(RuntimeModelMapper.toDto(temporary, null, null));
                 }
                 Map<String, Object> metadata = metadata(context, context.task.getNodeCode());
@@ -969,7 +979,8 @@ public class EnhancedTaskActionCoordinator {
         }
     }
 
-    private ProcessTaskGroupEntity createAddSignGroup(EnhancedActionContext context, AddSignRequest request, int count) {
+    private ProcessTaskGroupEntity createAddSignGroup(EnhancedActionContext context, AddSignRequest request,
+                                                      int count, LocalDateTime sourceDueAt) {
         Map<String, Object> snapshot = new LinkedHashMap<String, Object>();
         snapshot.put("schemaVersion", Integer.valueOf(1));
         snapshot.put("purpose", ADD_SIGN_PURPOSE);
@@ -978,6 +989,9 @@ public class EnhancedTaskActionCoordinator {
         snapshot.put("sourceCandidateUserIds", context.task.getCandidateUserIds());
         snapshot.put("sourceAssigneeUserId", context.task.getAssigneeUserId());
         snapshot.put("sourceAssigneeUserName", context.task.getAssigneeUserName());
+        // 保留源任务的到期时间与创建时间，加签完成后恢复源任务时原样还原，避免时限丢失。
+        snapshot.put("sourceDueAt", sourceDueAt);
+        snapshot.put("sourceCreatedAt", context.task.getCreatedAt());
         snapshot.put("sourceOperationId", request.getOperationId());
         ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
         group.setId(UUID.randomUUID().toString());
@@ -997,7 +1011,7 @@ public class EnhancedTaskActionCoordinator {
     }
 
     private ProcessActiveTaskEntity createTemporaryTask(EnhancedActionContext context, ProcessTaskGroupEntity group,
-                                                        UserDTO user) {
+                                                        UserDTO user, LocalDateTime dueAt) {
         ProcessActiveTaskEntity task = new ProcessActiveTaskEntity();
         task.setId(UUID.randomUUID().toString());
         task.setInstanceId(context.instance.getId());
@@ -1010,6 +1024,7 @@ public class EnhancedTaskActionCoordinator {
         task.setTaskGroupId(group.getId());
         task.setLockVersion(Long.valueOf(0));
         task.setCreatedAt(LocalDateTime.now());
+        task.setDueAt(dueAt);
         if (activeTaskRepository.insert(task) != 1) {
             throw state(RuntimeErrorCodes.ADD_SIGN_CONTEXT_INVALID, "failed to create add-sign task");
         }
@@ -1032,7 +1047,12 @@ public class EnhancedTaskActionCoordinator {
         task.setAssigneeUserName(optionalText(snapshot, "sourceAssigneeUserName"));
         task.setTaskStatus(isBlank(sourceAssigneeUserId) ? "ACTIVE" : "CLAIMED");
         task.setLockVersion(Long.valueOf(0));
-        task.setCreatedAt(LocalDateTime.now());
+        LocalDateTime sourceCreatedAt = optionalDateTime(snapshot, "sourceCreatedAt");
+        task.setCreatedAt(sourceCreatedAt != null ? sourceCreatedAt : LocalDateTime.now());
+        // 到期时间优先原样还原；旧快照缺 sourceDueAt 时，按节点 timeoutConfig 与源创建时间补全。
+        ProcessNodeDTO sourceNode = DefinitionGraphIndex.from(context.definition)
+                .getNodesByCode().get(task.getNodeCode());
+        task.setDueAt(resolveDueAt(sourceNode, optionalDateTime(snapshot, "sourceDueAt"), sourceCreatedAt));
         if (activeTaskRepository.insert(task) != 1) {
             throw state(RuntimeErrorCodes.ADD_SIGN_CONTEXT_INVALID, "failed to restore source task");
         }
@@ -1264,6 +1284,35 @@ public class EnhancedTaskActionCoordinator {
     private String optionalText(Map<String, Object> map, String key) {
         Object value = map.get(key);
         return value instanceof String && !isBlank((String) value) ? (String) value : null;
+    }
+    private LocalDateTime optionalDateTime(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        if (value == null) {
+            return null;
+        }
+        String text = value instanceof String ? (String) value : String.valueOf(value);
+        if (isBlank(text)) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(text.trim());
+        } catch (RuntimeException ex) {
+            throw state(RuntimeErrorCodes.ADD_SIGN_CONTEXT_INVALID,
+                    "add-sign source timestamp is malformed: " + key);
+        }
+    }
+    /**
+     * 解析加签场景下的到期时间：优先沿用已有 dueAt；缺失时按节点 timeoutConfig 与创建时间补全，
+     * 以覆盖历史数据中 dueAt 已丢失的情况。节点未配置时限或创建时间缺失时返回 null。
+     */
+    private LocalDateTime resolveDueAt(ProcessNodeDTO node, LocalDateTime dueAt, LocalDateTime createdAt) {
+        if (dueAt != null) {
+            return dueAt;
+        }
+        if (node == null || createdAt == null) {
+            return null;
+        }
+        return timeoutDueDateCalculator.calculate(node, createdAt);
     }
     private List<String> taskIds(List<TaskDTO> tasks) { List<String> ids = new ArrayList<String>(); for (TaskDTO task : tasks) { ids.add(task.getTaskId()); } return ids; }
     private List<String> userIds(List<UserDTO> users) { List<String> ids = new ArrayList<String>(); for (UserDTO user : users) { ids.add(user.getUserId()); } return ids; }

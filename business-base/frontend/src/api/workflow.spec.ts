@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   approveTask,
+  remindTask,
   fetchWorkflowList,
   fetchWorkflowUsers,
   downloadAttachment,
@@ -85,6 +86,31 @@ describe("workflow api", () => {
     });
   });
 
+
+  it("sends starter reminders with task version and idempotency key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ reminderId: "reminder-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await remindTask("task-1", {
+      expectedTaskVersion: 7,
+      comment: "请尽快处理",
+      idempotencyKey: "idem-remind",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(url).toContain("/api/workflow/tasks/task-1/remind");
+    expect(headers["Idempotency-Key"]).toBe("idem-remind");
+    expect(JSON.parse(init.body as string)).toEqual({
+      expectedTaskVersion: 7,
+      comment: "请尽快处理",
+    });
+  });
   it("uploads attachments as multipart form data without caller-controlled storage fields", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ attachmentId: "att-1" }), {

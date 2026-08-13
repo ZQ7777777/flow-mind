@@ -15,6 +15,7 @@ import {
   replaceInstanceAttachment,
 } from "../api/workflow";
 import { WorkflowApiError } from "../api/http";
+import { useAuthStore } from "../stores/auth";
 import { useWorkflowStore } from "../stores/workflow";
 import type {
   TaskActionCode,
@@ -31,6 +32,7 @@ const props = defineProps<{
 const route = useRoute();
 const router = useRouter();
 const store = useWorkflowStore();
+const authStore = useAuthStore();
 
 const detail = computed(() => store.detail.data);
 const instanceId = computed(() => String(route.params.instanceId ?? ""));
@@ -65,6 +67,18 @@ const pendingReplacements = ref<Record<string, {
   idempotencyKey: string;
 }>>({});
 const isEditableApply = computed(() => Boolean(detail.value?.allowedActions.includes("SUBMIT")));
+const reminderSuccess = ref("");
+const currentTask = computed(() => detail.value?.currentTask ?? null);
+const deadlineWarning = computed(() => {
+  const task = currentTask.value;
+  if (!task) return null;
+  if (task.deadlineStatus === "OVERDUE") return "已超时";
+  if (task.deadlineStatus === "DUE_SOON") return "即将超时";
+  return null;
+});
+const canRemindCurrentTask = computed(() =>
+  Boolean(currentTask.value?.taskId && authStore.user?.userId === detail.value?.instance.starterUserId),
+);
 
 onMounted(() => {
   void loadDetail();
@@ -162,6 +176,22 @@ async function submitAction(payload: {
   }
 }
 
+
+async function remindCurrentTask(): Promise<void> {
+  if (!currentTask.value?.taskId) return;
+  reminderSuccess.value = "";
+  try {
+    await store.remindTask(currentTask.value.taskId, {
+      expectedTaskVersion: currentTask.value.taskVersion,
+      comment: "请尽快处理",
+      idempotencyKey: createIdempotencyKey("workflow:remind"),
+    });
+    reminderSuccess.value = "催办已发送";
+    await loadDetail();
+  } catch {
+    // store.reminderError drives the visible error message.
+  }
+}
 function stageReplacement(payload: { attachment: WorkflowAttachmentView; file: File }): void {
   pendingReplacements.value = {
     ...pendingReplacements.value,
@@ -304,6 +334,24 @@ async function remove(item: WorkflowAttachmentView): Promise<void> {
         </dl>
       </header>
 
+      <div v-if="deadlineWarning" class="deadline-banner" data-test="deadline-banner">
+        <div>
+          <strong>{{ deadlineWarning }}</strong>
+          <span v-if="currentTask?.dueAt">到期时间：{{ formatDateTime(currentTask.dueAt) }}</span>
+        </div>
+        <button
+          v-if="canRemindCurrentTask"
+          type="button"
+          data-test="remind-task"
+          :disabled="store.reminderSubmitting"
+          @click="remindCurrentTask"
+        >
+          {{ store.reminderSubmitting ? "发送中" : "发送催办" }}
+        </button>
+      </div>
+      <p v-if="reminderSuccess" class="action-success" role="status">{{ reminderSuccess }}</p>
+      <p v-if="store.reminderError" class="action-error" role="alert">{{ store.reminderError }}</p>
+
       <ProcessGraph
         :nodes="detail.nodes"
         :edges="detail.edges"
@@ -408,6 +456,56 @@ dd {
   border-color: #fecaca;
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.deadline-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  padding: 12px;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.deadline-banner div {
+  display: grid;
+  gap: 4px;
+}
+
+.deadline-banner strong {
+  color: #78350f;
+}
+
+.deadline-banner span {
+  font-size: 13px;
+}
+
+.deadline-banner button {
+  min-height: 34px;
+  border: 1px solid #d97706;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  color: #92400e;
+  cursor: pointer;
+  font: inherit;
+}
+
+.deadline-banner button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.action-success {
+  margin: 0;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #f0fdf4;
+  color: #166534;
 }
 
 .action-error {

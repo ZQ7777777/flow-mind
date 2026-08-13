@@ -37,6 +37,16 @@ export interface ManagedDefinition {
   createdAt: string;
 }
 
+export interface ManagedSession {
+  sessionId: string;
+  businessName: string;
+  state: string;
+  rowVersion: number;
+  lastError?: { code: string; message: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ManagedGeneration {
   generationId: string;
   sessionId: string;
@@ -88,6 +98,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const error = ref("");
   const streamingText = ref("");
   const qualityReport = ref<GenerationQualityReport>();
+  const managedSessions = ref<ManagedSession[]>([]);
   const managedDefinitions = ref<ManagedDefinition[]>([]);
   const managedGenerations = ref<ManagedGeneration[]>([]);
   const connected = ref(false);
@@ -150,6 +161,18 @@ export const useWorkflowStore = defineStore("workflow", () => {
   async function refresh(sessionId = snapshot.value?.sessionId): Promise<void> {
     if (!currentUser.value || !sessionId) return;
     applySnapshot(await apiRequest<WorkflowSnapshot>(`/api/agent/sessions/${sessionId}`));
+  }
+
+  async function openSession(sessionId: string): Promise<void> {
+    if (!currentUser.value || !sessionId || sessionId === snapshot.value?.sessionId) return;
+    await run(async () => {
+      const nextSnapshot = await apiRequest<WorkflowSnapshot>(`/api/agent/sessions/${sessionId}`);
+      disconnect();
+      clearSessionViewState();
+      applySnapshot(nextSnapshot);
+      localStorage.setItem(sessionStorageKey(), nextSnapshot.sessionId);
+      connect();
+    }, false);
   }
 
   async function sendMessage(content: string): Promise<void> {
@@ -271,7 +294,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     generatedPreviewFile.value = undefined;
     const file = await apiRequest<GeneratedFileContent>(
       `/api/agent/sessions/${sessionId}/code-generations/${generation.generationId}/files/${encodePath(relativePath)}`,
-      user,
     );
     const currentGeneration = snapshot.value?.activeGeneration;
     if (
@@ -397,10 +419,12 @@ export const useWorkflowStore = defineStore("workflow", () => {
 
   async function loadManagementLists(): Promise<void> {
     if (!currentUser.value) return;
-    const [definitions, generations] = await Promise.all([
+    const [sessions, definitions, generations] = await Promise.all([
+      apiRequest<ManagedSession[]>("/api/agent/management/sessions"),
       apiRequest<ManagedDefinition[]>("/api/agent/management/process-definitions"),
       apiRequest<ManagedGeneration[]>("/api/agent/management/code-generations"),
     ]);
+    managedSessions.value = sessions;
     managedDefinitions.value = definitions;
     managedGenerations.value = generations;
   }
@@ -539,8 +563,23 @@ export const useWorkflowStore = defineStore("workflow", () => {
     generatedFile.value = undefined;
     generatedDiff.value = undefined;
     qualityReport.value = undefined;
+    managedSessions.value = [];
     managedDefinitions.value = [];
     managedGenerations.value = [];
+    lastCompaction.value = undefined;
+    generationLog.value = [];
+    qualityLog.value = [];
+    qualityStream.value = "";
+    verifyStages.value = initialVerifyStages();
+  }
+
+  function clearSessionViewState(): void {
+    streamingText.value = "";
+    reasoningText.value = "";
+    generatedFile.value = undefined;
+    generatedDiff.value = undefined;
+    generatedPreviewFile.value = undefined;
+    qualityReport.value = undefined;
     lastCompaction.value = undefined;
     generationLog.value = [];
     qualityLog.value = [];
@@ -589,6 +628,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     generatedDiff,
     generatedPreviewFile,
     qualityReport,
+    managedSessions,
     managedDefinitions,
     managedGenerations,
     lastCompaction,
@@ -601,6 +641,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     createSession,
     createQualityGateFixture,
     refresh,
+    openSession,
     sendMessage,
     saveRequirement,
     confirmRequirement,

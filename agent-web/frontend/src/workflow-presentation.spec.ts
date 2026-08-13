@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isResetSessionDisabled, nextStepMessage } from "./workflow-presentation";
+import {
+  isResetSessionDisabled,
+  isSessionSwitchConfirmationRequired,
+  nextStepMessage,
+} from "./workflow-presentation";
 
 describe("workflow presentation", () => {
   it("describes completed writes as successful", () => {
@@ -17,5 +21,24 @@ describe("workflow presentation", () => {
     expect(isResetSessionDisabled(["RESET_SESSION"], false)).toBe(false);
     expect(isResetSessionDisabled([], false)).toBe(true);
     expect(isResetSessionDisabled(["RESET_SESSION"], true)).toBe(true);
+  });
+});
+
+describe("isSessionSwitchConfirmationRequired", () => {
+  it.each([
+    "PROCESS_PROVISIONING",
+    "PROCESS_ACTIVATING",
+    "CODE_GENERATING",
+    "CODE_VERIFYING",
+    "CODE_REVIEWING",
+    "CODE_REPAIRING",
+    "WRITING_ARTIFACTS",
+  ])("requires confirmation before leaving processing state %s", (state) => {
+    expect(isSessionSwitchConfirmationRequired(state, "current", "history")).toBe(true);
+  });
+
+  it("does not confirm when reopening the current session or leaving an idle state", () => {
+    expect(isSessionSwitchConfirmationRequired("CODE_GENERATING", "current", "current")).toBe(false);
+    expect(isSessionSwitchConfirmationRequired("CODE_PIPELINE_FAILED", "current", "history")).toBe(false);
   });
 });

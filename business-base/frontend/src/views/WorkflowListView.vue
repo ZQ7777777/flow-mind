@@ -47,7 +47,7 @@ const columns = computed(() => {
   if (props.type === "read") {
     return ["processName", "instanceStatus", "readAt"];
   }
-  return ["processName", "nodeName", "source", "starterUserName", "createdAt", "dueAt"];
+  return ["processName", "nodeName", "source", "starterUserName", "createdAt", "dueAt", "deadlineStatus"];
 });
 
 onMounted(() => {
@@ -160,12 +160,28 @@ function columnLabel(column: string): string {
     starterUserName: "发起人",
     createdAt: "创建时间",
     dueAt: "到期时间",
+    deadlineStatus: "时限",
     startedAt: "发起时间",
     endedAt: "结束时间",
     completedAt: "完成时间",
     readAt: "阅读时间",
   };
   return labels[column] ?? column;
+}
+
+function deadlineLabel(row: WorkflowListRecord): string {
+  if (!isTask(row)) return "--";
+  if (row.deadlineStatus === "OVERDUE") return "已超时";
+  if (row.deadlineStatus === "DUE_SOON") return "即将超时";
+  if (row.deadlineStatus === "NORMAL") return "正常";
+  return "--";
+}
+
+function deadlineClass(row: WorkflowListRecord): Record<string, boolean> {
+  return {
+    "is-overdue": isTask(row) && row.deadlineStatus === "OVERDUE",
+    "is-due-soon": isTask(row) && row.deadlineStatus === "DUE_SOON",
+  };
 }
 
 function columnValue(row: WorkflowListRecord, column: string): string {
@@ -285,7 +301,17 @@ function starterName(row: WorkflowListRecord): string | undefined {
               <strong>{{ row.instanceTitle }}</strong>
               <span v-if="starterName(row)">发起人：{{ starterName(row) }}</span>
             </td>
-            <td v-for="column in columns" :key="column">{{ columnValue(row, column) }}</td>
+            <td v-for="column in columns" :key="column">
+              <span
+                v-if="column === 'deadlineStatus'"
+                class="deadline-badge"
+                :class="deadlineClass(row)"
+                :data-test="isTask(row) ? `deadline-${row.taskId}` : undefined"
+              >
+                {{ deadlineLabel(row) }}
+              </span>
+              <template v-else>{{ columnValue(row, column) }}</template>
+            </td>
             <td class="table-actions">
               <RouterLink class="table-link" :to="detailPath(row)">详情</RouterLink>
               <button

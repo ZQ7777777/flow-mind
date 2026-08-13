@@ -1,19 +1,36 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import ToastHost from "./components/ToastHost.vue";
 import { generatedRoutes } from "./router/generated-routes";
 import { useAuthStore } from "./stores/auth";
+import { useMessageStore } from "./stores/message";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const messageStore = useMessageStore();
 const publicLayout = computed(() => route.meta.public === true);
+const isAdmin = computed(() => auth.user?.administrator === true);
 
 const generatedEntryRoutes = computed(() =>
   generatedRoutes.map((route, index) => ({
     path: route.path,
     label: labelGeneratedRoute(route, index),
   })),
+);
+
+watch(
+  () => auth.authenticated,
+  (authenticated) => {
+    if (authenticated) {
+      messageStore.connectStream();
+      void messageStore.refreshUnreadCount();
+    } else {
+      messageStore.disconnectStream();
+    }
+  },
+  { immediate: true },
 );
 
 function labelGeneratedRoute(route: (typeof generatedRoutes)[number], index: number): string {
@@ -46,12 +63,23 @@ async function logout(): Promise<void> {
 <template>
   <RouterView v-if="publicLayout" />
   <div v-else class="business-app-shell">
+    <ToastHost />
     <header class="topbar">
       <div>
         <p class="eyebrow">Flow Mind</p>
         <h1>业务流程办理</h1>
       </div>
       <div class="user-panel" aria-label="当前用户">
+        <RouterLink class="message-entry" data-test="messages-link" to="/messages">
+          消息
+          <span
+            v-if="messageStore.unreadCount > 0"
+            class="unread-badge"
+            data-test="unread-badge"
+          >
+            {{ messageStore.unreadCount }}
+          </span>
+        </RouterLink>
         <div class="user-summary">
           <strong>{{ auth.user?.realName }}</strong>
           <span>{{ auth.user?.departmentName }}</span>
@@ -86,6 +114,7 @@ async function logout(): Promise<void> {
           <div class="nav-divider" aria-hidden="true"></div>
           <RouterLink class="nav-link" to="/admin/process-definitions">流程定义</RouterLink>
           <RouterLink class="nav-link" to="/admin/process-instances">流程实例</RouterLink>
+          <RouterLink class="nav-link" data-test="admin-alerts-link" to="/admin/alerts">告警管理</RouterLink>
         </template>
       </nav>
 
@@ -148,6 +177,42 @@ async function logout(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+.message-entry {
+  position: relative;
+  min-height: 32px;
+  border: 1px solid #b9c2cf;
+  border-radius: 5px;
+  padding: 5px 14px;
+  background: #fff;
+  color: #374151;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.message-entry:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+.unread-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #be123c;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
 
 .user-summary {

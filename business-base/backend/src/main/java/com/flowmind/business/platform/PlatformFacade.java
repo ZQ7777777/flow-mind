@@ -42,6 +42,7 @@ public class PlatformFacade {
     private final ProcessDefinitionService definitionService;
     private final AttachmentService attachmentService;
     private final ReadRecordService readRecordService;
+    private final com.flowmind.platform.api.service.ProcessMonitorService monitorService;
     private final CurrentUserProvider currentUserProvider;
 
     public PlatformFacade(TaskQueryService taskQueryService,
@@ -49,12 +50,14 @@ public class PlatformFacade {
                           ProcessDefinitionService definitionService,
                           AttachmentService attachmentService,
                           ReadRecordService readRecordService,
+                          com.flowmind.platform.api.service.ProcessMonitorService monitorService,
                           CurrentUserProvider currentUserProvider) {
         this.taskQueryService = taskQueryService;
         this.runtimeService = runtimeService;
         this.definitionService = definitionService;
         this.attachmentService = attachmentService;
         this.readRecordService = readRecordService;
+        this.monitorService = monitorService;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -196,6 +199,18 @@ public class PlatformFacade {
      * 幂等标记当前用户已阅指定实例。
      */
     public ReadRecordDTO markRead(String instanceId) { return readRecordService.markRead(instanceId); }
+
+    public com.flowmind.platform.api.dto.ReminderDTO remindTask(com.flowmind.platform.api.request.RemindTaskRequest request) { return monitorService.remindTask(request); }
+
+    public com.flowmind.platform.api.dto.PageResult<com.flowmind.platform.api.dto.AlertDTO> queryAlerts(
+            com.flowmind.platform.api.dto.AlertQuery query) {
+        return monitorService.queryAlerts(query);
+    }
+
+    public com.flowmind.platform.api.dto.AlertDTO handleAlert(
+            com.flowmind.platform.api.request.HandleAlertRequest request) {
+        return monitorService.handleAlert(request);
+    }
 
     /**
      * 根据 REST 动作名分派到 platform-starter 的唯一对应方法，业务端不自行更新任务状态。

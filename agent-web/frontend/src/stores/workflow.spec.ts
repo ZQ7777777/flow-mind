@@ -50,6 +50,70 @@ describe("workflow SSE lifecycle", () => {
     expect(store.defaultTargetRoot).toBe("E:\\workspace\\business-base");
   });
 
+  it("loads owner-isolated session history with the management lists", async () => {
+    const store = useWorkflowStore();
+    await store.initialize(user);
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path === "/api/agent/management/sessions") {
+        return [{
+          sessionId: "ags_history",
+          businessName: "历史需求",
+          state: "CODE_PIPELINE_FAILED",
+          rowVersion: 7,
+          createdAt: "2026-08-10T00:00:00.000Z",
+          updatedAt: "2026-08-11T00:00:00.000Z",
+        }];
+      }
+      return [];
+    });
+
+    await store.loadManagementLists();
+
+    expect(store.managedSessions).toHaveLength(1);
+    expect(store.managedSessions[0]).toMatchObject({ sessionId: "ags_history", state: "CODE_PIPELINE_FAILED" });
+  });
+
+  it("opens a historical session and only then replaces the persisted current session", async () => {
+    const historical = { ...snapshot, sessionId: "ags_history", state: "CODE_PIPELINE_FAILED" as const };
+    mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/sessions/ags_history") return historical;
+      return snapshot;
+    });
+    const store = useWorkflowStore();
+    await store.initialize(user);
+    localStorage.setItem("flowmind.agent.session.u_admin_01", "ags_current");
+
+    await store.openSession("ags_history");
+
+    expect(store.snapshot?.sessionId).toBe("ags_history");
+    expect(localStorage.getItem("flowmind.agent.session.u_admin_01")).toBe("ags_history");
+    expect(mocks.streamEvents).toHaveBeenCalledWith(
+      "/api/agent/sessions/ags_history/events",
+      expect.any(AbortSignal),
+      expect.any(Function),
+    );
+  });
+
+  it("preserves the current session when opening history fails", async () => {
+    mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/sessions") return snapshot;
+      if (path === "/api/agent/sessions/ags_missing") throw new ApiError(404, "AGENT_SESSION_NOT_FOUND", "session not found");
+      return snapshot;
+    });
+    const store = useWorkflowStore();
+    await store.initialize(user);
+    await store.createSession();
+
+    await expect(store.openSession("ags_missing")).rejects.toThrow("session not found");
+
+    expect(store.snapshot?.sessionId).toBe("ags_1");
+    expect(localStorage.getItem("flowmind.agent.session.u_admin_01")).toBe("ags_1");
+  });
+
   it("clears workflow state when the authenticated session is lost", async () => {
     mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
     const store = useWorkflowStore();
@@ -235,7 +299,6 @@ describe("workflow SSE lifecycle", () => {
 
     expect(mocks.apiRequest).toHaveBeenCalledWith(
       "/api/agent/sessions/ags_1/code-generations/acg_failed/reverify",
-      user,
       expect.objectContaining({
         method: "POST",
         rowVersion: 7,

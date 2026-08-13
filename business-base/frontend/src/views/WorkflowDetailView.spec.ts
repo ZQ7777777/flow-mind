@@ -1,60 +1,68 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { createPinia } from "pinia";
+import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import WorkflowDetailView from "./WorkflowDetailView.vue";
+import { useAuthStore } from "../stores/auth";
+
+function detailResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    instance: {
+      instanceId: "instance-1",
+      processName: "入金流程",
+      instanceTitle: "入金申请",
+      starterUserId: "starter-1",
+      starterUserName: "张三",
+      instanceStatus: "RUNNING",
+      currentNodeCodes: ["manager"],
+      variables: { amount: 1200 },
+      startedAt: "2026-08-10T09:00:00",
+    },
+    formFields: [{ fieldCode: "amount", fieldName: "金额", fieldType: "number" }],
+    nodes: [
+      { nodeCode: "apply", nodeName: "提交申请", positionX: 20, positionY: 20 },
+      { nodeCode: "manager", nodeName: "经理审批", positionX: 120, positionY: 20 },
+    ],
+    edges: [],
+    currentTask: {
+      taskId: "task-1",
+      instanceId: "instance-1",
+      instanceTitle: "入金申请",
+      nodeCode: "manager",
+      taskVersion: 3,
+      candidateUserIds: [],
+      deadlineStatus: "DUE_SOON",
+      dueAt: "2026-08-12T11:10:00",
+    },
+    activeTasks: [],
+    historyTasks: [],
+    comments: [],
+    attachments: [],
+    rejectTargetNodes: [{ nodeCode: "apply", nodeName: "提交申请", nodeType: "USER_TASK" }],
+    allowedActions: ["APPROVE", "REJECT"],
+    disabledActions: [],
+    ...overrides,
+  };
+}
+
+const leavingActions = [
+  "APPROVE",
+  "SUBMIT",
+  "REJECT",
+  "RETURN",
+  "WITHDRAW",
+  "DIRECT_SEND",
+  "TRANSFER",
+  "DELEGATE",
+  "ADD_SIGN",
+] as const;
 
 describe("WorkflowDetailView", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  const leavingActions = [
-    "APPROVE",
-    "SUBMIT",
-    "REJECT",
-    "RETURN",
-    "WITHDRAW",
-    "DIRECT_SEND",
-    "TRANSFER",
-    "DELEGATE",
-    "ADD_SIGN",
-  ] as const;
-
-  it("renders a detail response using backend DTO field names", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      instance: {
-        instanceId: "instance-1",
-        processName: "入金流程",
-        instanceTitle: "入金申请",
-        starterUserName: "张三",
-        instanceStatus: "RUNNING",
-        currentNodeCodes: ["manager"],
-        variables: { amount: 1200 },
-        startedAt: "2026-08-10T09:00:00",
-      },
-      formFields: [{ fieldCode: "amount", fieldName: "金额", fieldType: "number" }],
-      nodes: [
-        { nodeCode: "apply", nodeName: "提交申请", positionX: 20, positionY: 20 },
-        { nodeCode: "manager", nodeName: "经理审批", positionX: 120, positionY: 20 },
-      ],
-      edges: [],
-      currentTask: {
-        taskId: "task-1",
-        instanceId: "instance-1",
-        instanceTitle: "入金申请",
-        nodeCode: "manager",
-        taskVersion: 3,
-        candidateUserIds: [],
-      },
-      activeTasks: [],
-      historyTasks: [],
-      comments: [],
-      attachments: [],
-      rejectTargetNodes: [{ nodeCode: "apply", nodeName: "提交申请", nodeType: "USER_TASK" }],
-      allowedActions: ["APPROVE", "REJECT"],
-      disabledActions: [],
-    }), { status: 200, headers: { "Content-Type": "application/json" } })));
-
+    async function mountDetail(fetchMock: ReturnType<typeof vi.fn>) {
+      vi.stubGlobal("fetch", fetchMock);
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -68,11 +76,30 @@ describe("WorkflowDetailView", () => {
     await router.push("/workflow/tasks/task-1");
     await router.isReady();
 
-    const wrapper = mount(WorkflowDetailView, {
-      props: { mode: "task" },
-      global: { plugins: [createPinia(), router] },
-    });
-    await flushPromises();
+  const wrapper = mount(WorkflowDetailView, {
+    props: { mode: "task" },
+    global: { plugins: [createPinia(), router] },
+  });
+  await flushPromises();
+  return wrapper;
+}
+
+describe("WorkflowDetailView", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("renders a detail response using backend DTO field names", async () => {
+    const wrapper = await mountDetail(
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(detailResponse()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
 
     expect(wrapper.text()).toContain("入金申请");
     expect(wrapper.text()).toContain("经理审批");
@@ -354,5 +381,44 @@ describe("WorkflowDetailView", () => {
 
     expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/submit"))).toBe(false);
     expect(wrapper.text()).toContain("附件替换失败");
+  });
+});
+
+  it("shows deadline warning and starter reminder action for current task", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(detailResponse()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ reminderId: "reminder-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(detailResponse()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    const wrapper = await mountDetail(fetchMock);
+    useAuthStore().user = {
+      userId: "starter-1",
+      username: "starter01",
+      displayName: "张三",
+      administrator: false,
+    };
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get('[data-test="deadline-banner"]').text()).toContain("即将超时");
+    await wrapper.get('[data-test="remind-task"]').trigger("click");
+    await flushPromises();
+
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toContain("/api/workflow/tasks/task-1/remind");
+    expect(JSON.parse(init.body as string)).toMatchObject({ expectedTaskVersion: 3 });
+    expect(wrapper.text()).toContain("催办已发送");
   });
 });

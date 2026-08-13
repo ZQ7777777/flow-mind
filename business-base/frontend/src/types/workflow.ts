@@ -1,5 +1,7 @@
 export type WorkflowListType = "todo" | "completed" | "started" | "read";
 
+export type WorkflowDeadlineStatus = "NONE" | "NORMAL" | "DUE_SOON" | "OVERDUE" | string;
+
 export type TaskActionCode =
   | "APPROVE"
   | "SUBMIT"

@@ -86,6 +86,38 @@ export class WorkflowService {
     };
   }
 
+  listSessions(user: MockUser): Array<{
+    sessionId: string;
+    businessName: string;
+    state: WorkflowState;
+    rowVersion: number;
+    lastError?: { code: string; message: string };
+    createdAt: string;
+    updatedAt: string;
+  }> {
+    const sessions = this.database.db.prepare(`
+      SELECT id, state, row_version, requirement_json, last_error_code,
+        last_error_message, created_at, updated_at
+      FROM agent_session
+      WHERE owner_user_id = ?
+      ORDER BY updated_at DESC
+    `).all(user.userId) as Array<Pick<SessionRow,
+      "id" | "state" | "row_version" | "requirement_json" | "last_error_code"
+      | "last_error_message" | "created_at" | "updated_at"
+    >>;
+    return sessions.map((session) => ({
+      sessionId: session.id,
+      businessName: sessionBusinessName(session.requirement_json),
+      state: session.state,
+      rowVersion: session.row_version,
+      lastError: session.last_error_code
+        ? { code: session.last_error_code, message: session.last_error_message || "" }
+        : undefined,
+      createdAt: session.created_at,
+      updatedAt: session.updated_at,
+    }));
+  }
+
   async queueMessage(sessionId: string, user: MockUser, rowVersion: number, content: string): Promise<{ accepted: true }> {
     const session = this.ownedSession(sessionId, user);
     this.expectVersion(session, rowVersion);
@@ -707,6 +739,13 @@ function allowedActions(state: WorkflowState, validationPassed: boolean): string
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+
+function sessionBusinessName(requirementJson: string | null): string {
+  const requirement = parseJson<Record<string, unknown> | undefined>(requirementJson, undefined);
+  return typeof requirement?.businessName === "string" && requirement.businessName.trim()
+    ? requirement.businessName.trim()
+    : "未命名需求";
 }
 
 function hash(value: unknown): string {

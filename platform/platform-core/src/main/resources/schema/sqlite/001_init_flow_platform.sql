@@ -381,7 +381,7 @@ CREATE TABLE IF NOT EXISTS process_reminder_record (
     id TEXT PRIMARY KEY,
     instance_id TEXT NOT NULL,
     task_id TEXT,
-    reminder_type TEXT NOT NULL CHECK (reminder_type IN ('MANUAL', 'AUTO', 'TIMEOUT')),
+    reminder_type TEXT NOT NULL CHECK (reminder_type IN ('MANUAL', 'AUTO', 'DUE_SOON', 'TIMEOUT')),
     target_user_ids TEXT NOT NULL,
     message TEXT NOT NULL,
     reminder_status TEXT NOT NULL DEFAULT 'PENDING'

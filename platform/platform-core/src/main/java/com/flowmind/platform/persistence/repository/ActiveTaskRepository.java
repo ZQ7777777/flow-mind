@@ -156,6 +156,30 @@ public class ActiveTaskRepository {
                 Integer.valueOf(limit));
     }
 
+    /** 按节点提醒提前量读取即将到期的开放任务。 */
+    public List<ProcessActiveTaskEntity> findDueSoonOpenTasks(java.time.LocalDateTime scanAt, int limit) {
+        if (scanAt == null || limit <= 0) {
+            return java.util.Collections.emptyList();
+        }
+        String configuredBefore = "COALESCE(CAST(json_extract(n.reminder_config, '$.beforeDueMinutes') AS INTEGER), 30)";
+        String timeoutDuration = "COALESCE(CAST(json_extract(n.timeout_config, '$.durationMinutes') AS INTEGER), 0)";
+        String effectiveBefore = "CASE WHEN " + timeoutDuration + " > 0 AND " + configuredBefore + " > "
+                + timeoutDuration + " THEN " + timeoutDuration + " ELSE " + configuredBefore + " END";
+        return jdbcTemplate.query("SELECT * FROM (SELECT t.*, " + effectiveBefore + " AS reminder_before_minutes "
+                        + "FROM process_active_task t "
+                        + "JOIN process_node n ON n.definition_id = t.definition_id AND n.node_code = t.node_code "
+                        + "WHERE t.due_at IS NOT NULL AND t.due_at > ? "
+                        + "AND t.task_status IN ('ACTIVE', 'CLAIMED') "
+                        + "AND (json_extract(n.reminder_config, '$.enabled') = 1 "
+                        + "OR LOWER(CAST(json_extract(n.reminder_config, '$.enabled') AS TEXT)) = 'true')) due "
+                        + "WHERE reminder_before_minutes > 0 "
+                        + "AND datetime(due_at, '-' || reminder_before_minutes || ' minutes') <= datetime(?) "
+                        + "ORDER BY due_at ASC, created_at ASC, id ASC LIMIT ?",
+                RuntimeRowMappers.ACTIVE_TASK,
+                DefinitionRowMappers.toDbString(scanAt),
+                DefinitionRowMappers.toDbString(scanAt),
+                Integer.valueOf(limit));
+    }
     /** 统计实例下状态为 ACTIVE 或 CLAIMED 的任务数量。 */
     public long countOpenByInstanceId(String instanceId) {
         Long count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM process_active_task "

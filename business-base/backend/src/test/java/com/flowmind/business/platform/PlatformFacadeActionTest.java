@@ -14,6 +14,7 @@ import com.flowmind.platform.api.request.WithdrawTaskRequest;
 import com.flowmind.platform.api.service.AttachmentService;
 import com.flowmind.platform.api.service.ProcessDefinitionService;
 import com.flowmind.platform.api.service.ProcessRuntimeService;
+import com.flowmind.platform.api.service.ProcessMonitorService;
 import com.flowmind.platform.api.service.ReadRecordService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
@@ -29,7 +30,7 @@ class PlatformFacadeActionTest {
         ProcessRuntimeService runtime = mock(ProcessRuntimeService.class);
         PlatformFacade facade = new PlatformFacade(mock(TaskQueryService.class), runtime,
                 mock(ProcessDefinitionService.class), mock(AttachmentService.class),
-                mock(ReadRecordService.class), mock(CurrentUserProvider.class));
+                mock(ReadRecordService.class), mock(ProcessMonitorService.class), mock(CurrentUserProvider.class));
 
         ApproveTaskRequest approve = new ApproveTaskRequest(); facade.execute("approve", approve); verify(runtime).approve(approve);
         SubmitTaskRequest submit = new SubmitTaskRequest(); facade.execute("submit", submit); verify(runtime).submitTask(submit);

@@ -20,6 +20,7 @@ const message = ref("");
 const activeTab = ref("requirement");
 const generationTargetRoot = ref("");
 const compactionSummaryVisible = ref(false);
+const sessionHistoryVisible = ref(false);
 const {
   workspaceGrid,
   resizingPanels,
@@ -127,6 +128,14 @@ async function resetCurrentSession(): Promise<void> {
   } catch { /* store exposes error */ }
 }
 
+function handleSessionOpened(): void {
+  sessionHistoryVisible.value = false;
+  activeTab.value = [
+    "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING",
+    "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "COMPLETED",
+  ].includes(store.state || "") ? "code" : "requirement";
+}
+
 function formatTokens(value: number | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : "";
 }
@@ -168,6 +177,9 @@ function formatTokens(value: number | undefined): string {
         <el-input v-model="targetRoot" placeholder="目标工程绝对路径（可选）" />
         <el-button type="primary" size="large" :loading="store.busy" @click="createSession">
           开始采集需求
+        </el-button>
+        <el-button aria-label="查看历史会话" size="large" :disabled="store.busy" @click="sessionHistoryVisible = true">
+          查看历史会话
         </el-button>
         <el-button
           v-if="store.currentUser?.userId === 'u_admin_01'"
@@ -313,7 +325,7 @@ function formatTokens(value: number | undefined): string {
               </div>
             </el-tab-pane>
             <el-tab-pane label="管理清单" name="management">
-              <ManagementLists />
+              <ManagementLists @opened="handleSessionOpened" />
             </el-tab-pane>
           </el-tabs>
         </section>
@@ -360,6 +372,9 @@ function formatTokens(value: number | undefined): string {
         <pre class="compaction-summary-text">{{ store.lastCompaction?.summary }}</pre>
       </el-dialog>
     </main>
+    <el-dialog v-model="sessionHistoryVisible" title="历史会话" width="min(1080px, 92vw)">
+      <ManagementLists @opened="handleSessionOpened" />
+    </el-dialog>
   </div>
 </template>
 

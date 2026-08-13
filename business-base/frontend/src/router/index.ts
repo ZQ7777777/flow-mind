@@ -1,7 +1,9 @@
 import { createRouter, createWebHistory } from "vue-router";
 import type { RouteRecordRaw, RouterHistory } from "vue-router";
 import { useAuthStore } from "../stores/auth";
+import AdminAlertView from "../views/AdminAlertView.vue";
 import LoginView from "../views/LoginView.vue";
+import MessageCenterView from "../views/MessageCenterView.vue";
 import WorkflowDetailView from "../views/WorkflowDetailView.vue";
 import WorkflowListView from "../views/WorkflowListView.vue";
 import { generatedRoutes } from "./generated-routes";
@@ -37,6 +39,17 @@ export const baseRoutes: RouteRecordRaw[] = [
     name: "workflow-read",
     component: WorkflowListView,
     props: { type: "read", title: "我的已阅" },
+  },
+  {
+    path: "/messages",
+    name: "messages",
+    component: MessageCenterView,
+  },
+  {
+    path: "/admin/alerts",
+    name: "admin-alerts",
+    component: AdminAlertView,
+    meta: { requiresAdmin: true },
   },
   {
     path: "/workflow/tasks/:taskId",

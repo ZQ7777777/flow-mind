@@ -48,6 +48,10 @@ public class MockOrganizationRepository {
                 userMapper(), username.trim()));
     }
 
+    public List<String> listActiveAdministratorIds() {
+        return jdbc.queryForList("SELECT id FROM mock_user WHERE user_type = 'ADMIN' AND status = 1 ORDER BY id",
+                String.class);
+    }
     public boolean isActiveAdministrator(String userId) {
         requireText(userId, "userId");
         Integer count = jdbc.queryForObject(

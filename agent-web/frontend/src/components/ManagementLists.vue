@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { watch } from "vue";
+import { ElMessageBox } from "element-plus";
 import { useWorkflowStore } from "../stores/workflow";
+import { isSessionSwitchConfirmationRequired } from "../workflow-presentation";
 
 const store = useWorkflowStore();
+const emit = defineEmits<{ opened: [] }>();
 watch(
   () => store.currentUser?.userId,
   (userId) => { if (userId) void store.loadManagementLists(); },
@@ -15,11 +18,55 @@ function qualityLabel(row: { hardGatePassed: number; overrideRequired: number; c
   if (row.hardGatePassed) return "软门禁";
   return "未通过";
 }
+
+async function openSession(sessionId: string): Promise<void> {
+  if (sessionId === store.snapshot?.sessionId) return;
+  if (isSessionSwitchConfirmationRequired(store.state, store.snapshot?.sessionId, sessionId)) {
+    try {
+      await ElMessageBox.confirm(
+        "当前会话仍在后台处理中。切换不会取消任务，稍后可从历史会话重新打开。",
+        "切换历史会话",
+        { confirmButtonText: "继续切换", cancelButtonText: "取消", type: "warning" },
+      );
+    } catch {
+      return;
+    }
+  }
+  try {
+    await store.openSession(sessionId);
+    emit("opened");
+  } catch {
+    // The store keeps the current session and exposes the loading error.
+  }
+}
 </script>
 
 <template>
   <div class="management-lists">
     <el-tabs>
+      <el-tab-pane label="历史会话">
+        <el-table :data="store.managedSessions" height="500" stripe>
+          <el-table-column prop="businessName" label="业务名称" min-width="150" />
+          <el-table-column prop="sessionId" label="Session ID" min-width="250" />
+          <el-table-column prop="state" label="状态" min-width="150" />
+          <el-table-column label="最近错误" min-width="220">
+            <template #default="{ row }">
+              {{ row.lastError?.message || "-" }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="updatedAt" label="更新时间" min-width="180" />
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="primary"
+                :disabled="store.busy || row.sessionId === store.snapshot?.sessionId"
+                @click="openSession(row.sessionId)"
+              >{{ row.sessionId === store.snapshot?.sessionId ? "当前" : "打开" }}</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
       <el-tab-pane label="流程定义">
         <el-table :data="store.managedDefinitions" height="500" stripe>
           <el-table-column prop="businessCode" label="业务编码" min-width="150" />

@@ -63,7 +63,7 @@ class FormalEnumContractTest {
                 enumNames(AttachmentConfigStatusEnum.values()));
         assertEquals(Arrays.asList("ENABLED", "DISABLED"),
                 enumNames(AttachmentTemplateStatusEnum.values()));
-        assertEquals(Arrays.asList("MANUAL", "AUTO", "TIMEOUT"),
+        assertEquals(Arrays.asList("MANUAL", "AUTO", "DUE_SOON", "TIMEOUT"),
                 enumNames(ReminderTypeEnum.values()));
         assertEquals(Arrays.asList("TASK_TIMEOUT", "CALLBACK_FAILED", "ACTION_EXCEPTION"),
                 enumNames(AlertTypeEnum.values()));

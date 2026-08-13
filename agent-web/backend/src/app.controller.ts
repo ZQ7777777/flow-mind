@@ -415,6 +415,14 @@ export class AppController {
     return this.generation.listDefinitions(this.identity.resolve(userId, userName));
   }
 
+  @Get("/api/agent/management/sessions")
+  listManagedSessions(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.workflow.listSessions(this.identity.resolve(userId, userName));
+  }
+
   @Get("/api/agent/management/code-generations")
   listManagedGenerations(
     @Headers("x-agent-user-id") userId: string,

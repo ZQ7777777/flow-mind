@@ -16,6 +16,8 @@ public final class SchemaTestSupport {
     private static final String SCHEMA = "/schema/sqlite/001_init_flow_platform.sql";
     private static final String DELEGATE_FROM_USER_NAME_MIGRATION =
             "/schema/sqlite/005_delegate_from_user_name.sql";
+    private static final String DUE_SOON_REMINDER_TYPE_MIGRATION =
+            "/schema/sqlite/006_due_soon_reminder_type.sql";
 
     private SchemaTestSupport() {
     }
@@ -24,6 +26,9 @@ public final class SchemaTestSupport {
         executeScript(connection, SCHEMA);
         if (!tableHasColumn(connection, "process_active_task", "delegate_from_user_name")) {
             executeScript(connection, DELEGATE_FROM_USER_NAME_MIGRATION);
+        }
+        if (!tableContainsValue(connection, "process_reminder_record", "DUE_SOON")) {
+            executeScript(connection, DUE_SOON_REMINDER_TYPE_MIGRATION);
         }
     }
 
@@ -45,6 +50,16 @@ public final class SchemaTestSupport {
                     statement.execute(command);
                 }
             }
+        }
+    }
+
+    private static boolean tableContainsValue(Connection connection, String tableName, String value)
+            throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("SELECT sql FROM sqlite_master WHERE type = 'table' "
+                     + "AND name = '" + tableName + "'")) {
+            return resultSet.next() && resultSet.getString("sql") != null
+                    && resultSet.getString("sql").contains(value);
         }
     }
 

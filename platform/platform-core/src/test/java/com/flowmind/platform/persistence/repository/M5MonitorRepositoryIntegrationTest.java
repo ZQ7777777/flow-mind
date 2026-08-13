@@ -36,6 +36,7 @@ class M5MonitorRepositoryIntegrationTest {
     private ProcessAuditLogRepository auditRepository;
     private ReminderRecordRepository reminderRepository;
     private AlertRecordRepository alertRepository;
+    private ActiveTaskRepository activeTaskRepository;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -47,6 +48,7 @@ class M5MonitorRepositoryIntegrationTest {
         auditRepository = new ProcessAuditLogRepository(jdbcTemplate);
         reminderRepository = new ReminderRecordRepository(jdbcTemplate);
         alertRepository = new AlertRecordRepository(jdbcTemplate);
+        activeTaskRepository = new ActiveTaskRepository(jdbcTemplate);
     }
 
     @AfterEach
@@ -65,10 +67,16 @@ class M5MonitorRepositoryIntegrationTest {
                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 "instance-1", "definition-1", "leave", "Leave", 1, "Leave request",
                 "starter-1", "Starter One", "RUNNING");
-        jdbcTemplate.update("INSERT INTO process_active_task "
-                        + "(id, instance_id, definition_id, node_code, candidate_user_ids, task_status, lock_version) "
+        jdbcTemplate.update("INSERT INTO process_node "
+                        + "(id, definition_id, node_code, node_name, node_type, timeout_config, reminder_config) "
                         + "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                "task-1", "instance-1", "definition-1", "approve", "[\"user-1\"]", "ACTIVE", 0);
+                "node-approve", "definition-1", "approve", "Approve", "USER_TASK",
+                "{\"durationMinutes\":60}", "{\"enabled\":true}");
+        jdbcTemplate.update("INSERT INTO process_active_task "
+                        + "(id, instance_id, definition_id, node_code, candidate_user_ids, task_status, lock_version, due_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "task-1", "instance-1", "definition-1", "approve", "[\"user-1\"]", "ACTIVE", 0,
+                "2026-07-28 10:20:00");
     }
 
     @Test
@@ -86,6 +94,14 @@ class M5MonitorRepositoryIntegrationTest {
         assertNotEquals(firstRead, records.get(0).getReadAt());
     }
 
+    @Test
+    void activeTaskRepositoryFindsDueSoonTasksUsingDefaultReminderWindow() {
+        List<com.flowmind.platform.persistence.entity.ProcessActiveTaskEntity> tasks =
+                activeTaskRepository.findDueSoonOpenTasks(LocalDateTime.of(2026, 7, 28, 9, 50), 10);
+
+        assertEquals(1, tasks.size());
+        assertEquals("task-1", tasks.get(0).getId());
+    }
     @Test
     void auditReminderAndAlertRepositoriesSupportM5StateTransitions() {
         ProcessAuditLogEntity audit = new ProcessAuditLogEntity();

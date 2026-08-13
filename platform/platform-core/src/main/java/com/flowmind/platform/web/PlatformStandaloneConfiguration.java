@@ -225,6 +225,8 @@ public class PlatformStandaloneConfiguration {
                 "schema/sqlite/004_attachment_replace_operation_action.sql";
         private static final String DELEGATE_FROM_USER_NAME_MIGRATION =
                 "schema/sqlite/005_delegate_from_user_name.sql";
+        private static final String DUE_SOON_REMINDER_TYPE_MIGRATION =
+                "schema/sqlite/006_due_soon_reminder_type.sql";
 
         private final DataSource dataSource;
 
@@ -250,6 +252,10 @@ public class PlatformStandaloneConfiguration {
                 if (!tableHasColumn(connection, "process_active_task", "delegate_from_user_name")) {
                     ScriptUtils.executeSqlScript(connection,
                             new ClassPathResource(DELEGATE_FROM_USER_NAME_MIGRATION));
+                }
+                if (!tableContainsAction(connection, "process_reminder_record", "DUE_SOON")) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(DUE_SOON_REMINDER_TYPE_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);

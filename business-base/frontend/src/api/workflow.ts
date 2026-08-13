@@ -92,6 +92,21 @@ export async function performTaskAction(
   );
 }
 
+
+export async function remindTask(
+  taskId: string,
+  payload: Pick<TaskActionPayload, "expectedTaskVersion" | "comment" | "idempotencyKey">,
+): Promise<void> {
+  const { idempotencyKey, ...body } = payload;
+  await requestJson<unknown>(
+    `${WORKFLOW_BASE}/tasks/${encodeURIComponent(taskId)}/remind`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(body),
+    },
+  );
+}
 export async function approveTask(
   taskId: string,
   payload: Pick<TaskActionPayload, "expectedTaskVersion" | "comment" | "idempotencyKey">,

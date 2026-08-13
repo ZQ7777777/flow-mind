@@ -91,6 +91,13 @@ public class WorkflowActionController {
         return actionService.execute("claim", taskId, key, body);
     }
 
+    /** 由流程发起人催办当前任务办理人。 */
+    @PostMapping("/remind")
+    public void remind(@PathVariable String taskId,
+            @RequestHeader("Idempotency-Key") String key, @Valid @RequestBody WorkflowActionRequests.Remind body) {
+        actionService.remind(taskId, key, body);
+    }
+
     /** 取消当前用户对任务的认领。 */
     @PostMapping("/unclaim")
     public WorkflowTaskActionResponse unclaim(@PathVariable String taskId,

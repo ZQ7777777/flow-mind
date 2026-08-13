@@ -833,6 +833,168 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void addSignCarriesSourceDueAtIntoTemporaryTasksAndSnapshot() {
+        Fixture fixture = fixture(ActionTypeEnum.ADD_SIGN);
+        LocalDateTime sourceDueAt = LocalDateTime.of(2026, 8, 12, 10, 15, 30);
+        fixture.task.setDueAt(sourceDueAt);
+        AddSignRequest request = taskRequest(new AddSignRequest(), "op-add-sign-due", fixture.task, fixture.operator);
+        request.setAddSignUserIds(java.util.Collections.singletonList("user-b"));
+        when(fixture.organization.findUser("user-b")).thenReturn(Optional.of(new UserDTO("user-b", "User B")));
+        when(fixture.tasks.cancel("task-1", 3L)).thenReturn(1);
+        org.mockito.ArgumentCaptor<ProcessTaskGroupEntity> groupCaptor =
+                org.mockito.ArgumentCaptor.forClass(ProcessTaskGroupEntity.class);
+        org.mockito.ArgumentCaptor<ProcessActiveTaskEntity> taskCaptor =
+                org.mockito.ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        when(fixture.groups.insert(groupCaptor.capture())).thenReturn(1);
+        when(fixture.tasks.insert(taskCaptor.capture())).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("add-sign-history", "user-a", "manager", ActionTypeEnum.ADD_SIGN.name(), "{}"));
+
+        fixture.coordinator.addSign(request);
+
+        // 临时加签任务沿用源任务到期时间，加签不应重置节点时限。
+        assertEquals(sourceDueAt, taskCaptor.getValue().getDueAt());
+        java.util.Map<String, Object> snapshot =
+                RuntimeJsonCodec.readObjectMap(groupCaptor.getValue().getBranchStateJson());
+        assertEquals(sourceDueAt, LocalDateTime.parse(String.valueOf(snapshot.get("sourceDueAt"))));
+    }
+
+    @Test
+    void approveAddSignRestoresSourceDueAtAndCreatedAtFromSnapshot() {
+        Fixture fixture = fixture(ActionTypeEnum.APPROVE);
+        fixture.task.setTaskGroupId("add-sign-group-1");
+        ApproveTaskRequest request = taskRequest(new ApproveTaskRequest(), "op-approve-add-sign-due",
+                fixture.task, fixture.operator);
+        LocalDateTime sourceDueAt = LocalDateTime.of(2026, 8, 12, 10, 15, 30);
+        LocalDateTime sourceCreatedAt = LocalDateTime.of(2026, 8, 12, 9, 0, 0);
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("add-sign-group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("COUNTERSIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setCompletedCount(Integer.valueOf(0));
+        group.setTotalCount(Integer.valueOf(1));
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson("{\"schemaVersion\":1,\"purpose\":\"ADD_SIGN\","
+                + "\"sourceTaskId\":\"task-1\",\"sourceNodeCode\":\"manager\","
+                + "\"sourceCandidateUserIds\":\"[\\\"finance01\\\"]\","
+                + "\"sourceAssigneeUserId\":\"finance01\",\"sourceAssigneeUserName\":\"Finance 01\","
+                + "\"sourceDueAt\":\"2026-08-12T10:15:30\",\"sourceCreatedAt\":\"2026-08-12T09:00:00\"}");
+        ProcessTaskGroupEntity completedGroup = new ProcessTaskGroupEntity();
+        completedGroup.setId(group.getId());
+        completedGroup.setInstanceId(group.getInstanceId());
+        completedGroup.setGroupType(group.getGroupType());
+        completedGroup.setGroupStatus("COMPLETED");
+        completedGroup.setBranchStateJson(group.getBranchStateJson());
+        completedGroup.setLockVersion(Long.valueOf(3));
+        when(fixture.groups.findById("add-sign-group-1")).thenReturn(group, completedGroup);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.incrementCompletedCount("add-sign-group-1", 2L)).thenReturn(1);
+        when(fixture.tasks.insert(any(ProcessActiveTaskEntity.class))).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("add-sign-approve-history", "operation01", "manager",
+                        ActionTypeEnum.APPROVE.name(), "{}"));
+
+        fixture.coordinator.approveAddSign(request);
+
+        org.mockito.ArgumentCaptor<ProcessActiveTaskEntity> restoredTask =
+                org.mockito.ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        verify(fixture.tasks).insert(restoredTask.capture());
+        // 恢复的源任务必须原样还原到期时间与创建时间，否则加签后时限丢失。
+        assertEquals(sourceDueAt, restoredTask.getValue().getDueAt());
+        assertEquals(sourceCreatedAt, restoredTask.getValue().getCreatedAt());
+    }
+
+    @Test
+    void addSignRecoversDueAtFromNodeTimeoutConfigWhenSourceDueAtAlreadyLost() {
+        Fixture fixture = fixture(ActionTypeEnum.ADD_SIGN);
+        // 模拟历史数据：源任务 dueAt 已丢失，但节点仍配置了时限。
+        LocalDateTime sourceCreatedAt = LocalDateTime.of(2026, 8, 11, 11, 19, 45);
+        fixture.task.setDueAt(null);
+        fixture.task.setCreatedAt(sourceCreatedAt);
+        ProcessNodeDTO node = new ProcessNodeDTO();
+        node.setNodeCode("manager");
+        node.setNodeType(NodeTypeEnum.USER_TASK);
+        node.setTimeoutConfig("{\"enabled\":true,\"durationMinutes\":1440}");
+        fixture.definition.setNodes(java.util.Collections.singletonList(node));
+        AddSignRequest request = taskRequest(new AddSignRequest(), "op-add-sign-recover", fixture.task, fixture.operator);
+        request.setAddSignUserIds(java.util.Collections.singletonList("user-b"));
+        when(fixture.organization.findUser("user-b")).thenReturn(Optional.of(new UserDTO("user-b", "User B")));
+        when(fixture.tasks.cancel("task-1", 3L)).thenReturn(1);
+        org.mockito.ArgumentCaptor<ProcessTaskGroupEntity> groupCaptor =
+                org.mockito.ArgumentCaptor.forClass(ProcessTaskGroupEntity.class);
+        org.mockito.ArgumentCaptor<ProcessActiveTaskEntity> taskCaptor =
+                org.mockito.ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        when(fixture.groups.insert(groupCaptor.capture())).thenReturn(1);
+        when(fixture.tasks.insert(taskCaptor.capture())).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("add-sign-history", "user-a", "manager", ActionTypeEnum.ADD_SIGN.name(), "{}"));
+
+        fixture.coordinator.addSign(request);
+
+        LocalDateTime expectedDueAt = sourceCreatedAt.plusMinutes(1440);
+        // 临时加签任务按“源创建时间 + 节点时限”补全到期时间，加签后不再丢失时限。
+        assertEquals(expectedDueAt, taskCaptor.getValue().getDueAt());
+        java.util.Map<String, Object> snapshot =
+                RuntimeJsonCodec.readObjectMap(groupCaptor.getValue().getBranchStateJson());
+        assertEquals(expectedDueAt, LocalDateTime.parse(String.valueOf(snapshot.get("sourceDueAt"))));
+    }
+
+    @Test
+    void approveAddSignRecoversDueAtWhenLegacySnapshotLacksSourceDueAt() {
+        Fixture fixture = fixture(ActionTypeEnum.APPROVE);
+        fixture.task.setTaskGroupId("add-sign-group-1");
+        ProcessNodeDTO node = new ProcessNodeDTO();
+        node.setNodeCode("manager");
+        node.setNodeType(NodeTypeEnum.USER_TASK);
+        node.setTimeoutConfig("{\"enabled\":true,\"durationMinutes\":1440}");
+        fixture.definition.setNodes(java.util.Collections.singletonList(node));
+        ApproveTaskRequest request = taskRequest(new ApproveTaskRequest(), "op-approve-recover",
+                fixture.task, fixture.operator);
+        LocalDateTime sourceCreatedAt = LocalDateTime.of(2026, 8, 11, 11, 19, 45);
+        // 修复前的旧快照：没有 sourceDueAt，但保留了 sourceCreatedAt。
+        String legacySnapshot = "{\"schemaVersion\":1,\"purpose\":\"ADD_SIGN\","
+                + "\"sourceTaskId\":\"task-1\",\"sourceNodeCode\":\"manager\","
+                + "\"sourceCandidateUserIds\":\"[\\\"finance01\\\"]\","
+                + "\"sourceAssigneeUserId\":\"finance01\",\"sourceAssigneeUserName\":\"Finance 01\","
+                + "\"sourceCreatedAt\":\"2026-08-11T11:19:45\"}";
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("add-sign-group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("COUNTERSIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setCompletedCount(Integer.valueOf(0));
+        group.setTotalCount(Integer.valueOf(1));
+        group.setLockVersion(Long.valueOf(2));
+        group.setBranchStateJson(legacySnapshot);
+        ProcessTaskGroupEntity completedGroup = new ProcessTaskGroupEntity();
+        completedGroup.setId(group.getId());
+        completedGroup.setInstanceId(group.getInstanceId());
+        completedGroup.setGroupType(group.getGroupType());
+        completedGroup.setGroupStatus("COMPLETED");
+        completedGroup.setBranchStateJson(legacySnapshot);
+        completedGroup.setLockVersion(Long.valueOf(3));
+        when(fixture.groups.findById("add-sign-group-1")).thenReturn(group, completedGroup);
+        when(fixture.tasks.complete("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.incrementCompletedCount("add-sign-group-1", 2L)).thenReturn(1);
+        when(fixture.tasks.insert(any(ProcessActiveTaskEntity.class))).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class)))
+                .thenReturn(history("add-sign-approve-history", "operation01", "manager",
+                        ActionTypeEnum.APPROVE.name(), "{}"));
+
+        fixture.coordinator.approveAddSign(request);
+
+        org.mockito.ArgumentCaptor<ProcessActiveTaskEntity> restoredTask =
+                org.mockito.ArgumentCaptor.forClass(ProcessActiveTaskEntity.class);
+        verify(fixture.tasks).insert(restoredTask.capture());
+        // 旧快照缺 sourceDueAt 时，按节点 timeoutConfig + 源创建时间补全到期时间。
+        assertEquals(sourceCreatedAt.plusMinutes(1440), restoredTask.getValue().getDueAt());
+        assertEquals(sourceCreatedAt, restoredTask.getValue().getCreatedAt());
+    }
+
+    @Test
     void transferUpdatesAssigneeRecordsHistoryAndReturnsNewTaskVersion() {
         ProcessInstanceRepository instances = mock(ProcessInstanceRepository.class);
         ActiveTaskRepository tasks = mock(ActiveTaskRepository.class);

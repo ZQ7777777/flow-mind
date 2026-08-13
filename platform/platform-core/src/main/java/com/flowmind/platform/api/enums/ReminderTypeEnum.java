@@ -11,6 +11,8 @@ public enum ReminderTypeEnum {
     MANUAL,
     /** 自动提醒。 */
     AUTO,
+    /** 任务临期提醒。 */
+    DUE_SOON,
     /** 任务超时提醒。 */
     TIMEOUT
 }

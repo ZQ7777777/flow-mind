@@ -5,6 +5,7 @@ import {
   fetchTaskDetail,
   fetchWorkflowList,
   performTaskAction,
+  remindTask as remindTaskRequest,
 } from "../api/workflow";
 import type {
   WorkflowListQuery,
@@ -39,6 +40,8 @@ interface WorkflowState {
   detail: DetailState;
   actionSubmitting: boolean;
   actionError: string;
+  reminderSubmitting: boolean;
+  reminderError: string;
 }
 
 const defaultPage: WorkflowListQuery = { pageNo: 1, pageSize: 20 };
@@ -62,6 +65,8 @@ export const useWorkflowStore = defineStore("workflow", {
     },
     actionSubmitting: false,
     actionError: "",
+    reminderSubmitting: false,
+    reminderError: "",
   }),
   actions: {
     async loadList(type: WorkflowListType, params: WorkflowListQuery): Promise<void> {
@@ -117,6 +122,22 @@ export const useWorkflowStore = defineStore("workflow", {
       }
     },
 
+
+    async remindTask(
+      taskId: string,
+      payload: Pick<TaskActionPayload, "expectedTaskVersion" | "comment" | "idempotencyKey">,
+    ): Promise<void> {
+      this.reminderSubmitting = true;
+      this.reminderError = "";
+      try {
+        await remindTaskRequest(taskId, payload);
+      } catch (error) {
+        this.reminderError = error instanceof Error ? error.message : "催办发送失败";
+        throw error;
+      } finally {
+        this.reminderSubmitting = false;
+      }
+    },
     async loadDetail(loader: () => Promise<WorkflowDetailResponse>): Promise<void> {
       this.detail.loading = true;
       this.detail.error = "";

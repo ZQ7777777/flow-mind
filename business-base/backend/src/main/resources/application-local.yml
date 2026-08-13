@@ -10,4 +10,4 @@ flow-mind:
     callback:
       async-enabled: false
     timeout-scan:
-      enabled: false
+      enabled: true

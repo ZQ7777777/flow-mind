@@ -45,6 +45,7 @@ describe("App administrator access", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("系统管理员一");
+    expect(wrapper.find('[aria-label="查看历史会话"]').exists()).toBe(true);
     expect(mocks.apiRequest).toHaveBeenCalledWith("/api/agent/config");
   });
 });

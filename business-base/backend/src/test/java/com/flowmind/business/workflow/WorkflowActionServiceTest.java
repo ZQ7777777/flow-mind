@@ -17,6 +17,7 @@ import com.flowmind.platform.api.request.RejectTaskRequest;
 import com.flowmind.platform.api.request.TaskOperationRequest;
 import com.flowmind.platform.api.request.TransferTaskRequest;
 import com.flowmind.platform.api.request.SubmitTaskRequest;
+import com.flowmind.platform.api.service.ProcessMonitorService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -44,7 +45,7 @@ class WorkflowActionServiceTest {
         queryService = mock(WorkflowQueryService.class);
         formValueValidator = mock(WorkflowFormValueValidator.class);
         service = new WorkflowActionService(facade, new PlatformDtoMapper(), new OperationIdFactory(), queryService,
-                formValueValidator);
+                formValueValidator, mock(ProcessMonitorService.class));
         when(facade.currentUser()).thenReturn(new UserContext("manager-1", "Manager", "dept-1", "Dept"));
         ProcessInstanceDetailDTO instance = new ProcessInstanceDetailDTO();
         instance.setDefinitionId("definition-1");

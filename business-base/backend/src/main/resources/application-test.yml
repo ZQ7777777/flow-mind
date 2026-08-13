@@ -11,7 +11,7 @@ flow-mind:
     callback:
       async-enabled: false
     timeout-scan:
-      enabled: false
+      enabled: true
   business:
     local-user:
       default-user-id: u_sales_01

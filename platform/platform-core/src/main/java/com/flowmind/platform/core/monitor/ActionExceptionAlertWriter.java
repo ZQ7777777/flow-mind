@@ -1,15 +1,21 @@
 package com.flowmind.platform.core.monitor;
 
+import com.flowmind.platform.api.dto.ProcessMessage;
 import com.flowmind.platform.api.enums.AlertSeverityEnum;
 import com.flowmind.platform.api.enums.AlertStatusEnum;
 import com.flowmind.platform.api.enums.AlertTypeEnum;
+import com.flowmind.platform.api.spi.MessagePublisher;
 import com.flowmind.platform.core.runtime.RuntimeJsonCodec;
 import com.flowmind.platform.persistence.entity.ProcessAlertRecordEntity;
 import com.flowmind.platform.persistence.repository.AlertRecordRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -18,9 +24,22 @@ import java.util.UUID;
 public class ActionExceptionAlertWriter {
 
     private final AlertRecordRepository alertRepository;
+    private final MessagePublisher messagePublisher;
+    private final List<String> alertTargetUserIds;
 
+    @Autowired
     public ActionExceptionAlertWriter(AlertRecordRepository alertRepository) {
+        this(alertRepository, null, Collections.<String>emptyList());
+    }
+
+    public ActionExceptionAlertWriter(AlertRecordRepository alertRepository,
+                                      MessagePublisher messagePublisher,
+                                      List<String> alertTargetUserIds) {
         this.alertRepository = alertRepository;
+        this.messagePublisher = messagePublisher;
+        this.alertTargetUserIds = alertTargetUserIds == null
+                ? Collections.<String>emptyList()
+                : new ArrayList<String>(alertTargetUserIds);
     }
 
     public void write(String operationId,
@@ -55,6 +74,28 @@ public class ActionExceptionAlertWriter {
         alert.setDetailJson(RuntimeJsonCodec.toJson(detail));
         alert.setCreatedAt(LocalDateTime.now());
         alertRepository.insert(alert);
+        publishAlert(alert);
+    }
+
+    private void publishAlert(ProcessAlertRecordEntity alert) {
+        if (messagePublisher == null) {
+            return;
+        }
+        ProcessMessage message = new ProcessMessage();
+        message.setMessageId(alert.getId());
+        message.setMessageType("ALERT");
+        message.setTitle("流程异常告警");
+        message.setContent("流程自动处理发生异常，请及时处理");
+        message.setTargetUserIds(new ArrayList<String>(alertTargetUserIds));
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("alertId", alert.getId());
+        payload.put("alertType", alert.getAlertType());
+        payload.put("instanceId", alert.getInstanceId());
+        payload.put("taskId", alert.getTaskId());
+        payload.put("severity", alert.getSeverity());
+        message.setPayload(payload);
+        message.setCreatedAt(LocalDateTime.now());
+        messagePublisher.publish(message);
     }
 
     private String dedupKey(String operationId, String actionType) {

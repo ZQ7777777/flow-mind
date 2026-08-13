@@ -23,6 +23,7 @@ public class WorkflowTaskResponse {
     private Long taskVersion;
     private LocalDateTime createdAt;
     private LocalDateTime dueAt;
+    private String deadlineStatus;
 
     public String getTaskId() { return taskId; }
     public void setTaskId(String taskId) { this.taskId = taskId; }
@@ -60,4 +61,6 @@ public class WorkflowTaskResponse {
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getDueAt() { return dueAt; }
     public void setDueAt(LocalDateTime dueAt) { this.dueAt = dueAt; }
+    public String getDeadlineStatus() { return deadlineStatus; }
+    public void setDeadlineStatus(String deadlineStatus) { this.deadlineStatus = deadlineStatus; }
 }

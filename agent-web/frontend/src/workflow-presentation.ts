@@ -37,3 +37,21 @@ export function nextStepMessage(state: string | undefined): string {
 export function isResetSessionDisabled(allowedActions: string[], busy: boolean): boolean {
   return busy || !allowedActions.includes("RESET_SESSION");
 }
+
+const PROCESSING_STATES = new Set([
+  "PROCESS_PROVISIONING",
+  "PROCESS_ACTIVATING",
+  "CODE_GENERATING",
+  "CODE_VERIFYING",
+  "CODE_REVIEWING",
+  "CODE_REPAIRING",
+  "WRITING_ARTIFACTS",
+]);
+
+export function isSessionSwitchConfirmationRequired(
+  currentState: string | undefined,
+  currentSessionId: string | undefined,
+  nextSessionId: string,
+): boolean {
+  return currentSessionId !== nextSessionId && PROCESSING_STATES.has(currentState || "");
+}

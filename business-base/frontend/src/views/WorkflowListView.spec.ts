@@ -16,6 +16,21 @@ function emptyPage() {
   );
 }
 
+function mountList(type = "todo") {
+  return mount(WorkflowListView, {
+    props: { type: type as "todo", title: "我的待办" },
+    global: {
+      plugins: [createPinia()],
+      stubs: {
+        RouterLink: {
+          props: ["to"],
+          template: '<a :href="to"><slot /></a>',
+        },
+      },
+    },
+  });
+}
+
 describe("WorkflowListView", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -28,18 +43,7 @@ describe("WorkflowListView", () => {
       .mockResolvedValueOnce(emptyPage());
     vi.stubGlobal("fetch", fetchMock);
 
-    const wrapper = mount(WorkflowListView, {
-      props: { type: "todo", title: "我的待办" },
-      global: {
-        plugins: [createPinia()],
-        stubs: {
-          RouterLink: {
-            props: ["to"],
-            template: '<a :href="to"><slot /></a>',
-          },
-        },
-      },
-    });
+    const wrapper = mountList();
     await flushPromises();
 
     expect(fetchMock.mock.calls[0][0]).toContain("source=OWN");
@@ -74,6 +78,51 @@ describe("WorkflowListView", () => {
     });
     await flushPromises();
     expect(completed.find(".empty-cell").text()).toBe("暂无记录");
+  });
+
+  it("shows deadline status badges for due-soon and overdue todo tasks", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            records: [
+              {
+                taskId: "task-soon",
+                instanceId: "instance-1",
+                instanceTitle: "合同审批",
+                nodeCode: "approve",
+                taskVersion: 1,
+                candidateUserIds: [],
+                deadlineStatus: "DUE_SOON",
+                dueAt: "2026-08-12T11:10:00",
+              },
+              {
+                taskId: "task-overdue",
+                instanceId: "instance-2",
+                instanceTitle: "费用审批",
+                nodeCode: "approve",
+                taskVersion: 2,
+                candidateUserIds: [],
+                deadlineStatus: "OVERDUE",
+                dueAt: "2026-08-12T09:10:00",
+              },
+            ],
+            pageNo: 1,
+            pageSize: 20,
+            total: 2,
+            totalPages: 1,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const wrapper = mountList();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="deadline-task-soon"]').text()).toBe("即将超时");
+    expect(wrapper.find('[data-test="deadline-task-overdue"]').text()).toBe("已超时");
   });
 
   it("keeps the list headers visible while data is loading", async () => {

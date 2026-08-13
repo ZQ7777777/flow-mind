@@ -21,6 +21,9 @@ public final class WorkflowActionRequests {
         public void setComment(String comment) { this.comment = comment; }
     }
 
+    public static class Remind extends Basic {
+    }
+
     public static class Reject extends Basic {
         @NotBlank
         private String targetNodeCode;

@@ -59,6 +59,13 @@ public class ReminderRecordRepository {
         return results.isEmpty() ? null : results.get(0);
     }
 
+    public ProcessReminderRecordEntity findLatestByTaskAndType(String taskId, String reminderType) {
+        List<ProcessReminderRecordEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_reminder_record WHERE task_id = ? AND reminder_type = ? "
+                        + "ORDER BY created_at DESC, id DESC LIMIT 1",
+                ROW_MAPPER, taskId, reminderType);
+        return results.isEmpty() ? null : results.get(0);
+    }
     public int markSent(String id) {
         return jdbcTemplate.update("UPDATE process_reminder_record SET reminder_status = 'SENT', "
                 + "sent_at = datetime('now'), error_message = NULL WHERE id = ?", id);

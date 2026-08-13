@@ -24,6 +24,7 @@ import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserContext;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -72,6 +73,7 @@ public class PlatformDtoMapper {
         target.setTaskVersion(source.getTaskVersion());
         target.setCreatedAt(source.getCreatedAt());
         target.setDueAt(source.getDueAt());
+        target.setDeadlineStatus(deadlineStatus(source.getDueAt()));
         return target;
     }
 
@@ -239,6 +241,19 @@ public class PlatformDtoMapper {
     /**
      * 批量映射活动任务列表。
      */
+    private String deadlineStatus(LocalDateTime dueAt) {
+        if (dueAt == null) {
+            return "NONE";
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (!dueAt.isAfter(now)) {
+            return "OVERDUE";
+        }
+        if (!dueAt.isAfter(now.plusMinutes(30))) {
+            return "DUE_SOON";
+        }
+        return "NORMAL";
+    }
     private List<WorkflowTaskResponse> tasks(List<TaskDTO> sources) {
         List<WorkflowTaskResponse> targets = new ArrayList<WorkflowTaskResponse>();
         for (TaskDTO source : safe(sources)) targets.add(task(source));

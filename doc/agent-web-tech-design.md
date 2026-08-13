@@ -528,7 +528,9 @@ Reviewer 问题包含严重级别、类别、文件、行号、证据和修复�
 - `GET /api/agent/created-process-definitions`
 - `GET /api/agent/generated-code`
 
-均按当前 owner 隔离。不提供通用会话列表、LLM 历史列表或审计中心。
+均按当前 owner 隔离。另提供 owner 隔离的历史 Session 恢复清单，只返回工作流元数据，
+并通过既有 `GET /api/agent/sessions/{sessionId}` 重新打开工作区；不提供跨 owner 的通用会话列表、
+LLM 历史列表或审计中心。
 
 ## 10. ①流程平台集成
 

@@ -1,11 +1,33 @@
 import type { RouteRecordRaw } from "vue-router";
 import { createMemoryHistory } from "vue-router";
 import { createPinia, setActivePinia } from "pinia";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { baseRoutes, createBusinessRouter } from "./index";
 import { useAuthStore } from "../stores/auth";
 
+function mockMe(administrator: boolean) {
+  return vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        userId: administrator ? "admin-1" : "u1",
+        username: administrator ? "admin" : "user",
+        realName: administrator ? "管理员" : "用户",
+        departmentId: "d",
+        departmentName: "D",
+        userType: administrator ? "ADMIN" : "USER",
+        administrator,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ),
+  );
+}
+
 describe("business router", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
   it("defines the common workflow routes required by B4", () => {
     expect(baseRoutes.map((route) => route.path)).toEqual(
       expect.arrayContaining([
@@ -65,5 +87,27 @@ describe("business router", () => {
     expect(router.getRoutes().map((route) => route.path)).toContain(
       "/generated/demo/apply",
     );
+  });
+
+  it("admits administrators to the admin alerts route", async () => {
+    setActivePinia(createPinia());
+    vi.stubGlobal("fetch", mockMe(true));
+    const router = createBusinessRouter([], createMemoryHistory());
+
+    await router.push("/admin/alerts");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toBe("/admin/alerts");
+  });
+
+  it("redirects non-administrators away from the admin alerts route", async () => {
+    setActivePinia(createPinia());
+    vi.stubGlobal("fetch", mockMe(false));
+    const router = createBusinessRouter([], createMemoryHistory());
+
+    await router.push("/admin/alerts");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toBe("/workflow/todo");
   });
 });

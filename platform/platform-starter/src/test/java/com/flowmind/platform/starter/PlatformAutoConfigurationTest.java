@@ -73,8 +73,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
+import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -158,6 +160,33 @@ class PlatformAutoConfigurationTest {
         contextRunnerWithDatabase("timeout-scheduler-disabled.db")
                 .withPropertyValues("flow-mind.platform.timeout-scan.enabled=false")
                 .run(context -> assertThat(context).doesNotHaveBean(TimeoutScanScheduler.class));
+    }
+
+    @Test
+    void starterMigratesLegacyReminderSchemaToSupportDueSoon() throws Exception {
+        Path database = tempDir.resolve("legacy-reminder.db").toAbsolutePath();
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE process_reminder_record ("
+                    + "id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, task_id TEXT, "
+                    + "reminder_type TEXT NOT NULL CHECK (reminder_type IN ('MANUAL', 'AUTO', 'TIMEOUT')), "
+                    + "target_user_ids TEXT NOT NULL, message TEXT NOT NULL, "
+                    + "reminder_status TEXT NOT NULL DEFAULT 'PENDING' "
+                    + "CHECK (reminder_status IN ('PENDING', 'SENT', 'FAILED')), "
+                    + "error_message TEXT, created_by TEXT NOT NULL, "
+                    + "created_at TEXT NOT NULL DEFAULT (datetime('now')), sent_at TEXT)");
+        }
+
+        contextRunner.withPropertyValues("flow-mind.platform.sqlite.path="
+                        + database.toString().replace('\\', '/'),
+                        "flow-mind.platform.timeout-scan.enabled=false")
+                .run(context -> {
+                    String definition = context.getBean(JdbcTemplate.class).queryForObject(
+                            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                                    + "AND name = 'process_reminder_record'",
+                            String.class);
+                    assertThat(definition).contains("DUE_SOON");
+                });
     }
 
     @Test
