@@ -384,10 +384,21 @@ describe("WorkflowDetailView", () => {
   });
 });
 
-  it("shows deadline warning and starter reminder action for current task", async () => {
+  it("shows starter reminder action on the initiated instance detail at any time", async () => {
+    const instanceDetail = detailResponse({
+      currentTask: null,
+      activeTasks: [{
+        taskId: "task-1",
+        instanceId: "instance-1",
+        instanceTitle: "入金申请",
+        nodeCode: "manager",
+        taskVersion: 3,
+        candidateUserIds: ["manager01"],
+      }],
+    });
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(detailResponse()), {
+        new Response(JSON.stringify(instanceDetail), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),
@@ -397,22 +408,39 @@ describe("WorkflowDetailView", () => {
         headers: { "Content-Type": "application/json" },
       }))
       .mockResolvedValueOnce(
-        new Response(JSON.stringify(detailResponse()), {
+        new Response(JSON.stringify(instanceDetail), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),
       );
 
-    const wrapper = await mountDetail(fetchMock);
+    vi.stubGlobal("fetch", fetchMock);
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/workflow/instances/:instanceId", component: WorkflowDetailView, props: { mode: "instance" } },
+      ],
+    });
+    await router.push("/workflow/instances/instance-1");
+    await router.isReady();
+
+    const wrapper = mount(WorkflowDetailView, {
+      props: { mode: "instance" },
+      global: { plugins: [pinia, router] },
+    });
     useAuthStore().user = {
       userId: "starter-1",
       username: "starter01",
       displayName: "张三",
       administrator: false,
     };
+    await flushPromises();
     await wrapper.vm.$nextTick();
 
-    expect(wrapper.get('[data-test="deadline-banner"]').text()).toContain("即将超时");
+    // 发起人在「我发起的」详情页可随时催办，无需等待超时告警。
+    expect(wrapper.find('[data-test="deadline-banner"]').exists()).toBe(false);
     await wrapper.get('[data-test="remind-task"]').trigger("click");
     await flushPromises();
 
