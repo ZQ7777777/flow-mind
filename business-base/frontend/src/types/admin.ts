@@ -74,6 +74,8 @@ export interface ProcessFormField {
 
 export interface AttachmentTemplate {
   id?: string;
+  attachmentConfigId?: string;
+  definitionId?: string;
   attachmentTemplateId: string;
   attachmentCode: string;
   templateVersion?: number;

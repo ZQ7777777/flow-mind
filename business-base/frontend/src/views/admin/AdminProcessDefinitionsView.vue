@@ -106,7 +106,8 @@ function fillDraft(detail: ProcessDefinitionDetail): void {
     nodes: structuredClone(detail.nodes ?? []), edges: structuredClone(detail.edges ?? []),
     formFields: structuredClone(detail.formFields ?? []),
     attachmentConfigs: (detail.attachmentTemplates ?? []).map((item, index) => ({
-      configId: item.id, definitionId: detail.id, attachmentTemplateId: item.attachmentTemplateId,
+      configId: item.id, attachmentConfigId: item.attachmentConfigId,
+      definitionId: item.definitionId ?? detail.id, attachmentTemplateId: item.attachmentTemplateId,
       attachmentCode: item.attachmentCode, required: item.required ?? false, minCount: item.minCount ?? 0,
       maxCount: item.maxCount ?? 1, applicableNodeCodes: item.applicableNodeCodes ?? [], sortOrder: item.sortOrder ?? index + 1,
     })),
