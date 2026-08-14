@@ -58,6 +58,23 @@ const leavingActions = [
   "ADD_SIGN",
 ] as const;
 
+function authenticatedPinia() {
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  const auth = useAuthStore();
+  auth.user = {
+    userId: "user-1",
+    username: "user01",
+    realName: "测试用户",
+    departmentId: "dept-1",
+    departmentName: "测试部门",
+    userType: "USER",
+    administrator: false,
+  };
+  auth.initialized = true;
+  return pinia;
+}
+
 describe("WorkflowDetailView", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -78,7 +95,7 @@ describe("WorkflowDetailView", () => {
 
   const wrapper = mount(WorkflowDetailView, {
     props: { mode: "task" },
-    global: { plugins: [createPinia(), router] },
+    global: { plugins: [authenticatedPinia(), router] },
   });
   await flushPromises();
   return wrapper;
@@ -125,7 +142,7 @@ describe("WorkflowDetailView", () => {
         nodeCode: "apply", taskVersion: 5, candidateUserIds: ["sales01"],
       },
       activeTasks: [], historyTasks: [], comments: [],
-      attachments: [{ attachmentId: "old-att", ownerType: "INSTANCE", fileName: "old.pdf" }],
+      attachments: [{ attachmentId: "old-att", ownerType: "INSTANCE", fileName: "old.pdf", uploadedBy: "user-1" }],
       rejectTargetNodes: [], allowedActions: ["SUBMIT"], disabledActions: [],
     };
     const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
@@ -157,7 +174,7 @@ describe("WorkflowDetailView", () => {
     await router.push("/workflow/tasks/apply-task");
     await router.isReady();
     const wrapper = mount(WorkflowDetailView, {
-      props: { mode: "task" }, global: { plugins: [createPinia(), router] },
+      props: { mode: "task" }, global: { plugins: [authenticatedPinia(), router] },
     });
     await flushPromises();
 
@@ -177,6 +194,187 @@ describe("WorkflowDetailView", () => {
     const actionBody = JSON.parse(fetchMock.mock.calls[submitIndex][1]?.body as string);
     expect(actionBody.variables).toEqual({ amount: 250 });
     expect(router.currentRoute.value.fullPath).toBe("/workflow/todo");
+  });
+
+  it("immediately displays and downloads the latest staged replacement", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(detailResponse({
+        currentTask: {
+          taskId: "task-1", instanceId: "instance-1", instanceTitle: "入金申请",
+          nodeCode: "apply", taskVersion: 3, candidateUserIds: [],
+        },
+        attachments: [{
+          attachmentId: "old-att", ownerType: "INSTANCE", fileName: "1.pdf", sizeBytes: 3,
+          uploadedBy: "user-1",
+        }],
+        allowedActions: ["SUBMIT"],
+      })), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const createObjectURL = vi.fn().mockReturnValue("blob:replacement");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    let downloadedFileName = "";
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () {
+      downloadedFileName = this.download;
+    });
+    const wrapper = await mountDetail(fetchMock);
+
+    const secondFile = new File(["second"], "2.pdf", { type: "application/pdf" });
+    const firstInput = wrapper.get('input[aria-label="替换 1.pdf"]');
+    Object.defineProperty(firstInput.element, "files", { value: [secondFile], configurable: true });
+    await firstInput.trigger("change");
+
+    expect(wrapper.text()).not.toContain("1.pdf");
+    expect(wrapper.text()).toContain("2.pdf");
+    expect(wrapper.text()).toContain("6 B");
+    expect(wrapper.get('input[aria-label="替换 2.pdf"]')).toBeTruthy();
+
+    const thirdFile = new File(["third-file"], "3.pdf", { type: "application/pdf" });
+    const secondInput = wrapper.get('input[aria-label="替换 2.pdf"]');
+    Object.defineProperty(secondInput.element, "files", { value: [thirdFile], configurable: true });
+    await secondInput.trigger("change");
+    await wrapper.get(".attachment-list button").trigger("click");
+
+    expect(wrapper.text()).not.toContain("2.pdf");
+    expect(wrapper.text()).toContain("3.pdf");
+    expect(createObjectURL).toHaveBeenCalledWith(thirdFile);
+    expect(click).toHaveBeenCalledOnce();
+    expect(downloadedFileName).toBe("3.pdf");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:replacement");
+  });
+
+  it("continues downloading unstaged attachments from the backend", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(detailResponse({
+        attachments: [{ attachmentId: "saved-att", ownerType: "INSTANCE", fileName: "saved.pdf" }],
+      })), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response("saved-content", {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      }));
+    const createObjectURL = vi.fn().mockReturnValue("blob:saved");
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const wrapper = await mountDetail(fetchMock);
+
+    await wrapper.get(".attachment-list button").trigger("click");
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("/api/workflow/attachments/saved-att/content");
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+  });
+
+  it("does not delete an attachment when confirmation is cancelled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(detailResponse({
+      attachments: [{
+        attachmentId: "att-current",
+        taskId: "task-1",
+        ownerType: "INSTANCE",
+        fileName: "receipt.pdf",
+        uploadedBy: "user-1",
+      }],
+    })), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const wrapper = await mountDetail(fetchMock);
+
+    await wrapper.get('button[aria-label="删除 receipt.pdf"]').trigger("click");
+    await flushPromises();
+
+    expect(confirm).toHaveBeenCalledWith("确认删除附件“receipt.pdf”？");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain("receipt.pdf");
+  });
+
+  it("deletes a staged attachment and clears its local replacement", async () => {
+    const detail = detailResponse({
+      attachments: [{
+        attachmentId: "att-current",
+        taskId: "task-1",
+        ownerType: "INSTANCE",
+        fileName: "old.pdf",
+        sizeBytes: 3,
+        uploadedBy: "user-1",
+      }],
+      allowedActions: ["SUBMIT"],
+    });
+    let resolveDelete: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/attachments/att-current")) {
+        return new Promise<Response>((resolve) => {
+          resolveDelete = resolve;
+        });
+      }
+      return new Response(JSON.stringify(detail), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const wrapper = await mountDetail(fetchMock);
+
+    const replacement = new File(["new"], "new.pdf", { type: "application/pdf" });
+    const replacementInput = wrapper.get('input[aria-label="替换 old.pdf"]');
+    Object.defineProperty(replacementInput.element, "files", { value: [replacement] });
+    await replacementInput.trigger("change");
+    await wrapper.get('button[aria-label="删除 new.pdf"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get('button[aria-label="删除 new.pdf"]').text()).toBe("删除中…");
+    expect(wrapper.get('button[aria-label="删除 new.pdf"]').attributes("disabled")).toBeDefined();
+
+    resolveDelete?.(new Response(null, { status: 204 }));
+    await flushPromises();
+
+    const [, deleteInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(deleteInit.method).toBe("DELETE");
+    expect((deleteInit.headers as Record<string, string>)["Idempotency-Key"]).toContain(
+      "workflow:attachment-delete",
+    );
+    expect(wrapper.find(".attachment-list").exists()).toBe(false);
+    expect(wrapper.text()).toContain("已删除 new.pdf");
+  });
+
+  it("keeps an attachment visible when deletion fails", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(detailResponse({
+        attachments: [{
+          attachmentId: "att-current",
+          taskId: "task-1",
+          ownerType: "TASK",
+          fileName: "note.txt",
+          uploadedBy: "user-1",
+        }],
+      })), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: "ATTACHMENT_SOURCE_TASK_INVALID",
+        message: "附件删除失败",
+      }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const wrapper = await mountDetail(fetchMock);
+
+    await wrapper.get('button[aria-label="删除 note.txt"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("note.txt");
+    expect(wrapper.get('[role="alert"]').text()).toContain("附件删除失败");
+    expect(wrapper.get('button[aria-label="删除 note.txt"]').attributes("disabled")).toBeUndefined();
   });
 
   it.each(leavingActions)("returns to todo after %s succeeds", async (action) => {
@@ -345,7 +543,7 @@ describe("WorkflowDetailView", () => {
         nodeCode: "apply", taskVersion: 5, candidateUserIds: ["sales01"],
       },
       activeTasks: [], historyTasks: [], comments: [],
-      attachments: [{ attachmentId: "old-att", ownerType: "INSTANCE", fileName: "old.pdf" }],
+      attachments: [{ attachmentId: "old-att", ownerType: "INSTANCE", fileName: "old.pdf", uploadedBy: "user-1" }],
       rejectTargetNodes: [], allowedActions: ["SUBMIT"], disabledActions: [],
     };
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
@@ -367,7 +565,7 @@ describe("WorkflowDetailView", () => {
     await router.push("/workflow/tasks/apply-task");
     await router.isReady();
     const wrapper = mount(WorkflowDetailView, {
-      props: { mode: "task" }, global: { plugins: [createPinia(), router] },
+      props: { mode: "task" }, global: { plugins: [authenticatedPinia(), router] },
     });
     await flushPromises();
 
@@ -381,6 +579,8 @@ describe("WorkflowDetailView", () => {
 
     expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/submit"))).toBe(false);
     expect(wrapper.text()).toContain("附件替换失败");
+    expect(wrapper.text()).toContain("new.pdf");
+    expect(wrapper.text()).not.toContain("old.pdf");
   });
 });
 

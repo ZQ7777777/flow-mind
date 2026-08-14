@@ -11,6 +11,9 @@ const props = defineProps<{
   uploadableAttachments?: WorkflowUploadableAttachmentView[];
   canUpload?: boolean;
   canReplace?: boolean;
+  canDelete?: boolean;
+  currentUserId?: string;
+  deletingAttachmentId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +24,7 @@ const emit = defineEmits<{
   }];
   download: [attachment: WorkflowAttachmentView];
   replace: [payload: { attachment: WorkflowAttachmentView; file: File }];
+  delete: [attachment: WorkflowAttachmentView];
 }>();
 
 const selectedFile = ref<File | null>(null);
@@ -67,6 +71,11 @@ function selectReplacement(attachment: WorkflowAttachmentView, event: Event): vo
   if (file) emit("replace", { attachment, file });
   input.value = "";
 }
+
+function isOwnedByCurrentUser(attachment: WorkflowAttachmentView): boolean {
+  return Boolean(props.currentUserId && attachment.uploadedBy === props.currentUserId);
+}
+
 </script>
 
 <template>
@@ -110,7 +119,7 @@ function selectReplacement(attachment: WorkflowAttachmentView, event: Event): vo
             <button type="button" @click="emit('download', attachment)">
               下载
             </button>
-            <label v-if="canReplace" class="replace-control">
+            <label v-if="canReplace && isOwnedByCurrentUser(attachment)" class="replace-control">
               <span>替换</span>
               <input
                 type="file"
@@ -118,6 +127,16 @@ function selectReplacement(attachment: WorkflowAttachmentView, event: Event): vo
                 @change="selectReplacement(attachment, $event)"
               />
             </label>
+            <button
+              v-if="canDelete && isOwnedByCurrentUser(attachment)"
+              type="button"
+              class="delete-button"
+              :aria-label="`删除 ${attachment.fileName}`"
+              :disabled="Boolean(deletingAttachmentId)"
+              @click="emit('delete', attachment)"
+            >
+              {{ deletingAttachmentId === attachment.attachmentId ? "删除中…" : "删除" }}
+            </button>
           </li>
         </ul>
         <p v-else class="empty-state">暂无实例附件</p>
@@ -132,6 +151,16 @@ function selectReplacement(attachment: WorkflowAttachmentView, event: Event): vo
             <span>{{ formatDateTime(attachment.uploadedAt) }}</span>
             <button type="button" @click="emit('download', attachment)">
               下载
+            </button>
+            <button
+              v-if="canDelete && isOwnedByCurrentUser(attachment)"
+              type="button"
+              class="delete-button"
+              :aria-label="`删除 ${attachment.fileName}`"
+              :disabled="Boolean(deletingAttachmentId)"
+              @click="emit('delete', attachment)"
+            >
+              {{ deletingAttachmentId === attachment.attachmentId ? "删除中…" : "删除" }}
             </button>
           </li>
         </ul>
@@ -243,7 +272,7 @@ button:focus-visible {
 
 .attachment-list li {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) 90px 150px auto auto;
+  grid-template-columns: minmax(150px, 1fr) 90px 150px repeat(3, auto);
   gap: 8px;
   align-items: center;
   padding: 10px;
@@ -258,6 +287,16 @@ button:focus-visible {
   overflow-wrap: anywhere;
   color: #111827;
   font-weight: 600;
+}
+
+.delete-button {
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.delete-button:hover:not(:disabled) {
+  border-color: #ef4444;
+  background: #fef2f2;
 }
 
 .replace-control {

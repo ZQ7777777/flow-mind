@@ -8,6 +8,7 @@ import ProcessTimeline from "../components/workflow/ProcessTimeline.vue";
 import TaskActionPanel from "../components/workflow/TaskActionPanel.vue";
 import VariableFormReadonly from "../components/workflow/VariableFormReadonly.vue";
 import {
+  deleteAttachment as deleteWorkflowAttachment,
   downloadAttachment,
   uploadInstanceAttachment,
   uploadTaskAttachment,
@@ -57,6 +58,7 @@ const actionsThatLeaveCurrentTask = new Set<TaskActionCode>([
 ]);
 const attachmentError = ref("");
 const attachmentStatus = ref("");
+const deletingAttachmentId = ref("");
 const formError = ref("");
 const variableFormRef = ref<InstanceType<typeof VariableFormReadonly> | null>(null);
 const formVariables = ref<Record<string, unknown>>({});
@@ -65,6 +67,16 @@ const pendingReplacements = ref<Record<string, {
   file: File;
   idempotencyKey: string;
 }>>({});
+const displayedAttachments = computed(() => (detail.value?.attachments ?? []).map((attachment) => {
+  const replacement = pendingReplacements.value[attachment.attachmentId];
+  if (!replacement) return attachment;
+  return {
+    ...attachment,
+    fileName: replacement.file.name,
+    sizeBytes: replacement.file.size,
+    contentType: replacement.file.type || attachment.contentType,
+  };
+}));
 const isEditableApply = computed(() => Boolean(detail.value?.allowedActions.includes("SUBMIT")));
 const reminderSuccess = ref("");
 const currentTask = computed(() => detail.value?.currentTask ?? null);
@@ -100,6 +112,7 @@ watch(
 async function loadDetail(): Promise<void> {
   pendingReplacements.value = {};
   attachmentStatus.value = "";
+  deletingAttachmentId.value = "";
   if (props.mode === "task" && taskId.value) {
     await store.loadTaskDetail(taskId.value);
     if (store.detail.errorCode === "FLOW_TASK_NOT_FOUND") {
@@ -285,7 +298,8 @@ async function uploadAttachment(payload: {
 async function download(item: WorkflowAttachmentView): Promise<void> {
   attachmentError.value = "";
   try {
-    const blob = await downloadAttachment(item.attachmentId);
+    const blob = pendingReplacements.value[item.attachmentId]?.file
+      ?? await downloadAttachment(item.attachmentId);
     const href = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = href;
@@ -294,6 +308,34 @@ async function download(item: WorkflowAttachmentView): Promise<void> {
     URL.revokeObjectURL(href);
   } catch (error) {
     attachmentError.value = error instanceof Error ? error.message : "附件下载失败";
+  }
+}
+
+async function removeAttachment(item: WorkflowAttachmentView): Promise<void> {
+  if (deletingAttachmentId.value) return;
+  if (!window.confirm(`确认删除附件“${item.fileName}”？`)) return;
+
+  attachmentError.value = "";
+  attachmentStatus.value = "";
+  deletingAttachmentId.value = item.attachmentId;
+  try {
+    await deleteWorkflowAttachment(
+      item.attachmentId,
+      createIdempotencyKey("workflow:attachment-delete"),
+    );
+    if (detail.value) {
+      detail.value.attachments = detail.value.attachments.filter(
+        (attachment) => attachment.attachmentId !== item.attachmentId,
+      );
+    }
+    const next = { ...pendingReplacements.value };
+    delete next[item.attachmentId];
+    pendingReplacements.value = next;
+    attachmentStatus.value = `已删除 ${item.fileName}`;
+  } catch (error) {
+    attachmentError.value = error instanceof Error ? error.message : "附件删除失败";
+  } finally {
+    deletingAttachmentId.value = "";
   }
 }
 
@@ -365,13 +407,17 @@ async function download(item: WorkflowAttachmentView): Promise<void> {
       />
       <p v-if="formError" class="action-error" role="alert">{{ formError }}</p>
       <AttachmentPanel
-        :attachments="detail.attachments"
+        :attachments="displayedAttachments"
         :can-upload="Boolean(detail.currentTask) && !isEditableApply"
         :can-replace="isEditableApply"
+        can-delete
+        :current-user-id="authStore.user?.userId"
+        :deleting-attachment-id="deletingAttachmentId"
         :uploadable-attachments="detail.uploadableAttachments"
         @upload="uploadAttachment"
         @replace="stageReplacement"
         @download="download"
+        @delete="removeAttachment"
       />
       <p v-if="attachmentError" class="action-error" role="alert">{{ attachmentError }}</p>
       <p v-if="attachmentStatus" class="action-status" role="status">{{ attachmentStatus }}</p>
