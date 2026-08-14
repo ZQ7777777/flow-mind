@@ -60,7 +60,7 @@ class DefaultProcessMonitorServiceTest {
         DefaultProcessMonitorService service = service(activeTasks, alerts);
         LocalDateTime scanAt = LocalDateTime.of(2026, 7, 28, 10, 0);
         when(activeTasks.findTimeoutOpenTasks(scanAt, 10)).thenReturn(Collections.singletonList(task()));
-        when(alerts.findOpenByTaskAndType("task-timeout", AlertTypeEnum.TASK_TIMEOUT.name()))
+        when(alerts.findLatestByTaskAndType("task-timeout", AlertTypeEnum.TASK_TIMEOUT.name()))
                 .thenReturn(null, existingAlert());
         TimeoutScanRequest request = new TimeoutScanRequest();
         request.setScanAt(scanAt);
@@ -71,6 +71,25 @@ class DefaultProcessMonitorServiceTest {
         service.scanTimeoutTasks(request);
 
         verify(alerts).insert(any(ProcessAlertRecordEntity.class));
+    }
+
+    @Test
+    void timeoutScanSkipsHandledAlertWhenTaskIsStillOverdue() {
+        ActiveTaskRepository activeTasks = mock(ActiveTaskRepository.class);
+        AlertRecordRepository alerts = mock(AlertRecordRepository.class);
+        DefaultProcessMonitorService service = service(activeTasks, alerts);
+        LocalDateTime scanAt = LocalDateTime.of(2026, 7, 28, 10, 0);
+        when(activeTasks.findTimeoutOpenTasks(scanAt, 10)).thenReturn(Collections.singletonList(task()));
+        when(alerts.findLatestByTaskAndType("task-timeout", AlertTypeEnum.TASK_TIMEOUT.name()))
+                .thenReturn(existingAlert("HANDLED"));
+        TimeoutScanRequest request = new TimeoutScanRequest();
+        request.setScanAt(scanAt);
+        request.setLimit(Integer.valueOf(10));
+        request.setDryRun(Boolean.FALSE);
+
+        service.scanTimeoutTasks(request);
+
+        verify(alerts, never()).insert(any(ProcessAlertRecordEntity.class));
     }
 
     @Test
@@ -225,11 +244,15 @@ class DefaultProcessMonitorServiceTest {
     }
 
     private ProcessAlertRecordEntity existingAlert() {
+        return existingAlert("OPEN");
+    }
+
+    private ProcessAlertRecordEntity existingAlert(String status) {
         ProcessAlertRecordEntity alert = new ProcessAlertRecordEntity();
         alert.setId("alert-1");
         alert.setTaskId("task-timeout");
         alert.setAlertType(AlertTypeEnum.TASK_TIMEOUT.name());
-        alert.setAlertStatus("OPEN");
+        alert.setAlertStatus(status);
         return alert;
     }
 }

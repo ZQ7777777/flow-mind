@@ -14,11 +14,13 @@ import com.flowmind.platform.core.query.RuntimeQueryAssembler;
 import com.flowmind.platform.core.runtime.AdminPermissionGuard;
 import com.flowmind.platform.core.runtime.DefaultAdminProcessService;
 import com.flowmind.platform.core.runtime.InstanceTaskCancellationService;
+import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
 import com.flowmind.platform.core.runtime.RuntimeDefinitionLoader;
 import com.flowmind.platform.core.runtime.RuntimeNodeAdvancer;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
 import com.flowmind.platform.core.runtime.RuntimeRequestValidator;
 import com.flowmind.platform.core.runtime.RuntimeTransactionExecutor;
+import com.flowmind.platform.core.runtime.RuntimeValidationException;
 import com.flowmind.platform.core.validation.ProcessAttachmentTemplateValidator;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessAuditLogRepository;
@@ -56,6 +58,21 @@ public class BusinessPlatformConfiguration {
     @ConditionalOnMissingBean(BusinessAuthorizationProvider.class)
     public BusinessAuthorizationProvider businessAuthorizationProvider() {
         return userId -> false;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(AdminPermissionGuard.class)
+    public AdminPermissionGuard adminPermissionGuard(final BusinessAuthorizationProvider authorizationProvider) {
+        return new AdminPermissionGuard() {
+            @Override
+            public void assertAdminUserId(String operatorUserId) {
+                if (operatorUserId == null || operatorUserId.trim().isEmpty()
+                        || !authorizationProvider.isAdministrator(operatorUserId.trim())) {
+                    throw new RuntimeValidationException(RuntimeErrorCodes.ADMIN_PERMISSION_DENIED,
+                            "administrator permission is required");
+                }
+            }
+        };
     }
 
     @Bean

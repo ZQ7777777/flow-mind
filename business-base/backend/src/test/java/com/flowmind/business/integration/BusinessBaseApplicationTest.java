@@ -1,11 +1,13 @@
 package com.flowmind.business.integration;
 
 import com.flowmind.business.BusinessBaseApplication;
+import com.flowmind.business.message.BusinessAlertRecordRepository;
 import com.flowmind.business.security.CurrentBusinessUserProvider;
 import com.flowmind.business.security.PlatformCurrentUserAdapter;
 import com.flowmind.platform.api.service.ReadRecordService;
 import com.flowmind.platform.api.service.TaskQueryService;
 import com.flowmind.platform.api.spi.CurrentUserProvider;
+import com.flowmind.platform.persistence.repository.AlertRecordRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -40,6 +42,7 @@ class BusinessBaseApplicationTest {
     void starterAndTrustedIdentityAreWiredWithoutPlatformWebLayer() throws Exception {
         assertThat(context.getBean(TaskQueryService.class)).isNotNull();
         assertThat(context.getBean(ReadRecordService.class)).isNotNull();
+        assertThat(context.getBean(AlertRecordRepository.class)).isInstanceOf(BusinessAlertRecordRepository.class);
         assertThat(context.getBean(CurrentBusinessUserProvider.class)).isNotNull();
         CurrentUserProvider platformUser = context.getBean(CurrentUserProvider.class);
         assertThat(platformUser).isInstanceOf(PlatformCurrentUserAdapter.class);

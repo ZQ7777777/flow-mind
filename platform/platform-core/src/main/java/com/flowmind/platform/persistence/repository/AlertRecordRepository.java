@@ -66,6 +66,13 @@ public class AlertRecordRepository {
         return results.isEmpty() ? null : results.get(0);
     }
 
+    public ProcessAlertRecordEntity findLatestByTaskAndType(String taskId, String alertType) {
+        List<ProcessAlertRecordEntity> results = jdbcTemplate.query(
+                "SELECT * FROM process_alert_record WHERE task_id = ? AND alert_type = ? "
+                        + "ORDER BY created_at DESC, id DESC LIMIT 1",
+                ROW_MAPPER, taskId, alertType);
+        return results.isEmpty() ? null : results.get(0);
+    }
     /** Find an open alert by JSON detail field value for idempotent alert creation. */
     public ProcessAlertRecordEntity findOpenByTypeAndDetailValue(String alertType, String detailField, String value) {
         if (isBlank(detailField)) {

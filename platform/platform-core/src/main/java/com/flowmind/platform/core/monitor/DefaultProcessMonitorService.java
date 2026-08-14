@@ -413,7 +413,7 @@ public class DefaultProcessMonitorService implements ProcessMonitorService {
     }
 
     private void createTimeoutAlert(ProcessActiveTaskEntity task, TimeoutPolicy timeoutPolicy, LocalDateTime scanAt) {
-        if (alertRepository.findOpenByTaskAndType(task.getId(), AlertTypeEnum.TASK_TIMEOUT.name()) != null) {
+        if (alertRepository.findLatestByTaskAndType(task.getId(), AlertTypeEnum.TASK_TIMEOUT.name()) != null) {
             return;
         }
         ProcessAlertRecordEntity alert = new ProcessAlertRecordEntity();
