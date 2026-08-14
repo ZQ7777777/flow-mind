@@ -1,7 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ElMessage } from "element-plus";
 import WorkflowListView from "./WorkflowListView.vue";
 
 function emptyPage() {
@@ -32,26 +31,8 @@ function mountList(type = "todo") {
   });
 }
 
-function entryProcess(name = "客户入金") {
-  return new Response(
-    JSON.stringify({ processCode: "entry_application", processName: name }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
-  );
-}
-
-function workflowFetch(page: Response | undefined = emptyPage(), name = "客户入金") {
-  return vi.fn((input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url.includes("/api/workflow/startable-processes/entry-application")) {
-      return Promise.resolve(entryProcess(name));
-    }
-    return Promise.resolve((page ?? emptyPage()).clone());
-  });
-}
-
 const baseStubs = {
   RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' },
-  ElDrawer: { props: ["modelValue"], template: '<div v-if="modelValue"><slot /></div>' },
 };
 
 describe("WorkflowListView", () => {
@@ -59,70 +40,20 @@ describe("WorkflowListView", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows the entry application launcher only on the started list", async () => {
-    vi.stubGlobal("fetch", workflowFetch());
-
-    const started = mount(WorkflowListView, {
-      props: { type: "started", title: "我发起的" },
-      global: {
-        plugins: [createPinia()],
-        stubs: {
-          ...baseStubs,
-          EntryApplicationApply: true,
-        },
-      },
-    });
-    await flushPromises();
-    expect(started.find('[data-test="open-entry-application"]').exists()).toBe(true);
-    expect(started.get('[data-test="open-entry-application"]').text()).toBe("发起客户入金");
-
-    const todo = mount(WorkflowListView, {
-      props: { type: "todo", title: "我的待办" },
-      global: {
-        plugins: [createPinia()],
-        stubs: {
-          ...baseStubs,
-          EntryApplicationApply: true,
-        },
-      },
-    });
-    await flushPromises();
-    expect(todo.find('[data-test="open-entry-application"]').exists()).toBe(false);
-  });
-
-  it("opens the entry application drawer and refreshes after generated form success", async () => {
-    const fetchMock = workflowFetch(undefined, "客户入金");
-    vi.stubGlobal("fetch", fetchMock);
-    const successMessage = vi.spyOn(ElMessage, "success").mockImplementation(() => undefined as never);
+  it("does not expose an entry application launcher from the started list", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(emptyPage()));
 
     const wrapper = mount(WorkflowListView, {
       props: { type: "started", title: "我发起的" },
       global: {
         plugins: [createPinia()],
-        stubs: {
-          RouterLink: baseStubs.RouterLink,
-          EntryApplicationApply: {
-            data: () => ({ submitted: false }),
-            template: '<form data-test="entry-application-form"><button data-test="submit-entry" type="button" @click="submitted = true">submit</button><p v-if="submitted" data-test="success-text">ok</p></form>',
-          },
-          ElDrawer: {
-            props: ["modelValue"],
-            emits: ["closed"],
-            template: '<div v-if="modelValue" data-test="drawer"><slot /><button data-test="close-drawer" @click="$emit(\'closed\')">close</button></div>',
-          },
-        },
+        stubs: baseStubs,
       },
     });
     await flushPromises();
 
-    await wrapper.get('[data-test="open-entry-application"]').trigger("click");
-    expect(wrapper.find('[data-test="entry-application-form"]').exists()).toBe(true);
-
-    await wrapper.get('[data-test="submit-entry"]').trigger("click");
-    await flushPromises();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(successMessage).toHaveBeenCalledWith("客户入金已提交");
-    expect(wrapper.text()).not.toContain("客户入金已提交");
+    expect(wrapper.find('[data-test="open-entry-application"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="entry-application-drawer"]').exists()).toBe(false);
   });
 
   it("separates own todo tasks from delegated todo tasks", async () => {
@@ -152,7 +83,7 @@ describe("WorkflowListView", () => {
       props: { type: "todo", title: "我的待办" },
       global: {
         plugins: [createPinia()],
-        stubs: { RouterLink: baseStubs.RouterLink, ElDrawer: baseStubs.ElDrawer },
+        stubs: baseStubs,
       },
     });
     await flushPromises();
@@ -226,7 +157,6 @@ describe("WorkflowListView", () => {
             props: ["to"],
             template: '<a :href="to"><slot /></a>',
           },
-          ElDrawer: baseStubs.ElDrawer,
         },
       },
     });
