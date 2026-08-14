@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { useWorkflowStore } from "../stores/workflow";
 import type {
   WorkflowHistoryTaskResponse,
@@ -182,7 +183,7 @@ function stopWatchingEntrySubmissionSuccess(): void {
 
 async function handleEntrySubmitted(): Promise<void> {
   stopWatchingEntrySubmissionSuccess();
-  operationSuccess.value = `${entryProcessName.value}已提交`;
+  ElMessage.success(`${entryProcessName.value}已提交`);
   entryDrawerOpen.value = false;
   await load();
 }

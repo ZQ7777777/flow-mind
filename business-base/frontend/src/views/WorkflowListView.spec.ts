@@ -1,6 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ElMessage } from "element-plus";
 import WorkflowListView from "./WorkflowListView.vue";
 
 function emptyPage() {
@@ -92,6 +93,7 @@ describe("WorkflowListView", () => {
   it("opens the entry application drawer and refreshes after generated form success", async () => {
     const fetchMock = workflowFetch(undefined, "客户入金");
     vi.stubGlobal("fetch", fetchMock);
+    const successMessage = vi.spyOn(ElMessage, "success").mockImplementation(() => undefined as never);
 
     const wrapper = mount(WorkflowListView, {
       props: { type: "started", title: "我发起的" },
@@ -119,7 +121,8 @@ describe("WorkflowListView", () => {
     await wrapper.get('[data-test="submit-entry"]').trigger("click");
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(wrapper.text()).toContain("客户入金已提交");
+    expect(successMessage).toHaveBeenCalledWith("客户入金已提交");
+    expect(wrapper.text()).not.toContain("客户入金已提交");
   });
 
   it("separates own todo tasks from delegated todo tasks", async () => {

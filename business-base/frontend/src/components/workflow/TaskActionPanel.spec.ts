@@ -1,11 +1,33 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TaskActionPanel from "./TaskActionPanel.vue";
 import { fetchWorkflowUsers } from "../../api/workflow";
 
 vi.mock("../../api/workflow", () => ({ fetchWorkflowUsers: vi.fn() }));
 
+async function openSuggestions(input: ReturnType<ReturnType<typeof mount>["get"]>, keyword: string) {
+  await input.setValue(keyword);
+  await vi.advanceTimersByTimeAsync(300);
+  await flushPromises();
+}
+
+async function clickSuggestion(selector: string): Promise<void> {
+  const option = document.body.querySelector<HTMLElement>(selector);
+  expect(option).not.toBeNull();
+  option?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  await flushPromises();
+}
+
 describe("TaskActionPanel", () => {
+  beforeEach(() => {
+    vi.mocked(fetchWorkflowUsers).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = "";
+  });
+
   it("only renders actions allowed by the workflow detail response", async () => {
     const wrapper = mount(TaskActionPanel, {
       props: {
@@ -63,6 +85,7 @@ describe("TaskActionPanel", () => {
     ]);
   });
   it("selects a searched target user and emits id with name required by the backend DTO", async () => {
+    vi.useFakeTimers();
     vi.mocked(fetchWorkflowUsers).mockResolvedValue([
       { userId: "u_operations_01", userName: "运营职工一", departmentName: "运营部" },
     ]);
@@ -70,9 +93,10 @@ describe("TaskActionPanel", () => {
       props: { taskVersion: 5, allowedActions: ["DELEGATE"] },
     });
 
-    await wrapper.get('[data-test="target-user-search"]').setValue("operation");
-    await flushPromises();
-    await wrapper.get('[data-test="target-user-option-u_operations_01"]').trigger("click");
+    await openSuggestions(wrapper.get('[data-test="target-user-search"]'), "operation");
+    expect(document.body.textContent).toContain("运营职工一");
+    expect(document.body.textContent).toContain("u_operations_01 / 运营部");
+    await clickSuggestion('[data-test="target-user-option-u_operations_01"]');
     await wrapper.find('[data-test="action-delegate"]').trigger("click");
 
     expect(fetchWorkflowUsers).toHaveBeenCalledWith("operation", 20);
@@ -86,6 +110,7 @@ describe("TaskActionPanel", () => {
   });
 
   it("selects searched add-sign users and emits their ids", async () => {
+    vi.useFakeTimers();
     vi.mocked(fetchWorkflowUsers).mockResolvedValue([
       { userId: "u_operations_01", userName: "运营职工一", departmentName: "运营部" },
       { userId: "u_operations_02", userName: "运营职工二", departmentName: "运营部" },
@@ -94,18 +119,57 @@ describe("TaskActionPanel", () => {
       props: { taskVersion: 6, allowedActions: ["ADD_SIGN"] },
     });
 
-    await wrapper.get('[data-test="add-sign-user-search"]').setValue("operation");
-    await flushPromises();
-    await wrapper.get('[data-test="add-sign-user-option-u_operations_01"]').trigger("click");
-    await wrapper.get('[data-test="add-sign-user-search"]').setValue("operation");
-    await flushPromises();
-    await wrapper.get('[data-test="add-sign-user-option-u_operations_02"]').trigger("click");
+    const input = wrapper.get('[data-test="add-sign-user-search"]');
+    await openSuggestions(input, "operation");
+    await clickSuggestion('[data-test="add-sign-user-option-u_operations_01"]');
+    await openSuggestions(input, "operation");
+    expect(document.body.querySelector('[data-test="add-sign-user-option-u_operations_01"]'))
+      .toBeNull();
+    await clickSuggestion('[data-test="add-sign-user-option-u_operations_02"]');
     await wrapper.find('[data-test="action-add-sign"]').trigger("click");
 
     expect(wrapper.emitted("submit")?.[0]?.[0]).toMatchObject({
       action: "ADD_SIGN",
       addSignUserIds: ["u_operations_01", "u_operations_02"],
     });
+  });
+
+  it("clears a selected target user when its text is edited", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchWorkflowUsers).mockResolvedValue([
+      { userId: "u_operations_01", userName: "运营职工一", departmentName: "运营部" },
+    ]);
+    const wrapper = mount(TaskActionPanel, {
+      props: { taskVersion: 5, allowedActions: ["TRANSFER"] },
+    });
+    const input = wrapper.get('[data-test="target-user-search"]');
+
+    await openSuggestions(input, "operation");
+    await clickSuggestion('[data-test="target-user-option-u_operations_01"]');
+    expect(wrapper.find('[data-test="selected-target-user"]').exists()).toBe(true);
+
+    await input.setValue("another user");
+    expect(wrapper.find('[data-test="selected-target-user"]').exists()).toBe(false);
+    await wrapper.get('[data-test="action-transfer"]').trigger("click");
+
+    expect(wrapper.text()).toContain("请选择目标用户");
+    expect(wrapper.emitted("submit")).toBeUndefined();
+  });
+
+  it("does not query blank keywords and hides suggestions after a search failure", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchWorkflowUsers).mockRejectedValue(new Error("network error"));
+    const wrapper = mount(TaskActionPanel, {
+      props: { taskVersion: 5, allowedActions: ["TRANSFER"] },
+    });
+    const input = wrapper.get('[data-test="target-user-search"]');
+
+    await openSuggestions(input, "   ");
+    expect(fetchWorkflowUsers).not.toHaveBeenCalled();
+
+    await openSuggestions(input, "missing");
+    expect(fetchWorkflowUsers).toHaveBeenCalledWith("missing", 20);
+    expect(document.body.querySelector('[data-test^="target-user-option-"]')).toBeNull();
   });
 
   it("renders eligible reject targets by node name and submits the selected node code", async () => {

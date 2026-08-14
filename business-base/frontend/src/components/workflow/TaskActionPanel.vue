@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { Ref } from "vue";
+import { ElAutocomplete } from "element-plus";
+import type {
+  AutocompleteFetchSuggestions,
+  AutocompleteFetchSuggestionsCallback,
+} from "element-plus";
 import { fetchWorkflowUsers } from "../../api/workflow";
 import type {
   TaskActionCode,
@@ -36,12 +40,12 @@ const emit = defineEmits<{
 const comment = ref("");
 const rejectTargetNodeCode = ref("");
 const targetUserKeyword = ref("");
-const targetUserOptions = ref<WorkflowUserCandidateResponse[]>([]);
 const selectedTargetUser = ref<WorkflowUserCandidateResponse | null>(null);
 const addSignUserKeyword = ref("");
-const addSignUserOptions = ref<WorkflowUserCandidateResponse[]>([]);
 const selectedAddSignUsers = ref<WorkflowUserCandidateResponse[]>([]);
 const validationError = ref("");
+
+type UserSuggestion = WorkflowUserCandidateResponse & { value: string };
 
 const actionConfig: Array<{
   code: TaskActionCode;
@@ -70,49 +74,53 @@ const needsTargetUser = computed(() =>
   props.allowedActions.some((action) => action === "TRANSFER" || action === "DELEGATE"),
 );
 const needsAddSignUsers = computed(() => props.allowedActions.includes("ADD_SIGN"));
-const visibleAddSignOptions = computed(() =>
-  addSignUserOptions.value.filter((user) =>
-    !selectedAddSignUsers.value.some((selected) => selected.userId === user.userId),
-  ),
-);
 
-async function searchTargetUsers(): Promise<void> {
-  selectedTargetUser.value = null;
-  await loadUserOptions(targetUserKeyword.value, targetUserOptions);
-}
-
-async function searchAddSignUsers(): Promise<void> {
-  await loadUserOptions(addSignUserKeyword.value, addSignUserOptions);
-}
-
-async function loadUserOptions(
+async function loadUserSuggestions(
   keyword: string,
-  options: Ref<WorkflowUserCandidateResponse[]>,
+  callback: AutocompleteFetchSuggestionsCallback,
+  excludedUserIds: Set<string> = new Set(),
 ): Promise<void> {
   const trimmed = keyword.trim();
   if (!trimmed) {
-    options.value = [];
+    callback([]);
     return;
   }
   try {
-    options.value = await fetchWorkflowUsers(trimmed, 20);
+    const users = await fetchWorkflowUsers(trimmed, 20);
+    callback(users
+      .filter((user) => !excludedUserIds.has(user.userId))
+      .map((user) => ({ ...user, value: userLabel(user) })));
   } catch {
-    options.value = [];
+    callback([]);
   }
 }
 
-function selectTargetUser(user: WorkflowUserCandidateResponse): void {
-  selectedTargetUser.value = user;
-  targetUserKeyword.value = userLabel(user);
-  targetUserOptions.value = [];
+const fetchTargetUserSuggestions: AutocompleteFetchSuggestions = (keyword, callback) => {
+  void loadUserSuggestions(keyword, callback);
+};
+
+const fetchAddSignUserSuggestions: AutocompleteFetchSuggestions = (keyword, callback) => {
+  void loadUserSuggestions(
+    keyword,
+    callback,
+    new Set(selectedAddSignUsers.value.map((user) => user.userId)),
+  );
+};
+
+function clearTargetUserSelection(): void {
+  selectedTargetUser.value = null;
 }
 
-function selectAddSignUser(user: WorkflowUserCandidateResponse): void {
+function selectTargetUser(user: Record<string, any>): void {
+  selectedTargetUser.value = user as UserSuggestion;
+}
+
+function selectAddSignUser(item: Record<string, any>): void {
+  const user = item as UserSuggestion;
   if (!selectedAddSignUsers.value.some((selected) => selected.userId === user.userId)) {
     selectedAddSignUsers.value = [...selectedAddSignUsers.value, user];
   }
   addSignUserKeyword.value = "";
-  addSignUserOptions.value = [];
 }
 
 function removeAddSignUser(userId: string): void {
@@ -123,7 +131,7 @@ function userLabel(user: WorkflowUserCandidateResponse): string {
   return `${user.userName}（${user.userId}）`;
 }
 
-function userMeta(user: WorkflowUserCandidateResponse): string {
+function userMeta(user: { userId?: string; departmentName?: string }): string {
   return [user.userId, user.departmentName].filter(Boolean).join(" / ");
 }
 
@@ -202,29 +210,31 @@ function submit(action: (typeof actionConfig)[number]): void {
         </label>
         <div v-if="needsTargetUser" class="field user-picker">
           <span>目标用户</span>
-          <input
+          <ElAutocomplete
             v-model="targetUserKeyword"
             data-test="target-user-search"
-            type="text"
-            autocomplete="off"
-            role="combobox"
             aria-label="目标用户"
             placeholder="姓名 / 用户 ID"
-            @input="searchTargetUsers"
-          />
-          <div v-if="targetUserOptions.length" class="user-options" role="listbox">
-            <button
-              v-for="user in targetUserOptions"
-              :key="user.userId"
-              type="button"
-              class="user-option"
-              :data-test="`target-user-option-${user.userId}`"
-              @click="selectTargetUser(user)"
-            >
-              <span>{{ user.userName }}</span>
-              <small>{{ userMeta(user) }}</small>
-            </button>
-          </div>
+            :fetch-suggestions="fetchTargetUserSuggestions"
+            :trigger-on-focus="false"
+            :fit-input-width="true"
+            :teleported="true"
+            :debounce="300"
+            :highlight-first-item="true"
+            popper-class="workflow-user-autocomplete-popper"
+            @input="clearTargetUserSelection"
+            @select="selectTargetUser"
+          >
+            <template #default="{ item }">
+              <div
+                class="user-suggestion"
+                :data-test="`target-user-option-${item.userId}`"
+              >
+                <span>{{ item.userName }}</span>
+                <small>{{ userMeta(item) }}</small>
+              </div>
+            </template>
+          </ElAutocomplete>
           <p v-if="selectedTargetUser" class="selected-user" data-test="selected-target-user">
             {{ userLabel(selectedTargetUser) }}
           </p>
@@ -237,29 +247,30 @@ function submit(action: (typeof actionConfig)[number]): void {
               <button type="button" aria-label="移除加签用户" @click="removeAddSignUser(user.userId)">×</button>
             </span>
           </div>
-          <input
+          <ElAutocomplete
             v-model="addSignUserKeyword"
             data-test="add-sign-user-search"
-            type="text"
-            autocomplete="off"
-            role="combobox"
             aria-label="加签用户"
             placeholder="姓名 / 用户 ID"
-            @input="searchAddSignUsers"
-          />
-          <div v-if="visibleAddSignOptions.length" class="user-options" role="listbox">
-            <button
-              v-for="user in visibleAddSignOptions"
-              :key="user.userId"
-              type="button"
-              class="user-option"
-              :data-test="`add-sign-user-option-${user.userId}`"
-              @click="selectAddSignUser(user)"
-            >
-              <span>{{ user.userName }}</span>
-              <small>{{ userMeta(user) }}</small>
-            </button>
-          </div>
+            :fetch-suggestions="fetchAddSignUserSuggestions"
+            :trigger-on-focus="false"
+            :fit-input-width="true"
+            :teleported="true"
+            :debounce="300"
+            :highlight-first-item="true"
+            popper-class="workflow-user-autocomplete-popper"
+            @select="selectAddSignUser"
+          >
+            <template #default="{ item }">
+              <div
+                class="user-suggestion"
+                :data-test="`add-sign-user-option-${item.userId}`"
+              >
+                <span>{{ item.userName }}</span>
+                <small>{{ userMeta(item) }}</small>
+              </div>
+            </template>
+          </ElAutocomplete>
         </div>
       </div>
       <p v-if="validationError" class="validation-error" role="alert">{{ validationError }}</p>
@@ -350,37 +361,38 @@ button:focus-visible {
   min-width: 0;
 }
 
-.user-options {
-  display: grid;
-  max-height: 220px;
-  overflow-y: auto;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 8px 22px rgba(17, 24, 39, 0.12);
-  z-index: 2;
+.user-picker :deep(.el-autocomplete) {
+  width: 100%;
 }
 
-.user-option {
+.user-suggestion {
   display: grid;
   gap: 2px;
-  border: 0;
-  border-bottom: 1px solid #eef2f7;
-  padding: 9px 10px;
-  background: #fff;
   color: #111827;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
 }
 
-.user-option:hover {
-  background: #f8fafc;
-}
-
-.user-option small {
+.user-suggestion small {
   color: #6b7280;
   font-size: 12px;
+}
+
+:global(.workflow-user-autocomplete-popper) {
+  z-index: 3000;
+  box-shadow: 0 8px 22px rgba(17, 24, 39, 0.12);
+}
+
+:global(.workflow-user-autocomplete-popper .el-autocomplete-suggestion__wrap) {
+  max-height: 220px;
+}
+
+:global(.workflow-user-autocomplete-popper .el-autocomplete-suggestion li) {
+  border-bottom: 1px solid #eef2f7;
+  padding: 9px 10px;
+  line-height: normal;
+}
+
+:global(.workflow-user-autocomplete-popper .el-autocomplete-suggestion li:last-child) {
+  border-bottom: 0;
 }
 
 .selected-user,
