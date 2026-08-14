@@ -5,6 +5,7 @@ import {
   fetchEntryApplicationProcess,
   fetchWorkflowList,
   fetchWorkflowUsers,
+  deleteAttachment,
   downloadAttachment,
   uploadInstanceAttachment,
   replaceInstanceAttachment,
@@ -220,5 +221,17 @@ describe("workflow api", () => {
     expect(url).toContain("/api/workflow/attachments/att-1/content");
     expect(blob).toBeInstanceOf(Blob);
     expect(blob.size).toBe("file-content".length);
+  });
+
+  it("deletes an attachment with an encoded id and idempotency key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await deleteAttachment("att/with space", "idem-delete");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/workflow/attachments/att%2Fwith%20space");
+    expect(init.method).toBe("DELETE");
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-delete");
   });
 });

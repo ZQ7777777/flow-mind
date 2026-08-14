@@ -72,14 +72,6 @@ public class ProcessAttachmentRepository {
                 deletedBy, DefinitionRowMappers.toDbString(deletedAt), id);
     }
 
-    /** 仅当附件来源任务仍未完成时，原子地执行软删除。 */
-    public int softDeleteWhenTaskOpen(String id, String taskId, String instanceId, String deletedBy, LocalDateTime deletedAt) {
-        return jdbcTemplate.update("UPDATE process_attachment SET deleted = 1, deleted_by = ?, deleted_at = ? "
-                        + "WHERE id = ? AND deleted = 0 AND EXISTS (SELECT 1 FROM process_active_task "
-                        + "WHERE id = ? AND instance_id = ? AND task_status IN ('ACTIVE', 'CLAIMED'))",
-                deletedBy, DefinitionRowMappers.toDbString(deletedAt), id, taskId, instanceId);
-    }
-
     /** Soft-delete an instance attachment only while the current rework task and version remain open. */
     public int softDeleteForReplacement(String id, String taskId, String instanceId, Long expectedTaskVersion,
                                         String deletedBy, LocalDateTime deletedAt) {

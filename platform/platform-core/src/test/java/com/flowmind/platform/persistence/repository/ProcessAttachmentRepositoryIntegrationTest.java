@@ -114,21 +114,22 @@ class ProcessAttachmentRepositoryIntegrationTest {
     }
 
     @Test
-    void softDeleteWhenTaskOpenKeepsMetadataAndRejectsClosedSourceTask() {
+    void softDeleteKeepsMetadataForAttachmentsFromOpenAndClosedTasks() {
         insertAttachment("attachment-active", "instance-1", "task-active", "INSTANCE", "receipt", null,
                 "storage-active", false, LocalDateTime.of(2026, 7, 27, 10, 0));
         insertAttachment("attachment-closed", "instance-1", "task-completed", "INSTANCE", "receipt", null,
                 "storage-closed", false, LocalDateTime.of(2026, 7, 27, 10, 1));
 
-        assertEquals(1, repository.softDeleteWhenTaskOpen("attachment-active", "task-active", "instance-1",
+        assertEquals(1, repository.softDelete("attachment-active",
                 "deleter", LocalDateTime.of(2026, 7, 27, 11, 0)));
-        assertEquals(0, repository.softDeleteWhenTaskOpen("attachment-closed", "task-completed", "instance-1",
+        assertEquals(1, repository.softDelete("attachment-closed",
                 "deleter", LocalDateTime.of(2026, 7, 27, 11, 0)));
 
         ProcessAttachmentEntity deleted = repository.findById("attachment-active");
         assertTrue(Boolean.TRUE.equals(deleted.getDeleted()));
         assertEquals("deleter", deleted.getDeletedBy());
         assertEquals("storage-active", deleted.getStorageKey());
+        assertTrue(Boolean.TRUE.equals(repository.findById("attachment-closed").getDeleted()));
     }
 
     @Test

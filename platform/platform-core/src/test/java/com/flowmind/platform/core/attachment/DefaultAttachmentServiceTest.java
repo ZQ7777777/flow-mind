@@ -2,12 +2,16 @@ package com.flowmind.platform.core.attachment;
 
 import com.flowmind.platform.api.dto.StoredFile;
 import com.flowmind.platform.api.dto.AttachmentDTO;
+import com.flowmind.platform.api.dto.AttachmentDownloadDTO;
+import com.flowmind.platform.api.dto.AttachmentQuery;
 import com.flowmind.platform.api.dto.AttachmentTemplateCheckResult;
+import com.flowmind.platform.api.dto.FileContent;
 import com.flowmind.platform.api.dto.UserContext;
 import com.flowmind.platform.api.enums.AttachmentOwnerTypeEnum;
 import com.flowmind.platform.api.request.AttachmentUploadItem;
 import com.flowmind.platform.api.request.CheckAttachmentRequest;
 import com.flowmind.platform.api.request.DeleteAttachmentRequest;
+import com.flowmind.platform.api.request.DownloadAttachmentRequest;
 import com.flowmind.platform.api.request.ReplaceInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveInstanceAttachmentRequest;
 import com.flowmind.platform.api.request.SaveTaskAttachmentRequest;
@@ -16,6 +20,7 @@ import com.flowmind.platform.api.spi.FileStorageProvider;
 import com.flowmind.platform.core.runtime.RuntimeValidationException;
 import com.flowmind.platform.core.runtime.RuntimeStateException;
 import com.flowmind.platform.core.runtime.RuntimeOperationExecutor;
+import com.flowmind.platform.core.runtime.RuntimeErrorCodes;
 import com.flowmind.platform.core.definition.OperationIdempotencyService;
 import com.flowmind.platform.core.security.AttachmentAccessGuard;
 import com.flowmind.platform.core.definition.OperationIdempotencyDecision;
@@ -162,29 +167,84 @@ class DefaultAttachmentServiceTest {
     }
 
     @Test
-    void deleteSoftDeletesActiveAttachmentAndRetryOnlyCleansStorage() {
+    void deleteSoftDeletesVisibleAttachmentAndRetryOnlyCleansStorage() {
         Fixture fixture = new Fixture(true);
         ProcessAttachmentEntity attachment = fixture.attachment(false);
         when(fixture.attachments.findById("attachment-1")).thenReturn(attachment);
-        when(fixture.attachments.softDeleteWhenTaskOpen(any(), any(), any(), any(), any())).thenReturn(1);
+        when(fixture.attachments.softDelete(any(), any(), any())).thenReturn(1);
         fixture.service.deleteAttachment(fixture.deleteRequest());
-        verify(fixture.attachments).softDeleteWhenTaskOpen(any(), any(), any(), any(), any());
+        verify(fixture.attachments).softDelete(any(), any(), any());
         verify(fixture.storage).delete("storage-1");
 
         attachment.setDeleted(Boolean.TRUE);
         fixture.service.deleteAttachment(fixture.deleteRequest());
-        verify(fixture.attachments).softDeleteWhenTaskOpen(any(), any(), any(), any(), any());
+        verify(fixture.attachments).softDelete(any(), any(), any());
         verify(fixture.storage, org.mockito.Mockito.times(2)).delete("storage-1");
+    }
+
+    @Test
+    void deleteRejectsOtherOrMissingUploaderBeforeMetadataAndStorageChanges() {
+        Fixture fixture = new Fixture(true);
+        ProcessAttachmentEntity attachment = fixture.attachment(false);
+        attachment.setUploadedBy("other-user");
+        when(fixture.attachments.findById("attachment-1")).thenReturn(attachment);
+
+        RuntimeValidationException otherUserError = assertThrows(RuntimeValidationException.class,
+                () -> fixture.service.deleteAttachment(fixture.deleteRequest()));
+        assertEquals(RuntimeErrorCodes.ATTACHMENT_PERMISSION_DENIED, otherUserError.getErrorCode());
+        attachment.setUploadedBy(null);
+        RuntimeValidationException missingOwnerError = assertThrows(RuntimeValidationException.class,
+                () -> fixture.service.deleteAttachment(fixture.deleteRequest()));
+        assertEquals(RuntimeErrorCodes.ATTACHMENT_PERMISSION_DENIED, missingOwnerError.getErrorCode());
+
+        verify(fixture.attachments, never()).softDelete(any(), any(), any());
+        verify(fixture.storage, never()).delete(any());
+    }
+
+    @Test
+    void replacementRejectsOtherUploaderBeforeStorageChanges() {
+        Fixture fixture = new Fixture(true);
+        ProcessAttachmentEntity attachment = fixture.attachment(false);
+        attachment.setAttachmentCode("receipt");
+        attachment.setUploadedBy("other-user");
+        when(fixture.attachments.findById("attachment-1")).thenReturn(attachment);
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.service.replaceInstanceAttachment(fixture.replaceRequest()));
+        assertEquals(RuntimeErrorCodes.ATTACHMENT_PERMISSION_DENIED, error.getErrorCode());
+
+        verify(fixture.storage, never()).store(any());
+        verify(fixture.attachments, never()).softDeleteForReplacement(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void otherUsersAttachmentRemainsQueryableAndDownloadable() {
+        Fixture fixture = new Fixture(true);
+        ProcessAttachmentEntity attachment = fixture.attachment(false);
+        attachment.setUploadedBy("other-user");
+        when(fixture.attachments.findById("attachment-1")).thenReturn(attachment);
+        when(fixture.attachments.queryActive(any())).thenReturn(Collections.singletonList(attachment));
+        when(fixture.storage.load("storage-1")).thenReturn(
+                new FileContent("storage-1", "receipt.pdf", "application/pdf", 3L, new byte[] {1, 2, 3}));
+
+        DownloadAttachmentRequest download = new DownloadAttachmentRequest();
+        download.setAttachmentId("attachment-1"); download.setOperatorUserId("user-1");
+        AttachmentDownloadDTO downloaded = fixture.service.downloadAttachment(download);
+        AttachmentQuery query = new AttachmentQuery();
+        query.setInstanceId("instance-1"); query.setOperatorUserId("user-1");
+
+        assertEquals(3, downloaded.getContent().length);
+        assertEquals("other-user", fixture.service.queryAttachments(query).get(0).getUploadedBy());
     }
 
     @Test
     void storageCleanupFailureDoesNotUndoSoftDelete() {
         Fixture fixture = new Fixture(true);
         when(fixture.attachments.findById("attachment-1")).thenReturn(fixture.attachment(false));
-        when(fixture.attachments.softDeleteWhenTaskOpen(any(), any(), any(), any(), any())).thenReturn(1);
+        when(fixture.attachments.softDelete(any(), any(), any())).thenReturn(1);
         doThrow(new IllegalStateException("storage unavailable")).when(fixture.storage).delete("storage-1");
         fixture.service.deleteAttachment(fixture.deleteRequest());
-        verify(fixture.attachments).softDeleteWhenTaskOpen(any(), any(), any(), any(), any());
+        verify(fixture.attachments).softDelete(any(), any(), any());
     }
 
     @Test
@@ -198,7 +258,24 @@ class DefaultAttachmentServiceTest {
         fixture.service.deleteAttachment(fixture.deleteRequest());
 
         verify(fixture.storage).delete("storage-1");
-        verify(fixture.attachments, never()).softDeleteWhenTaskOpen(any(), any(), any(), any(), any());
+        verify(fixture.attachments, never()).softDelete(any(), any(), any());
+    }
+
+    @Test
+    void deleteReplayRejectsOtherUploaderBeforeStorageCleanup() {
+        RuntimeOperationExecutor operations = mock(RuntimeOperationExecutor.class);
+        Fixture fixture = new Fixture(true, operations);
+        when(operations.begin(any(), any(), any(), any(), any(), any())).thenReturn(
+                new OperationIdempotencyDecision(OperationIdempotencyDecisionType.REPLAY_SUCCESS, null));
+        ProcessAttachmentEntity attachment = fixture.attachment(true);
+        attachment.setUploadedBy("other-user");
+        when(fixture.attachments.findById("attachment-1")).thenReturn(attachment);
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.service.deleteAttachment(fixture.deleteRequest()));
+
+        assertEquals(RuntimeErrorCodes.ATTACHMENT_PERMISSION_DENIED, error.getErrorCode());
+        verify(fixture.storage, never()).delete(any());
     }
 
     @Test
@@ -363,7 +440,7 @@ class DefaultAttachmentServiceTest {
         }
 
         private ProcessAttachmentEntity attachment(boolean deleted) {
-            ProcessAttachmentEntity value = new ProcessAttachmentEntity(); value.setId("attachment-1"); value.setInstanceId("instance-1"); value.setTaskId("task-1"); value.setOwnerType("INSTANCE"); value.setStorageKey("storage-1"); value.setDeleted(Boolean.valueOf(deleted)); return value;
+            ProcessAttachmentEntity value = new ProcessAttachmentEntity(); value.setId("attachment-1"); value.setInstanceId("instance-1"); value.setTaskId("task-1"); value.setOwnerType("INSTANCE"); value.setStorageKey("storage-1"); value.setUploadedBy("user-1"); value.setDeleted(Boolean.valueOf(deleted)); return value;
         }
     }
 }

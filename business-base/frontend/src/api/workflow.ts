@@ -156,6 +156,19 @@ export async function downloadAttachment(attachmentId: string): Promise<Blob> {
   );
 }
 
+export async function deleteAttachment(
+  attachmentId: string,
+  idempotencyKey: string,
+): Promise<void> {
+  await requestJson<unknown>(
+    `${WORKFLOW_BASE}/attachments/${encodeURIComponent(attachmentId)}`,
+    {
+      method: "DELETE",
+      headers: { "Idempotency-Key": idempotencyKey },
+    },
+  );
+}
+
 export async function replaceInstanceAttachment(
   taskId: string,
   attachmentId: string,

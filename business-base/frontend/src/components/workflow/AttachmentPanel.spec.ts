@@ -47,9 +47,10 @@ describe("AttachmentPanel", () => {
     const wrapper = mount(AttachmentPanel, {
       props: {
         canReplace: true,
+        currentUserId: "user-1",
         attachments: [
-          { attachmentId: "a1", ownerType: "INSTANCE", fileName: "old.pdf" },
-          { attachmentId: "a2", ownerType: "TASK", fileName: "task.txt" },
+          { attachmentId: "a1", ownerType: "INSTANCE", fileName: "old.pdf", uploadedBy: "user-1" },
+          { attachmentId: "a2", ownerType: "TASK", fileName: "task.txt", uploadedBy: "user-1" },
         ],
       },
     });
@@ -74,5 +75,69 @@ describe("AttachmentPanel", () => {
     expect(wrapper.text()).toContain("当前节点未配置可上传材料");
     expect(wrapper.find('input[type="file"]').attributes("disabled")).toBeDefined();
     expect(wrapper.find("button").attributes("disabled")).toBeDefined();
+  });
+
+  it("offers modification only for attachments uploaded by the current user", async () => {
+    const currentInstanceAttachment = {
+      attachmentId: "instance-current",
+      taskId: "task-current",
+      ownerType: "INSTANCE",
+      fileName: "current.pdf",
+      uploadedBy: "user-1",
+    };
+    const wrapper = mount(AttachmentPanel, {
+      props: {
+        canDelete: true,
+        canReplace: true,
+        currentUserId: "user-1",
+        attachments: [
+          currentInstanceAttachment,
+          {
+            attachmentId: "task-current-attachment",
+            taskId: "task-current",
+            ownerType: "TASK",
+            fileName: "current-task.txt",
+            uploadedBy: "user-1",
+          },
+          {
+            attachmentId: "history-attachment",
+            taskId: "task-history",
+            ownerType: "INSTANCE",
+            fileName: "history.pdf",
+            uploadedBy: "other-user",
+          },
+        ],
+      },
+    });
+
+    expect(wrapper.find('button[aria-label="删除 current.pdf"]').exists()).toBe(true);
+    expect(wrapper.find('button[aria-label="删除 current-task.txt"]').exists()).toBe(true);
+    expect(wrapper.find('button[aria-label="删除 history.pdf"]').exists()).toBe(false);
+    expect(wrapper.find('input[aria-label="替换 current.pdf"]').exists()).toBe(true);
+    expect(wrapper.find('input[aria-label="替换 history.pdf"]').exists()).toBe(false);
+    expect(wrapper.find('input[aria-label="替换 current-task.txt"]').exists()).toBe(false);
+    expect(wrapper.findAll(".attachment-list button").filter((button) => button.text() === "下载")).toHaveLength(3);
+
+    await wrapper.get('button[aria-label="删除 current.pdf"]').trigger("click");
+    expect(wrapper.emitted("delete")?.[0]?.[0]).toEqual(currentInstanceAttachment);
+  });
+
+  it("disables delete actions while an attachment is being deleted", () => {
+    const wrapper = mount(AttachmentPanel, {
+      props: {
+        canDelete: true,
+        currentUserId: "user-1",
+        deletingAttachmentId: "attachment-1",
+        attachments: [
+          { attachmentId: "attachment-1", taskId: "task-current", fileName: "one.pdf", uploadedBy: "user-1" },
+          { attachmentId: "attachment-2", taskId: "task-current", fileName: "two.pdf", uploadedBy: "user-1" },
+        ],
+      },
+    });
+
+    const buttons = wrapper.findAll(".delete-button");
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0].text()).toBe("删除中…");
+    expect(buttons.every((button) => button.attributes("disabled") !== undefined)).toBe(true);
   });
 });
