@@ -306,4 +306,54 @@ describe("workflow SSE lifecycle", () => {
       }),
     );
   });
+  it("stops the currently running quality gate", async () => {
+    const verifying: WorkflowSnapshot = {
+      ...snapshot,
+      state: "CODE_VERIFYING",
+      rowVersion: 8,
+      activeGeneration: {
+        generationId: "acg_verifying",
+        status: "VERIFYING",
+        generationRevision: 2,
+        targetRoot: "E:\\workspace\\business-base",
+        contractVersion: "1.0",
+        manifest: {
+          generationId: "acg_verifying",
+          targetRoot: "E:\\workspace\\business-base",
+          contractVersion: "1.0",
+          revision: 2,
+          files: [],
+        },
+        createdAt: "2026-08-03T00:00:00Z",
+        updatedAt: "2026-08-03T00:01:00Z",
+      },
+      allowedActions: ["STOP_QUALITY"],
+    };
+    const stopped: WorkflowSnapshot = {
+      ...verifying,
+      state: "CODE_REVIEW",
+      rowVersion: 9,
+      allowedActions: ["EDIT_GENERATED_FILE", "REGENERATE", "REVERIFY"],
+      activeGeneration: verifying.activeGeneration && { ...verifying.activeGeneration, status: "REVIEW" },
+    };
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path.endsWith("/quality/stop")) return { cancelled: true, state: "CODE_REVIEW" };
+      return stopped;
+    });
+    const store = useWorkflowStore();
+    store.currentUser = user;
+    store.snapshot = verifying;
+    store.qualityStream = "running";
+    store.reasoningText = "thinking";
+
+    await store.stopGenerationQuality();
+
+    expect(mocks.apiRequest).toHaveBeenCalledWith(
+      "/api/agent/sessions/ags_1/code-generations/acg_verifying/quality/stop",
+      expect.objectContaining({ method: "POST", rowVersion: 8 }),
+    );
+    expect(store.state).toBe("CODE_REVIEW");
+    expect(store.qualityStream).toBe("");
+    expect(store.reasoningText).toBe("");
+  });
 });

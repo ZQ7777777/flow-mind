@@ -380,6 +380,21 @@ export const useWorkflowStore = defineStore("workflow", () => {
     });
   }
 
+  async function stopGenerationQuality(): Promise<void> {
+    const generation = snapshot.value?.activeGeneration;
+    if (!snapshot.value || !currentUser.value || !generation) return;
+    await run(async () => {
+      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/quality/stop`, {
+        method: "POST",
+        rowVersion: snapshot.value!.rowVersion,
+        body: JSON.stringify({}),
+      });
+      qualityStream.value = "";
+      reasoningText.value = "";
+      await refresh();
+    });
+  }
+
   async function overrideGenerationQuality(
     scopes: Array<"BACKEND_TESTS" | "FRONTEND_TESTS" | "REVIEWER">,
     reason: string,
@@ -658,6 +673,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     loadGenerationQuality,
     reverifyGeneration,
     startGenerationQuality,
+    stopGenerationQuality,
     overrideGenerationQuality,
     confirmGenerationWrite,
     loadManagementLists,

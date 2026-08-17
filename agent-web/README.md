@@ -10,6 +10,7 @@
 
 复制 `.env.example` 中的配置到进程环境。`targetRoot` 在 M0-M2 可以留空，M3 启动生成时可补填，
 但必须位于 `AGENT_ALLOWED_TARGET_ROOTS` 下并通过 `.flowmind/generation-target.json` 预检。
+Java 质量门禁可通过 `AGENT_MAVEN_REPO_LOCAL` 指定稳定本地 Maven 仓库；启动脚本默认指向仓库根 `.m2/repository`。
 
 ## M3 目标工程前置条件
 

@@ -367,6 +367,18 @@ export class AppController {
     );
   }
 
+  @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/quality/stop")
+  stopGenerationQuality(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+  ) {
+    return this.generation.stopQuality(
+      sessionId, generationId, this.identity.resolve(userId, userName), parseVersion(ifMatch),
+    );
+  }
   @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/quality-override")
   overrideGenerationQuality(
     @Param("sessionId") sessionId: string,

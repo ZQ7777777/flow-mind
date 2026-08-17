@@ -80,6 +80,36 @@ describe("M5 quality action idempotency", () => {
       .toEqual({ count: 1 });
   });
 
+  it("starts a manual reverify with a fresh repair cycle and clears repair history", () => {
+    const rowVersion = database.getSession("session-actions")!.row_version;
+    database.db.prepare(`
+      INSERT INTO agent_verification_run (
+        id, generation_id, revision, repair_round, trigger, status,
+        stage_results_json, started_at, completed_at, created_at
+      ) VALUES ('verification-before-reverify', ?, 1, 3, 'REPAIR', 'FAILED', '[]', ?, ?, ?)
+    `).run(generationId, new Date().toISOString(), new Date().toISOString(), new Date().toISOString());
+    database.db.prepare(`
+      INSERT INTO agent_repair_attempt (
+        id, generation_id, verification_run_id, round, diagnostic_ids_json,
+        changed_files_json, resolutions_json, outcome, failure_code, created_at
+      ) VALUES ('repair-manual-reverify', ?, 'verification-before-reverify', 3, '["diagnostic-before"]',
+        '["backend/src/main/java/com/flowmind/business/generated/entryapplication/EntryApplicationService.java"]',
+        '[]', 'CHANGED', NULL, ?)
+    `).run(generationId, new Date().toISOString());
+    database.db.prepare(`
+      UPDATE agent_code_generation SET repair_round = 3, max_repair_rounds = 3 WHERE id = ?
+    `).run(generationId);
+
+    generation.reverify("session-actions", generationId, user, rowVersion, 1, "fresh-reverify-cycle");
+
+    const reverified = database.getGeneration(generationId)!;
+    expect(reverified.status).toBe("VERIFYING");
+    expect(reverified.repair_round).toBe(0);
+    expect(reverified.max_repair_rounds).toBe(3);
+    expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_repair_attempt WHERE generation_id = ?").get(generationId))
+      .toEqual({ count: 0 });
+  });
+
   it("replays a quality override and advances the session row version once", () => {
     const rowVersion = database.getSession("session-actions")!.row_version;
     const override = generation.overrideQuality as unknown as (
@@ -98,6 +128,50 @@ describe("M5 quality action idempotency", () => {
     expect(database.getSession("session-actions")!.row_version).toBe(rowVersion + 1);
     expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_generation_action WHERE generation_id = ? AND action = 'OVERRIDE_QUALITY'").get(generationId))
       .toEqual({ count: 1 });
+  });
+
+  it("stops a running quality gate, resets repair rounds, and allows restart", () => {
+    const rowVersion = database.getSession("session-actions")!.row_version;
+    const runningReport = JSON.parse(database.getGeneration(generationId)!.quality_report_json!) as GenerationQualityReport;
+    database.db.prepare(`
+      INSERT INTO agent_verification_run (
+        id, generation_id, revision, repair_round, trigger, status,
+        stage_results_json, started_at, created_at
+      ) VALUES ('verification-stop', ?, 1, 3, 'REPAIR', 'RUNNING', '[]', ?, ?)
+    `).run(generationId, new Date().toISOString(), new Date().toISOString());
+    database.db.prepare(`
+      UPDATE agent_code_generation SET status = 'REPAIRING', repair_round = 3,
+        max_repair_rounds = 3, can_write = 1, quality_report_json = ? WHERE id = ?
+    `).run(JSON.stringify({ ...runningReport, repairRound: 3 }), generationId);
+    database.db.prepare("UPDATE agent_session SET state = 'CODE_REPAIRING' WHERE id = 'session-actions'").run();
+
+    const stopped = generation.stopQuality("session-actions", generationId, user, rowVersion);
+
+    expect(stopped).toEqual({ cancelled: true, state: "CODE_REVIEW" });
+    const stoppedGeneration = database.getGeneration(generationId)!;
+    expect(stoppedGeneration.status).toBe("REVIEW");
+    expect(stoppedGeneration.repair_round).toBe(0);
+    expect(stoppedGeneration.max_repair_rounds).toBe(3);
+    expect(stoppedGeneration.can_write).toBe(0);
+    expect(JSON.parse(stoppedGeneration.quality_report_json!)).toEqual(expect.objectContaining({
+      pipelineState: "CANCELLED",
+      repairRound: 0,
+      maxRepairRounds: 3,
+      canWrite: false,
+    }));
+    expect(database.db.prepare("SELECT status FROM agent_verification_run WHERE id = 'verification-stop'").get())
+      .toEqual({ status: "CANCELLED" });
+    const afterStop = database.getSession("session-actions")!;
+    expect(afterStop.state).toBe("CODE_REVIEW");
+    expect(afterStop.row_version).toBe(rowVersion + 1);
+
+    generation.startQuality("session-actions", generationId, user, afterStop.row_version, 1, false, "restart-quality");
+
+    const restarted = database.getGeneration(generationId)!;
+    expect(restarted.status).toBe("VERIFYING");
+    expect(restarted.repair_round).toBe(0);
+    expect(restarted.quality_report_json).toBeNull();
+    expect(database.getSession("session-actions")!.state).toBe("CODE_VERIFYING");
   });
 
   async function waitForReview(): Promise<void> {

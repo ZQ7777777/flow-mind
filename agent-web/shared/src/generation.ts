@@ -82,6 +82,7 @@ export type QualityStageStatus =
 export type QualitySeverity = "ERROR" | "WARNING" | "INFO";
 export type DiagnosticRepairability = "CODE_ACTIONABLE" | "INFRASTRUCTURE" | "PROTECTED_FILE" | "UNKNOWN";
 export type DiagnosticClassification = "NEW" | "PERSISTING" | "RESOLVED" | "BLOCKED";
+export type DiagnosticScope = "CURRENT_GENERATION" | "PRE_EXISTING" | "INTEGRATION_IMPACT";
 
 export interface QualityDiagnostic {
   /** Stable fingerprint; optional while older persisted reports are still readable. */
@@ -89,6 +90,7 @@ export interface QualityDiagnostic {
   /** Content fingerprint used to correlate this finding across verification runs. */
   fingerprint?: string;
   classification?: DiagnosticClassification;
+  scope?: DiagnosticScope;
   stage?: QualityStageName;
   code: string;
   message: string;
@@ -100,6 +102,8 @@ export interface QualityDiagnostic {
   actual?: string;
   expected?: string;
   evidence?: string;
+  command?: string;
+  exitCode?: number;
   repairHint?: string;
   acceptedForms?: string[];
   unsupportedForms?: string[];
@@ -118,6 +122,7 @@ export interface QualityStageResult {
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
+  command?: string;
   exitCode?: number;
   logPath?: string;
   outputTruncated?: boolean;
@@ -178,7 +183,7 @@ export interface QualityOverrideSummary {
 export interface GenerationQualityReport {
   generationId: string;
   revision: number;
-  pipelineState: "VERIFYING" | "REVIEWING" | "REPAIRING" | "PASSED" | "FAILED";
+  pipelineState: "VERIFYING" | "REVIEWING" | "REPAIRING" | "PASSED" | "FAILED" | "CANCELLED";
   repairRound: number;
   maxRepairRounds: 3;
   unblockExtensionUsed?: boolean;

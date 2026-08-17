@@ -46,6 +46,8 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(BusinessBaseProperties.class)
 public class BusinessPlatformConfiguration {
 
+    private static final String TIMEOUT_SYSTEM_OPERATOR = "system_timeout";
+
     @Bean
     @ConditionalOnBean(CurrentBusinessUserProvider.class)
     @ConditionalOnMissingBean(CurrentUserProvider.class)
@@ -66,8 +68,10 @@ public class BusinessPlatformConfiguration {
         return new AdminPermissionGuard() {
             @Override
             public void assertAdminUserId(String operatorUserId) {
-                if (operatorUserId == null || operatorUserId.trim().isEmpty()
-                        || !authorizationProvider.isAdministrator(operatorUserId.trim())) {
+                String normalizedUserId = operatorUserId == null ? null : operatorUserId.trim();
+                if (normalizedUserId == null || normalizedUserId.isEmpty()
+                        || (!TIMEOUT_SYSTEM_OPERATOR.equals(normalizedUserId)
+                        && !authorizationProvider.isAdministrator(normalizedUserId))) {
                     throw new RuntimeValidationException(RuntimeErrorCodes.ADMIN_PERMISSION_DENIED,
                             "administrator permission is required");
                 }

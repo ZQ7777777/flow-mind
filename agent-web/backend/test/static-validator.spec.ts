@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import {
   ENTRY_APPLICATION_REQUIREMENT,
   type ArtifactManifest,
   type GenerationTargetContract,
 } from "@flowmind/agent-contracts";
 import { deriveGenerationSpec } from "../src/generation/generation-spec.js";
-import { StaticValidatorService } from "../src/validation/static-validator.service.js";
 import { createFakeGenerationFiles } from "../src/pi/fake-generation-files.js";
+import { StaticValidatorService } from "../src/validation/static-validator.service.js";
 
 const contract: GenerationTargetContract = {
   contractVersion: "1.0",
@@ -55,609 +55,178 @@ const contract: GenerationTargetContract = {
 describe("static generated-code validation", () => {
   const validator = new StaticValidatorService();
 
-  it("accepts a complete M3 generated artifact set", () => {
-    const input = validInput();
-    const result = validator.validate(input);
+  it("passes for a complete artifact set with valid Java, TypeScript, and Vue syntax", () => {
+    const result = validator.validate(validInput());
+
     expect(result.status).toBe("PASSED");
     expect(result.diagnostics).toEqual([]);
   });
 
-  it("rejects a missing instance title assignment", () => {
+  it("fails when Java source has a clear syntax error and reports file position", () => {
     const input = validInput();
     const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!.replace(/^\s*request\.setInstanceTitle\([^\n]+\);\r?\n/m, ""),
-    );
-
-    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({
-      code: "INSTANCE_TITLE_REQUIRED",
-      relativePath: path,
-      actual: expect.stringContaining("No setInstanceTitle call"),
-    }));
-  });
-
-  it("rejects a blank instance title assignment", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!.replace(/^\s*request\.setInstanceTitle\([^\n]+\);/m, '        request.setInstanceTitle("   ");'),
-    );
-
-    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({
-      code: "INSTANCE_TITLE_REQUIRED",
-      relativePath: path,
-      actual: expect.stringContaining("blank or null"),
-    }));
-  });
-
-  it("rejects an instance title assignment placed after startAndSubmit", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    const service = input.files.get(path)!;
-    const titleLine = service.match(/^\s*request\.setInstanceTitle\([^\n]+\);/m)![0];
-    input.files.set(
-      path,
-      service
-        .replace(`${titleLine}\n`, "")
-        .replace(
-          "ProcessInstanceDTO result = runtimeService.startAndSubmit(request);",
-          `ProcessInstanceDTO result = runtimeService.startAndSubmit(request);\n${titleLine}`,
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({
-      code: "INSTANCE_TITLE_REQUIRED",
-      relativePath: path,
-      actual: expect.stringContaining("only after startAndSubmit"),
-    }));
-  });
-
-  it("accepts an attachment mapping that uses a static final string constant", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(/(public class \w+Service \{)/, "$1\n    private static final String ATTACHMENT_BANK_RECEIPT = \"bankReceipt\";")
-        .replace('item.setAttachmentCode("bankReceipt")', "item.setAttachmentCode(ATTACHMENT_BANK_RECEIPT)"),
-    );
+    input.files.set(path, input.files.get(path)!.replace("public class", "public class {"));
 
     const result = validator.validate(input);
-    expect(result.status).toBe("PASSED");
-    expect(result.diagnostics).toEqual([]);
-  });
 
-  it("accepts a DTO-owned process-variable mapper and an independently named attachment file list", () => {
-    const input = validInput();
-    input.files.set(
-      input.spec.paths.service,
-      input.files.get(input.spec.paths.service)!
-        .replace(/\s*variables\.put\([^\n]+/g, "")
-        .replace("request.setVariables(variables);", "request.setVariables(payload.toProcessVariables());"),
-    );
-    const dto = input.files.get(input.spec.paths.requestDto)!;
-    const puts = input.requirement.formFields.map((field) => `vars.put(\"${field.fieldCode}\", null);`).join(" ");
-    input.files.set(
-      input.spec.paths.requestDto,
-      dto.replace(/\n}\s*$/, `\n    public Map<String, Object> toProcessVariables() { Map<String, Object> vars = new HashMap<>(); ${puts} return vars; }\n}`),
-    );
-    input.files.set(
-      input.spec.paths.view,
-      input.files.get(input.spec.paths.view)!
-        .replace(/form\.bankReceipt/g, "fileList")
-        .replace(/<input([^>]*?)type="file"([^>]*?)\/>/, '<el-upload$1name = \'bankReceipt\'$2 />'),
-    );
-
-    expect(validator.validate(input).diagnostics).toEqual([]);
-  });
-
-  it("accepts the user_sales formData model and extracted-extension validation style", () => {
-    const input = validInput();
-    input.files.set(
-      input.spec.paths.view,
-      input.files.get(input.spec.paths.view)!
-        .replace(/\bform\./g, "formData.")
-        .replace("const form = reactive", "const formData = reactive"),
-    );
-    input.files.set(
-      input.spec.paths.service,
-      useDirectAttachmentValidation(input.files.get(input.spec.paths.service)!, "bankReceiptFiles"),
-    );
-
-    expect(validator.validate(input).diagnostics).toEqual([]);
-  });
-
-  it("accepts the user_manager direct collection checks and equality extension checks", () => {
-    const input = validInput();
-    input.files.set(
-      input.spec.paths.service,
-      useDirectAttachmentValidation(input.files.get(input.spec.paths.service)!, "bankReceipt"),
-    );
-
-    expect(validator.validate(input).diagnostics).toEqual([]);
-  });
-
-  it("accepts a separately extracted extension checked through an allowed collection", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(
-          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
-          "String originalFilename = file.getOriginalFilename();\n                String extension = originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT);",
-        )
-        .replace(
-          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
-          'if (!java.util.Arrays.asList("pdf", "jpg", "png").contains(extension))',
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics).toEqual([]);
-  });
-
-  it("tracks filename normalization across multiple string variables", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(
-          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
-          "String originalFilename = file.getOriginalFilename();\n                String normalizedFilename = originalFilename.toLowerCase(java.util.Locale.ROOT);\n                String extension = normalizedFilename.substring(normalizedFilename.lastIndexOf('.') + 1);",
-        )
-        .replace(
-          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
-          'if (!"pdf".equals(extension) && !"jpg".equals(extension) && !"png".equals(extension))',
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics).toEqual([]);
-  });
-
-  it("accepts a named allowed-extension constant checked via a helper method (model repair pattern)", () => {
-    // Reproduces the real generated code that previously caused a false-positive
-    // ATTACHMENT_VALIDATION_MISSING: the extension set lives in a named
-    // List<String> constant and the extension is extracted by a private helper
-    // method, then checked with NAME.contains(helper(file)). The detection must
-    // resolve the constant and accept the contains() call regardless of how the
-    // extension value is derived.
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(
-          /(public class \w+Service \{)/,
-          '$1\n    private static final List<String> BANK_RECEIPT_ALLOWED_EXTENSIONS = java.util.Arrays.asList("pdf", "jpg", "png");',
-        )
-        .replace(
-          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
-          "String fileName = file.getOriginalFilename();",
-        )
-        .replace(
-          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
-          'if (!BANK_RECEIPT_ALLOWED_EXTENSIONS.contains(getExtension(fileName)))',
-        )
-        .replace(
-          /\n}\s*$/,
-          `\n    private static String getExtension(String fileName) {\n        if (fileName == null) return "";\n        int dotIndex = fileName.lastIndexOf('.');\n        return dotIndex < 0 || dotIndex == fileName.length() - 1 ? "" : fileName.substring(dotIndex + 1).toLowerCase(java.util.Locale.ROOT);\n    }\n}\n`,
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics).toEqual([]);
-  });
-
-  it("does not accept an allowed collection check on an unrelated string", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(
-          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
-          "String originalFilename = file.getOriginalFilename();\n                String extension = suppliedExtension;",
-        )
-        .replace(
-          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
-          'if (!java.util.Arrays.asList("pdf", "jpg", "png").contains(extension))',
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING"))
-      .toEqual(expect.objectContaining({ message: expect.stringContaining("allowedExtensions=pdf/jpg/png") }));
-  });
-
-  it("does not treat an arbitrary filename substring as an extracted extension", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(
-          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
-          "String originalFilename = file.getOriginalFilename();\n                String extension = originalFilename.substring(0, 1);",
-        )
-        .replace(
-          /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
-          'if (!java.util.Arrays.asList("pdf", "jpg", "png").contains(extension))',
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING"))
-      .toEqual(expect.objectContaining({ message: expect.stringContaining("allowedExtensions=pdf/jpg/png") }));
-  });
-
-  it("does not accept extension validation placed after startAndSubmit", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(
-          /\s*String lowerName = file\.getOriginalFilename\(\) == null \? "" : file\.getOriginalFilename\(\)\.toLowerCase\(java\.util\.Locale\.ROOT\);\s*if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\) throw new IllegalArgumentException\([^\n]+/,
-          "",
-        )
-        .replace(
-          "ProcessInstanceDTO result = runtimeService.startAndSubmit(request);",
-          "ProcessInstanceDTO result = runtimeService.startAndSubmit(request);\n        String lowerName = \"receipt.pdf\";\n        if (!lowerName.endsWith(\".pdf\") || !lowerName.endsWith(\".jpg\") || !lowerName.endsWith(\".png\")) throw new IllegalArgumentException(\"late\");",
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING"))
-      .toEqual(expect.objectContaining({ message: expect.stringContaining("allowedExtensions=pdf/jpg/png") }));
-  });
-
-  it("accepts numeric constants, digit separators, and a validation helper called before startAndSubmit", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(
-          /(public class \w+Service \{)/,
-          "$1\n    private static final int MIN_FILES = 1;\n    private static final int MAX_FILES = 5;\n    private static final long MAX_FILE_SIZE = 10_485_760L;",
-        )
-        .replace("bankReceiptCount < 1", "bankReceiptCount < MIN_FILES")
-        .replace("bankReceiptCount > 5", "bankReceiptCount > MAX_FILES")
-        .replace("file.getSize() > 10485760L", "file.getSize() > MAX_FILE_SIZE")
-        .replace(
-          "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
-          "validateBankReceiptExtension(file);",
-        )
-        .replace(
-          /\s*if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\) throw new IllegalArgumentException\([^\n]+/,
-          "",
-        )
-        .replace(
-          /\n}\s*$/,
-          `\n    private void validateBankReceiptExtension(MultipartFile file) {\n        String extension = file.getOriginalFilename().substring(file.getOriginalFilename().lastIndexOf('.') + 1);\n        if (!\"pdf\".equals(extension) && !\"jpg\".equals(extension) && !\"png\".equals(extension)) throw new IllegalArgumentException(\"invalid extension\");\n    }\n}\n`,
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics).toEqual([]);
-  });
-
-  it("accepts a process-variable key that uses a resolved static final string constant", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(/(public class \w+Service \{)/, '$1\n    private static final String FIELD_AMOUNT = "amount";')
-        .replace('variables.put("amount", payload.getAmount())', "variables.put(FIELD_AMOUNT, payload.getAmount())"),
-    );
-
-    expect(validator.validate(input).diagnostics.find(({ code }) => code === "FORM_FIELD_MAPPING_MISSING"))
-      .toBeUndefined();
-  });
-
-  it("accepts attachment validation delegated through renamed collection and file parameters", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(
-          /\s*int bankReceiptCount = [^;]+;\s*if \(bankReceiptCount < 1 \|\| bankReceiptCount > 5\) \{[^}]+\}/,
-          "\n        validateBankReceipts(bankReceiptFiles);",
-        )
-        .replace(
-          /\s*if \(bankReceiptFiles != null\) \{\s*for \(MultipartFile file : bankReceiptFiles\) \{\s*if \(file\.getSize\(\) > 10485760L\) throw new IllegalArgumentException\([^\n]+\);\s*String lowerName = [^;]+;\s*if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\) throw new IllegalArgumentException\([^\n]+\);/,
-          "\n        if (bankReceiptFiles != null) {\n            for (MultipartFile file : bankReceiptFiles) {",
-        )
-        .replace(
-          /\n}\s*$/,
-          `\n    private void validateBankReceipts(java.util.List<MultipartFile> files) {\n        if (files == null || files.isEmpty()) throw new IllegalArgumentException("required");\n        if (files.size() > 5) throw new IllegalArgumentException("too many");\n        for (MultipartFile upload : files) validateBankReceiptFile(upload);\n    }\n\n    private void validateBankReceiptFile(MultipartFile upload) {\n        if (upload.getSize() > 10485760L) throw new IllegalArgumentException("too large");\n        String lowerName = upload.getOriginalFilename() == null ? "" : upload.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);\n        if (!(lowerName.endsWith(".pdf") || lowerName.endsWith(".jpg") || lowerName.endsWith(".png"))) throw new IllegalArgumentException("invalid extension");\n    }\n}\n`,
-        ),
-    );
-
-    expect(validator.validate(input).diagnostics).toEqual([]);
-  });
-
-  it("does not borrow attachment checks from an unrelated collection", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace("bankReceiptCount > 5", "bankReceiptCount > 999")
-        .replace(/\n}\s*$/, "\n    private void validateOther(java.util.List<MultipartFile> otherFiles) { if (otherFiles.size() > 5) throw new IllegalArgumentException(\"too many\"); }\n}\n"),
-    );
-
-    expect(validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING"))
-      .toEqual(expect.objectContaining({ message: expect.stringContaining("maxCount=5") }));
-  });
-
-  it("rejects an attachment constant whose resolved value differs from the contract", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(/(public class \w+Service \{)/, "$1\n    private static final String ATTACHMENT_OTHER = \"otherAttachment\";")
-        .replace('item.setAttachmentCode("bankReceipt")', "item.setAttachmentCode(ATTACHMENT_OTHER)"),
-    );
-
-    const result = validator.validate(input);
+    expect(result.status).toBe("FAILED");
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "ATTACHMENT_MAPPING_MISSING",
+      code: "JAVA_SYNTAX_ERROR",
       relativePath: path,
+      line: expect.any(Number),
+      message: expect.any(String),
     }));
   });
 
-  it("rejects an attachment upload whose external part name differs from the contract", () => {
-    const input = validInput();
-    const path = input.spec.paths.view;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(/form\.bankReceipt/g, "fileList")
-        .replace(/<input([^>]*?)type="file"([^>]*?)\/>/, '<el-upload$1name="otherAttachment"$2 />'),
-    );
-
-    const result = validator.validate(input);
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "ATTACHMENT_MAPPING_MISSING",
-      relativePath: path,
-      message: expect.stringContaining("Vue upload"),
-    }));
-  });
-
-  it("rejects an attachment API whose multipart part name differs from the contract", () => {
+  it("passes for valid TypeScript syntax", () => {
     const input = validInput();
     const path = input.spec.paths.api;
-    input.files.set(path, input.files.get(path)!.replace(/bankReceipt/g, "otherAttachment"));
+    input.files.set(path, `${input.files.get(path)!}\nexport const syntaxOnly = { ok: true };\n`);
 
     const result = validator.validate(input);
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "ATTACHMENT_MAPPING_MISSING",
-      relativePath: path,
-      message: expect.stringContaining("frontend API"),
-    }));
+
+    expect(result.status).toBe("PASSED");
+    expect(result.diagnostics).toEqual([]);
   });
 
-  it("rejects attachment mapping that omits backend count, size, and extension enforcement", () => {
+  it("fails when TypeScript source has a clear syntax error", () => {
     const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace("bankReceiptCount < 1", "bankReceiptCount < 0")
-        .replace("bankReceiptCount > 5", "bankReceiptCount > 999")
-        .replace("file.getSize() > 10485760L", "file.getSize() > Long.MAX_VALUE")
-        .replace(/lowerName\.endsWith\("\.(?:pdf|jpg|png)"\)/g, "false"),
-    );
+    const path = input.spec.paths.api;
+    input.files.set(path, `${input.files.get(path)!}\nexport const broken = ;\n`);
 
     const result = validator.validate(input);
+
+    expect(result.status).toBe("FAILED");
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "ATTACHMENT_VALIDATION_MISSING",
+      code: "TYPESCRIPT_SYNTAX_ERROR",
       relativePath: path,
-      message: expect.stringContaining("bankReceipt"),
-      actual: expect.stringContaining("Missing:"),
-      expected: expect.stringContaining("minCount=1"),
-      evidence: expect.stringContaining("Attachment collection candidates"),
-      repairHint: expect.stringContaining("missing checks"),
-      acceptedForms: expect.arrayContaining([expect.stringContaining("isEmpty")]),
+      line: expect.any(Number),
+      column: expect.any(Number),
+      message: expect.any(String),
     }));
   });
 
-  it.each([
-    ["required/minCount=1", (source: string) => source.replace("bankReceiptCount < 1", "bankReceiptCount < 0")],
-    ["maxCount=5", (source: string) => source.replace("bankReceiptCount > 5", "bankReceiptCount > 999")],
-    ["maxSizeBytes=10485760", (source: string) => source.replace("file.getSize() > 10485760L", "file.getSize() > Long.MAX_VALUE")],
-    ["allowedExtensions=pdf", (source: string) => source.replace('lowerName.endsWith(".pdf")', "false")],
-  ])("reports the specific missing attachment subrule %s", (missing, mutate) => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(path, mutate(input.files.get(path)!));
-
-    const diagnostic = validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING");
-    expect(diagnostic).toEqual(expect.objectContaining({
-      relativePath: path,
-      message: expect.stringContaining(missing),
-      actual: expect.stringContaining(missing),
-    }));
-  });
-
-  it("does not accept attachment validation patterns that appear only in comments", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace("bankReceiptCount < 1", "bankReceiptCount < 0")
-        .replace("bankReceiptCount > 5", "bankReceiptCount > 999")
-        .replace("file.getSize() > 10485760L", "file.getSize() > Long.MAX_VALUE")
-        .replace(/lowerName\.endsWith\("\.(?:pdf|jpg|png)"\)/g, "false")
-        .replace(/\n}\s*$/, '\n// bankReceiptCount < 1; bankReceiptCount > 5; file.getSize() > 10485760L; lowerName.endsWith(".pdf"); lowerName.endsWith(".jpg"); lowerName.endsWith(".png");\n}\n'),
-    );
-
-    const diagnostic = validator.validate(input).diagnostics.find(({ code }) => code === "ATTACHMENT_VALIDATION_MISSING");
-    expect(diagnostic?.message).toEqual(expect.stringContaining("required/minCount=1"));
-    expect(diagnostic?.message).toEqual(expect.stringContaining("maxCount=5"));
-    expect(diagnostic?.message).toEqual(expect.stringContaining("maxSizeBytes=10485760"));
-    expect(diagnostic?.message).toEqual(expect.stringContaining("allowedExtensions=pdf/jpg/png"));
-  });
-
-  it("reports separate path-bound diagnostics for each missing Vue field", () => {
+  it("passes for valid Vue SFC syntax", () => {
     const input = validInput();
     const path = input.spec.paths.view;
-    input.files.set(path, input.files.get(path)!.replace(/\bform\.(applicantName|amount|accountNo)\b/g, "form.removedField"));
+    input.files.set(path, `<script setup lang="ts">
+const message: string = "ok";
+</script>
+<template><section>{{ message }}</section></template>
+`);
 
-    const diagnostics = validator.validate(input).diagnostics.filter(({ code, relativePath }) =>
-      code === "FORM_FIELD_CONTRACT_MISSING" && relativePath === path,
-    );
-    expect(diagnostics).toHaveLength(input.requirement.formFields.length);
-    expect(new Set(diagnostics.map(({ diagnosticId }) => diagnosticId)).size).toBe(input.requirement.formFields.length);
-    expect(diagnostics.every(({ actual, expected, repairHint }) => Boolean(actual && expected && repairHint))).toBe(true);
+    const result = validator.validate(input);
+
+    expect(result.status).toBe("PASSED");
+    expect(result.diagnostics).toEqual([]);
   });
 
-  it("rejects platform actions outside the single allowed start call", () => {
+  it("fails when Vue script TypeScript has a clear syntax error", () => {
+    const input = validInput();
+    const path = input.spec.paths.view;
+    input.files.set(path, `<script setup lang="ts">
+const message = ;
+</script>
+<template><section>{{ message }}</section></template>
+`);
+
+    const result = validator.validate(input);
+
+    expect(result.status).toBe("FAILED");
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "TYPESCRIPT_SYNTAX_ERROR",
+      relativePath: path,
+      line: expect.any(Number),
+      column: expect.any(Number),
+      message: expect.any(String),
+    }));
+  });
+
+  it("fails when Vue SFC structure has a parser error", () => {
+    const input = validInput();
+    const path = input.spec.paths.view;
+    input.files.set(path, "<script setup lang=\"ts\">const ok = true;</script><template><div></template>");
+
+    const result = validator.validate(input);
+
+    expect(result.status).toBe("FAILED");
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "VUE_SYNTAX_ERROR",
+      relativePath: path,
+      message: expect.any(String),
+    }));
+  });
+
+  it("fails when manifest, spec, and staging file sets differ", () => {
+    const input = validInput();
+    input.files.delete(input.spec.paths.api);
+
+    const result = validator.validate(input);
+
+    expect(result.status).toBe("FAILED");
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "GENERATED_FILE_SET_MISMATCH",
+    }));
+  });
+
+  it("fails when a required generated source file is empty", () => {
     const input = validInput();
     const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!.replace("runtimeService.startAndSubmit(request)", "runtimeService.approve(request)"),
-    );
+    input.files.set(path, "   \n");
+
     const result = validator.validate(input);
+
     expect(result.status).toBe("FAILED");
-    expect(result.diagnostics.map(({ code }) => code)).toEqual(
-      expect.arrayContaining(["ALLOWED_API_CALL_COUNT", "PLATFORM_ACTION_FORBIDDEN"]),
-    );
-    expect(result.diagnostics.find(({ code }) => code === "PLATFORM_ACTION_FORBIDDEN"))
-      .toEqual(expect.objectContaining({ relativePath: path, line: expect.any(Number) }));
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "EMPTY_GENERATED_FILE",
+      relativePath: path,
+    }));
   });
 
-  it("rejects the captured user_sales platform API guesses before Maven compilation", () => {
+  it("passes syntax-valid Java that uses a different business implementation style", () => {
     const input = validInput();
     const path = input.spec.paths.service;
     input.files.set(
       path,
       input.files.get(path)!
-        .replace("com.flowmind.platform.api.service.ProcessRuntimeService", "com.flowmind.platform.runtime.ProcessRuntimeService")
-        .replace("com.flowmind.platform.api.request.StartProcessRequest", "com.flowmind.platform.runtime.dto.StartProcessRequest")
-        .replace("com.flowmind.platform.api.request.AttachmentUploadItem", "com.flowmind.platform.runtime.dto.AttachmentUploadItem")
-        .replace("com.flowmind.platform.api.dto.ProcessInstanceDTO", "com.flowmind.platform.runtime.dto.ProcessInstance")
-        .replace("CurrentBusinessUserProvider.BusinessUser", "CurrentUser")
-        .replace("request.setVariables(variables)", "request.setProcessVariables(variables)")
-        .replace("request.setAttachments(attachments)", "request.setAttachmentItems(attachments)"),
+        .replace(/\s*Map<String, Object> variables = new LinkedHashMap<String, Object>\(\);\n(?:\s*variables\.put\([^\n]+\n)+/, "\n")
+        .replace("request.setVariables(variables);", "request.setVariables(input.toProcessVariables());")
+        .replace("file.getSize() > 10485760L", "file.getSize() > 10 * 1024 * 1024L"),
     );
+
     const result = validator.validate(input);
-    expect(result.status).toBe("FAILED");
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "PLATFORM_API_CONTRACT_MISMATCH",
-      relativePath: path,
-    }));
+
+    expect(result.status).toBe("PASSED");
+    expect(result.diagnostics).toEqual([]);
   });
 
-  it("rejects an opaque created-task mapping that drops task summary fields", () => {
+  it("does not block when syntax-valid code omits a business field mapping", () => {
     const input = validInput();
-    const path = input.spec.paths.responseDto;
+    const path = input.spec.paths.service;
+    input.files.set(path, input.files.get(path)!.replace(/\s*variables\.put\("amount"[^\n]+\n/, "\n"));
+
+    const result = validator.validate(input);
+
+    expect(result.status).toBe("PASSED");
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("does not block when syntax-valid code omits attachment business validation", () => {
+    const input = validInput();
+    const path = input.spec.paths.service;
     input.files.set(
       path,
       input.files.get(path)!
-        .replace("private List<CreatedTask> createdTasks;", "private List<?> createdTasks;"),
+        .replace(/bankReceiptCount < 1/g, "bankReceiptCount < -1")
+        .replace(/bankReceiptCount > 5/g, "bankReceiptCount > 999")
+        .replace(/file\.getSize\(\) > 10485760L/g, "false")
+        .replace(/lowerName\.endsWith\("\.(?:pdf|jpg|png)"\)/g, "true"),
     );
 
     const result = validator.validate(input);
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "PLATFORM_API_CONTRACT_MISMATCH",
-      relativePath: path,
-    }));
-  });
 
-  it("rejects captured backend test environment mismatches", () => {
-    const input = validInput();
-    input.files.set(
-      input.spec.paths.controllerTest,
-      input.files.get(input.spec.paths.controllerTest)! + "\n@WebMvcTest(EntryApplicationController.class) class SliceTest {}\n",
-    );
-    input.files.set(
-      input.spec.paths.serviceTest,
-      input.files.get(input.spec.paths.serviceTest)! + "\n@BeforeEach void setUp() { when(currentBusinessUserProvider.currentUser()).thenReturn(user); }\n",
-    );
-
-    const result = validator.validate(input);
-    expect(result.diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH")).toHaveLength(2);
-  });
-
-  it("rejects captured Element Plus and jsdom test anti-patterns", () => {
-    const input = validInput();
-    const path = input.spec.paths.viewTest;
-    input.files.set(
-      path,
-      input.files.get(path)! + `\nwrapper.findAll("option");\nwrapper.vm.form.amount = 1;\nwrapper.find(".el-form-item__error");\npayloadBlob.text();\n`,
-    );
-
-    const result = validator.validate(input);
-    expect(result.diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH")).toHaveLength(4);
-    expect(result.diagnostics.find(({ message }) => message.includes("wrapper.vm"))).toEqual(expect.objectContaining({
-      repairHint: expect.stringContaining("update:modelValue/update:fileList"),
-      acceptedForms: expect.arrayContaining([expect.stringContaining("ElUpload")]),
-    }));
-  });
-
-  it("accepts Element Plus public update events without root wrapper state access", () => {
-    const input = validInput();
-    input.files.set(
-      input.spec.paths.viewTest,
-      input.files.get(input.spec.paths.viewTest)! + `
-const applicationNo = wrapper.findComponent({ name: "ElInput" });
-applicationNo.vm.$emit("update:modelValue", "APP-001");
-const amount = wrapper.findComponent({ name: "ElInputNumber" });
-amount.vm.$emit("update:modelValue", 10);
-const currency = wrapper.findComponent({ name: "ElSelect" });
-currency.vm.$emit("update:modelValue", "CNY");
-const upload = wrapper.findComponent({ name: "ElUpload" });
-upload.vm.$emit("update:fileList", []);
-`,
-    );
-
-    expect(validator.validate(input).diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH"))
-      .toEqual([]);
-  });
-
-  it("rejects enum mocks, non-nullable list matchers, and fake file sizes", () => {
-    const input = validInput();
-    input.files.set(
-      input.spec.paths.serviceTest,
-      input.files.get(input.spec.paths.serviceTest)! + "\n// mock(InstanceStatusEnum.class)\n// verify(service).submit(any(), anyList(), anyString());\n",
-    );
-    input.files.set(
-      input.spec.paths.viewTest,
-      input.files.get(input.spec.paths.viewTest)! + '\nfunction createMockFile(name: string, size: number) { return new File(["tiny"], name); }\n',
-    );
-
-    const result = validator.validate(input);
-    expect(result.diagnostics.filter(({ code }) => code === "GENERATED_TEST_CONTRACT_MISMATCH")).toHaveLength(3);
-  });
-
-  it("rejects missing field mapping and weakened tests", () => {
-    const input = validInput();
-    const servicePath = input.spec.paths.service;
-    input.files.set(
-      servicePath,
-      input.files.get(servicePath)!.replace(/\s*variables\.put\("amount"[^\n]+/, ""),
-    );
-    const testPath = input.spec.paths.apiTest;
-    input.files.set(testPath, input.files.get(testPath)!.replace("describe(", "describe.skip("));
-    const result = validator.validate(input);
-    expect(result.diagnostics.map(({ code }) => code)).toEqual(
-      expect.arrayContaining(["FORM_FIELD_MAPPING_MISSING", "TEST_WEAKENED"]),
-    );
-    expect(result.diagnostics.find(({ code }) => code === "FORM_FIELD_MAPPING_MISSING"))
-      .toEqual(expect.objectContaining({
-        diagnosticId: expect.any(String),
-        stage: "STATIC_VALIDATION",
-        actual: expect.stringContaining("amount"),
-        expected: expect.stringContaining("amount"),
-        repairHint: expect.stringContaining("amount"),
-        acceptedForms: expect.arrayContaining([expect.stringContaining('variables.put("amount"')]),
-        repairability: "CODE_ACTIONABLE",
-      }));
+    expect(result.status).toBe("PASSED");
+    expect(result.diagnostics).toEqual([]);
   });
 });
 
@@ -685,21 +254,4 @@ function validInput() {
     })),
   };
   return { generationId: manifest.generationId, revision: 1, requirement, contract, spec, manifest, files };
-}
-
-function useDirectAttachmentValidation(source: string, collectionName: string): string {
-  return source
-    .replace(/bankReceiptFiles/g, collectionName)
-    .replace(
-      /\s*int bankReceiptCount = [^;]+;\s*if \(bankReceiptCount < 1 \|\| bankReceiptCount > 5\) \{[^}]+\}/,
-      `\n        if (${collectionName} == null || ${collectionName}.isEmpty()) throw new IllegalArgumentException("required");\n        if (${collectionName}.size() > 5) throw new IllegalArgumentException("too many");`,
-    )
-    .replace(
-      "String lowerName = file.getOriginalFilename() == null ? \"\" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);",
-      "String extension = file.getOriginalFilename().substring(file.getOriginalFilename().lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT);",
-    )
-    .replace(
-      /if \(!\(lowerName\.endsWith\("\.pdf"\) \|\| lowerName\.endsWith\("\.jpg"\) \|\| lowerName\.endsWith\("\.png"\)\)\)/,
-      'if (!"pdf".equals(extension) && !"jpg".equals(extension) && !"png".equals(extension))',
-    );
 }

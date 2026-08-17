@@ -8,6 +8,8 @@ import { EventBusService } from "../workflow/event-bus.service.js";
 
 @Injectable()
 export class ReviewerService {
+  private readonly activeReviews = new Map<string, string>();
+
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Optional() @Inject(PiAdapterService) private readonly pi?: PiAdapterService,
@@ -19,9 +21,13 @@ export class ReviewerService {
     generation: GenerationRow,
     verificationRunId: string,
     stages: QualityStageResult[] = [],
+    signal?: AbortSignal,
   ): Promise<CodeReviewReport> {
     const reviewId = `review_${randomUUID()}`;
     const createdAt = new Date().toISOString();
+    const cancel = () => this.pi?.cancelReview(reviewId);
+    signal?.addEventListener("abort", cancel, { once: true });
+    this.activeReviews.set(generation.id, reviewId);
     this.database.db.prepare(`
       INSERT INTO agent_code_review (
         id, generation_id, verification_run_id, revision, status, verdict,
@@ -32,6 +38,7 @@ export class ReviewerService {
     let submitted: Pick<CodeReviewReport, "verdict" | "summary" | "issues"> | undefined;
     let session: { piSessionId: string; sessionFile?: string } | undefined;
     try {
+      if (signal?.aborted) throw new Error("quality gate cancelled");
       if (this.pi && this.staging) {
         session = await this.pi.runReview(
           reviewId,
@@ -45,6 +52,7 @@ export class ReviewerService {
             onError: (_code, message) => this.events?.publish(generation.session_id, { type: "error", data: { message } }),
           },
         );
+        if (signal?.aborted) throw new Error("quality gate cancelled");
         if (!submitted) throw new Error("reviewer ended without submit_code_review");
       } else {
         submitted = {
@@ -85,6 +93,14 @@ export class ReviewerService {
         createdAt,
         completedAt,
       };
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+      this.activeReviews.delete(generation.id);
     }
+  }
+
+  cancel(generationId: string): void {
+    const reviewId = this.activeReviews.get(generationId);
+    if (reviewId) this.pi?.cancelReview(reviewId);
   }
 }

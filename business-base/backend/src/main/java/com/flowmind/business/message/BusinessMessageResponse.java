@@ -56,6 +56,10 @@ public class BusinessMessageResponse {
             if ("FORCE_COMPLETE".equals(action)) {
                 return prefix + "系统将按配置自动完成当前任务。";
             }
+            if ("JUMP".equals(action)) {
+                return prefix + "系统将按配置流转至"
+                        + payloadText(payload, "targetNodeName", "targetNodeCode");
+            }
             return prefix + "请关注处理。";
         }
         return content;

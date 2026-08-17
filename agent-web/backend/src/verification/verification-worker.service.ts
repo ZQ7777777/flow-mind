@@ -31,8 +31,10 @@ const HARD_STAGES = new Set<QualityStageName>([
 ]);
 const activeGenerations = new Set<string>();
 
+export type VerificationCommandStage = Exclude<QualityStageName, "STATIC_VALIDATION">;
+
 export interface VerificationCommand {
-  stage: Exclude<QualityStageName, "STATIC_VALIDATION">;
+  stage: VerificationCommandStage;
   executable: string;
   args: string[];
   cwd: string;
@@ -68,8 +70,10 @@ export interface VerificationWorkerInput {
   maxOutputBytes?: number;
   signal?: AbortSignal;
   execute?: VerificationCommandExecutor;
+  /** Optional command-stage subset used after repair to avoid rerunning unaffected gates. */
+  stages?: VerificationCommandStage[];
   /** Per-stage progress sink so the orchestrator can stream stage status to the UI. */
-  onStage?: (stage: VerificationCommand["stage"], status: QualityStageResult["status"], hardGate: boolean) => void;
+  onStage?: (stage: VerificationCommandStage, status: QualityStageResult["status"], hardGate: boolean) => void;
 }
 
 export interface VerificationWorkerResult {
@@ -99,6 +103,7 @@ export class VerificationWorkerService {
     try {
       copyDirectory(input.targetRoot, workspaceRoot);
       overlayManifest(input, workspaceRoot);
+      writeGeneratedFrontendTsconfig(input, workspaceRoot);
       const commands = fixedCommands(input, workspaceRoot);
       const stages: QualityStageResult[] = [];
       const execute = input.execute || executeVerificationCommand;
@@ -263,18 +268,30 @@ function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string): V
     // while preserving a shell-free child_process invocation.
     return {
       executable: process.env.COMSPEC || "cmd.exe",
-      args: ["/d", "/s", "/c", `${executable}.cmd ${args.join(" ")}`],
+      args: ["/d", "/s", "/c", `${executable}.cmd ${args.map(windowsCommandArg).join(" ")}`],
     };
   };
+  const mavenRepoArgs = configuredMavenRepoArgs();
   const backend = resolve(workspaceRoot, input.contract.backend.rootDir);
   const frontend = resolve(workspaceRoot, input.contract.frontend.rootDir);
-  return [
-    { ...common, stage: "BACKEND_COMPILE", ...command("mvn", ["-q", "-DskipTests", "compile"]), cwd: backend },
-    { ...common, stage: "BACKEND_TESTS", ...command("mvn", ["-q", "test"]), cwd: backend },
-    { ...common, stage: "FRONTEND_TYPECHECK", ...command("npm", ["run", "typecheck"]), cwd: frontend },
-    { ...common, stage: "FRONTEND_TESTS", ...command("npm", ["run", "test", "--", "--run"]), cwd: frontend },
+  const commands: VerificationCommand[] = [
+    { ...common, stage: "BACKEND_COMPILE", ...command("mvn", ["-q", ...mavenRepoArgs, "-DskipTests", "compile"]), cwd: backend },
+    { ...common, stage: "FRONTEND_TYPECHECK", ...command("npm", ["exec", "--", "vue-tsc", "-p", "tsconfig.generated.json", "--noEmit"]), cwd: frontend },
     { ...common, stage: "FRONTEND_BUILD", ...command("npm", ["run", "build"]), cwd: frontend },
+    { ...common, stage: "BACKEND_TESTS", ...command("mvn", ["-q", ...mavenRepoArgs, "test"]), cwd: backend },
+    { ...common, stage: "FRONTEND_TESTS", ...command("npm", ["run", "test", "--", "--run"]), cwd: frontend },
   ];
+  const selected = input.stages ? new Set(input.stages) : undefined;
+  return selected ? commands.filter(({ stage }) => selected.has(stage)) : commands;
+}
+
+function configuredMavenRepoArgs(): string[] {
+  const repoLocal = process.env.AGENT_MAVEN_REPO_LOCAL?.trim();
+  return repoLocal ? [`-Dmaven.repo.local=${resolve(repoLocal)}`] : [];
+}
+
+function windowsCommandArg(arg: string): string {
+  return /[\s"]/u.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg;
 }
 
 function fixedEnvironment(): NodeJS.ProcessEnv {
@@ -303,6 +320,21 @@ function overlayManifest(input: VerificationWorkerInput, workspaceRoot: string):
     mkdirSync(dirname(destination), { recursive: true });
     writeFileSync(destination, readFileSync(source));
   }
+}
+
+function writeGeneratedFrontendTsconfig(input: VerificationWorkerInput, workspaceRoot: string): void {
+  const frontendRoot = resolve(workspaceRoot, input.contract.frontend.rootDir);
+  const frontendPrefix = `${input.contract.frontend.rootDir.replace(/\\/g, "/").replace(/\/$/, "")}/`;
+  const include = input.manifest.files
+    .map(({ relativePath }) => relativePath.replace(/\\/g, "/"))
+    .filter((path) => path.startsWith(frontendPrefix) && /\.(vue|tsx?)$/i.test(path))
+    .map((path) => path.slice(frontendPrefix.length));
+  mkdirSync(frontendRoot, { recursive: true });
+  writeFileSync(
+    join(frontendRoot, "tsconfig.generated.json"),
+    `${JSON.stringify({ extends: "./tsconfig.json", include }, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 function copyDirectory(source: string, destination: string): void {
@@ -383,31 +415,57 @@ function stageResult(
   manifest?: ArtifactManifest,
 ): QualityStageResult {
   const hardGate = HARD_STAGES.has(command.stage);
+  const commandText = formatVerificationCommand(command);
   let status: QualityStageResult["status"];
   if (result.cancelled) status = "CANCELLED";
   else if (result.timedOut || result.infrastructureError) status = "INFRASTRUCTURE_FAILED";
   else status = result.exitCode === 0 ? "PASSED" : "FAILED";
+  const fallbackEvidence = diagnosticExcerpt(`${result.stdout}\n${result.stderr}`);
+  let parsedDiagnostics = status === "PASSED" ? [] : parseCommandDiagnostics(command, result, hardGate, manifest);
+  if (status === "FAILED" && !parsedDiagnostics.length) {
+    parsedDiagnostics = [qualityDiagnostic(command.stage, {
+      code: "VERIFICATION_COMMAND_FAILED",
+      message: `Command exited with code ${result.exitCode}.`,
+      hardGate,
+      evidence: fallbackEvidence || `Command exited with code ${result.exitCode}.`,
+      command: commandText,
+      exitCode: result.exitCode === null ? undefined : result.exitCode,
+      expected: "The command must exit successfully.",
+      repairHint: "Use the evidence and verification log to locate and correct the failing code or assertion.",
+      repairability: "CODE_ACTIONABLE",
+      scope: "CURRENT_GENERATION",
+    })];
+  }
+  if (status === "FAILED" && parsedDiagnostics.length
+    && !parsedDiagnostics.some(({ scope }) => scope === "CURRENT_GENERATION" || !scope)) {
+    status = "PASSED";
+  }
   const message = result.infrastructureError
     || (result.timedOut ? "Verification command timed out."
       : result.cancelled ? "Verification command was cancelled."
-        : status === "PASSED" ? "Command passed." : `Command exited with code ${result.exitCode}.`);
-  const parsedDiagnostics = status === "PASSED" ? [] : parseCommandDiagnostics(command, result, hardGate, manifest);
-  const fallbackEvidence = diagnosticExcerpt(`${result.stdout}\n${result.stderr}`);
+        : result.exitCode === 0 ? "Command passed."
+          : status === "PASSED"
+            ? `Command exited with code ${result.exitCode}; no current-generation diagnostics were found.`
+            : `Command exited with code ${result.exitCode}.`);
   return {
     stage: command.stage,
     status,
     hardGate,
     summary: message,
-    diagnostics: status === "PASSED" ? [] : parsedDiagnostics.length ? parsedDiagnostics : [qualityDiagnostic(command.stage, {
+    command: commandText,
+    diagnostics: result.exitCode === 0 && status === "PASSED" ? [] : parsedDiagnostics.length ? parsedDiagnostics : [qualityDiagnostic(command.stage, {
       code: status === "INFRASTRUCTURE_FAILED" ? "VERIFICATION_INFRASTRUCTURE_FAILED" : "VERIFICATION_COMMAND_FAILED",
       message,
       hardGate,
       evidence: fallbackEvidence || message,
+      command: commandText,
+      exitCode: result.exitCode === null ? undefined : result.exitCode,
       expected: status === "INFRASTRUCTURE_FAILED" ? "The verification environment must be available." : "The command must exit successfully.",
       repairHint: status === "INFRASTRUCTURE_FAILED"
         ? "Do not change generated code for this failure; retry after the verification environment is restored."
         : "Use the evidence and verification log to locate and correct the failing code or assertion.",
       repairability: status === "INFRASTRUCTURE_FAILED" ? "INFRASTRUCTURE" : "CODE_ACTIONABLE",
+      scope: status === "INFRASTRUCTURE_FAILED" ? undefined : "CURRENT_GENERATION",
     })],
     exitCode: result.exitCode === null ? undefined : result.exitCode,
     logPath,
@@ -417,11 +475,16 @@ function stageResult(
 
 function commandBlockers(stage: QualityStageName, stages: QualityStageResult[]): QualityStageName[] {
   const dependencies: Partial<Record<QualityStageName, QualityStageName[]>> = {
-    BACKEND_TESTS: ["BACKEND_COMPILE"],
+    FRONTEND_TYPECHECK: ["BACKEND_COMPILE"],
+    FRONTEND_BUILD: ["BACKEND_COMPILE", "FRONTEND_TYPECHECK"],
+    BACKEND_TESTS: ["BACKEND_COMPILE", "FRONTEND_TYPECHECK", "FRONTEND_BUILD"],
+    FRONTEND_TESTS: ["BACKEND_COMPILE", "FRONTEND_TYPECHECK", "FRONTEND_BUILD"],
   };
-  return (dependencies[stage] || []).filter((dependency) =>
-    stages.some((result) => result.stage === dependency && result.status !== "PASSED"),
-  );
+  for (const dependency of dependencies[stage] || []) {
+    const result = stages.find((item) => item.stage === dependency);
+    if (result && result.status !== "PASSED") return result.blockedBy?.length ? result.blockedBy : [dependency];
+  }
+  return [];
 }
 
 function blockedStageResult(
@@ -485,6 +548,8 @@ function parseCommandDiagnostics(
         line: Number(match[2]),
         column: Number(match[3]),
         evidence: line,
+        command: formatVerificationCommand(command),
+        exitCode: result.exitCode === null ? undefined : result.exitCode,
         expected: "TypeScript and Vue sources must pass type checking without errors.",
         repairHint: "Correct the reported type mismatch at the referenced source location.",
       }));
@@ -501,6 +566,8 @@ function parseCommandDiagnostics(
         line: Number(match[2]),
         column: match[3] ? Number(match[3]) : undefined,
         evidence: diagnosticBlock(lines, index),
+        command: formatVerificationCommand(command),
+        exitCode: result.exitCode === null ? undefined : result.exitCode,
         expected: "Generated Java sources must compile against the authoritative platform API.",
         repairHint: "Correct the compiler error and consult the authoritative references before editing platform calls.",
       }));
@@ -516,6 +583,8 @@ function parseCommandDiagnostics(
         relativePath: diagnosticPath(command, match[1], manifest),
         line: Number(match[2]),
         column: Number(match[3]),
+        command: formatVerificationCommand(command),
+        exitCode: result.exitCode === null ? undefined : result.exitCode,
       });
     }
   }
@@ -529,7 +598,7 @@ function parseCommandDiagnostics(
     expected: item.code === "TEST_FAILURE" ? "The named test must pass." : undefined,
     repairHint: item.code === "TEST_FAILURE" ? "Correct the implementation without weakening or skipping the test." : undefined,
   }));
-  return [...new Map(enriched.map((item) => [item.diagnosticId, item])).values()];
+  return scopeDiagnostics(command, [...new Map(enriched.map((item) => [item.diagnosticId, item])).values()], manifest);
 }
 
 function parseStructuredTestDiagnostics(
@@ -650,7 +719,11 @@ function diagnosticExcerpt(output: string): string {
 }
 
 function diagnosticBlock(lines: string[], index: number): string {
-  return sanitizeDiagnosticEvidence(lines.slice(Math.max(0, index - 4), Math.min(lines.length, index + 4)).join("\n"));
+  return sanitizeDiagnosticEvidence(lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 8)).join("\n"));
+}
+
+function formatVerificationCommand(command: VerificationCommand): string {
+  return [command.executable, ...command.args].join(" ");
 }
 
 function assertionValue(evidence: string, label: string): string | undefined {
@@ -662,7 +735,7 @@ function diagnosticPath(command: VerificationCommand, input: string, manifest?: 
   const absolute = isAbsolute(input) ? resolve(input) : resolve(command.cwd, input);
   const path = relative(command.workspaceRoot, absolute).replace(/\\/g, "/");
   if (path === ".." || path.startsWith("../") || isAbsolute(path)) return undefined;
-  return manifestPath(path, input, manifest);
+  return bestDiagnosticPath(path, input, manifest);
 }
 
 function junitPath(
@@ -673,16 +746,150 @@ function junitPath(
 ): string | undefined {
   const topLevelClass = className.replace(/\$.*$/, "");
   const derived = `backend/src/test/java/${topLevelClass.replace(/\./g, "/")}.java`;
-  return manifestPath(derived, fileName, manifest) || diagnosticPath(command, fileName, manifest);
+  return bestDiagnosticPath(derived, fileName, manifest) || diagnosticPath(command, fileName, manifest);
 }
 
-function manifestPath(candidate: string, original: string, manifest?: ArtifactManifest): string | undefined {
+function bestDiagnosticPath(candidate: string, original: string, manifest?: ArtifactManifest): string | undefined {
   if (!manifest) return candidate;
   const paths = manifest.files.map(({ relativePath }) => relativePath.replace(/\\/g, "/"));
   if (paths.includes(candidate)) return candidate;
   const normalizedOriginal = original.replace(/\\/g, "/").replace(/^\.\//, "");
   const suffixMatches = paths.filter((path) => path === normalizedOriginal || path.endsWith(`/${normalizedOriginal}`));
-  return suffixMatches.length === 1 ? suffixMatches[0] : undefined;
+  return suffixMatches.length === 1 ? suffixMatches[0] : candidate;
+}
+
+function scopeDiagnostics(
+  command: VerificationCommand,
+  diagnostics: QualityDiagnostic[],
+  manifest?: ArtifactManifest,
+): QualityDiagnostic[] {
+  if (!manifest) return diagnostics.map((diagnostic) => ({ ...diagnostic, scope: diagnostic.scope || "CURRENT_GENERATION" }));
+  const manifestPaths = manifest.files.map(({ relativePath }) => relativePath.replace(/\\/g, "/"));
+  const manifestSet = new Set(manifestPaths);
+  return diagnostics.map((diagnostic) => {
+    if (diagnostic.scope) return diagnostic;
+    const relativePath = diagnostic.relativePath?.replace(/\\/g, "/");
+    if (!relativePath || manifestSet.has(relativePath)) {
+      return { ...diagnostic, relativePath, scope: "CURRENT_GENERATION" };
+    }
+    return {
+      ...diagnostic,
+      relativePath,
+      scope: hasDirectManifestDependency(command, relativePath, manifestPaths)
+        ? "INTEGRATION_IMPACT"
+        : "PRE_EXISTING",
+    };
+  });
+}
+
+function hasDirectManifestDependency(
+  command: VerificationCommand,
+  diagnosticRelativePath: string,
+  manifestPaths: string[],
+): boolean {
+  const absolute = resolve(command.workspaceRoot, diagnosticRelativePath);
+  const rel = relative(command.workspaceRoot, absolute);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel) || !existsSync(absolute) || !lstatSync(absolute).isFile()) {
+    return false;
+  }
+  const source = readFileSync(absolute, "utf8");
+  if (/\.(vue|tsx?|jsx?)$/i.test(diagnosticRelativePath)) {
+    return frontendSourceImportsManifest(command, absolute, source, manifestPaths);
+  }
+  if (/\.java$/i.test(diagnosticRelativePath)) {
+    return javaSourceReferencesManifest(command.workspaceRoot, source, manifestPaths);
+  }
+  return false;
+}
+
+function frontendSourceImportsManifest(
+  command: VerificationCommand,
+  absoluteSourcePath: string,
+  source: string,
+  manifestPaths: string[],
+): boolean {
+  const imports = [...source.matchAll(/\b(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g)]
+    .map((match) => match[1] || match[2])
+    .filter((value): value is string => Boolean(value));
+  return imports.some((specifier) => frontendImportMatchesManifest(
+    command,
+    absoluteSourcePath,
+    specifier,
+    manifestPaths,
+  ));
+}
+
+function frontendImportMatchesManifest(
+  command: VerificationCommand,
+  absoluteSourcePath: string,
+  specifier: string,
+  manifestPaths: string[],
+): boolean {
+  const bases: string[] = [];
+  if (specifier.startsWith(".")) {
+    bases.push(resolve(dirname(absoluteSourcePath), specifier));
+  } else if (specifier.startsWith("@/")) {
+    bases.push(resolve(command.cwd, "src", specifier.slice(2)));
+  } else if (specifier.startsWith("/src/")) {
+    bases.push(resolve(command.cwd, specifier.slice(1)));
+  }
+  const candidates = bases.flatMap((base) => pathCandidates(base))
+    .map((candidate) => relative(command.workspaceRoot, candidate).replace(/\\/g, "/"));
+  const candidateSet = new Set(candidates);
+  if (manifestPaths.some((path) => candidateSet.has(path))) return true;
+
+  const normalizedSpecifier = specifier
+    .replace(/^@\//, "frontend/src/")
+    .replace(/^src\//, "frontend/src/")
+    .replace(/^\//, "");
+  const specifierNoExt = stripKnownExtension(normalizedSpecifier);
+  return manifestPaths.some((path) => stripKnownExtension(path).endsWith(specifierNoExt));
+}
+
+function pathCandidates(base: string): string[] {
+  return [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.vue`,
+    `${base}.js`,
+    `${base}.jsx`,
+    `${base}.d.ts`,
+    join(base, "index.ts"),
+    join(base, "index.tsx"),
+    join(base, "index.vue"),
+  ];
+}
+
+function stripKnownExtension(value: string): string {
+  return value.replace(/\.d\.ts$/i, "").replace(/\.(vue|tsx?|jsx?)$/i, "");
+}
+
+function javaSourceReferencesManifest(workspaceRoot: string, source: string, manifestPaths: string[]): boolean {
+  const imports = [...source.matchAll(/^\s*import\s+(?:static\s+)?([\w.]+)(?:\.\*)?\s*;/gm)]
+    .map((match) => match[1]);
+  if (!imports.length) return false;
+  const sourcePackage = source.match(/^\s*package\s+([\w.]+)\s*;/m)?.[1];
+  const manifestTypes = manifestPaths.flatMap((path) => javaManifestType(workspaceRoot, path));
+  return manifestTypes.some(({ packageName, className, fqn }) =>
+    imports.includes(fqn)
+    || imports.some((item) => item === packageName || item.startsWith(`${fqn}.`))
+    || (sourcePackage === packageName && new RegExp(`\\b${className}\\b`).test(source)));
+}
+
+function javaManifestType(
+  workspaceRoot: string,
+  relativePath: string,
+): Array<{ packageName: string; className: string; fqn: string }> {
+  if (!relativePath.endsWith(".java")) return [];
+  const absolute = resolve(workspaceRoot, relativePath);
+  if (!existsSync(absolute) || !lstatSync(absolute).isFile()) return [];
+  const source = readFileSync(absolute, "utf8");
+  const packageName = source.match(/^\s*package\s+([\w.]+)\s*;/m)?.[1]
+    || relativePath.replace(/^.*\/src\/(?:main|test)\/java\//, "").replace(/\/[^/]+\.java$/, "").replace(/\//g, ".");
+  const className = source.match(/\b(?:class|interface|enum|record)\s+([A-Za-z_]\w*)/)?.[1]
+    || relativePath.split("/").at(-1)!.replace(/\.java$/, "");
+  return [{ packageName, className, fqn: `${packageName}.${className}` }];
 }
 
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {

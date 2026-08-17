@@ -12,18 +12,27 @@ describe("quality gates and repair budget", () => {
     });
   });
 
-  it("requires current-revision overrides for JUnit, Vitest, or reviewer failures", () => {
+  it("requires current-revision overrides for JUnit or Vitest failures while reviewer findings stay report-only", () => {
     const failed = stages().map((stage) => stage.stage === "BACKEND_TESTS"
       ? { ...stage, status: "FAILED" as const }
       : stage);
     expect(evaluateQualityGates(failed, review("CHANGES_REQUESTED"), [])).toEqual({
       hardGatePassed: true,
-      softFailures: ["BACKEND_TESTS", "REVIEWER"],
+      softFailures: ["BACKEND_TESTS"],
       overrideRequired: true,
       canWrite: false,
     });
-    expect(evaluateQualityGates(failed, review("CHANGES_REQUESTED"), ["BACKEND_TESTS", "REVIEWER"]).canWrite)
+    expect(evaluateQualityGates(failed, review("CHANGES_REQUESTED"), ["BACKEND_TESTS"]).canWrite)
       .toBe(true);
+  });
+
+  it("does not block writing for reviewer-only findings when automatic gates pass", () => {
+    expect(evaluateQualityGates(stages(), review("CHANGES_REQUESTED"), [])).toEqual({
+      hardGatePassed: true,
+      softFailures: [],
+      overrideRequired: false,
+      canWrite: true,
+    });
   });
 
   it("never permits an override for a hard failure", () => {
@@ -40,8 +49,8 @@ describe("quality gates and repair budget", () => {
     expect(nextRepairDecision(3, true, false)).toEqual({ repair: false, nextRound: 3 });
   });
 
-  it("allows one fourth repair only for a first unblocked failure", () => {
-    expect(nextRepairDecision(3, true, false, true)).toEqual({ repair: true, nextRound: 4, unblockExtension: true });
+  it("keeps the automatic repair budget capped at three rounds", () => {
+    expect(nextRepairDecision(3, true, false, true)).toEqual({ repair: false, nextRound: 3 });
     expect(nextRepairDecision(4, true, false, true)).toEqual({ repair: false, nextRound: 4 });
     expect(nextRepairDecision(3, true, false, false)).toEqual({ repair: false, nextRound: 3 });
   });

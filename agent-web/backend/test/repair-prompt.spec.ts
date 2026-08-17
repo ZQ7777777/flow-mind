@@ -78,6 +78,117 @@ describe("repair prompt", () => {
     expect(prompt).not.toContain('"summary":"passed"');
   });
 
+  it("summarizes resolved, persisting, and new diagnostics for later repair rounds", () => {
+    const stages: QualityStageResult[] = [{
+      stage: "BACKEND_COMPILE",
+      status: "FAILED",
+      hardGate: true,
+      summary: "compile failed",
+      command: "mvn -q -DskipTests compile",
+      exitCode: 1,
+      diagnostics: [{
+        diagnosticId: "diag-current",
+        stage: "BACKEND_COMPILE",
+        code: "JAVA_COMPILER_ERROR",
+        message: "cannot find symbol",
+        severity: "ERROR",
+        hardGate: true,
+        relativePath: "backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java",
+        line: 87,
+        column: 31,
+        evidence: "symbol: method getApplicationNo()\nlocation: variable payload of type EntryApplicationRequest",
+        repairability: "CODE_ACTIONABLE",
+      }, {
+        diagnosticId: "diag-new",
+        stage: "BACKEND_COMPILE",
+        code: "JAVA_COMPILER_ERROR",
+        message: "incompatible types",
+        severity: "ERROR",
+        hardGate: true,
+        relativePath: "backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java",
+        line: 91,
+        evidence: "required: String\nfound: Long",
+        repairability: "CODE_ACTIONABLE",
+      }],
+    }];
+    const buildRepairPrompt = (repairModule as Record<string, unknown>).buildRepairPrompt as any;
+    const prompt = buildRepairPrompt(2, stages, undefined, {
+      platformRuntime: "ProcessRuntimeService#startAndSubmit(StartProcessRequest)",
+      trustedUserContext: "CurrentBusinessUserProvider.BusinessUser",
+    }, {
+      generationId: "generation-1",
+      generationRevision: 3,
+      verificationRunId: "verification-2",
+    }, {
+      changedFiles: ["backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java"],
+      resolvedDiagnosticIds: ["diag-old"],
+      unresolvedDiagnosticIds: ["diag-current"],
+    });
+
+    const brief = JSON.parse(prompt.split("Current Repair Brief:\n")[1]);
+    expect(brief.failedStages).toContainEqual(expect.objectContaining({
+      stage: "BACKEND_COMPILE",
+      command: "mvn -q -DskipTests compile",
+      exitCode: 1,
+    }));
+    expect(brief.diagnosticDelta).toEqual(expect.objectContaining({
+      resolvedDiagnosticIds: ["diag-old"],
+      persistingDiagnosticIds: ["diag-current"],
+      newDiagnosticIds: ["diag-new"],
+    }));
+    expect(brief.ineffectiveRepairSignals).toEqual(expect.objectContaining({
+      requiresRootCauseRecheck: true,
+    }));
+    expect(prompt).toContain("re-check the actual API, DTO, imports, dependencies, and language constraints before editing");
+  });
+
+  it("keeps external scoped diagnostics out of repair actionability", () => {
+    const stages: QualityStageResult[] = [{
+      stage: "FRONTEND_TYPECHECK",
+      status: "FAILED",
+      hardGate: true,
+      summary: "failed",
+      diagnostics: [{
+        diagnosticId: "diag-current",
+        stage: "FRONTEND_TYPECHECK",
+        code: "TS2345",
+        message: "Generated payload is invalid.",
+        severity: "ERROR",
+        hardGate: true,
+        relativePath: "frontend/src/modules/generated/example.ts",
+        scope: "CURRENT_GENERATION",
+        repairability: "CODE_ACTIONABLE",
+      } as any, {
+        diagnosticId: "diag-pre-existing",
+        stage: "FRONTEND_TYPECHECK",
+        code: "TS2322",
+        message: "Legacy view has an old unrelated type error.",
+        severity: "ERROR",
+        hardGate: true,
+        relativePath: "frontend/src/views/LegacyView.vue",
+        scope: "PRE_EXISTING",
+        repairability: "CODE_ACTIONABLE",
+      } as any, {
+        diagnosticId: "diag-integration-impact",
+        stage: "FRONTEND_TYPECHECK",
+        code: "TS2741",
+        message: "Legacy view directly depends on the generated payload shape.",
+        severity: "ERROR",
+        hardGate: true,
+        relativePath: "frontend/src/views/GeneratedCaller.vue",
+        scope: "INTEGRATION_IMPACT",
+        repairability: "CODE_ACTIONABLE",
+      } as any],
+    }];
+    const buildRepairPrompt = (repairModule as Record<string, unknown>).buildRepairPrompt as any;
+    const prompt = buildRepairPrompt(1, stages);
+    const brief = JSON.parse(prompt.split("Current Repair Brief:\n")[1]);
+
+    expect(brief.actionableDiagnostics.map(({ diagnosticId }: { diagnosticId: string }) => diagnosticId))
+      .toEqual(["diag-current"]);
+    expect(brief.blockedDiagnostics.map(({ diagnosticId }: { diagnosticId: string }) => diagnosticId))
+      .toEqual(["diag-pre-existing", "diag-integration-impact"]);
+  });
   it("reads only bounded logs inside the current generation", () => {
     const root = mkdtempSync(join(tmpdir(), "flowmind-repair-log-"));
     try {

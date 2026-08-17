@@ -230,7 +230,12 @@ export class GenerationService {
     );
     if (replay) return replay;
     this.expectVersion(session, rowVersion);
-    if (generation.status !== "REVIEW" || generation.generation_revision !== generationRevision || generation.quality_report_json) {
+    const existingQuality = generation.quality_report_json
+      ? JSON.parse(generation.quality_report_json) as CodeGenerationSummary["quality"]
+      : undefined;
+    const canRestartCancelledQuality = existingQuality?.pipelineState === "CANCELLED";
+    if (generation.status !== "REVIEW" || generation.generation_revision !== generationRevision
+      || (generation.quality_report_json && !canRestartCancelledQuality)) {
       throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_REVISION_CONFLICT", "Only an unverified current generation can enter the quality gate.", sessionId);
     }
     if (!this.quality) throw new AgentError(HttpStatus.SERVICE_UNAVAILABLE, "AGENT_QUALITY_UNAVAILABLE", "Quality pipeline is unavailable.", sessionId);
@@ -239,6 +244,19 @@ export class GenerationService {
       requestHash,
       expectedRowVersion: rowVersion,
     });
+  }
+
+  stopQuality(
+    sessionId: string,
+    generationId: string,
+    user: MockUser,
+    rowVersion: number,
+  ): { cancelled: true; state: "CODE_REVIEW" } {
+    const session = this.ownedSession(sessionId, user);
+    this.ownedGeneration(sessionId, generationId, user);
+    this.expectVersion(session, rowVersion);
+    if (!this.quality) throw new AgentError(HttpStatus.SERVICE_UNAVAILABLE, "AGENT_QUALITY_UNAVAILABLE", "Quality pipeline is unavailable.", sessionId);
+    return this.quality.stop(generationId, rowVersion);
   }
 
   overrideQuality(

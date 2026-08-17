@@ -21,6 +21,7 @@ import { RepairCoordinatorService } from "../repair/repair-coordinator.service.j
 import {
   VerificationWorkerService,
   type VerificationCommandExecutor,
+  type VerificationCommandStage,
 } from "./verification-worker.service.js";
 import { qualityDiagnostic } from "./quality-diagnostic.js";
 
@@ -32,7 +33,7 @@ interface QualityActionRequest {
 
 @Injectable()
 export class QualityPipelineService {
-  private readonly activeGenerations = new Set<string>();
+  private readonly activeRuns = new Map<string, AbortController>();
 
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
@@ -46,9 +47,11 @@ export class QualityPipelineService {
   ) {}
 
   start(generationId: string, trigger: "GENERATION" | "REVERIFY" | "REPAIR" = "GENERATION"): void {
-    if (this.activeGenerations.has(generationId)) return;
-    this.activeGenerations.add(generationId);
-    setImmediate(() => void this.run(generationId, trigger));
+    const active = this.activeRuns.get(generationId);
+    if (active && !active.signal.aborted) return;
+    const controller = new AbortController();
+    this.activeRuns.set(generationId, controller);
+    setImmediate(() => void this.run(generationId, trigger, controller));
   }
 
   getReport(generationId: string): GenerationQualityReport | undefined {
@@ -80,11 +83,13 @@ export class QualityPipelineService {
         UPDATE agent_quality_override SET invalidated_at = ?
         WHERE generation_id = ? AND invalidated_at IS NULL
       `).run(now, generationId);
+      this.database.db.prepare("DELETE FROM agent_repair_attempt WHERE generation_id = ?").run(generationId);
       this.database.db.prepare(`
         UPDATE agent_code_generation SET status = 'VERIFYING', quality_revision = ?,
           quality_report_json = NULL, latest_verification_run_id = NULL, latest_review_id = NULL,
           hard_gate_passed = 0, override_required = 0, quality_override_id = NULL,
-          skip_ai_review = ?, can_write = 0, last_error_code = NULL, last_error_message = NULL, updated_at = ?
+          skip_ai_review = ?, can_write = 0, repair_round = 0, max_repair_rounds = 3,
+          last_error_code = NULL, last_error_message = NULL, updated_at = ?
         WHERE id = ? AND generation_revision = ?
       `).run(revision, skipAiReview ? 1 : 0, now, generationId, revision);
       const sessionUpdate = this.database.db.prepare(`
@@ -99,6 +104,70 @@ export class QualityPipelineService {
     });
     this.start(generationId, "REVERIFY");
     return result;
+  }
+  stop(generationId: string, expectedRowVersion: number): { cancelled: true; state: "CODE_REVIEW" } {
+    const generation = this.database.getGeneration(generationId);
+    if (!generation || !["VERIFYING", "REVIEWING", "REPAIRING"].includes(generation.status)) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_QUALITY_NOT_RUNNING", "Quality gate is not running.", generation?.session_id);
+    }
+    const session = this.database.getSession(generation.session_id);
+    if (!session || !["CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING"].includes(session.state)) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_STATE_CONFLICT", "current state does not allow this operation", generation.session_id);
+    }
+    if (!Number.isInteger(expectedRowVersion) || session.row_version !== expectedRowVersion) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_ROW_VERSION_CONFLICT", "row version is stale", generation.session_id, { expected: session.row_version });
+    }
+    this.activeRuns.get(generationId)?.abort();
+    this.reviewer.cancel(generationId);
+    this.repair?.cancel(generationId);
+
+    const now = new Date().toISOString();
+    const runningRuns = this.database.db.prepare(`
+      SELECT id, stage_results_json FROM agent_verification_run
+      WHERE generation_id = ? AND status = 'RUNNING'
+      ORDER BY created_at DESC
+    `).all(generationId) as Array<{ id: string; stage_results_json: string }>;
+    const stages = runningRuns[0]?.stage_results_json
+      ? JSON.parse(runningRuns[0].stage_results_json) as QualityStageResult[]
+      : [];
+    const report: GenerationQualityReport = {
+      generationId,
+      revision: generation.generation_revision,
+      pipelineState: "CANCELLED",
+      repairRound: 0,
+      maxRepairRounds: 3,
+      stages,
+      repairAttempts: this.repair?.history(generationId),
+      aiReviewSkipped: Boolean(generation.skip_ai_review),
+      hardGatePassed: false,
+      overrideRequired: false,
+      canWrite: false,
+      updatedAt: now,
+    };
+    this.database.transaction(() => {
+      for (const run of runningRuns) {
+        this.database.db.prepare(`
+          UPDATE agent_verification_run SET status = 'CANCELLED',
+            stage_results_json = ?, completed_at = ? WHERE id = ?
+        `).run(JSON.stringify(stages), now, run.id);
+      }
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET status = 'REVIEW', repair_round = 0,
+          max_repair_rounds = 3, quality_revision = ?, latest_verification_run_id = ?,
+          quality_report_json = ?, hard_gate_passed = 0, override_required = 0,
+          quality_override_id = NULL, can_write = 0, last_error_code = NULL,
+          last_error_message = NULL, updated_at = ?
+        WHERE id = ? AND status IN ('VERIFYING', 'REVIEWING', 'REPAIRING')
+      `).run(generation.generation_revision, runningRuns[0]?.id || null, JSON.stringify(report), now, generationId);
+      this.database.db.prepare(`
+        UPDATE agent_session SET state = 'CODE_REVIEW', row_version = row_version + 1,
+          last_error_code = NULL, last_error_message = NULL, updated_at = ?
+        WHERE id = ? AND row_version = ?
+      `).run(now, generation.session_id, expectedRowVersion);
+    });
+    this.events.publish(generation.session_id, { type: "generation.quality_completed", data: report });
+    this.events.publish(generation.session_id, { type: "workflow.state_changed", data: { state: "CODE_REVIEW" } });
+    return { cancelled: true, state: "CODE_REVIEW" };
   }
 
   override(
@@ -188,10 +257,15 @@ export class QualityPipelineService {
     );
   }
 
-  async run(generationId: string, trigger: "GENERATION" | "REVERIFY" | "REPAIR" = "GENERATION"): Promise<void> {
+  async run(
+    generationId: string,
+    trigger: "GENERATION" | "REVERIFY" | "REPAIR" = "GENERATION",
+    controller = new AbortController(),
+  ): Promise<void> {
+    const signal = controller.signal;
     let generation = this.database.getGeneration(generationId);
-    if (!generation || generation.status !== "VERIFYING") {
-      this.activeGenerations.delete(generationId);
+    if (signal.aborted || !generation || generation.status !== "VERIFYING") {
+      if (this.activeRuns.get(generationId) === controller) this.activeRuns.delete(generationId);
       return;
     }
     const previousStageRuns = (this.database.db.prepare(`
@@ -200,6 +274,10 @@ export class QualityPipelineService {
       ORDER BY created_at
     `).all(generationId) as Array<{ stage_results_json: string }>).map(({ stage_results_json }) =>
       JSON.parse(stage_results_json) as QualityStageResult[]);
+    const previousStages = previousStageRuns.at(-1);
+    const reverifyStages = trigger === "REPAIR"
+      ? selectRepairVerificationStages(previousStages || [], this.repair?.history(generationId).at(-1)?.changedFiles || [])
+      : undefined;
     const runId = `verification_${randomUUID()}`;
     const startedAt = new Date().toISOString();
     this.database.db.prepare(`
@@ -242,8 +320,10 @@ export class QualityPipelineService {
         files,
       });
       this.publishVerifyStage(generation.session_id, generationId, runId, "STATIC_VALIDATION", staticResult.status, staticResult.hardGate);
-      const invalidPaths = new Set(staticResult.diagnostics.map(({ relativePath }) => relativePath).filter(Boolean));
-      const hasGlobalError = staticResult.diagnostics.some(({ relativePath }) => !relativePath);
+      if (signal.aborted) return;
+      const staticBlockingDiagnostics = staticResult.diagnostics.filter(({ severity, hardGate }) => severity === "ERROR" && hardGate);
+      const invalidPaths = new Set(staticBlockingDiagnostics.map(({ relativePath }) => relativePath).filter(Boolean));
+      const hasGlobalError = staticBlockingDiagnostics.some(({ relativePath }) => !relativePath);
       const validatedManifest = {
         ...manifest,
         files: manifest.files.map((file) => ({
@@ -255,8 +335,9 @@ export class QualityPipelineService {
       };
       this.database.db.prepare("UPDATE agent_code_generation SET artifact_manifest_json = ?, updated_at = ? WHERE id = ? AND generation_revision = ?")
         .run(JSON.stringify(validatedManifest), new Date().toISOString(), generation.id, generation.generation_revision);
+      if (signal.aborted) return;
       const sessionId = generation.session_id;
-      const stages: QualityStageResult[] = [staticResult];
+      let stages: QualityStageResult[] = [staticResult];
       if (staticResult.status === "PASSED") {
         const workerResult = await this.worker.run({
           generationId,
@@ -267,9 +348,12 @@ export class QualityPipelineService {
           manifest,
           dataDir: this.database.dataDir,
           execute: fakeExecutor(),
+          stages: reverifyStages,
+          signal,
           onStage: (stage, status, hardGate) => this.publishVerifyStage(sessionId, generationId, runId, stage, status, hardGate),
         });
-        stages.push(...workerResult.stages);
+        if (signal.aborted) return;
+        stages = mergeVerificationStages(staticResult, workerResult.stages, previousStages, reverifyStages);
       } else {
         const skipped = skippedCommandStages();
         for (const stage of skipped) {
@@ -282,18 +366,21 @@ export class QualityPipelineService {
       const resolvedDiagnostics = collectResolvedDiagnostics(stages, previousStageRuns.at(-1));
 
       generation = this.database.getGeneration(generationId);
-      if (!generation || generation.generation_revision !== manifest.revision) return;
+      if (signal.aborted || !generation || generation.status !== "VERIFYING" || generation.generation_revision !== manifest.revision) return;
       let infrastructureFailure = stages.some(({ status }) =>
         status === "INFRASTRUCTURE_FAILED" || status === "CANCELLED",
       );
       const hardFailure = stages.some(({ hardGate, status }) => hardGate && status !== "PASSED");
+      const hasIntegrationImpact = stages.some(({ diagnostics }) =>
+        diagnostics.some(({ scope }) => scope === "INTEGRATION_IMPACT"));
       let review: CodeReviewReport | undefined;
-      if (!hardFailure && !infrastructureFailure && !generation.skip_ai_review) {
+      if (!hardFailure && !infrastructureFailure && (!generation.skip_ai_review || hasIntegrationImpact)) {
         this.transition(generation.id, generation.session_id, "REVIEWING", "CODE_REVIEWING", runId);
         generation = this.database.getGeneration(generationId)!;
-        review = await this.reviewer.review(generation, runId, stages);
+        review = await this.reviewer.review(generation, runId, stages, signal);
+        if (signal.aborted) return;
       }
-      const aiReviewSkipped = Boolean(generation.skip_ai_review);
+      const aiReviewSkipped = Boolean(generation.skip_ai_review && !review);
       const decision = evaluateQualityGates(stages, review, [], aiReviewSkipped);
       const reviewerInfrastructureFailure = review?.status === "INFRASTRUCTURE_FAILED";
       infrastructureFailure = infrastructureFailure || reviewerInfrastructureFailure;
@@ -311,7 +398,8 @@ export class QualityPipelineService {
           type: "generation.stage_changed",
           data: { generationId: generation.id, state: "CODE_REPAIRING", runId },
         });
-        const repairResult = await this.repair.attempt(generation, repairDecision.nextRound, runId, stages, review);
+        const repairResult = await this.repair.attempt(generation, repairDecision.nextRound, runId, stages, review, signal);
+        if (signal.aborted) return;
         if (repairResult.repaired) {
           const repairedAt = new Date().toISOString();
           this.database.db.prepare(`
@@ -415,9 +503,9 @@ export class QualityPipelineService {
       });
     } catch (error) {
       const failedGeneration = this.database.getGeneration(generationId);
-      if (failedGeneration) this.failRun(failedGeneration, runId, error);
+      if (!signal.aborted && failedGeneration) this.failRun(failedGeneration, runId, error);
     } finally {
-      this.activeGenerations.delete(generationId);
+      if (this.activeRuns.get(generationId) === controller) this.activeRuns.delete(generationId);
     }
   }
 
@@ -498,15 +586,117 @@ function attachRunToDiagnostics(stages: QualityStageResult[], verificationRunId:
   }
 }
 
-// Mirrors the worker's HARD_STAGES so skipped command stages carry the same
-// hard-gate flags as when they actually run.
-const SKIPPABLE_COMMAND_STAGES: ReadonlyArray<{ stage: Exclude<QualityStageName, "STATIC_VALIDATION">; hardGate: boolean }> = [
-  { stage: "BACKEND_COMPILE", hardGate: true },
-  { stage: "BACKEND_TESTS", hardGate: false },
-  { stage: "FRONTEND_TYPECHECK", hardGate: true },
-  { stage: "FRONTEND_TESTS", hardGate: false },
-  { stage: "FRONTEND_BUILD", hardGate: true },
+const COMMAND_STAGE_ORDER: readonly VerificationCommandStage[] = [
+  "BACKEND_COMPILE",
+  "FRONTEND_TYPECHECK",
+  "FRONTEND_BUILD",
+  "BACKEND_TESTS",
+  "FRONTEND_TESTS",
 ];
+const HARD_COMMAND_STAGES = new Set<VerificationCommandStage>([
+  "BACKEND_COMPILE",
+  "FRONTEND_TYPECHECK",
+  "FRONTEND_BUILD",
+]);
+const SOFT_COMMAND_STAGES = new Set<VerificationCommandStage>(["BACKEND_TESTS", "FRONTEND_TESTS"]);
+
+// Mirrors the worker's command stages so skipped command stages carry the same
+// hard-gate flags as when they actually run.
+const SKIPPABLE_COMMAND_STAGES: ReadonlyArray<{ stage: VerificationCommandStage; hardGate: boolean }> =
+  COMMAND_STAGE_ORDER.map((stage) => ({ stage, hardGate: HARD_COMMAND_STAGES.has(stage) }));
+
+export function selectRepairVerificationStages(
+  previousStages: QualityStageResult[],
+  changedFiles: string[],
+): VerificationCommandStage[] {
+  const selected = new Set<VerificationCommandStage>();
+  const previousByStage = new Map(previousStages.map((stage) => [stage.stage, stage]));
+  const impact = classifyRepairImpact(changedFiles);
+  if (impact.fullHard) {
+    for (const stage of HARD_COMMAND_STAGES) selected.add(stage);
+  } else {
+    if (impact.backend) selected.add("BACKEND_COMPILE");
+    if (impact.frontend) {
+      selected.add("FRONTEND_TYPECHECK");
+      selected.add("FRONTEND_BUILD");
+    }
+  }
+
+  for (const stage of HARD_COMMAND_STAGES) {
+    if (previousByStage.get(stage)?.status !== "PASSED") selected.add(stage);
+  }
+  for (const stage of SOFT_COMMAND_STAGES) {
+    const previous = previousByStage.get(stage);
+    const wasUnverified = !previous || (previous.status !== "PASSED" && Boolean(previous.blockedBy?.length));
+    const failedDirectly = previous?.status === "FAILED" || previous?.status === "CANCELLED" || previous?.status === "INFRASTRUCTURE_FAILED";
+    if (wasUnverified || failedDirectly) selected.add(stage);
+  }
+
+  if (!selected.size) {
+    for (const stage of HARD_COMMAND_STAGES) selected.add(stage);
+  }
+  return COMMAND_STAGE_ORDER.filter((stage) => selected.has(stage));
+}
+
+function classifyRepairImpact(changedFiles: string[]): { backend: boolean; frontend: boolean; fullHard: boolean } {
+  if (!changedFiles.length) return { backend: true, frontend: true, fullHard: true };
+  let backend = false;
+  let frontend = false;
+  for (const rawPath of changedFiles) {
+    const path = rawPath.replace(/\\/g, "/");
+    const buildConfig = /(^|\/)(pom\.xml|package(?:-lock)?\.json|tsconfig(?:\.[^/]*)?\.json|vite\.config\.[tj]s)$/.test(path);
+    if (buildConfig || path.startsWith("shared/")) return { backend: true, frontend: true, fullHard: true };
+    if (path.startsWith("backend/") && path.endsWith(".java")) {
+      backend = true;
+      continue;
+    }
+    if (path.startsWith("frontend/src/") && /\.(vue|ts|tsx|js|jsx)$/.test(path)) {
+      frontend = true;
+      continue;
+    }
+    return { backend: true, frontend: true, fullHard: true };
+  }
+  return { backend, frontend, fullHard: backend && frontend };
+}
+
+function mergeVerificationStages(
+  staticResult: QualityStageResult,
+  currentCommandStages: QualityStageResult[],
+  previousStages?: QualityStageResult[],
+  selectedStages?: VerificationCommandStage[],
+): QualityStageResult[] {
+  if (!selectedStages) return [staticResult, ...currentCommandStages];
+  const currentByStage = new Map(currentCommandStages.map((stage) => [stage.stage, stage]));
+  const previousByStage = new Map((previousStages || []).map((stage) => [stage.stage, stage]));
+  return [
+    staticResult,
+    ...COMMAND_STAGE_ORDER.map((stage) => {
+      const current = currentByStage.get(stage);
+      if (current) return current;
+      const previous = previousByStage.get(stage);
+      if (previous?.status === "PASSED") return previous;
+      return notReverifiedStage(stage, selectedStages);
+    }),
+  ];
+}
+
+function notReverifiedStage(stage: VerificationCommandStage, selectedStages: VerificationCommandStage[]): QualityStageResult {
+  const diagnostic = qualityDiagnostic(stage, {
+    code: "QUALITY_STAGE_NOT_REVERIFIED",
+    message: `${stage} was not selected for this targeted repair verification and has no prior passing result.`,
+    hardGate: HARD_COMMAND_STAGES.has(stage),
+    expected: "A stage can be reused only when the previous current result passed for the same staging revision lineage.",
+    repairHint: "Run a broader verification scope before writing if this stage remains unverified.",
+    repairability: "UNKNOWN",
+  });
+  return {
+    stage,
+    status: "SKIPPED",
+    hardGate: HARD_COMMAND_STAGES.has(stage),
+    summary: `Not selected for targeted repair verification. Selected stages: ${selectedStages.join(", ")}.`,
+    diagnostics: [{ ...diagnostic, classification: "BLOCKED" }],
+  };
+}
 
 /** When static validation fails, the five command stages cannot run. Emit them
  * as SKIPPED (blocked by STATIC_VALIDATION) so the report still covers all six

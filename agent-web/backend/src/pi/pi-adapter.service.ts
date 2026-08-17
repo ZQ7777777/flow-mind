@@ -160,6 +160,15 @@ export class PiAdapterService implements OnModuleDestroy {
   cancelGeneration(generationId: string): void {
     this.generationHandles.get(generationId)?.abort?.();
   }
+
+  cancelRepair(generationId: string): void {
+    this.generationHandles.get(`${generationId}:repair`)?.abort?.();
+  }
+
+  cancelReview(reviewId: string): void {
+    this.generationHandles.get(`review:${reviewId}`)?.abort?.();
+  }
+
   async runRepair(
     generationId: string,
     stagingDir: string,
@@ -470,15 +479,18 @@ export class PiAdapterService implements OnModuleDestroy {
 
   private createFakeRepairHandle(generationId: string, callbacks: GenerationPiCallbacks): SessionHandle {
     const sessionFile = join(this.database.dataDir, "pi-sessions", `${generationId}.fake.jsonl`);
+    let cancelled = false;
     return {
       sessionId: `pi_fake_repair_${generationId}`,
       sessionFile,
       prompt: async () => {
         callbacks.onEvent("agent.started", { purpose: "REPAIR" });
+        if (cancelled) throw new Error("repair cancelled");
         callbacks.reportComplete(callbacks.listStaged());
         callbacks.onEvent("agent.completed", { purpose: "REPAIR" });
       },
       messages: () => [],
+      abort: () => { cancelled = true; },
       dispose: () => undefined,
     };
   }

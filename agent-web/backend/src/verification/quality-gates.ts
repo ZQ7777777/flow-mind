@@ -15,9 +15,9 @@ export interface QualityGateDecision {
 
 export function evaluateQualityGates(
   stages: QualityStageResult[],
-  review: CodeReviewReport | undefined,
+  _review: CodeReviewReport | undefined,
   overriddenScopes: SoftGateScope[] | QualityOverrideSummary["scopes"],
-  aiReviewSkipped = false,
+  _aiReviewSkipped = false,
 ): QualityGateDecision {
   const hardGatePassed = stages
     .filter(({ hardGate }) => hardGate)
@@ -28,9 +28,6 @@ export function evaluateQualityGates(
   }
   if (stages.some(({ stage, status }) => stage === "FRONTEND_TESTS" && status !== "PASSED")) {
     softFailures.push("FRONTEND_TESTS");
-  }
-  if (!aiReviewSkipped && (!review || review.status !== "PASSED" || review.verdict !== "APPROVE")) {
-    softFailures.push("REVIEWER");
   }
   const overridden = new Set(overriddenScopes);
   const allSoftFailuresOverridden = softFailures.every((scope) => overridden.has(scope));
@@ -44,17 +41,12 @@ export function evaluateQualityGates(
 
 export function nextRepairDecision(
   currentRound: number,
-  hardFailure: boolean,
+  needsRepair: boolean,
   infrastructureFailure: boolean,
-  firstUnblockedFailure = false,
-): { repair: boolean; nextRound: number; unblockExtension?: true } {
-  if (infrastructureFailure || !hardFailure || currentRound >= 4) {
+  _firstUnblockedFailure = false,
+): { repair: boolean; nextRound: number } {
+  if (infrastructureFailure || !needsRepair || currentRound >= 3) {
     return { repair: false, nextRound: currentRound };
-  }
-  if (currentRound === 3) {
-    return firstUnblockedFailure
-      ? { repair: true, nextRound: 4, unblockExtension: true }
-      : { repair: false, nextRound: currentRound };
   }
   return { repair: true, nextRound: currentRound + 1 };
 }

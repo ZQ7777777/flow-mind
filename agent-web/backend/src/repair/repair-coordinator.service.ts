@@ -39,6 +39,14 @@ interface PreviousRepairAttempt {
   changedFiles: string[];
   resolvedDiagnosticIds: string[];
   unresolvedDiagnosticIds: string[];
+  previousDiagnosticIds: string[];
+  outcome?: RepairAttemptSummary["outcome"];
+  failureCode?: RepairAttemptSummary["failureCode"];
+}
+
+interface RelatedSourceFile {
+  relativePath: string;
+  content: string;
 }
 
 @Injectable()
@@ -57,6 +65,7 @@ export class RepairCoordinatorService {
     verificationRunId: string,
     stages: QualityStageResult[],
     review?: CodeReviewReport,
+    signal?: AbortSignal,
   ): Promise<RepairAttemptResult> {
     if (!generation.pi_session_file) return { repaired: false, infrastructureFailure: true };
     const previousRound = generation.repair_round;
@@ -92,6 +101,7 @@ export class RepairCoordinatorService {
       ...currentDiagnostics
       .filter(({ repairability, derivedFrom, classification }) => !derivedFrom?.length && classification !== "BLOCKED"
         && (repairability === "CODE_ACTIONABLE" || repairability === "UNKNOWN" || !repairability))
+      .filter(isCurrentGenerationRepairDiagnostic)
       .map(({ diagnosticId, relativePath }) => ({ diagnosticId, relativePath })),
       ...(currentReview?.issues
         .filter(({ repairability }) => repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE")
@@ -101,6 +111,7 @@ export class RepairCoordinatorService {
     const beforeContents = new Map(this.staging.list(generation).map((path) => [path, this.staging.read(generation, path).content]));
     const beforeHashes = new Map([...beforeContents].map(([path, content]) => [path, sha256(content)]));
     const previousAttempt = this.previousAttempt(generation.id, allDiagnosticIds);
+    const relatedSource = relatedSourceFiles(beforeContents, currentStages, currentReview);
     let reported = false;
     let reportedFiles: string[] = [];
     let resolutions: RepairResolution[] = [];
@@ -129,6 +140,7 @@ export class RepairCoordinatorService {
       },
     };
     try {
+      if (signal?.aborted) throw new Error("quality gate cancelled");
       await this.pi.runRepair(
         generation.id,
         generation.staging_dir,
@@ -137,18 +149,18 @@ export class RepairCoordinatorService {
           generationId: generation.id,
           generationRevision: generation.generation_revision,
           verificationRunId,
-        }, previousAttempt),
+        }, previousAttempt, relatedSource),
         callbacks,
       );
+      if (signal?.aborted) throw new Error("quality gate cancelled");
       if (modelError) throw modelError;
       if (!reported) throw new Error("repair session ended without report_repair_complete");
       const current = this.requiredRepairing(generation.id);
       const actualFiles = this.staging.list(current).sort();
       const changedFiles = actualFiles.filter((path) => beforeHashes.get(path) !== sha256(this.staging.read(current, path).content));
       const reportedSet = [...new Set(reportedFiles)].sort();
-      const protocolValid = sameStringSet(reportedSet, actualFiles)
-        && validateRepairReport(actionableById, changedFiles, resolutions);
-      if (!changedFiles.length || !protocolValid) {
+      const fileSetValid = sameStringSet(reportedSet, actualFiles);
+      if (!changedFiles.length || !fileSetValid) {
         const failureCode = changedFiles.length ? "REPAIR_PROTOCOL_INVALID" : "REPAIR_NO_EFFECT";
         if (changedFiles.length) {
           for (const [path, content] of beforeContents) this.staging.writeDuringRepair(current, path, content);
@@ -165,10 +177,24 @@ export class RepairCoordinatorService {
         );
         return { repaired: false, infrastructureFailure: false, noEffect: true, failureCode, changedFiles };
       }
+      const protocolValid = validateRepairReport(actionableById, changedFiles, resolutions);
       this.staging.completeRepair(current, reportedFiles);
-      this.recordAttempt(generation.id, verificationRunId, nextRound, allDiagnosticIds, changedFiles, resolutions, "CHANGED");
+      this.recordAttempt(
+        generation.id,
+        verificationRunId,
+        nextRound,
+        allDiagnosticIds,
+        changedFiles,
+        protocolValid ? resolutions : [],
+        "CHANGED",
+      );
       return { repaired: true, infrastructureFailure: false, changedFiles };
     } catch {
+      if (signal?.aborted) {
+        const current = this.database.getGeneration(generation.id) || generation;
+        this.staging.restoreRepairSnapshot(current, beforeContents);
+        return { repaired: false, infrastructureFailure: false, changedFiles: [] };
+      }
       const failedAt = new Date().toISOString();
       const repairing = this.database.getGeneration(generation.id);
       if (repairing?.status === "REPAIRING") {
@@ -187,6 +213,10 @@ export class RepairCoordinatorService {
       });
       return { repaired: false, infrastructureFailure: true };
     }
+  }
+
+  cancel(generationId: string): void {
+    this.pi.cancelRepair(generationId);
   }
 
   history(generationId: string): RepairAttemptSummary[] {
@@ -214,6 +244,9 @@ export class RepairCoordinatorService {
       changedFiles: previous.changedFiles,
       resolvedDiagnosticIds: previous.diagnosticIds.filter((id) => !currentIds.has(id)),
       unresolvedDiagnosticIds: previous.diagnosticIds.filter((id) => currentIds.has(id)),
+      previousDiagnosticIds: previous.diagnosticIds,
+      outcome: previous.outcome,
+      failureCode: previous.failureCode,
     };
   }
 
@@ -296,29 +329,56 @@ export function buildRepairPrompt(
     verificationRunId: "legacy-verification",
   },
   previousAttempt?: PreviousRepairAttempt,
+  sourceContext: RelatedSourceFile[] = [],
 ): string {
   const failedStages = stages.filter(({ status }) => status !== "PASSED");
   const diagnostics = boundRepairDiagnostics(failedStages.flatMap(({ diagnostics }) => diagnostics));
+  const actionableDiagnostics = diagnostics.filter(({ repairability, derivedFrom, classification }) =>
+    !derivedFrom?.length && classification !== "BLOCKED"
+    && repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE")
+    .filter(isCurrentGenerationRepairDiagnostic);
+  const diagnosticDelta = previousAttempt ? repairDiagnosticDelta(previousAttempt, diagnostics) : undefined;
+  const ineffectiveRepairSignals = previousAttempt && diagnosticDelta
+    ? repairIneffectiveSignals(previousAttempt, diagnosticDelta, diagnostics.length)
+    : undefined;
   const brief = {
     ...context,
     round,
-    actionableDiagnostics: diagnostics.filter(({ repairability, derivedFrom, classification }) =>
-      !derivedFrom?.length && classification !== "BLOCKED"
-      && repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE"),
+    failedStages: failedStages.map(({ stage, status, hardGate, summary, command, exitCode, diagnostics: stageDiagnostics }) => ({
+      stage,
+      status,
+      hardGate,
+      summary,
+      command,
+      exitCode,
+      diagnosticIds: stageDiagnostics.map(({ diagnosticId }) => diagnosticId).filter(Boolean),
+    })),
+    actionableDiagnostics,
     derivedDiagnostics: diagnostics.filter(({ derivedFrom }) => Boolean(derivedFrom?.length)),
-    blockedDiagnostics: diagnostics.filter(({ repairability, classification }) =>
-      classification === "BLOCKED" || repairability === "INFRASTRUCTURE" || repairability === "PROTECTED_FILE"),
+    blockedDiagnostics: diagnostics.filter((diagnostic) =>
+      diagnostic.classification === "BLOCKED"
+      || diagnostic.repairability === "INFRASTRUCTURE"
+      || diagnostic.repairability === "PROTECTED_FILE"
+      || !isCurrentGenerationRepairDiagnostic(diagnostic)),
     reviewIssues: review?.issues.filter(({ repairability }) =>
       repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE") || [],
     blockedReviewIssues: review?.issues.filter(({ repairability }) =>
       repairability === "INFRASTRUCTURE" || repairability === "PROTECTED_FILE") || [],
+    relatedSourceFiles: boundRelatedSourceFiles(sourceContext),
     previousAttempt,
+    diagnosticDelta,
+    ineffectiveRepairSignals,
     repeatedDiagnostics: previousAttempt
       ? diagnostics.filter(({ diagnosticId }) => diagnosticId && previousAttempt.unresolvedDiagnosticIds.includes(diagnosticId))
-        .map(({ diagnosticId, code, relativePath, actual, expected, evidence, repairHint, acceptedForms }) => ({
+        .map(({ diagnosticId, stage, code, relativePath, line, column, actual, expected, evidence, command, exitCode, repairHint, acceptedForms }) => ({
           diagnosticId,
+          stage,
           code,
           relativePath,
+          line,
+          column,
+          command,
+          exitCode,
           actual,
           expected,
           evidence,
@@ -333,11 +393,14 @@ export function buildRepairPrompt(
     "Modify only existing Manifest-managed staged files. Do not add or delete files.",
     "Resolve all failed hard and soft quality stages and every reviewer issue, preserve the confirmed requirement, then call report_repair_complete.",
     "BACKEND_TESTS and FRONTEND_TESTS are actionable failures even though they are soft gates; do not stop after compilation, typecheck, or build passes.",
-    "Before editing, read every referenced staged file. If evidence is insufficient, call read_verification_diagnostic with its diagnosticId.",
+    "For each actionable diagnostic, first read the relatedSourceFiles entry or the referenced staged file, then inspect any directly related types, DTOs, interfaces, tests, or callers before editing.",
+    "If a diagnostic reports method not found, constructor mismatch, cannot find symbol, incompatible types, property missing, or argument mismatch, re-check the actual API, DTO, imports, dependencies, and language constraints before editing; do not guess signatures.",
+    "Use command, exitCode, file, line, column, code, expected, actual, and evidence as the repair checklist for each diagnostic.",
+    "Do not delete business logic, validation, or exception handling; do not comment out code, skip tests, disable rules, change commands, or weaken quality gates.",
     "Follow expected, repairHint, and acceptedForms exactly. Make the smallest relevant changes and never weaken tests.",
-    "If repeatedDiagnostics is non-empty, compare it with previousAttempt.changedFiles and fix the explicitly remaining subchecks; do not repeat the same syntactic guess.",
+    "If repeatedDiagnostics or ineffectiveRepairSignals.requiresRootCauseRecheck is non-empty, compare previousAttempt.changedFiles with the explicitly remaining subchecks, then stop continuing the same edit pattern: re-confirm the root cause from authoritative source, API/type definitions, imports, Maven/npm dependencies, and Java/TypeScript version limits.",
     "Report one RESOLVED resolution for every actionable diagnostic and actionable reviewer diagnostic. This is a repair claim only; the next verification run decides whether the diagnostic is actually RESOLVED. Do not claim blocked infrastructure, protected-file, or derived findings are resolved.",
-    "Before editing, use the authoritative references below. Never guess Java packages, types, getters, or setters.",
+    "Before editing, use the authoritative references below. Never guess Java packages, types, getters, setters, Vue props, or TypeScript payload shapes.",
     `Authoritative platform runtime API reference:\n${apiReferences?.platformRuntime || "Unavailable in legacy prompt test."}`,
     `Authoritative trusted user context source:\n${apiReferences?.trustedUserContext || "Unavailable in legacy prompt test."}`,
     `Current Repair Brief:\n${JSON.stringify(brief)}`,
@@ -353,9 +416,12 @@ function attachVerificationContext(
     ...stage,
     diagnostics: stage.diagnostics.map((item) => {
       const normalized = item.diagnosticId && item.stage ? item : qualityDiagnostic(stage.stage, item);
+      const externalScoped = normalized.scope === "PRE_EXISTING" || normalized.scope === "INTEGRATION_IMPACT";
       return {
         ...normalized,
-        relativePath: canonicalManifestPath(normalized.relativePath, manifestPaths),
+        relativePath: externalScoped
+          ? normalized.relativePath?.replace(/\\/g, "/")
+          : canonicalManifestPath(normalized.relativePath, manifestPaths),
         verificationRunId,
       };
     }),
@@ -364,15 +430,19 @@ function attachVerificationContext(
 
 function normalizeReviewIssues(issues: CodeReviewIssue[], manifestPaths: string[]): CodeReviewIssue[] {
   return issues.map((issue) => {
+    const manifestPath = canonicalManifestPath(issue.relativePath, manifestPaths);
+    const externalPath = issue.relativePath && !manifestPath
+      ? issue.relativePath.replace(/\\/g, "/")
+      : undefined;
     const diagnostic = qualityDiagnostic("STATIC_VALIDATION", {
       code: `REVIEW_${issue.code}`,
       message: issue.message,
       hardGate: issue.severity === "BLOCKING",
-      relativePath: canonicalManifestPath(issue.relativePath, manifestPaths),
+      relativePath: manifestPath || externalPath,
       line: issue.line,
       evidence: issue.evidence || `${issue.title}: ${issue.message}`,
       repairHint: issue.repairHint || "Address the reviewer finding with the smallest change that preserves the confirmed requirement.",
-      repairability: issue.repairability || "CODE_ACTIONABLE",
+      repairability: externalPath ? "PROTECTED_FILE" : issue.repairability || "CODE_ACTIONABLE",
     });
     return {
       ...issue,
@@ -414,9 +484,85 @@ function validateRepairReport(
   });
 }
 
+function isCurrentGenerationRepairDiagnostic(diagnostic: QualityDiagnostic): boolean {
+  return !diagnostic.scope || diagnostic.scope === "CURRENT_GENERATION";
+}
+
 function sameStringSet(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
+
+function relatedSourceFiles(
+  beforeContents: Map<string, string>,
+  stages: QualityStageResult[],
+  review?: CodeReviewReport,
+): RelatedSourceFile[] {
+  const paths = new Set<string>();
+  for (const diagnostic of stages.flatMap(({ diagnostics }) => diagnostics)) {
+    if (diagnostic.relativePath) paths.add(diagnostic.relativePath);
+  }
+  for (const issue of review?.issues || []) {
+    if (issue.relativePath) paths.add(issue.relativePath);
+  }
+  return [...paths]
+    .filter((path) => beforeContents.has(path))
+    .slice(0, 8)
+    .map((relativePath) => ({
+      relativePath,
+      content: beforeContents.get(relativePath) || "",
+    }));
+}
+
+function repairDiagnosticDelta(previousAttempt: PreviousRepairAttempt, diagnostics: QualityDiagnostic[]) {
+  const currentIds = diagnostics.map(({ diagnosticId }) => diagnosticId).filter((value): value is string => Boolean(value));
+  const previousDiagnosticIds = previousAttempt.previousDiagnosticIds || [
+    ...previousAttempt.resolvedDiagnosticIds,
+    ...previousAttempt.unresolvedDiagnosticIds,
+  ];
+  const previousIds = new Set(previousDiagnosticIds);
+  return {
+    previousDiagnosticCount: previousDiagnosticIds.length,
+    currentDiagnosticCount: currentIds.length,
+    resolvedDiagnosticIds: previousAttempt.resolvedDiagnosticIds,
+    persistingDiagnosticIds: previousAttempt.unresolvedDiagnosticIds.filter((id) => currentIds.includes(id)),
+    newDiagnosticIds: currentIds.filter((id) => !previousIds.has(id)),
+  };
+}
+
+function repairIneffectiveSignals(
+  previousAttempt: PreviousRepairAttempt,
+  delta: ReturnType<typeof repairDiagnosticDelta>,
+  currentDiagnosticCount: number,
+) {
+  const sortedPrevious = [...(previousAttempt.previousDiagnosticIds || [
+    ...previousAttempt.resolvedDiagnosticIds,
+    ...previousAttempt.unresolvedDiagnosticIds,
+  ])].sort();
+  const sortedCurrent = [...delta.persistingDiagnosticIds, ...delta.newDiagnosticIds].sort();
+  const diagnosticsBasicallySame = sameStringSet(sortedPrevious, sortedCurrent)
+    || (currentDiagnosticCount > 0 && delta.persistingDiagnosticIds.length / currentDiagnosticCount >= 0.8);
+  const repairHadNoEffectiveDiff = previousAttempt.outcome === "NO_EFFECT" || previousAttempt.changedFiles.length === 0;
+  const errorCountIncreased = delta.currentDiagnosticCount > delta.previousDiagnosticCount;
+  const persistentDiagnosticsRemain = delta.persistingDiagnosticIds.length > 0;
+  return {
+    diagnosticsBasicallySame,
+    repairHadNoEffectiveDiff,
+    persistentDiagnosticIds: delta.persistingDiagnosticIds,
+    persistentDiagnosticsRemain,
+    errorCountIncreased,
+    previousOutcome: previousAttempt.outcome,
+    previousFailureCode: previousAttempt.failureCode,
+    requiresRootCauseRecheck: diagnosticsBasicallySame || persistentDiagnosticsRemain || repairHadNoEffectiveDiff || errorCountIncreased,
+  };
+}
+
+function boundRelatedSourceFiles(files: RelatedSourceFile[]): RelatedSourceFile[] {
+  return files.map(({ relativePath, content }) => ({
+    relativePath,
+    content: content.length > 8_000 ? `[earlier content omitted]\n${content.slice(-8_000)}` : content,
+  }));
+}
+
 
 function boundRepairDiagnostics(diagnostics: QualityDiagnostic[]): QualityDiagnostic[] {
   const evidenceLimit = Math.max(300, Math.floor(24_000 / Math.max(1, diagnostics.length)));

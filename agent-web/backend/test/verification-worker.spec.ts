@@ -24,8 +24,10 @@ describe("verification worker", () => {
     staging = join(root, "staging");
     write(target, "backend/pom.xml", "<project/>\n");
     write(target, "frontend/package.json", "{}\n");
+    write(target, "frontend/tsconfig.json", "{\"compilerOptions\":{\"strict\":true},\"include\":[\"src/**/*.ts\",\"src/**/*.vue\"]}\n");
     write(target, "frontend/src/api/generated/example.ts", "export const value = 'target';\n");
     write(staging, "frontend/src/api/generated/example.ts", "export const value = 'staged';\n");
+    write(staging, "backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java", "class EntryApplicationService {}\n");
     write(staging, "backend/src/test/java/com/flowmind/business/generated/EntryApplicationServiceTest.java", "class EntryApplicationServiceTest {}\n");
     write(staging, "backend/src/test/java/com/flowmind/business/generated/EntryApplicationControllerTest.java", "class EntryApplicationControllerTest {}\n");
     write(staging, "frontend/src/modules/generated/__tests__/EntryApplicationApply.test.ts", "export {};\n");
@@ -37,6 +39,13 @@ describe("verification worker", () => {
       contractVersion: "1.0",
       revision: 1,
       files: [{
+        relativePath: "backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java",
+        changeType: "ADD",
+        stagedSha256: "1".repeat(64),
+        sizeBytes: 32,
+        validationStatus: "PENDING",
+        editedByUser: false,
+      }, {
         relativePath: "frontend/src/api/generated/example.ts",
         changeType: "MODIFY",
         baseSha256: "a".repeat(64),
@@ -102,6 +111,10 @@ describe("verification worker", () => {
   it("overlays a disposable copy and runs only fixed commands", async () => {
     const commands: VerificationCommand[] = [];
     const workspaces: string[] = [];
+    let generatedTsconfig: unknown;
+    const previousMavenRepoLocal = process.env.AGENT_MAVEN_REPO_LOCAL;
+    const mavenRepoLocal = join(root, "stable repo", "repository");
+    process.env.AGENT_MAVEN_REPO_LOCAL = mavenRepoLocal;
     const execute = async (command: VerificationCommand): Promise<VerificationCommandResult> => {
       commands.push(command);
       workspaces.push(command.workspaceRoot);
@@ -111,37 +124,54 @@ describe("verification worker", () => {
       );
       expect(readFileSync(join(command.workspaceRoot, "frontend/src/api/generated/example.ts"), "utf8"))
         .toContain("staged");
+      if (command.stage === "FRONTEND_TYPECHECK") {
+        generatedTsconfig = JSON.parse(readFileSync(join(command.workspaceRoot, "frontend/tsconfig.generated.json"), "utf8"));
+      }
       return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
     };
 
     const worker = new VerificationWorkerService();
-    const result = await worker.run({
-      generationId: "generation-worker",
-      revision: 1,
-      targetRoot: target,
-      stagingDir: staging,
-      contract,
-      manifest,
-      dataDir: join(root, "data"),
-      execute,
-    });
+    let result;
+    try {
+      result = await worker.run({
+        generationId: "generation-worker",
+        revision: 1,
+        targetRoot: target,
+        stagingDir: staging,
+        contract,
+        manifest,
+        dataDir: join(root, "data"),
+        execute,
+      });
+    } finally {
+      if (previousMavenRepoLocal === undefined) delete process.env.AGENT_MAVEN_REPO_LOCAL;
+      else process.env.AGENT_MAVEN_REPO_LOCAL = previousMavenRepoLocal;
+    }
 
     const expectedCommands = process.platform === "win32"
       ? [
-        { stage: "BACKEND_COMPILE", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "mvn.cmd -q -DskipTests compile"] },
-        { stage: "BACKEND_TESTS", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "mvn.cmd -q test"] },
-        { stage: "FRONTEND_TYPECHECK", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd run typecheck"] },
-        { stage: "FRONTEND_TESTS", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd run test -- --run"] },
+        { stage: "BACKEND_COMPILE", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", `mvn.cmd -q "-Dmaven.repo.local=${mavenRepoLocal}" -DskipTests compile`] },
+        { stage: "FRONTEND_TYPECHECK", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd exec -- vue-tsc -p tsconfig.generated.json --noEmit"] },
         { stage: "FRONTEND_BUILD", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd run build"] },
+        { stage: "BACKEND_TESTS", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", `mvn.cmd -q "-Dmaven.repo.local=${mavenRepoLocal}" test`] },
+        { stage: "FRONTEND_TESTS", executable: process.env.COMSPEC || "cmd.exe", args: ["/d", "/s", "/c", "npm.cmd run test -- --run"] },
       ]
       : [
-        { stage: "BACKEND_COMPILE", executable: "mvn", args: ["-q", "-DskipTests", "compile"] },
-        { stage: "BACKEND_TESTS", executable: "mvn", args: ["-q", "test"] },
-        { stage: "FRONTEND_TYPECHECK", executable: "npm", args: ["run", "typecheck"] },
-        { stage: "FRONTEND_TESTS", executable: "npm", args: ["run", "test", "--", "--run"] },
+        { stage: "BACKEND_COMPILE", executable: "mvn", args: ["-q", `-Dmaven.repo.local=${mavenRepoLocal}`, "-DskipTests", "compile"] },
+        { stage: "FRONTEND_TYPECHECK", executable: "npm", args: ["exec", "--", "vue-tsc", "-p", "tsconfig.generated.json", "--noEmit"] },
         { stage: "FRONTEND_BUILD", executable: "npm", args: ["run", "build"] },
+        { stage: "BACKEND_TESTS", executable: "mvn", args: ["-q", `-Dmaven.repo.local=${mavenRepoLocal}`, "test"] },
+        { stage: "FRONTEND_TESTS", executable: "npm", args: ["run", "test", "--", "--run"] },
       ];
     expect(commands.map(({ stage, executable, args }) => ({ stage, executable, args }))).toEqual(expectedCommands);
+    expect(generatedTsconfig).toEqual({
+      extends: "./tsconfig.json",
+      include: [
+        "src/api/generated/example.ts",
+        "src/modules/generated/example.ts",
+        "src/modules/generated/__tests__/EntryApplicationApply.test.ts",
+      ],
+    });
     expect(result.stages.every(({ status }) => status === "PASSED")).toBe(true);
     expect(readFileSync(join(target, "frontend/src/api/generated/example.ts"), "utf8")).toContain("target");
     expect(new Set(workspaces).size).toBe(1);
@@ -211,6 +241,45 @@ describe("verification worker", () => {
     }));
   });
 
+  it("keeps Maven compiler symbol context and command metadata for repair", async () => {
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => ({
+        exitCode: command.stage === "BACKEND_COMPILE" ? 1 : 0,
+        stdout: "",
+        stderr: command.stage === "BACKEND_COMPILE"
+          ? [
+            `[ERROR] ${command.workspaceRoot}/backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java:[87,31] cannot find symbol`,
+            "[ERROR]   symbol:   method getApplicationNo()",
+            "[ERROR]   location: variable payload of type EntryApplicationRequest",
+          ].join("\n")
+          : "",
+        timedOut: false,
+        cancelled: false,
+      }),
+    });
+
+    const compile = result.stages.find(({ stage }) => stage === "BACKEND_COMPILE")!;
+    expect(compile.command).toContain("mvn");
+    expect(compile.exitCode).toBe(1);
+    expect(compile.diagnostics).toContainEqual(expect.objectContaining({
+      code: "JAVA_COMPILER_ERROR",
+      relativePath: "backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java",
+      line: 87,
+      column: 31,
+      evidence: expect.stringContaining("symbol:   method getApplicationNo()"),
+      command: expect.stringContaining("compile"),
+      exitCode: 1,
+    }));
+    expect(compile.diagnostics[0].evidence).toContain("location: variable payload of type EntryApplicationRequest");
+  });
   it("keeps a redacted actionable excerpt when command output is not recognized", async () => {
     const worker = new VerificationWorkerService();
     const result = await worker.run({
@@ -449,7 +518,7 @@ describe("verification worker", () => {
     }));
   });
 
-  it("blocks JUnit after compilation failure while continuing independent frontend gates", async () => {
+  it("enters repair after the first hard command failure and skips later gates", async () => {
     const executed: string[] = [];
     const worker = new VerificationWorkerService();
     const result = await worker.run({
@@ -469,16 +538,20 @@ describe("verification worker", () => {
     });
 
     expect(executed).not.toContain("BACKEND_TESTS");
-    expect(executed).toEqual(expect.arrayContaining(["FRONTEND_TYPECHECK", "FRONTEND_TESTS", "FRONTEND_BUILD"]));
+    expect(executed).toEqual(["BACKEND_COMPILE"]);
     expect(result.stages.find(({ stage }) => stage === "BACKEND_TESTS")).toEqual(expect.objectContaining({
+      status: "SKIPPED",
+      blockedBy: ["BACKEND_COMPILE"],
+    }));
+    expect(result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")).toEqual(expect.objectContaining({
       status: "SKIPPED",
       blockedBy: ["BACKEND_COMPILE"],
     }));
   });
 
-  it("marks build type diagnostics as derived from matching typecheck diagnostics", async () => {
+  it("runs only the selected command stages for targeted repair reverify", async () => {
+    const executed: string[] = [];
     const worker = new VerificationWorkerService();
-    const typeError = "src/modules/generated/EntryApplicationApply.vue(65,24): error TS2307: Cannot find module '../../api/generated/entry-application'.";
     const result = await worker.run({
       generationId: "generation-worker",
       revision: 1,
@@ -487,14 +560,112 @@ describe("verification worker", () => {
       contract,
       manifest,
       dataDir: join(root, "data"),
-      execute: async (command) => ["FRONTEND_TYPECHECK", "FRONTEND_BUILD"].includes(command.stage)
+      stages: ["FRONTEND_TYPECHECK", "FRONTEND_BUILD", "FRONTEND_TESTS"],
+      execute: async (command) => {
+        executed.push(command.stage);
+        return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    expect(executed).toEqual(["FRONTEND_TYPECHECK", "FRONTEND_BUILD", "FRONTEND_TESTS"]);
+    expect(result.stages.map(({ stage }) => stage)).toEqual(executed);
+  });
+
+  it("skips frontend build after typecheck hard-gate failure", async () => {
+    const worker = new VerificationWorkerService();
+    const typeError = "src/modules/generated/example.ts(65,24): error TS2307: Cannot find module '../../api/generated/entry-application'.";
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => command.stage === "FRONTEND_TYPECHECK"
         ? { exitCode: 1, stdout: typeError, stderr: "", timedOut: false, cancelled: false }
         : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false },
     });
-    const typecheck = result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")!.diagnostics[0];
-    const build = result.stages.find(({ stage }) => stage === "FRONTEND_BUILD")!.diagnostics[0];
+    const typecheck = result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")!;
+    const build = result.stages.find(({ stage }) => stage === "FRONTEND_BUILD")!;
 
-    expect(build.derivedFrom).toEqual([typecheck.fingerprint]);
+    expect(typecheck.status).toBe("FAILED");
+    expect(build).toEqual(expect.objectContaining({
+      status: "SKIPPED",
+      blockedBy: ["FRONTEND_TYPECHECK"],
+    }));
+  });
+
+  it("keeps unrelated external TypeScript diagnostics as pre-existing without blocking generated gates", async () => {
+    const executed: string[] = [];
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        executed.push(command.stage);
+        return command.stage === "FRONTEND_TYPECHECK"
+          ? {
+            exitCode: 2,
+            stdout: "src/views/LegacyView.vue(3,5): error TS2322: Type 'string' is not assignable to type 'number'.",
+            stderr: "",
+            timedOut: false,
+            cancelled: false,
+          }
+          : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    const typecheck = result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")!;
+    expect(typecheck.status).toBe("PASSED");
+    expect(typecheck.summary).toContain("Command exited with code 2");
+    expect(typecheck.diagnostics).toContainEqual(expect.objectContaining({
+      code: "TS2322",
+      relativePath: "frontend/src/views/LegacyView.vue",
+      scope: "PRE_EXISTING",
+    }));
+    expect(executed).toContain("FRONTEND_BUILD");
+  });
+
+  it("marks external diagnostics from files directly importing Manifest files as integration impact", async () => {
+    write(target, "frontend/src/views/LegacyView.vue", [
+      "<script setup lang=\"ts\">",
+      "import { value } from \"../api/generated/example\";",
+      "const legacyValue: number = value;",
+      "</script>",
+    ].join("\n"));
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-worker",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => command.stage === "FRONTEND_TYPECHECK"
+        ? {
+          exitCode: 2,
+          stdout: "src/views/LegacyView.vue(3,7): error TS2322: Type 'string' is not assignable to type 'number'.",
+          stderr: "",
+          timedOut: false,
+          cancelled: false,
+        }
+        : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false },
+    });
+
+    const typecheck = result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")!;
+    expect(typecheck.status).toBe("PASSED");
+    expect(typecheck.diagnostics).toContainEqual(expect.objectContaining({
+      code: "TS2322",
+      relativePath: "frontend/src/views/LegacyView.vue",
+      scope: "INTEGRATION_IMPACT",
+    }));
   });
 });
 

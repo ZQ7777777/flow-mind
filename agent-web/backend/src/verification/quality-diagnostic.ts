@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   DiagnosticRepairability,
+  DiagnosticScope,
   QualityDiagnostic,
   QualitySeverity,
   QualityStageName,
@@ -19,11 +20,14 @@ export interface DiagnosticDetails {
   actual?: string;
   expected?: string;
   evidence?: string;
+  command?: string;
+  exitCode?: number;
   repairHint?: string;
   acceptedForms?: string[];
   unsupportedForms?: string[];
   repairability?: DiagnosticRepairability;
   verificationRunId?: string;
+  scope?: DiagnosticScope;
 }
 
 export function qualityDiagnostic(stage: QualityStageName, details: DiagnosticDetails): QualityDiagnostic {
@@ -46,6 +50,7 @@ export function qualityDiagnostic(stage: QualityStageName, details: DiagnosticDe
     diagnosticId,
     fingerprint,
     classification: "NEW",
+    scope: details.scope,
     stage,
     code: details.code,
     message: details.message,
@@ -57,6 +62,8 @@ export function qualityDiagnostic(stage: QualityStageName, details: DiagnosticDe
     actual: details.actual,
     expected: details.expected,
     evidence,
+    command: details.command,
+    exitCode: details.exitCode,
     repairHint: details.repairHint,
     acceptedForms: details.acceptedForms,
     unsupportedForms: details.unsupportedForms,

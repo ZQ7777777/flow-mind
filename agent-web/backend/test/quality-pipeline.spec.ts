@@ -16,6 +16,7 @@ import {
   collectResolvedDiagnostics,
   hasFirstUnblockedFailure,
   QualityPipelineService,
+  selectRepairVerificationStages,
 } from "../src/verification/quality-pipeline.service.js";
 import { RepairCoordinatorService } from "../src/repair/repair-coordinator.service.js";
 import { createGenerationTarget, seedActiveWorkflow } from "./generation-fixture.js";
@@ -100,6 +101,47 @@ describe("M4 quality pipeline integration", () => {
     ]);
     expect(hasFirstUnblockedFailure(current, [previous])).toBe(true);
     expect(hasFirstUnblockedFailure(current, [previous, current])).toBe(false);
+  });
+
+  it("selects the smallest safe command reverify scope after repair", () => {
+    const passedHardStages = [
+      { stage: "BACKEND_COMPILE" as const, status: "PASSED" as const, hardGate: true, summary: "passed", diagnostics: [] },
+      { stage: "FRONTEND_TYPECHECK" as const, status: "PASSED" as const, hardGate: true, summary: "passed", diagnostics: [] },
+      { stage: "FRONTEND_BUILD" as const, status: "PASSED" as const, hardGate: true, summary: "passed", diagnostics: [] },
+    ];
+
+    expect(selectRepairVerificationStages([
+      ...passedHardStages,
+      { stage: "BACKEND_TESTS" as const, status: "PASSED" as const, hardGate: false, summary: "passed", diagnostics: [] },
+      { stage: "FRONTEND_TESTS" as const, status: "FAILED" as const, hardGate: false, summary: "failed", diagnostics: [] },
+    ], ["frontend/src/modules/generated/EntryApplicationApply.vue"])).toEqual([
+      "FRONTEND_TYPECHECK",
+      "FRONTEND_BUILD",
+      "FRONTEND_TESTS",
+    ]);
+
+    expect(selectRepairVerificationStages([
+      ...passedHardStages,
+      { stage: "BACKEND_TESTS" as const, status: "FAILED" as const, hardGate: false, summary: "failed", diagnostics: [] },
+      { stage: "FRONTEND_TESTS" as const, status: "PASSED" as const, hardGate: false, summary: "passed", diagnostics: [] },
+    ], ["backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java"])).toEqual([
+      "BACKEND_COMPILE",
+      "BACKEND_TESTS",
+    ]);
+
+    expect(selectRepairVerificationStages([
+      { stage: "BACKEND_COMPILE" as const, status: "FAILED" as const, hardGate: true, summary: "failed", diagnostics: [] },
+      { stage: "FRONTEND_TYPECHECK" as const, status: "SKIPPED" as const, hardGate: true, summary: "blocked", diagnostics: [], blockedBy: ["BACKEND_COMPILE" as const] },
+      { stage: "FRONTEND_BUILD" as const, status: "SKIPPED" as const, hardGate: true, summary: "blocked", diagnostics: [], blockedBy: ["BACKEND_COMPILE" as const] },
+      { stage: "BACKEND_TESTS" as const, status: "SKIPPED" as const, hardGate: false, summary: "blocked", diagnostics: [], blockedBy: ["BACKEND_COMPILE" as const] },
+      { stage: "FRONTEND_TESTS" as const, status: "SKIPPED" as const, hardGate: false, summary: "blocked", diagnostics: [], blockedBy: ["BACKEND_COMPILE" as const] },
+    ], ["backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java"])).toEqual([
+      "BACKEND_COMPILE",
+      "FRONTEND_TYPECHECK",
+      "FRONTEND_BUILD",
+      "BACKEND_TESTS",
+      "FRONTEND_TESTS",
+    ]);
   });
 
   beforeEach(() => {
@@ -195,6 +237,94 @@ describe("M4 quality pipeline integration", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     throw new Error("skipped-review quality pipeline timed out");
+  });
+
+  it("forces reviewer reporting for integration impact while preserving the automatic write gate", async () => {
+    const worker = {
+      run: vi.fn(async () => ({
+        runId: "worker-integration-impact",
+        workspaceRoot: join(root, "worker"),
+        logDir: join(root, "logs"),
+        infrastructureFailed: false,
+        stages: [
+          { stage: "BACKEND_COMPILE" as const, status: "PASSED" as const, hardGate: true, summary: "passed", diagnostics: [] },
+          {
+            stage: "FRONTEND_TYPECHECK" as const,
+            status: "PASSED" as const,
+            hardGate: true,
+            summary: "Command exited with code 2; only external diagnostics were found.",
+            diagnostics: [{
+              code: "TS2322",
+              message: "Legacy caller expects the old generated payload shape.",
+              severity: "ERROR" as const,
+              hardGate: true,
+              relativePath: "frontend/src/views/LegacyView.vue",
+              scope: "INTEGRATION_IMPACT",
+            } as any],
+          },
+          { stage: "FRONTEND_BUILD" as const, status: "PASSED" as const, hardGate: true, summary: "passed", diagnostics: [] },
+          { stage: "BACKEND_TESTS" as const, status: "PASSED" as const, hardGate: false, summary: "passed", diagnostics: [] },
+          { stage: "FRONTEND_TESTS" as const, status: "PASSED" as const, hardGate: false, summary: "passed", diagnostics: [] },
+        ],
+      })),
+    } as unknown as VerificationWorkerService;
+    const reviewer = {
+      review: vi.fn(async () => ({
+        reviewId: "review-integration-impact",
+        status: "FAILED" as const,
+        verdict: "CHANGES_REQUESTED" as const,
+        summary: "Integration impact requires manual judgment.",
+        issues: [{
+          code: "INTEGRATION_IMPACT",
+          title: "Legacy caller impact",
+          message: "Review before writing.",
+          severity: "WARNING" as const,
+          relativePath: "frontend/src/views/LegacyView.vue",
+        }],
+        createdAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      })),
+      cancel: vi.fn(),
+    } as unknown as ReviewerService;
+    quality = new QualityPipelineService(
+      database, staging, targets, new StaticValidatorService(), worker, reviewer, events,
+    );
+    generation = new GenerationService(database, targets, staging, pi, events, quality);
+    const target = createGenerationTarget(root);
+    seedActiveWorkflow(database, "session-integration-impact", target);
+    const started = generation.start("session-integration-impact", user, 0, "start-integration-impact", target);
+    await waitForGeneratedReview("session-integration-impact", started.generationId);
+    generation.startQuality(
+      "session-integration-impact",
+      started.generationId,
+      user,
+      database.getSession("session-integration-impact")!.row_version,
+      1,
+      true,
+      "quality-integration-impact",
+    );
+
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const summary = generation.get("session-integration-impact", started.generationId, user);
+      if (summary.status === "REVIEW" && summary.quality) {
+        expect(reviewer.review).toHaveBeenCalledOnce();
+        expect(summary.quality.review).toEqual(expect.objectContaining({
+          verdict: "CHANGES_REQUESTED",
+          summary: "Integration impact requires manual judgment.",
+        }));
+        expect(summary.quality).toEqual(expect.objectContaining({
+          aiReviewSkipped: false,
+          hardGatePassed: true,
+          overrideRequired: false,
+          canWrite: true,
+        }));
+        return;
+      }
+      if (summary.status === "FAILED") throw new Error(summary.lastError?.message);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("integration-impact quality pipeline timed out");
   });
   it("resumes the Generator Session and fully verifies a repaired revision", async () => {
     const realStatic = new StaticValidatorService();
@@ -326,36 +456,46 @@ describe("M4 quality pipeline integration", () => {
     }));
     expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_verification_run WHERE generation_id = ?")
       .get(started.generationId)).toEqual({ count: 1 });
-    expect(workerRun).toHaveBeenCalledOnce();
+    expect(workerRun).not.toHaveBeenCalled();
   });
 
-  it("keeps a protocol-invalid repair visible when only a soft gate failed", async () => {
+  it("continues verification when repair changes files but reports incomplete resolutions", async () => {
+    let workerCalls = 0;
     const worker = {
-      run: vi.fn(async () => ({
-        runId: "worker-soft-failure",
-        workspaceRoot: join(root, "worker"),
-        logDir: join(root, "logs"),
-        infrastructureFailed: false,
-        stages: [
-          ["BACKEND_COMPILE", true, "PASSED"],
-          ["BACKEND_TESTS", false, "PASSED"],
-          ["FRONTEND_TYPECHECK", true, "PASSED"],
-          ["FRONTEND_TESTS", false, "FAILED"],
-          ["FRONTEND_BUILD", true, "PASSED"],
-        ].map(([stage, hardGate, status]) => ({
-          stage,
-          hardGate,
-          status,
-          summary: status === "FAILED" ? "Vitest failed." : "Passed.",
-          diagnostics: status === "FAILED" ? [{
-            code: "VITEST_TEST_FAILURE",
-            message: "The generated form test failed.",
-            severity: "ERROR" as const,
-            hardGate: false,
-            relativePath: "EntryApplicationApply.test.ts",
-          }] : [],
-        })),
-      })),
+      run: vi.fn(async () => {
+        workerCalls += 1;
+        return {
+          runId: `worker-soft-failure-${workerCalls}`,
+          workspaceRoot: join(root, "worker"),
+          logDir: join(root, "logs"),
+          infrastructureFailed: false,
+          stages: (workerCalls === 1
+            ? [
+                ["BACKEND_COMPILE", true, "PASSED"],
+                ["BACKEND_TESTS", false, "PASSED"],
+                ["FRONTEND_TYPECHECK", true, "PASSED"],
+                ["FRONTEND_TESTS", false, "FAILED"],
+                ["FRONTEND_BUILD", true, "PASSED"],
+              ]
+            : [
+                ["FRONTEND_TYPECHECK", true, "PASSED"],
+                ["FRONTEND_BUILD", true, "PASSED"],
+                ["FRONTEND_TESTS", false, "PASSED"],
+              ]).map(([stage, hardGate, status]) => ({
+                stage,
+                hardGate,
+                status,
+                summary: status === "FAILED" ? "Vitest failed." : "Passed.",
+                diagnostics: status === "FAILED" ? [{
+                  code: "VITEST_TEST_FAILURE",
+                  message: "The generated form test failed.",
+                  severity: "ERROR" as const,
+                  hardGate: false,
+                  relativePath: "EntryApplicationApply.test.ts",
+                }] : [],
+              })),
+        };
+      }),
     } as unknown as VerificationWorkerService;
     const repair = new RepairCoordinatorService(database, targets, staging, pi, events);
     quality = new QualityPipelineService(
@@ -387,18 +527,19 @@ describe("M4 quality pipeline integration", () => {
     while (Date.now() < deadline) {
       const summary = generation.get("session-protocol-invalid", started.generationId, user);
       if (summary.status === "REVIEW" && summary.quality) {
-        expect(summary.lastError?.code).toBe("REPAIR_PROTOCOL_INVALID");
+        expect(summary.lastError).toBeUndefined();
         expect(summary.quality).toEqual(expect.objectContaining({
           hardGatePassed: true,
-          canWrite: false,
+          canWrite: true,
           repairAttempts: [expect.objectContaining({
-            outcome: "NO_EFFECT",
-            failureCode: "REPAIR_PROTOCOL_INVALID",
+            outcome: "CHANGED",
             changedFiles: [expect.stringMatching(/EntryApplicationApply\.spec\.ts$/)],
           })],
         }));
+        expect(summary.quality.repairAttempts![0].failureCode).toBeUndefined();
+        expect(worker.run).toHaveBeenCalledTimes(2);
         expect(staging.read(database.getGeneration(started.generationId)!, summary.quality.repairAttempts![0].changedFiles[0]).content)
-          .not.toContain("valid change with invalid report");
+          .toContain("valid change with invalid report");
         return;
       }
       if (summary.status === "FAILED") throw new Error(summary.lastError?.message);

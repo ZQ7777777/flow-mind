@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, watch } from "vue";
+import { ElMessage } from "element-plus";
 import { useWorkflowStore, type GenerationLogEntry } from "../stores/workflow";
 import { useStickToBottom } from "../composables/useStickToBottom";
 import { useResizableHeight } from "../composables/useResizableHeight";
@@ -46,6 +47,7 @@ const subPhase = computed(() => {
 });
 
 const runningCount = computed(() => store.qualityLog.filter((entry) => entry.status === "running").length);
+const canStopQuality = computed(() => store.allowedActions.includes("STOP_QUALITY"));
 
 function stageClass(status: string): string {
   if (status === "RUNNING") return "running";
@@ -57,6 +59,13 @@ function stageClass(status: string): string {
 
 function stageTag(status: string): string {
   return STAGE_TAGS[status] || status;
+}
+
+async function stopQuality(): Promise<void> {
+  try {
+    await store.stopGenerationQuality();
+    ElMessage.success("质量门禁已终止，可重新启动");
+  } catch { /* store exposes error */ }
 }
 
 function toolLabel(entry: GenerationLogEntry): string {
@@ -82,6 +91,7 @@ const { height: reasoningHeight, startResize: startReasoningResize, resizeByKeyb
     <header class="qp-head">
       <span class="gp-spinner" aria-hidden="true"></span>
       <strong>质量门禁审查中</strong>
+      <el-button v-if="canStopQuality" size="small" type="danger" plain :loading="store.busy" @click="stopQuality">停止质量门禁</el-button>
       <span class="gp-stats">{{ subPhase }}<span v-if="runningCount"> · {{ runningCount }} 进行中</span></span>
     </header>
 

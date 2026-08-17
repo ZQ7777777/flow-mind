@@ -59,6 +59,14 @@ export class StagingService {
     this.write(generation, relativePath, content);
   }
 
+  restoreRepairSnapshot(generation: GenerationRow, contents: Map<string, string>): void {
+    const manifestPaths = parseManifest(generation).files.map(({ relativePath }) => relativePath);
+    for (const relativePath of manifestPaths) {
+      const content = contents.get(relativePath);
+      if (content !== undefined) this.write(generation, relativePath, content);
+    }
+  }
+
   completeRepair(generation: GenerationRow, reportedFiles: string[]): ArtifactManifest {
     if (generation.status !== "REPAIRING") throw stateError(generation);
     const previous = parseManifest(generation);

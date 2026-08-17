@@ -23,4 +23,14 @@ class BusinessPlatformConfigurationTest {
                 .isInstanceOf(RuntimeValidationException.class)
                 .hasMessage("administrator permission is required");
     }
+
+    @Test
+    void adminPermissionGuardAllowsTrustedTimeoutSystemOperator() {
+        BusinessPlatformConfiguration configuration = new BusinessPlatformConfiguration();
+        BusinessAuthorizationProvider authorizationProvider = userId -> false;
+        AdminPermissionGuard guard = configuration.adminPermissionGuard(authorizationProvider);
+
+        assertThatCode(() -> guard.assertAdminUserId("system_timeout"))
+                .doesNotThrowAnyException();
+    }
 }
