@@ -96,6 +96,9 @@ if ($WhatIf) {
 }
 
 $businessDatabase = Join-Path $repositoryRoot "data\business-flow-local.db"
+$defaultMavenRepo = Join-Path $repositoryRoot ".m2\repository"
+$escapedDefaultMavenRepo = $defaultMavenRepo.Replace("'", "''")
+$agentBackendCommand = "if (-not `$env:AGENT_MAVEN_REPO_LOCAL -and -not (Select-String -Path .env -Pattern '^\s*AGENT_MAVEN_REPO_LOCAL\s*=' -Quiet -ErrorAction SilentlyContinue)) { `$env:AGENT_MAVEN_REPO_LOCAL='$escapedDefaultMavenRepo' }; npm run dev:backend"
 $businessBaseCommand = "`$env:FLOW_MIND_PLATFORM_SQLITE_PATH='$businessDatabase'; mvn --% -f business-base/backend/pom.xml -Dspring-boot.run.profiles=local org.springframework.boot:spring-boot-maven-plugin:2.7.18:run"
 $businessBase = @{ Name = "Business Base"; Port = 8081; WorkingDirectory = $repositoryRoot; Command = $businessBaseCommand }
 if ($SkipBusinessBase) {
@@ -120,7 +123,7 @@ if ($SkipBusinessBase) {
     }
 }
 
-$backend = @{ Name = "Agent backend"; Port = 3100; WorkingDirectory = $agentWebRoot; Command = "npm run dev:backend" }
+$backend = @{ Name = "Agent backend"; Port = 3100; WorkingDirectory = $agentWebRoot; Command = $agentBackendCommand }
 $backendProcessId = Get-ListeningProcessId $backend.Port
 if ($backendProcessId) {
     if ($WhatIf) {
