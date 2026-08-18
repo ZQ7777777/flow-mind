@@ -1,4 +1,4 @@
-export interface PageResult<T> {
+﻿export interface PageResult<T> {
   records: T[];
   pageNo: number;
   pageSize: number;
@@ -30,6 +30,26 @@ export interface ProcessDefinition {
   updatedAt?: string;
 }
 
+
+export interface BusinessEntryConfig {
+  id?: string;
+  definitionId: string;
+  processCode?: string;
+  processName?: string;
+  entryDisplayName?: string;
+  entryPageUrl?: string;
+  entrySource?: "MANUAL" | "AGENT_GENERATED" | string;
+  enabled?: boolean;
+  remark?: string;
+}
+
+export interface BusinessEntryConfigPayload {
+  entryDisplayName?: string;
+  entryPageUrl?: string;
+  entrySource?: "MANUAL" | "AGENT_GENERATED" | string;
+  enabled?: boolean;
+  remark?: string;
+}
 export interface ProcessNode {
   id?: string;
   definitionId?: string;
@@ -193,3 +213,7 @@ export interface ProcessInstanceDetail extends ProcessInstance {
 
 export type TraceType = "history-tasks" | "comments" | "callback-logs" | "read-records" | "audit-logs";
 export type AdminRecord = Record<string, unknown>;
+
+
+
+

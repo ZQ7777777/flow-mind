@@ -1,4 +1,4 @@
-import { buildQuery, requestBlob, requestJson } from "./http";
+﻿import { buildQuery, requestBlob, requestJson } from "./http";
 import type {
   AttachmentUploadPayload,
   WorkflowListQuery,
@@ -9,6 +9,7 @@ import type {
   WorkflowDetailResponse,
   WorkflowListRecord,
   WorkflowListType,
+  WorkflowProcessEntryLink,
   WorkflowStartableProcessResponse,
   WorkflowUserResponse,
   WorkflowUserCandidateResponse,
@@ -53,6 +54,20 @@ export async function fetchWorkflowUsers(
 export async function fetchEntryApplicationProcess(): Promise<WorkflowStartableProcessResponse> {
   return requestJson<WorkflowStartableProcessResponse>(
     `${WORKFLOW_BASE}/startable-processes/entry-application`,
+  );
+}
+
+export async function fetchProcessEntryLinks(): Promise<WorkflowProcessEntryLink[]> {
+  return requestJson<WorkflowProcessEntryLink[]>(
+    `${WORKFLOW_BASE}/process-entry-links`,
+  );
+}
+
+export async function fetchProcessEntryLink(
+  definitionId: string,
+): Promise<WorkflowProcessEntryLink> {
+  return requestJson<WorkflowProcessEntryLink>(
+    `${WORKFLOW_BASE}/process-entry-links/${encodeURIComponent(definitionId)}`,
   );
 }
 export async function fetchWorkflowList(
@@ -213,3 +228,5 @@ async function uploadAttachment(
     body: formData,
   });
 }
+
+

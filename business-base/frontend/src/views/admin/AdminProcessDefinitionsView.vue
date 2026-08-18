@@ -1,16 +1,18 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   copyDefinition, createAttachmentTemplate, createDefinition, deleteDefinition,
+  fetchBusinessEntryConfigByDefinition,
   fetchAttachmentTemplates, fetchDefinition, fetchDefinitions, fetchProcessDefinitionOptions, operateDefinition,
-  saveDefinitionGraph, validateDefinition,
+  saveBusinessEntryConfigByDefinition, saveDefinitionGraph, validateDefinition,
 } from "../../api/admin";
 import ProcessGraphDesigner from "../../components/admin/ProcessGraphDesigner.vue";
 import type {
   AttachmentConfig, AttachmentTemplate, ProcessDefinition, ProcessDefinitionDetail,
   ProcessEdge, ProcessFormField, ProcessNode, ValidationResult,
   ProcessDefinitionOptions,
+  BusinessEntryConfigPayload,
 } from "../../types/admin";
 import { createIdempotencyKey } from "../../utils/idempotency";
 import { formatDateTime } from "../../utils/format";
@@ -25,6 +27,7 @@ interface DefinitionDraft {
   edges: ProcessEdge[];
   formFields: ProcessFormField[];
   attachmentConfigs: AttachmentConfig[];
+  entryConfig: BusinessEntryConfigPayload;
 }
 
 interface SelectOption {
@@ -55,6 +58,7 @@ const draft = reactive<DefinitionDraft>(emptyDraft());
 const templateDraft = reactive({ attachmentCode: "", attachmentName: "", description: "", allowedExtensions: "pdf,jpg,png", maxSizeBytes: 10485760 });
 const advancedValidationOpen = reactive<Record<number, boolean>>({});
 const formFieldErrors = reactive<Record<number, string>>({});
+const entryConfigWarning = ref("");
 
 function emptyDraft(): DefinitionDraft {
   return {
@@ -76,6 +80,17 @@ function emptyDraft(): DefinitionDraft {
       { fieldCode: "amount", fieldName: "金额", fieldType: "number", controlType: "number", required: true, sortOrder: 1 },
     ],
     attachmentConfigs: [],
+    entryConfig: emptyEntryConfig(),
+  };
+}
+
+function emptyEntryConfig(): BusinessEntryConfigPayload {
+  return {
+    entryDisplayName: "",
+    entryPageUrl: "",
+    entrySource: "MANUAL",
+    enabled: false,
+    remark: "",
   };
 }
 
@@ -109,6 +124,7 @@ async function edit(row: ProcessDefinition): Promise<void> {
   try {
     const detail = await fetchDefinition(definitionId(row));
     fillDraft(detail);
+    await loadEntryConfig(definitionId(detail));
     validation.value = undefined;
     tab.value = "graph";
     editorOpen.value = true;
@@ -123,6 +139,7 @@ function fillDraft(detail: ProcessDefinitionDetail): void {
     systemCode: detail.systemCode ?? "", remark: "",
     nodes: structuredClone(detail.nodes ?? []), edges: structuredClone(detail.edges ?? []),
     formFields: structuredClone(detail.formFields ?? []),
+    entryConfig: emptyEntryConfig(),
     attachmentConfigs: (detail.attachmentTemplates ?? []).map((item, index) => ({
       configId: item.id, attachmentConfigId: item.attachmentConfigId,
       definitionId: item.definitionId ?? detail.id, attachmentTemplateId: item.attachmentTemplateId,
@@ -132,6 +149,23 @@ function fillDraft(detail: ProcessDefinitionDetail): void {
   });
 }
 
+async function loadEntryConfig(id: string): Promise<void> {
+  entryConfigWarning.value = "";
+  Object.assign(draft.entryConfig, emptyEntryConfig());
+  if (!id) return;
+  try {
+    const config = await fetchBusinessEntryConfigByDefinition(id);
+    Object.assign(draft.entryConfig, {
+      entryDisplayName: config.entryDisplayName ?? "",
+      entryPageUrl: config.entryPageUrl ?? "",
+      entrySource: config.entrySource ?? "MANUAL",
+      enabled: config.enabled ?? false,
+      remark: config.remark ?? "",
+    });
+  } catch (error) {
+    entryConfigWarning.value = `入口配置接口暂不可用：${message(error)}`;
+  }
+}
 async function loadTemplates(): Promise<void> {
   try { templates.value = await fetchAttachmentTemplates({ templateStatus: "ENABLED" }); }
   catch (error) { ElMessage.error(message(error)); }
@@ -351,6 +385,7 @@ async function save(): Promise<void> {
       formFields: draft.formFields.map((item, index) => ({ ...item, sortOrder: index + 1 })),
       attachmentConfigs: draft.attachmentConfigs.map((item, index) => ({ ...item, sortOrder: index + 1 })),
     });
+    await saveEntryConfig(id);
     validation.value = await validateDefinition(id);
     await load();
     ElMessage.success(validation.value.valid ? "定义已保存，发布校验通过" : "定义已保存，但发布校验未通过");
@@ -358,6 +393,21 @@ async function save(): Promise<void> {
   finally { saving.value = false; }
 }
 
+async function saveEntryConfig(id: string): Promise<void> {
+  entryConfigWarning.value = "";
+  try {
+    await saveBusinessEntryConfigByDefinition(id, {
+      entryDisplayName: draft.entryConfig.entryDisplayName?.trim() || undefined,
+      entryPageUrl: draft.entryConfig.entryPageUrl?.trim() || undefined,
+      entrySource: draft.entryConfig.entrySource || "MANUAL",
+      enabled: draft.entryConfig.enabled ?? false,
+      remark: draft.entryConfig.remark?.trim() || undefined,
+    });
+  } catch (error) {
+    entryConfigWarning.value = `入口配置保存失败：${message(error)}`;
+    ElMessage.warning(entryConfigWarning.value);
+  }
+}
 async function lifecycle(row: ProcessDefinition, operation: "publish" | "activate" | "deactivate" | "archive"): Promise<void> {
   try {
     await operateDefinition(definitionId(row), operation, createIdempotencyKey(`admin-${operation}`));
@@ -403,8 +453,16 @@ onMounted(load);
 
     <div v-if="editorOpen" class="modal-backdrop" @click.self="editorOpen = false"><section class="editor-modal" role="dialog" aria-modal="true">
       <header class="modal-header"><h3>{{ draft.id ? `编辑 ${draft.processCode}` : '新建流程定义' }}</h3><button @click="editorOpen = false">关闭</button></header>
-      <nav class="tabs"><button v-for="item in [['basic','基础信息'],['graph','流程图'],['fields','表单字段'],['attachments','附件配置']]" :key="item[0]" :class="{ active: tab === item[0] }" @click="tab = item[0]">{{ item[1] }}</button></nav>
+      <nav class="tabs"><button v-for="item in [['basic','基础信息'],['entry','入口配置'],['graph','流程图'],['fields','表单字段'],['attachments','附件配置']]" :key="item[0]" :class="{ active: tab === item[0] }" @click="tab = item[0]">{{ item[1] }}</button></nav>
       <div v-show="tab === 'basic'" class="editor-section form-grid"><label>流程编码<input v-model="draft.processCode" :disabled="!!draft.id" /></label><label>流程名称<input v-model="draft.processName" :disabled="!!draft.id" /></label><label>所属系统<input v-model="draft.systemCode" :disabled="!!draft.id" /></label><label class="wide">备注<textarea v-model="draft.remark" rows="3" :disabled="!!draft.id" /></label></div>
+      <div v-show="tab === 'entry'" class="editor-section form-grid">
+        <p v-if="entryConfigWarning" class="entry-warning wide" role="alert">{{ entryConfigWarning }}</p>
+        <label>入口展示名称<input v-model="draft.entryConfig.entryDisplayName" placeholder="默认使用流程名称" /></label>
+        <label>入口页面地址<input v-model="draft.entryConfig.entryPageUrl" placeholder="例如 /generated/entry-application/apply" /></label>
+        <label>入口来源<select v-model="draft.entryConfig.entrySource"><option value="MANUAL">手工配置</option><option value="AGENT_GENERATED">Agent 生成</option></select></label>
+        <label class="checkbox-field"><span>业务大厅展示</span><input v-model="draft.entryConfig.enabled" type="checkbox" /></label>
+        <label class="wide">入口备注<textarea v-model="draft.entryConfig.remark" rows="3" /></label>
+      </div>
       <div v-show="tab === 'graph'" class="editor-section"><ProcessGraphDesigner v-model:nodes="draft.nodes" v-model:edges="draft.edges" :options="definitionOptions" /></div>
       <div v-show="tab === 'fields'" class="editor-section form-fields-editor">
         <button class="primary" data-test="add-form-field" @click="addField">添加字段</button>
@@ -470,9 +528,12 @@ onMounted(load);
 .page-header,.modal-header,.modal-footer,.pagination { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 h2,h3,h4,p { margin:0; }.eyebrow { margin:0 0 4px;color:#0f766e;font-size:12px;font-weight:800; }
 button { min-height:34px;border:1px solid #d8dee8;border-radius:6px;padding:6px 12px;background:#fff;color:#17202a;cursor:pointer;font:inherit; }button:hover:not(:disabled){border-color:#2563eb;color:#2563eb}button:disabled{opacity:.55;cursor:not-allowed}.primary{background:#0f766e;color:#fff;border-color:#0f766e}.primary:hover:not(:disabled){background:#115e59;color:#fff;border-color:#115e59}.danger{color:#b91c1c}
-.filters,.form-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end; }.filters label,.form-grid label{display:grid;gap:6px;color:#5d6978;font-size:13px}.filter-actions{display:flex;gap:8px;align-items:end}.wide{grid-column:1/-1}
+.filters,.form-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end; }.filters label,.form-grid label{display:grid;gap:6px;color:#5d6978;font-size:13px}.filter-actions{display:flex;gap:8px;align-items:end}.wide{grid-column:1/-1}.checkbox-field{align-content:start}.checkbox-field input{width:18px;min-height:18px}.entry-warning{margin:0;border:1px solid #fed7aa;border-radius:6px;padding:9px 11px;background:#fff7ed;color:#9a3412}
 input,select,textarea{min-height:34px;border:1px solid #d8dee8;border-radius:6px;padding:7px 9px;background:#fff;color:#17202a;font:inherit}textarea{resize:vertical}.table-wrap{overflow:auto;border:1px solid #d8dee8;border-radius:8px;background:#fff}table{width:100%;border-collapse:collapse}.admin-page>.table-wrap table{min-width:1100px;table-layout:fixed}.admin-page>.table-wrap th:last-child,.admin-page>.table-wrap td:last-child{width:390px}th,td{overflow-wrap:anywhere;padding:9px 10px;border-bottom:1px solid #d8dee8;text-align:left;vertical-align:middle}th{height:40px;background:#f8fafc;color:#344054;font-size:12px;font-weight:700}.admin-page>.table-wrap th{position:sticky;top:0;z-index:1}td{color:#17202a;font-size:13px}td small{display:block;margin-top:4px;color:#5d6978;font-size:12px}tbody tr:hover{background:#eef6ff}.actions{display:flex;flex-wrap:wrap;gap:6px}.empty{padding:20px;background:#f8fafc;color:#5d6978;text-align:center}.pagination{justify-content:flex-end;color:#5d6978;font-size:13px}
 .modal-backdrop{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:22px;background:rgba(15,23,42,.55)}.editor-modal{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;width:min(1180px,96vw);max-height:94vh;border-radius:9px;background:#fff;box-shadow:0 24px 70px rgba(0,0,0,.3)}.modal-header,.modal-footer{padding:14px 18px;border-bottom:1px solid #e2e8f0}.modal-footer{justify-content:flex-end;border-top:1px solid #e2e8f0;border-bottom:0}.tabs{display:flex;gap:4px;padding:10px 18px;border-bottom:1px solid #e2e8f0}.tabs .active{color:#0f766e;border-color:#0f766e;background:#ecfdf5}.editor-section{overflow:auto;padding:16px 18px}.editor-section>table{margin-top:12px}.editor-section table input,.editor-section table select,.editor-section table textarea{min-width:100px;max-width:220px}.template-create{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr)) auto;gap:8px;align-items:end;margin-bottom:12px;padding:12px;background:#f8fafc}.template-create h4{grid-column:1/-1}.validation{margin:0 18px 12px;padding:10px 12px;border-radius:6px}.validation.valid{background:#ecfdf5;color:#166534}.validation.invalid{background:#fff7ed;color:#9a3412}.validation ul{margin:7px 0 0;padding-left:20px}
 .form-fields-editor>table{min-width:1050px}.field-detail-row:hover{background:transparent}.field-detail-row>td{padding:0 10px 10px;background:#f8fafc}.select-options-editor,.advanced-validation{display:grid;gap:10px;padding:12px;border:1px solid #d8dee8;border-radius:7px;background:#fff}.field-detail-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.field-detail-heading strong,.field-detail-heading small{display:block}.field-detail-heading small,.advanced-validation>small{margin-top:3px;color:#5d6978}.option-list{display:grid;gap:8px}.option-row{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;gap:8px;align-items:end}.option-row label,.advanced-validation label{display:grid;gap:5px;color:#5d6978;font-size:12px}.option-row input,.advanced-validation textarea{width:100%;max-width:none!important}.empty-options{margin:0;padding:12px;border:1px dashed #cbd5e1;border-radius:6px;color:#64748b;text-align:center}.field-error{margin:0;color:#b91c1c;font-size:12px}.field-save-error{padding:9px 12px;border-radius:6px;background:#fef2f2}
 @media(max-width:900px){.filters,.form-grid{grid-template-columns:1fr}.template-create,.option-row{grid-template-columns:1fr}.editor-modal{width:98vw}.actions{min-width:220px}}
 </style>
+
+
+

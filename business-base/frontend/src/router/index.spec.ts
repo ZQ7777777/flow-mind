@@ -31,6 +31,7 @@ describe("business router", () => {
   it("defines the common workflow routes required by B4", () => {
     expect(baseRoutes.map((route) => route.path)).toEqual(
       expect.arrayContaining([
+        "/business-hall",
         "/workflow/todo",
         "/workflow/completed",
         "/workflow/started",
@@ -46,6 +47,12 @@ describe("business router", () => {
     expect(readRoute?.props).toEqual({ type: "read", title: "我的已阅" });
   });
 
+
+  it("redirects the root path to the business hall home", () => {
+    const rootRoute = baseRoutes.find((route) => route.path === "/");
+
+    expect(rootRoute?.redirect).toBe("/business-hall");
+  });
   it("redirects an authenticated non-administrator away from admin routes", async () => {
     setActivePinia(createPinia());
     const auth = useAuthStore();
@@ -111,3 +118,4 @@ describe("business router", () => {
     expect(router.currentRoute.value.path).toBe("/workflow/todo");
   });
 });
+

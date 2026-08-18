@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import type { RouteRecordRaw, RouterHistory } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import AdminAlertView from "../views/AdminAlertView.vue";
+import BusinessHallView from "../views/BusinessHallView.vue";
 import LoginView from "../views/LoginView.vue";
 import MessageCenterView from "../views/MessageCenterView.vue";
 import WorkflowDetailView from "../views/WorkflowDetailView.vue";
@@ -9,12 +10,17 @@ import WorkflowListView from "../views/WorkflowListView.vue";
 import { generatedRoutes } from "./generated-routes";
 
 export const baseRoutes: RouteRecordRaw[] = [
-  { path: "/", redirect: "/workflow/todo" },
+  { path: "/", redirect: "/business-hall" },
   {
     path: "/login",
     name: "login",
     component: LoginView,
     meta: { public: true },
+  },
+  {
+    path: "/business-hall",
+    name: "business-hall",
+    component: BusinessHallView,
   },
   {
     path: "/workflow/todo",
@@ -114,3 +120,4 @@ export function createBusinessRouter(
 const router = createBusinessRouter();
 
 export default router;
+

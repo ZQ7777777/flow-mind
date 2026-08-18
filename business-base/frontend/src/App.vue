@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ToastHost from "./components/ToastHost.vue";
-import { generatedRoutes } from "./router/generated-routes";
 import { useAuthStore } from "./stores/auth";
 import { useMessageStore } from "./stores/message";
 import MessageCenterView from "./views/MessageCenterView.vue";
@@ -23,46 +22,21 @@ const resizeState = ref<{
 const publicLayout = computed(() => route.meta.public === true);
 const isAdmin = computed(() => auth.user?.administrator === true);
 
-const generatedEntryRoutes = computed(() =>
-  generatedRoutes.map((route, index) => ({
-    path: route.path,
-    label: labelGeneratedRoute(route, index),
-  })),
-);
-
 watch(
-  () => auth.authenticated,
-  (authenticated) => {
-    if (authenticated) {
-      messageStore.connectStream();
-      void messageStore.refreshUnreadCount();
-    } else {
-      messageStore.disconnectStream();
+  () => (auth.initialized ? auth.user?.userId ?? null : null),
+  (userId, previousUserId) => {
+    if (!userId) {
+      messagePanelOpen.value = false;
+      messageStore.clearState();
+      return;
     }
+    if (previousUserId !== userId) {
+      messageStore.clearState();
+    }
+    void messageStore.refreshUnreadCount();
   },
   { immediate: true },
 );
-
-function labelGeneratedRoute(route: (typeof generatedRoutes)[number], index: number): string {
-  if (typeof route.meta?.title === "string") {
-    return route.meta.title;
-  }
-  if (typeof route.name === "string") {
-    const businessCode = route.name
-      .replace(/^generated-/, "")
-      .replace(/-apply$/, "");
-    return readableGeneratedLabel(businessCode);
-  }
-  return `生成录入 ${index + 1}`;
-}
-
-function readableGeneratedLabel(value: string): string {
-  return value
-    .split("-")
-    .filter((part) => part.length > 0)
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
-}
 
 const messagePanelStyle = computed(() => ({
   width: `${messagePanelSize.value.width}px`,
@@ -135,7 +109,7 @@ async function logout(): Promise<void> {
     <header class="topbar">
       <div>
         <p class="eyebrow">Flow Mind</p>
-        <h1>业务流程办理</h1>
+        <h1>业务大厅</h1>
       </div>
       <div class="user-panel" aria-label="当前用户">
         <div class="message-popover">
@@ -198,14 +172,7 @@ async function logout(): Promise<void> {
 
     <div class="workspace">
       <nav class="side-nav" aria-label="功能导航">
-        <RouterLink
-          v-for="generatedRoute in generatedEntryRoutes"
-          :key="generatedRoute.path"
-          class="nav-link"
-          :to="generatedRoute.path"
-        >
-          {{ generatedRoute.label }}
-        </RouterLink>
+        <RouterLink class="nav-link" to="/business-hall">首页</RouterLink>
         <RouterLink class="nav-link" to="/workflow/started">我发起的</RouterLink>
         <RouterLink class="nav-link" to="/workflow/todo">我的待办</RouterLink>
         <RouterLink class="nav-link" to="/workflow/completed">我的已办</RouterLink>
@@ -568,3 +535,4 @@ async function logout(): Promise<void> {
   }
 }
 </style>
+

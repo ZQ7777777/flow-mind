@@ -1,4 +1,4 @@
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import type { Pinia } from "pinia";
@@ -78,17 +78,18 @@ describe("App navigation", () => {
     return { router, wrapper };
   }
 
-  it("shows the generated entry route before the common workflow navigation", async () => {
+  it("shows the business hall before the common workflow navigation", async () => {
     const { wrapper } = await mountApp(false);
 
     expect(wrapper.findAll(".nav-link").map((link) => link.text())).toEqual([
-      "入金申请",
+      "首页",
       "我发起的",
       "我的待办",
       "我的已办",
       "我的已阅",
     ]);
-    expect(wrapper.get('.nav-link[href="/generated/entry-application/apply"]').text()).toBe("入金申请");
+    expect(wrapper.get('.nav-link[href="/business-hall"]').text()).toBe("首页");
+    expect(wrapper.find('.nav-link[href="/generated/entry-application/apply"]').exists()).toBe(false);
     expect(wrapper.text()).toContain("张三");
     expect(wrapper.text()).toContain("业务一部");
     expect(wrapper.find('[data-test="logout"]').exists()).toBe(true);
@@ -108,7 +109,7 @@ describe("App navigation", () => {
     const labels = wrapper.findAll(".nav-link").map((link) => link.text());
 
     expect(labels).toEqual([
-      "入金申请",
+      "首页",
       "我发起的",
       "我的待办",
       "我的已办",
@@ -122,9 +123,61 @@ describe("App navigation", () => {
 
   it("renders the message entry without a badge when there are no unread messages", async () => {
     const { wrapper } = await mountApp(false);
+    await flushPromises();
 
     expect(wrapper.find('[data-test="messages-link"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="unread-badge"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="admin-alerts-link"]').exists()).toBe(false);
   });
+  it("loads unread messages after the current user is initialized", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ unreadCount: 7 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { wrapper } = await mountApp(false);
+    await flushPromises();
+
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/api/messages/unread-count"),
+      ),
+    ).toBe(true);
+    expect(wrapper.find('[data-test="unread-badge"]').text()).toBe("7");
+  });
+
+  it("reloads unread messages when the initialized user changes", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ unreadCount: 9 }))
+      .mockResolvedValueOnce(jsonResponse({ unreadCount: 2 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { wrapper } = await mountApp(false);
+    await flushPromises();
+    expect(wrapper.find('[data-test="unread-badge"]').text()).toBe("9");
+
+    useAuthStore().user = buildUser(true);
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="unread-badge"]').text()).toBe("2");
+  });
+  it("clears unread messages when the user logs out", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ unreadCount: 5 }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { wrapper } = await mountApp(false);
+    await flushPromises();
+    expect(wrapper.find('[data-test="unread-badge"]').text()).toBe("5");
+
+    await wrapper.get('[data-test="logout"]').trigger("click");
+    await flushPromises();
+
+    expect(useMessageStore().unreadCount).toBe(0);
+    expect(wrapper.find('[data-test="unread-badge"]').exists()).toBe(false);
+  });
 });
+

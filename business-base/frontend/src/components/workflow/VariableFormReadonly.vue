@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, reactive, watch } from "vue";
 import type { WorkflowFormField } from "../../types/workflow";
 import { formatDateTime, formatUnknown } from "../../utils/format";
@@ -26,8 +26,14 @@ watch(
 );
 
 const sortedFields = computed(() =>
-  [...props.fields].sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0)),
+  [...props.fields]
+    .filter((field) => field.visible !== false)
+    .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0)),
 );
+
+function canEdit(field: WorkflowFormField): boolean {
+  return Boolean(props.editable) && field.editable !== false;
+}
 
 function displayValue(field: WorkflowFormField): string {
   const value = props.variables[field.fieldCode];
@@ -106,6 +112,7 @@ function update(field: WorkflowFormField, event: Event): void {
 function validate(): boolean {
   for (const key of Object.keys(errors)) delete errors[key];
   for (const field of sortedFields.value) {
+    if (!canEdit(field)) continue;
     const value = draft[field.fieldCode];
     if (field.required && (value == null || typeof value === "string" && !value.trim())) {
       errors[field.fieldCode] = `${field.fieldName}不能为空`;
@@ -151,48 +158,55 @@ defineExpose({ validate });
     <div class="section-header">
       <h2 id="variables-heading">业务信息</h2>
     </div>
-    <div v-if="sortedFields.length && editable" class="variable-grid editable-grid">
-      <label v-for="field in sortedFields" :key="field.fieldCode" class="variable-item editable-item">
-        <span>{{ field.fieldName }}<b v-if="field.required" aria-hidden="true"> *</b></span>
-        <textarea
-          v-if="field.controlType?.toLowerCase() === 'textarea'"
-          :value="String(draft[field.fieldCode] ?? '')"
-          rows="3"
-          @input="update(field, $event)"
-        />
-        <select
-          v-else-if="field.controlType?.toLowerCase() === 'select'"
-          :value="String(draft[field.fieldCode] ?? '')"
-          @change="update(field, $event)"
-        >
-          <option value="">请选择</option>
-          <option v-for="item in options(field)" :key="item.value" :value="item.value">
-            {{ item.label }}
-          </option>
-        </select>
-        <input
-          v-else-if="field.controlType?.toLowerCase() === 'checkbox'"
-          type="checkbox"
-          :checked="Boolean(draft[field.fieldCode])"
-          @change="update(field, $event)"
-        />
-        <input
-          v-else
-          :type="inputType(field)"
-          :value="String(draft[field.fieldCode] ?? '')"
-          @input="update(field, $event)"
-        />
-        <small v-if="errors[field.fieldCode]" class="field-error" role="alert">
-          {{ errors[field.fieldCode] }}
-        </small>
-      </label>
-    </div>
-    <dl v-else-if="sortedFields.length" class="variable-grid">
-      <div v-for="field in sortedFields" :key="field.fieldCode" class="variable-item">
-        <dt>{{ field.fieldName }}</dt>
-        <dd>{{ displayValue(field) }}</dd>
+    <div v-if="sortedFields.length" class="variable-grid" :class="{ 'editable-grid': editable }">
+      <div
+        v-for="field in sortedFields"
+        :key="field.fieldCode"
+        class="variable-item"
+        :class="{ 'editable-item': canEdit(field) }"
+      >
+        <template v-if="canEdit(field)">
+          <label class="editable-label">
+            <span>{{ field.fieldName }}<b v-if="field.required" aria-hidden="true"> *</b></span>
+            <textarea
+              v-if="field.controlType?.toLowerCase() === 'textarea'"
+              :value="String(draft[field.fieldCode] ?? '')"
+              rows="3"
+              @input="update(field, $event)"
+            />
+            <select
+              v-else-if="field.controlType?.toLowerCase() === 'select'"
+              :value="String(draft[field.fieldCode] ?? '')"
+              @change="update(field, $event)"
+            >
+              <option value="">请选择</option>
+              <option v-for="item in options(field)" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
+            <input
+              v-else-if="field.controlType?.toLowerCase() === 'checkbox'"
+              type="checkbox"
+              :checked="Boolean(draft[field.fieldCode])"
+              @change="update(field, $event)"
+            />
+            <input
+              v-else
+              :type="inputType(field)"
+              :value="String(draft[field.fieldCode] ?? '')"
+              @input="update(field, $event)"
+            />
+          </label>
+          <small v-if="errors[field.fieldCode]" class="field-error" role="alert">
+            {{ errors[field.fieldCode] }}
+          </small>
+        </template>
+        <template v-else>
+          <dt>{{ field.fieldName }}<b v-if="field.required" aria-hidden="true"> *</b></dt>
+          <dd>{{ displayValue(field) }}</dd>
+        </template>
       </div>
-    </dl>
+    </div>
     <p v-else class="empty-state">暂无业务字段</p>
   </section>
 </template>
@@ -252,6 +266,11 @@ dd {
   font-size: 13px;
 }
 
+.editable-label {
+  display: grid;
+  gap: 7px;
+}
+
 .editable-item input:not([type="checkbox"]),
 .editable-item textarea,
 .editable-item select {
@@ -265,7 +284,8 @@ dd {
 }
 
 .editable-item b,
-.field-error {
+.field-error,
+dt b {
   color: #b91c1c;
 }
 

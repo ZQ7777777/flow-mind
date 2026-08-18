@@ -115,6 +115,20 @@ export const useMessageStore = defineStore("message", {
       }
     },
 
+    clearState(): void {
+      closeStream();
+      reconnectAttempts = 0;
+      this.records = [];
+      this.pageNo = 1;
+      this.pageSize = 20;
+      this.unreadCount = 0;
+      this.hasMore = false;
+      this.loading = false;
+      this.error = "";
+      this.markingAllRead = false;
+      this.filters = { readStatus: "", messageType: "" };
+    },
+
     async refreshUnreadCount(): Promise<void> {
       try {
         const { unreadCount } = await fetchUnreadCount();

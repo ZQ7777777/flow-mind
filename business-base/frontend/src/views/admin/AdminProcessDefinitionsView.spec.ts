@@ -1,4 +1,4 @@
-import { flushPromises, mount } from "@vue/test-utils";
+﻿import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminProcessDefinitionsView from "./AdminProcessDefinitionsView.vue";
 
@@ -81,7 +81,7 @@ describe("AdminProcessDefinitionsView", () => {
 
     const fieldsTab = wrapper.findAll(".tabs button").find((item) => item.text().includes("表单字段"));
     await fieldsTab!.trigger("click");
-    const fieldInputs = wrapper.findAll(".editor-section")[2].findAll("tbody input");
+    const fieldInputs = wrapper.get(".form-fields-editor").findAll("tbody input");
     expect((fieldInputs[0].element as HTMLInputElement).value).toBe("amount");
     expect((fieldInputs[1].element as HTMLInputElement).value).toBe("金额");
   });
@@ -357,4 +357,74 @@ describe("AdminProcessDefinitionsView", () => {
     const request = JSON.parse(String(graphCall![1]?.body));
     expect(request.attachmentConfigs).toEqual(expectedAttachments);
   });
+
+  it("saves business hall entry config without icon or theme fields", async () => {
+    const definition = {
+      id: "definition-entry-config",
+      processCode: "entry_application",
+      processName: "入金流程",
+      systemCode: "business-base",
+      version: 1,
+      definitionStatus: "DRAFT",
+      activationStatus: "INACTIVE",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      let payload: unknown;
+      if (url.includes("business-entry-configs/by-definition") && init?.method === "PUT") {
+        payload = { definitionId: definition.id, ...JSON.parse(String(init.body)) };
+      } else if (url.includes("business-entry-configs/by-definition")) {
+        payload = {
+          definitionId: definition.id,
+          entryDisplayName: "旧入口",
+          entryPageUrl: "/old-entry",
+          entrySource: "MANUAL",
+          enabled: false,
+        };
+      } else if (url.includes("process-definition-options")) {
+        payload = { users: [], departments: [], roles: [] };
+      } else if (url.includes("attachment-templates")) {
+        payload = [];
+      } else if (url.endsWith(`/${definition.id}/publish-validation`)) {
+        payload = { valid: true, issues: [] };
+      } else if (url.endsWith(`/${definition.id}/graph`) && init?.method === "PUT") {
+        payload = definition;
+      } else if (url.endsWith(`/${definition.id}`)) {
+        payload = { ...definition, nodes: [], edges: [], formFields: [], attachmentTemplates: [] };
+      } else {
+        payload = { records: [definition], pageNo: 1, pageSize: 10, total: 1, totalPages: 1 };
+      }
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    const wrapper = mount(AdminProcessDefinitionsView);
+    await flushPromises();
+    await wrapper.get("tbody .actions button").trigger("click");
+    await flushPromises();
+    await wrapper.findAll(".tabs button").find((button) => button.text() === "入口配置")?.trigger("click");
+    await wrapper.get('input[placeholder="默认使用流程名称"]').setValue("入金申请");
+    await wrapper.get('input[placeholder="例如 /generated/entry-application/apply"]').setValue("/generated/entry-application/apply");
+    await wrapper.get(".checkbox-field input").setValue(true);
+    await wrapper.get(".modal-footer .primary").trigger("click");
+    await flushPromises();
+
+    const configCall = vi.mocked(fetch).mock.calls.find(([input, init]) =>
+      String(input).includes("/api/admin/business-entry-configs/by-definition/definition-entry-config") && init?.method === "PUT");
+    expect(configCall).toBeDefined();
+    const request = JSON.parse(String(configCall![1]?.body));
+    expect(request).toMatchObject({
+      entryDisplayName: "入金申请",
+      entryPageUrl: "/generated/entry-application/apply",
+      entrySource: "MANUAL",
+      enabled: true,
+    });
+    expect(request).not.toHaveProperty("icon");
+    expect(request).not.toHaveProperty("themeColor");
+  });
 });
+
+
+

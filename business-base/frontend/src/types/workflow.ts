@@ -1,4 +1,4 @@
-export type WorkflowListType = "todo" | "completed" | "started" | "read";
+﻿export type WorkflowListType = "todo" | "completed" | "started" | "read";
 
 export type WorkflowDeadlineStatus = "NONE" | "NORMAL" | "DUE_SOON" | "OVERDUE" | string;
 
@@ -61,6 +61,16 @@ export interface WorkflowStartableProcessResponse {
   processCode: string;
   processName: string;
 }
+
+export interface WorkflowProcessEntryLink {
+  definitionId: string;
+  processCode?: string;
+  processName?: string;
+  entryDisplayName?: string;
+  entryPageUrl?: string;
+  entrySource?: "MANUAL" | "AGENT_GENERATED" | string;
+  enabled?: boolean;
+}
 export interface WorkflowTaskResponse {
   taskId: string;
   instanceId: string;
@@ -79,6 +89,7 @@ export interface WorkflowTaskResponse {
   taskStatus?: string;
   taskVersion: number;
   createdAt?: string;
+  deadlineStatus?: WorkflowDeadlineStatus;
   dueAt?: string;
 }
 
@@ -156,6 +167,8 @@ export interface WorkflowFormField {
   fieldType?: string;
   controlType?: string;
   required?: boolean;
+  visible?: boolean;
+  editable?: boolean;
   validationRule?: string;
   sortOrder?: number;
 }
@@ -262,3 +275,6 @@ export interface AttachmentUploadPayload {
   expectedTaskVersion?: number;
   idempotencyKey: string;
 }
+
+
+

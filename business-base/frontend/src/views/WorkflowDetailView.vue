@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { ArrowDown, ArrowUp, Finished, Tickets } from "@element-plus/icons-vue";
 import AttachmentPanel from "../components/workflow/AttachmentPanel.vue";
-import CommentPanel from "../components/workflow/CommentPanel.vue";
-import ProcessGraph from "../components/workflow/ProcessGraph.vue";
 import ProcessTimeline from "../components/workflow/ProcessTimeline.vue";
 import TaskActionPanel from "../components/workflow/TaskActionPanel.vue";
 import VariableFormReadonly from "../components/workflow/VariableFormReadonly.vue";
@@ -62,6 +61,7 @@ const deletingAttachmentId = ref("");
 const formError = ref("");
 const variableFormRef = ref<InstanceType<typeof VariableFormReadonly> | null>(null);
 const formVariables = ref<Record<string, unknown>>({});
+const timelineExpanded = ref(false);
 const pendingReplacements = ref<Record<string, {
   attachment: WorkflowAttachmentView;
   file: File;
@@ -78,10 +78,13 @@ const displayedAttachments = computed(() => (detail.value?.attachments ?? []).ma
   };
 }));
 const isEditableApply = computed(() => Boolean(detail.value?.allowedActions.includes("SUBMIT")));
+const canEditBusinessFields = computed(() =>
+  Boolean(detail.value?.currentTask && detail.value.formFields.some(fieldAllowsEdit)),
+);
 const reminderSuccess = ref("");
 const currentTask = computed(() => detail.value?.currentTask ?? null);
 const activeTask = computed(
-    () => detail.value?.activeTasks?.[0] ?? null,
+  () => detail.value?.activeTasks?.[0] ?? null,
 );
 const deadlineWarning = computed(() => {
   const task = currentTask.value;
@@ -91,11 +94,47 @@ const deadlineWarning = computed(() => {
   return null;
 });
 const canRemindCurrentTask = computed(() =>
-    Boolean(
-        props.mode === "instance" &&
-        activeTask.value?.taskId &&
-        authStore.user?.userId === detail.value?.instance.starterUserId
-    ),
+  Boolean(
+    props.mode === "instance" &&
+    activeTask.value?.taskId &&
+    authStore.user?.userId === detail.value?.instance.starterUserId,
+  ),
+);
+const breadcrumbHome = computed(() => {
+  const source = typeof route.query.from === "string" ? route.query.from : "";
+  const items: Record<string, { label: string; path: string }> = {
+    todo: { label: "我的待办", path: "/workflow/todo" },
+    started: { label: "我发起的", path: "/workflow/started" },
+    completed: { label: "我的已办", path: "/workflow/completed" },
+    read: { label: "我的已阅", path: "/workflow/read" },
+  };
+  if (source in items) return items[source];
+  return props.mode === "instance" ? items.started : items.todo;
+});
+const summaryItems = computed(() => {
+  const loaded = detail.value;
+  if (!loaded) return [];
+  return [
+    { label: "业务类型", value: loaded.instance.processName ?? loaded.definition?.processName ?? "--" },
+    { label: "申请编号", value: loaded.instance.instanceId ?? "--" },
+    { label: "当前节点", value: currentNodeNames.value },
+    { label: "发起人", value: loaded.instance.starterUserName ?? "--" },
+    { label: "发起时间", value: formatDateTime(loaded.instance.startedAt) },
+    { label: "实例版本", value: loaded.instance.version ?? "--" },
+  ];
+});
+const statusLabel = computed(() => instanceStatusLabel(detail.value?.instance.instanceStatus));
+const statusClass = computed(() => {
+  const status = detail.value?.instance.instanceStatus;
+  return {
+    "is-running": status === "RUNNING",
+    "is-completed": status === "COMPLETED",
+    "is-stopped": status === "TERMINATED" || status === "CANCELLED",
+  };
+});
+const timelineItems = computed(() => detail.value?.historyTasks ?? []);
+const timelineSummary = computed(() =>
+  currentNodeNames.value === "--" ? "暂无当前节点" : `当前节点：${currentNodeNames.value}`,
 );
 
 onMounted(() => {
@@ -154,11 +193,13 @@ async function submitAction(payload: {
     return;
   }
   formError.value = "";
-  if ((payload.action === "SUBMIT" || payload.action === "DIRECT_SEND") && isEditableApply.value) {
+  if (shouldSubmitVariables(payload.action) && canEditBusinessFields.value) {
     if (!variableFormRef.value?.validate()) {
       formError.value = "请修正表单字段后再提交";
       return;
     }
+  }
+  if ((payload.action === "SUBMIT" || payload.action === "DIRECT_SEND") && isEditableApply.value) {
     try {
       await savePendingReplacements();
     } catch {
@@ -176,9 +217,8 @@ async function submitAction(payload: {
       targetUserId: payload.targetUserId,
       targetUserName: payload.targetUserName,
       addSignUserIds: payload.addSignUserIds,
-      variables: isEditableApply.value
-        && (payload.action === "SUBMIT" || payload.action === "DIRECT_SEND")
-        ? { ...formVariables.value }
+      variables: shouldSubmitVariables(payload.action) && canEditBusinessFields.value
+        ? editableVariables()
         : undefined,
       idempotencyKey,
     });
@@ -193,6 +233,49 @@ async function submitAction(payload: {
       await loadDetail();
     }
   }
+}
+
+function fieldAllowsEdit(field: { visible?: boolean; editable?: boolean }): boolean {
+  return field.visible !== false && (field.editable === true || field.editable == null && isEditableApply.value);
+}
+
+function shouldSubmitVariables(action: TaskActionCode): boolean {
+  return action === "APPROVE" || action === "SUBMIT" || action === "DIRECT_SEND";
+}
+
+function editableVariables(): Record<string, unknown> {
+  const loaded = detail.value;
+  if (!loaded) return {};
+  const values: Record<string, unknown> = {};
+  for (const field of loaded.formFields) {
+    if (!fieldAllowsEdit(field)) continue;
+    if (Object.prototype.hasOwnProperty.call(formVariables.value, field.fieldCode)) {
+      values[field.fieldCode] = formVariables.value[field.fieldCode];
+    }
+  }
+  return values;
+}
+
+function toggleTimeline(): void {
+  timelineExpanded.value = !timelineExpanded.value;
+}
+
+function goBack(): void {
+  router.back();
+}
+
+function goBreadcrumb(): void {
+  void router.push(breadcrumbHome.value.path);
+}
+
+function instanceStatusLabel(status: string | undefined): string {
+  const labels: Record<string, string> = {
+    RUNNING: "运行中",
+    COMPLETED: "已完成",
+    TERMINATED: "已终止",
+    CANCELLED: "已取消",
+  };
+  return status ? labels[status] ?? status : "--";
 }
 
 async function remindCurrentTask(): Promise<void> {
@@ -350,89 +433,129 @@ async function removeAttachment(item: WorkflowAttachmentView): Promise<void> {
     <template v-else-if="detail">
       <p v-if="reminderSuccess" class="action-success" role="status">{{ reminderSuccess }}</p>
       <p v-if="store.reminderError" class="action-error" role="alert">{{ store.reminderError }}</p>
-      <header class="detail-header">
-        <div class="detail-title-row">
-          <div>
-            <h1 id="detail-heading">{{ detail.instance.instanceTitle }}</h1>
-            <p>
-              {{ detail.instance.processName ?? "--" }} / {{ detail.instance.instanceStatus ?? "--" }} /
-              {{ currentNodeNames }}
-            </p>
-          </div>
-          <button
-            v-if="canRemindCurrentTask"
-            type="button"
-            class="remind-button"
-            data-test="remind-task"
-            :disabled="store.reminderSubmitting"
-            @click="remindCurrentTask"
-          >
-            {{ store.reminderSubmitting ? "发送中" : "发送催办" }}
-          </button>
+
+      <header class="detail-topbar">
+        <div class="detail-navigation">
+          <button type="button" class="back-button" data-test="detail-back" @click="goBack">返回</button>
+          <nav class="detail-breadcrumb" aria-label="审批详情位置">
+            <a :href="breadcrumbHome.path" @click.prevent="goBreadcrumb">{{ breadcrumbHome.label }}</a>
+            <span aria-hidden="true">/</span>
+            <strong>{{ detail.instance.instanceTitle }}</strong>
+          </nav>
         </div>
-        <dl class="summary-grid">
-          <div>
-            <dt>发起人</dt>
-            <dd>{{ detail.instance.starterUserName ?? "--" }}</dd>
-          </div>
-          <div>
-            <dt>发起时间</dt>
-            <dd>{{ formatDateTime(detail.instance.startedAt) }}</dd>
-          </div>
-          <div>
-            <dt>实例版本</dt>
-            <dd>{{ detail.instance.version ?? "--" }}</dd>
-          </div>
-        </dl>
+        <button
+          v-if="canRemindCurrentTask"
+          type="button"
+          class="remind-button"
+          data-test="remind-task"
+          :disabled="store.reminderSubmitting"
+          @click="remindCurrentTask"
+        >
+          {{ store.reminderSubmitting ? "发送中" : "发送催办" }}
+        </button>
       </header>
 
-      <div v-if="deadlineWarning" class="deadline-banner" data-test="deadline-banner">
-        <div>
-          <strong>{{ deadlineWarning }}</strong>
-          <span v-if="activeTask?.dueAt">到期时间：{{ formatDateTime(activeTask.dueAt) }}</span>
-        </div>
-      </div>
+      <div class="detail-layout has-assistant">
+        <main class="detail-main" aria-label="审批详情主要内容">
+          <section class="summary-card" aria-labelledby="detail-heading">
+            <span class="summary-icon" aria-hidden="true"><Tickets /></span>
+            <div class="summary-content">
+              <div class="summary-title-row">
+                <h1 id="detail-heading">{{ detail.instance.instanceTitle }}</h1>
+                <span class="status-badge" :class="statusClass">{{ statusLabel }}</span>
+              </div>
+              <dl class="summary-grid">
+                <div v-for="item in summaryItems" :key="item.label">
+                  <dt>{{ item.label }}</dt>
+                  <dd>{{ item.value }}</dd>
+                </div>
+              </dl>
+            </div>
+          </section>
 
-      <ProcessGraph
-        :nodes="detail.nodes"
-        :edges="detail.edges"
-        :current-node-codes="detail.instance.currentNodeCodes"
-      />
-      <VariableFormReadonly
-        ref="variableFormRef"
-        :fields="detail.formFields"
-        :variables="formVariables"
-        :editable="isEditableApply"
-        @update:variables="formVariables = $event"
-      />
-      <p v-if="formError" class="action-error" role="alert">{{ formError }}</p>
-      <AttachmentPanel
-        :attachments="displayedAttachments"
-        :can-upload="Boolean(detail.currentTask) && !isEditableApply"
-        :can-replace="isEditableApply"
-        can-delete
-        :current-user-id="authStore.user?.userId"
-        :deleting-attachment-id="deletingAttachmentId"
-        :uploadable-attachments="detail.uploadableAttachments"
-        @upload="uploadAttachment"
-        @replace="stageReplacement"
-        @download="download"
-        @delete="removeAttachment"
-      />
-      <p v-if="attachmentError" class="action-error" role="alert">{{ attachmentError }}</p>
-      <p v-if="attachmentStatus" class="action-status" role="status">{{ attachmentStatus }}</p>
-      <CommentPanel :comments="detail.comments" />
-      <ProcessTimeline :items="detail.historyTasks" />
-      <p v-if="store.actionError" class="action-error" role="alert">{{ store.actionError }}</p>
-      <TaskActionPanel
-        v-if="detail.currentTask"
-        :task-version="detail.currentTask.taskVersion"
-        :allowed-actions="detail.allowedActions"
-        :disabled-actions="detail.disabledActions"
-        :reject-target-nodes="detail.rejectTargetNodes"
-        :submitting="store.actionSubmitting"
-        @submit="submitAction"
-      />
+          <div v-if="deadlineWarning" class="deadline-banner" data-test="deadline-banner">
+            <div>
+              <strong>{{ deadlineWarning }}</strong>
+              <span v-if="activeTask?.dueAt">到期时间：{{ formatDateTime(activeTask.dueAt) }}</span>
+            </div>
+          </div>
+
+          <section class="content-card">
+            <VariableFormReadonly
+              ref="variableFormRef"
+              :fields="detail.formFields"
+              :variables="formVariables"
+              :editable="canEditBusinessFields"
+              @update:variables="formVariables = $event"
+            />
+          </section>
+          <p v-if="formError" class="action-error" role="alert">{{ formError }}</p>
+
+          <section class="content-card">
+            <AttachmentPanel
+              :attachments="displayedAttachments"
+              :can-upload="Boolean(detail.currentTask) && !isEditableApply"
+              :can-replace="isEditableApply"
+              can-delete
+              :current-user-id="authStore.user?.userId"
+              :deleting-attachment-id="deletingAttachmentId"
+              :uploadable-attachments="detail.uploadableAttachments"
+              @upload="uploadAttachment"
+              @replace="stageReplacement"
+              @download="download"
+              @delete="removeAttachment"
+            />
+          </section>
+          <p v-if="attachmentError" class="action-error" role="alert">{{ attachmentError }}</p>
+          <p v-if="attachmentStatus" class="action-status" role="status">{{ attachmentStatus }}</p>
+        </main>
+
+        <aside class="assistant-panel" aria-label="审批辅助信息">
+          <section class="timeline-card" :class="{ 'is-expanded': timelineExpanded }">
+            <button
+              type="button"
+              class="timeline-card-header"
+              data-test="timeline-toggle"
+              :aria-expanded="timelineExpanded"
+              aria-controls="detail-timeline-body"
+              @click="toggleTimeline"
+            >
+              <span class="timeline-title-wrap">
+                <span class="timeline-card-icon" aria-hidden="true"><Finished /></span>
+                <span>
+                  <strong>流程轨迹</strong>
+                  <small>{{ timelineSummary }}</small>
+                </span>
+              </span>
+              <span class="timeline-toggle-icon" aria-hidden="true">
+                <ArrowUp v-if="timelineExpanded" />
+                <ArrowDown v-else />
+              </span>
+            </button>
+            <Transition name="timeline-collapse">
+              <div v-if="timelineExpanded" id="detail-timeline-body" class="timeline-card-body">
+                <ProcessTimeline
+                  :items="timelineItems"
+                  :nodes="detail.nodes"
+                  :current-node-codes="detail.instance.currentNodeCodes"
+                  :comments="detail.comments"
+                />
+              </div>
+            </Transition>
+          </section>
+          <p v-if="store.actionError" class="action-error" role="alert">{{ store.actionError }}</p>
+          <section v-if="detail.currentTask" class="assistant-action-card">
+            <TaskActionPanel
+              :task-version="detail.currentTask.taskVersion"
+              :allowed-actions="detail.allowedActions"
+              :disabled-actions="detail.disabledActions"
+              :reject-target-nodes="detail.rejectTargetNodes"
+              :submitting="store.actionSubmitting"
+              @submit="submitAction"
+            />
+          </section>
+        </aside>
+      </div>
     </template>
     <div v-else class="state-line">暂无详情</div>
   </section>
@@ -441,50 +564,240 @@ async function removeAttachment(item: WorkflowAttachmentView): Promise<void> {
 <style scoped>
 .page-surface {
   display: grid;
-  gap: 0;
+  gap: 14px;
 }
 
-.detail-header {
-  display: grid;
-  gap: 16px;
-  padding-bottom: 18px;
+.detail-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-h1 {
-  margin: 0;
-  color: #111827;
-  font-size: 24px;
+.detail-navigation,
+.detail-breadcrumb {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.detail-navigation {
+  gap: 12px;
+}
+
+.detail-breadcrumb {
+  gap: 8px;
+  color: #5d6978;
+  font-size: 14px;
+}
+
+.detail-breadcrumb a {
+  color: #5d6978;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.detail-breadcrumb a:hover {
+  color: #2563eb;
+}
+
+.detail-breadcrumb strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #17202a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.back-button,
+.remind-button,
+.dialog-header button {
+  min-height: 34px;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: #fff;
+  color: #17202a;
+  cursor: pointer;
+  font: inherit;
   font-weight: 700;
 }
 
-p {
-  margin: 6px 0 0;
-  color: #6b7280;
+.back-button:hover,
+.remind-button:hover:not(:disabled),
+.dialog-header button:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.back-button::before {
+  content: "‹";
+  margin-right: 4px;
+  font-size: 18px;
+  line-height: 0;
+}
+
+.remind-button {
+  flex-shrink: 0;
+  color: #2563eb;
+}
+
+.remind-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  gap: 16px;
+  align-items: start;
+}
+
+.detail-main,
+.assistant-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.summary-card,
+.content-card,
+.assistant-panel {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.summary-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 18px;
+}
+
+.summary-icon,
+.assistant-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #ecfdf5;
+  color: #0f766e;
+}
+
+.summary-icon {
+  width: 54px;
+  height: 54px;
+}
+
+.summary-icon :deep(svg),
+.assistant-icon :deep(svg) {
+  width: 24px;
+  height: 24px;
+}
+
+.summary-content {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.summary-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+h1,
+h2,
+p,
+dl {
+  margin: 0;
+}
+
+h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #17202a;
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 700;
 }
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
-  margin: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 18px;
 }
 
 .summary-grid div {
-  padding: 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #fff;
+  min-width: 0;
 }
 
 dt {
-  color: #6b7280;
+  color: #5d6978;
   font-size: 13px;
 }
 
 dd {
-  margin: 6px 0 0;
-  color: #111827;
-  font-weight: 600;
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+  color: #17202a;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid #d8dee8;
+  border-radius: 999px;
+  padding: 2px 10px;
+  background: #f8fafc;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-badge.is-running {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.status-badge.is-completed {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.status-badge.is-stopped {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.content-card {
+  padding: 0 16px;
+}
+
+.content-card :deep(.workflow-section) {
+  border-top: 0;
+}
+
+.content-card :deep(.variable-grid) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.assistant-action-card {
+  min-width: 0;
+}
+
+.assistant-action-card :deep(.workflow-section) {
+  border-top: 1px solid #d8dee8;
+  padding: 14px 0 0;
 }
 
 .state-line {
@@ -526,71 +839,189 @@ dd {
   font-size: 13px;
 }
 
-.deadline-banner button {
-  min-height: 34px;
-  border: 1px solid #d97706;
+.action-success,
+.action-error,
+.action-status {
+  border: 1px solid #d1d5db;
   border-radius: 6px;
-  padding: 6px 12px;
-  background: #fff;
-  color: #92400e;
-  cursor: pointer;
-  font: inherit;
-}
-
-.deadline-banner button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.detail-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.remind-button {
-  min-height: 34px;
-  border: 1px solid #2563eb;
-  border-radius: 6px;
-  padding: 6px 12px;
-  background: #fff;
-  color: #2563eb;
-  cursor: pointer;
-  font: inherit;
-  flex-shrink: 0;
-  margin-top: 18px;
-}
-
-.remind-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
+  padding: 10px 12px;
 }
 
 .action-success {
-  margin: 0;
-  border: 1px solid #86efac;
-  border-radius: 6px;
-  padding: 10px 12px;
+  border-color: #86efac;
   background: #f0fdf4;
   color: #166534;
 }
 
 .action-error {
-  margin: 0;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-  padding: 10px 12px;
+  border-color: #fecaca;
   background: #fef2f2;
   color: #b91c1c;
 }
 
 .action-status {
-  margin: 0;
-  border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  padding: 10px 12px;
+  border-color: #bfdbfe;
   background: #eff6ff;
   color: #1d4ed8;
+}
+
+.assistant-panel {
+  position: sticky;
+  top: 18px;
+  padding: 12px;
+}
+
+.timeline-card {
+  overflow: hidden;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.timeline-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 66px;
+  border: 0;
+  padding: 12px;
+  background: #f8fafc;
+  color: #17202a;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.timeline-card-header:hover {
+  background: #fff;
+}
+
+.timeline-title-wrap {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.timeline-title-wrap strong,
+.timeline-title-wrap small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.timeline-title-wrap strong {
+  font-size: 15px;
+}
+
+.timeline-title-wrap small {
+  margin-top: 4px;
+  color: #5d6978;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.timeline-card-icon,
+.timeline-toggle-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+}
+
+.timeline-card-icon {
+  width: 36px;
+  height: 36px;
+  background: #ecfdf5;
+  color: #0f766e;
+}
+
+.timeline-toggle-icon {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  color: #2563eb;
+}
+
+.timeline-card-icon :deep(svg),
+.timeline-toggle-icon :deep(svg) {
+  width: 18px;
+  height: 18px;
+}
+
+.timeline-card-body {
+  border-top: 1px solid #d8dee8;
+  padding: 0 12px 12px;
+}
+
+.timeline-card-body :deep(.workflow-section) {
+  border-top: 0;
+  padding-bottom: 0;
+}
+
+.timeline-collapse-enter-active,
+.timeline-collapse-leave-active {
+  overflow: hidden;
+  transition: max-height 180ms ease, opacity 180ms ease;
+}
+
+.timeline-collapse-enter-from,
+.timeline-collapse-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+
+.timeline-collapse-enter-to,
+.timeline-collapse-leave-from {
+  max-height: 720px;
+  opacity: 1;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+@media (max-width: 1180px) {
+  .content-card :deep(.variable-grid),
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .assistant-panel {
+    position: static;
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .detail-topbar,
+  .summary-title-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .detail-navigation {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .summary-card,
+  .assistant-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .content-card :deep(.variable-grid),
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

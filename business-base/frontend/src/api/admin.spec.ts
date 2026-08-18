@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  deleteInstance, fetchAdminInstances, fetchInstanceTrace, fetchProcessDefinitionOptions, operateDefinition, saveDefinitionGraph,
+  deleteInstance,
+  fetchAdminInstances,
+  fetchBusinessEntryConfigByDefinition,
+  fetchInstanceTrace,
+  fetchProcessDefinitionOptions,
+  operateDefinition,
+  saveBusinessEntryConfigByDefinition,
+  saveDefinitionGraph,
 } from "./admin";
 
 describe("admin api", () => {
@@ -30,5 +37,25 @@ describe("admin api", () => {
   it("loads administrator process-definition organization options", async () => {
     await fetchProcessDefinitionOptions();
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/admin/process-definition-options");
+  });
+
+  it("loads and saves business entry configs under the admin namespace", async () => {
+    await fetchBusinessEntryConfigByDefinition("definition / 1");
+    await saveBusinessEntryConfigByDefinition("definition / 1", {
+      entryDisplayName: "入金申请",
+      entryPageUrl: "/generated/entry-application/apply",
+      entrySource: "AGENT_GENERATED",
+      enabled: true,
+    });
+
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls[0][0]).toBe("/api/admin/business-entry-configs/by-definition/definition%20%2F%201");
+    expect(calls[1][0]).toBe("/api/admin/business-entry-configs/by-definition/definition%20%2F%201");
+    expect(calls[1][1]).toMatchObject({ method: "PUT" });
+    expect(JSON.parse(calls[1][1]?.body as string)).toMatchObject({
+      entryPageUrl: "/generated/entry-application/apply",
+      entrySource: "AGENT_GENERATED",
+      enabled: true,
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { mount } from "@vue/test-utils";
+﻿import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 import VariableFormReadonly from "./VariableFormReadonly.vue";
 
@@ -53,5 +53,34 @@ describe("VariableFormReadonly", () => {
     expect((wrapper.vm as unknown as { validate: () => boolean }).validate()).toBe(false);
     await wrapper.vm.$nextTick();
     expect(wrapper.text()).toContain("币种不能为空");
+  });
+
+  it("honors field visibility, editability, and required permissions", async () => {
+    const wrapper = mount(VariableFormReadonly, {
+      props: {
+        editable: true,
+        fields: [
+          { fieldCode: "hidden", fieldName: "隐藏字段", visible: false, editable: true, required: true },
+          { fieldCode: "readonly", fieldName: "只读字段", visible: true, editable: false, required: true },
+          { fieldCode: "editable", fieldName: "可编辑字段", fieldType: "string", controlType: "input", visible: true, editable: true, required: true },
+        ],
+        variables: { hidden: "secret", readonly: "locked", editable: "" },
+      },
+    });
+
+    expect(wrapper.text()).not.toContain("隐藏字段");
+    expect(wrapper.text()).toContain("只读字段");
+    expect(wrapper.text()).toContain("locked");
+    expect(wrapper.findAll("input")).toHaveLength(1);
+
+    expect((wrapper.vm as unknown as { validate: () => boolean }).validate()).toBe(false);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("可编辑字段不能为空");
+    await wrapper.get("input").setValue("changed");
+    expect(wrapper.emitted("update:variables")?.at(-1)?.[0]).toMatchObject({
+      hidden: "secret",
+      readonly: "locked",
+      editable: "changed",
+    });
   });
 });

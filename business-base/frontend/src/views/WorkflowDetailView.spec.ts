@@ -217,7 +217,7 @@ describe("WorkflowDetailView", () => {
     const revokeObjectURL = vi.fn();
     vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
     let downloadedFileName = "";
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       downloadedFileName = this.download;
     });
     const wrapper = await mountDetail(fetchMock);
@@ -336,7 +336,7 @@ describe("WorkflowDetailView", () => {
     resolveDelete?.(new Response(null, { status: 204 }));
     await flushPromises();
 
-    const [, deleteInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [, deleteInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
     expect(deleteInit.method).toBe("DELETE");
     expect((deleteInit.headers as Record<string, string>)["Idempotency-Key"]).toContain(
       "workflow:attachment-delete",
@@ -528,6 +528,120 @@ describe("WorkflowDetailView", () => {
     expect(wrapper.get('[role="alert"]').text()).toContain("无权查看该任务");
   });
 
+
+  it("renders the approval detail with a collapsed timeline card and right-side actions", async () => {
+    const wrapper = await mountDetail(
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(detailResponse({
+          instance: {
+            ...detailResponse().instance,
+            instanceId: "RK202508110001",
+            processName: "入金申请",
+            instanceTitle: "入金申请-111",
+            instanceStatus: "RUNNING",
+          },
+          comments: [{ commentId: "comment-1", operatorUserName: "李四", comment: "同意" }],
+          historyTasks: [{ historyTaskId: "history-1", instanceId: "instance-1", nodeName: "经理审批" }],
+        })), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    expect(wrapper.get(".detail-breadcrumb").text()).toContain("我的待办");
+    expect(wrapper.get(".summary-card").text()).toContain("入金申请-111");
+    expect(wrapper.get(".summary-card").text()).toContain("运行中");
+    expect(wrapper.get(".summary-card").text()).toContain("RK202508110001");
+    expect(wrapper.get(".detail-layout").classes()).toContain("has-assistant");
+    expect(wrapper.get(".timeline-card").text()).toContain("流程轨迹");
+    expect(wrapper.get(".timeline-card").text()).toContain("当前节点：经理审批");
+    expect(wrapper.find(".timeline-card .timeline").exists()).toBe(false);
+    expect(wrapper.find('[data-test="open-process-comments"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="open-process-graph"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="detail-dialog"]').exists()).toBe(false);
+    expect(wrapper.get(".assistant-panel .action-panel").text()).toContain("办理动作");
+    expect(wrapper.find(".detail-main .action-panel").exists()).toBe(false);
+  });
+
+  it.each([
+    ["/workflow/instances/instance-1", "我发起的", "/workflow/started"],
+    ["/workflow/instances/instance-1?from=completed", "我的已办", "/workflow/completed"],
+    ["/workflow/instances/instance-1?from=read", "我的已阅", "/workflow/read"],
+  ])("uses the source list label in instance breadcrumbs for %s", async (path, label, href) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(detailResponse({ currentTask: null })), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/workflow/instances/:instanceId", component: WorkflowDetailView, props: { mode: "instance" } }],
+    });
+    await router.push(path);
+    await router.isReady();
+
+    const wrapper = mount(WorkflowDetailView, {
+      props: { mode: "instance" },
+      global: { plugins: [authenticatedPinia(), router] },
+    });
+    await flushPromises();
+
+    expect(wrapper.get(".detail-breadcrumb").text()).toContain(label);
+    expect(wrapper.get(".detail-breadcrumb a").attributes("href")).toBe(href);
+  });
+  it("expands and collapses the timeline card with reached operation rows", async () => {
+    const wrapper = await mountDetail(
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(detailResponse({
+          nodes: [
+            { nodeCode: "start", nodeName: "开始", nodeType: "START", sortOrder: 0 },
+            { nodeCode: "apply", nodeName: "发起申请", sortOrder: 1 },
+            { nodeCode: "manager", nodeName: "经理审批", sortOrder: 2 },
+            { nodeCode: "finance", nodeName: "财务审核", sortOrder: 3 },
+          ],
+          instance: {
+            ...detailResponse().instance,
+            currentNodeCodes: ["manager"],
+          },
+          historyTasks: [
+            { historyTaskId: "history-0", instanceId: "instance-1", nodeCode: "start", nodeName: "开始", actionType: "SUBMIT", assigneeUserName: "系统管理员", completedAt: "2026-08-11T10:16:00" },
+            { historyTaskId: "history-1", instanceId: "instance-1", nodeCode: "apply", nodeName: "apply", actionType: "SUBMIT", assigneeUserName: "系统管理员", comment: "-", completedAt: "2026-08-11T10:17:00" },
+            { historyTaskId: "history-2", instanceId: "instance-1", nodeCode: "manager", nodeName: "manager", actionType: "TRANSFER", assigneeUserName: "张三", comment: "转交李四处理", completedAt: "2026-08-11T10:21:00" },
+          ],
+          comments: [{ commentId: "comment-1", nodeCode: "manager", operatorUserName: "李四", comment: "请复核", createdAt: "2026-08-11T10:25:00" }],
+        })), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    expect(wrapper.find('[data-test="detail-dialog"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="open-process-graph"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="open-process-comments"]').exists()).toBe(false);
+    expect(wrapper.find(".timeline-card .timeline").exists()).toBe(false);
+    expect(wrapper.get(".timeline-card").text()).toContain("当前节点：经理审批");
+
+    await wrapper.get('[data-test="timeline-toggle"]').trigger("click");
+    const timelineText = wrapper.get(".timeline-card .timeline").text();
+    expect(timelineText).toContain("发起申请");
+    expect(timelineText).toContain("已提交");
+    expect(timelineText).toContain("系统管理员");
+    expect(timelineText).toContain("经理审批");
+    expect(timelineText).toContain("转办");
+    expect(timelineText).toContain("转交李四处理");
+    expect(timelineText).toContain("请复核");
+    expect(timelineText).not.toContain("开始");
+    expect(timelineText).not.toContain("财务审核");
+    expect(timelineText).not.toContain("apply");
+    expect(timelineText).not.toContain("manager");
+
+    await wrapper.get(".timeline-card-header").trigger("click");
+    expect(wrapper.find(".timeline-card .timeline").exists()).toBe(false);
+  });
+
   it("blocks submit when a staged attachment replacement fails", async () => {
     const detail = {
       instance: {
@@ -633,7 +747,10 @@ describe("WorkflowDetailView", () => {
     useAuthStore().user = {
       userId: "starter-1",
       username: "starter01",
-      displayName: "张三",
+      realName: "张三",
+      departmentId: "dept-1",
+      departmentName: "研发部",
+      userType: "USER",
       administrator: false,
     };
     await flushPromises();

@@ -1,7 +1,9 @@
-import { buildQuery, requestJson } from "./http";
+﻿import { buildQuery, requestJson } from "./http";
 import type {
   AdminRecord,
   AttachmentTemplate,
+  BusinessEntryConfig,
+  BusinessEntryConfigPayload,
   DefinitionQuery,
   InstanceQuery,
   PageResult,
@@ -19,6 +21,7 @@ const DEFINITION_BASE = "/api/admin/process-definitions";
 const INSTANCE_BASE = "/api/admin/process-instances";
 const TEMPLATE_BASE = "/api/admin/attachment-templates";
 const DEFINITION_OPTIONS = "/api/admin/process-definition-options";
+const BUSINESS_ENTRY_CONFIG_BASE = "/api/admin/business-entry-configs";
 
 function body(value: object): RequestInit {
   return { body: JSON.stringify(value) };
@@ -34,6 +37,24 @@ export function fetchDefinition(id: string): Promise<ProcessDefinitionDetail> {
 
 export function fetchProcessDefinitionOptions(): Promise<ProcessDefinitionOptions> {
   return requestJson(DEFINITION_OPTIONS);
+}
+
+export function fetchBusinessEntryConfigByDefinition(
+  definitionId: string,
+): Promise<BusinessEntryConfig> {
+  return requestJson(
+    `${BUSINESS_ENTRY_CONFIG_BASE}/by-definition/${encodeURIComponent(definitionId)}`,
+  );
+}
+
+export function saveBusinessEntryConfigByDefinition(
+  definitionId: string,
+  payload: BusinessEntryConfigPayload,
+): Promise<BusinessEntryConfig> {
+  return requestJson(
+    `${BUSINESS_ENTRY_CONFIG_BASE}/by-definition/${encodeURIComponent(definitionId)}`,
+    { method: "PUT", ...body(payload) },
+  );
 }
 
 export function createDefinition(payload: object): Promise<ProcessDefinition> {
@@ -118,3 +139,6 @@ export function deleteInstance(id: string, operationId: string): Promise<void> {
     method: "DELETE", ...body({ operationId }),
   });
 }
+
+
+

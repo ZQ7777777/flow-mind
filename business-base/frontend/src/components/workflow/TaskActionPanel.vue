@@ -11,6 +11,7 @@ import type {
   WorkflowNodeView,
   WorkflowUserCandidateResponse,
 } from "../../types/workflow";
+import { workflowTaskActions } from "../../utils/workflowDisplay";
 
 const props = withDefaults(defineProps<{
   taskVersion: number;
@@ -47,24 +48,7 @@ const validationError = ref("");
 
 type UserSuggestion = WorkflowUserCandidateResponse & { value: string };
 
-const actionConfig: Array<{
-  code: TaskActionCode;
-  label: string;
-  kind: "primary" | "neutral" | "danger";
-  requiresTargetUser?: boolean;
-}> = [
-  { code: "APPROVE", label: "通过", kind: "primary" },
-  { code: "SUBMIT", label: "提交", kind: "primary" },
-  { code: "REJECT", label: "驳回", kind: "danger" },
-  { code: "RETURN", label: "退回", kind: "danger" },
-  { code: "WITHDRAW", label: "撤回", kind: "danger" },
-  { code: "DIRECT_SEND", label: "直送", kind: "neutral" },
-  { code: "TRANSFER", label: "转办", kind: "neutral", requiresTargetUser: true },
-  { code: "DELEGATE", label: "委托", kind: "neutral", requiresTargetUser: true },
-  { code: "ADD_SIGN", label: "加签", kind: "neutral" },
-  { code: "CLAIM", label: "认领", kind: "primary" },
-  { code: "UNCLAIM", label: "取消认领", kind: "neutral" },
-];
+const actionConfig = workflowTaskActions;
 
 const visibleActions = computed(() =>
   actionConfig.filter((action) => props.allowedActions.includes(action.code)),

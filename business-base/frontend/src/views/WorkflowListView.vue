@@ -9,7 +9,16 @@ import type {
   WorkflowReadRecordResponse,
   WorkflowTaskResponse,
 } from "../types/workflow";
-import { formatDateTime } from "../utils/format";
+import {
+  displayWorkflowValue,
+  formatWorkflowDateTime,
+  instanceStatusBadgeClass,
+  instanceStatusLabel,
+  taskActionBadgeClass,
+  taskActionLabel,
+  workflowEmptyText,
+  workflowNodeLabel,
+} from "../utils/workflowDisplay";
 import { performTaskAction } from "../api/workflow";
 import { WorkflowApiError } from "../api/http";
 import { createIdempotencyKey } from "../utils/idempotency";
@@ -47,7 +56,7 @@ const columns = computed(() => {
   if (props.type === "read") {
     return ["processName", "instanceStatus", "readAt"];
   }
-  return ["processName", "nodeName", "source", "starterUserName", "createdAt", "dueAt", "deadlineStatus"];
+  return ["processName", "nodeName", "starterUserName", "createdAt", "dueAt", "deadlineStatus"];
 });
 
 onMounted(() => {
@@ -170,11 +179,11 @@ function columnLabel(column: string): string {
 }
 
 function deadlineLabel(row: WorkflowListRecord): string {
-  if (!isTask(row)) return "--";
+  if (!isTask(row)) return workflowEmptyText;
   if (row.deadlineStatus === "OVERDUE") return "已超时";
   if (row.deadlineStatus === "DUE_SOON") return "即将超时";
   if (row.deadlineStatus === "NORMAL") return "正常";
-  return "--";
+  return workflowEmptyText;
 }
 
 function deadlineClass(row: WorkflowListRecord): Record<string, boolean> {
@@ -184,25 +193,49 @@ function deadlineClass(row: WorkflowListRecord): Record<string, boolean> {
   };
 }
 
+function rawColumnValue(row: WorkflowListRecord, column: string): unknown {
+  return (row as unknown as Record<string, unknown>)[column];
+}
+
 function columnValue(row: WorkflowListRecord, column: string): string {
   if (column === "source" && isTask(row)) {
     return row.delegateFromUserId ? "委托代办任务" : "自己的任务";
   }
   if (column === "currentNodeCodes" && isInstance(row)) {
-    return row.currentNodeCodes.length ? row.currentNodeCodes.join("、") : "--";
+    return currentNodeNames(row);
   }
   const value = (row as unknown as Record<string, unknown>)[column];
   if (column.endsWith("At")) {
-    return formatDateTime(value as string | undefined);
+    return formatWorkflowDateTime(value as string | undefined | null);
   }
-  if (typeof value === "boolean") {
-    return value ? "是" : "否";
+  if (column === "nodeName" && (isTask(row) || isHistoryTask(row))) {
+    return workflowNodeLabel(row.nodeCode, row.nodeName);
   }
-  return value == null || value === "" ? "--" : String(value);
+  return displayWorkflowValue(value);
 }
 
 function starterName(row: WorkflowListRecord): string | undefined {
   return "starterUserName" in row ? row.starterUserName : undefined;
+}
+
+function currentNodeNames(row: WorkflowInstanceResponse): string {
+  const names = (row as { currentNodeNames?: string[] }).currentNodeNames;
+  if (names?.length) {
+    return names.map((name) => displayWorkflowValue(name)).join("、");
+  }
+  return row.currentNodeCodes.length
+    ? row.currentNodeCodes.map((code) => workflowNodeLabel(code)).join("、")
+    : workflowEmptyText;
+}
+
+function statusDataTest(row: WorkflowListRecord): string | undefined {
+  if (isReadRecord(row)) return `status-${row.readRecordId}`;
+  if (isInstance(row)) return `status-${row.instanceId}`;
+  return undefined;
+}
+
+function actionDataTest(row: WorkflowListRecord): string | undefined {
+  return isHistoryTask(row) ? `action-${row.historyTaskId}` : undefined;
 }
 </script>
 
@@ -310,14 +343,30 @@ function starterName(row: WorkflowListRecord): string | undefined {
               >
                 {{ deadlineLabel(row) }}
               </span>
+              <span
+                v-else-if="column === 'instanceStatus'"
+                class="status-badge"
+                :class="instanceStatusBadgeClass(rawColumnValue(row, column))"
+                :data-test="statusDataTest(row)"
+              >
+                {{ instanceStatusLabel(rawColumnValue(row, column)) }}
+              </span>
+              <span
+                v-else-if="column === 'actionType'"
+                class="action-badge"
+                :class="taskActionBadgeClass(rawColumnValue(row, column))"
+                :data-test="actionDataTest(row)"
+              >
+                {{ taskActionLabel(rawColumnValue(row, column)) }}
+              </span>
               <template v-else>{{ columnValue(row, column) }}</template>
             </td>
             <td class="table-actions">
-              <RouterLink class="table-link" :to="detailPath(row)">详情</RouterLink>
+              <RouterLink class="detail-link" :to="detailPath(row)">详情</RouterLink>
               <button
                 v-if="isHistoryTask(row) && row.withdrawContext"
                 type="button"
-                class="withdraw-button"
+                class="withdraw-button text-action"
                 data-test="withdraw-completed-task"
                 :disabled="Boolean(withdrawingHistoryId)"
                 @click="withdraw(row)"
@@ -426,8 +475,7 @@ input {
   font: inherit;
 }
 
-button,
-.table-link {
+button {
   min-height: 34px;
   border: 1px solid #d8dee8;
   border-radius: 6px;
@@ -439,8 +487,7 @@ button,
   text-decoration: none;
 }
 
-button:hover:not(:disabled),
-.table-link:hover {
+button:hover:not(:disabled) {
   border-color: #2563eb;
   color: #2563eb;
 }
@@ -452,7 +499,7 @@ button:disabled {
 
 input:focus,
 button:focus-visible,
-.table-link:focus-visible {
+.detail-link:focus-visible {
   outline: 3px solid #f59e0b;
   outline-offset: 2px;
 }
@@ -552,7 +599,86 @@ td span {
 .table-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+}
+
+.detail-link,
+.text-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 0;
+  padding: 0 2px;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.detail-link:hover,
+.text-action:hover:not(:disabled) {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.text-action {
+  min-height: 28px;
+  border: 0;
+}
+
+.withdraw-button {
+  color: #b91c1c;
+}
+
+.withdraw-button:hover:not(:disabled) {
+  color: #991b1b;
+}
+
+.status-badge,
+.action-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  padding: 2px 9px;
+  background: #f8fafc;
+  color: #5d6978;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-badge.is-running,
+.status-badge.is-pending {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.status-badge.is-completed,
+.action-badge.is-positive {
+  border-color: #bbf7d0;
+  background: #ecfdf5;
+  color: #15803d;
+}
+
+.status-badge.is-stopped,
+.action-badge.is-danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.status-badge.is-neutral,
+.action-badge.is-neutral,
+.action-badge.is-muted {
+  border-color: #d8dee8;
+  background: #f8fafc;
+  color: #344054;
 }
 
 .pager {
