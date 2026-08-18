@@ -559,6 +559,12 @@ export class DatabaseService implements OnModuleDestroy {
     ).get(sessionId) as ProcessRow | undefined;
   }
 
+  getProcess(id: string): ProcessRow | undefined {
+    return this.db.prepare(
+      "SELECT * FROM agent_process_definition WHERE id = ?",
+    ).get(id) as ProcessRow | undefined;
+  }
+
   getGeneration(id: string): GenerationRow | undefined {
     return this.db.prepare("SELECT * FROM agent_code_generation WHERE id = ?").get(id) as GenerationRow | undefined;
   }
@@ -582,6 +588,25 @@ export class DatabaseService implements OnModuleDestroy {
       last_error_message = 'Agent server restarted during an in-progress operation; retry is required.',
       updated_at = ?
       WHERE state IN ('PROCESS_PROVISIONING', 'PROCESS_ACTIVATING')
+    `).run(now);
+    this.db.prepare(`
+      UPDATE agent_code_generation SET
+        status = 'ENTRY_CONFIG_FAILED',
+        can_write = 1,
+        write_status = 'ENTRY_CONFIG_FAILED',
+        last_error_code = 'AGENT_INTERRUPTED',
+        last_error_message = 'Agent server restarted while registering the business entry; retry only the registration.',
+        updated_at = ?
+      WHERE status = 'CONFIGURING_ENTRY'
+    `).run(now);
+    this.db.prepare(`
+      UPDATE agent_session SET
+        state = 'BUSINESS_ENTRY_CONFIG_FAILED',
+        row_version = row_version + 1,
+        last_error_code = 'AGENT_INTERRUPTED',
+        last_error_message = '代码已写入，但服务在登记业务入口时重启；请重试入口登记。',
+        updated_at = ?
+      WHERE state = 'BUSINESS_ENTRY_CONFIGURING'
     `).run(now);
     this.db.prepare(`
       UPDATE agent_code_generation SET

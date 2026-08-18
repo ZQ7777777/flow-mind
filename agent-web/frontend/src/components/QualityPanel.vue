@@ -41,7 +41,7 @@ const canStartQuality = computed(() =>
 );
 const canConfirmWrite = computed(() =>
   Boolean(quality.value?.canWrite)
-  && ["REVIEW", "WRITE_FAILED"].includes(props.generation.status),
+  && ["REVIEW", "WRITE_FAILED", "ENTRY_CONFIG_FAILED"].includes(props.generation.status),
 );
 
 watch(() => props.generation.generationRevision, () => {
@@ -69,7 +69,7 @@ async function applyOverride(): Promise<void> {
 
 async function confirmWrite(): Promise<void> {
   await store.confirmGenerationWrite();
-  ElMessage.success("候选代码已安全写入目标工程");
+  ElMessage.success("候选代码已安全写入目标工程并登记到业务大厅");
 }
 
 function label(stage: QualityStageName): string {

@@ -12,6 +12,7 @@ export function nextStepMessage(state: string | undefined): string {
     case "CODE_REVIEWING":
     case "CODE_REPAIRING":
     case "WRITING_ARTIFACTS":
+    case "BUSINESS_ENTRY_CONFIGURING":
       return "Agent 正在和流程平台协作，请稍候。";
     case "PROCESS_PROVISION_FAILED":
       return "创建流程失败；请检查错误信息后重试失败步骤。";
@@ -27,8 +28,10 @@ export function nextStepMessage(state: string | undefined): string {
       return "代码质量流水线失败；请修复目标前置条件或生成内容后重新验证。";
     case "ARTIFACT_WRITE_FAILED":
       return "写入工程失败；请根据错误信息确认回滚状态后再执行允许的重试操作。";
+    case "BUSINESS_ENTRY_CONFIG_FAILED":
+      return "代码已写入，但业务入口登记失败；请重试入口登记，重试不会重复写入文件。";
     case "COMPLETED":
-      return "代码已安全写入目标工程；可重置当前会话开始新需求。";
+      return "代码已安全写入目标工程并登记到业务大厅；可重置当前会话开始新需求。";
     default:
       return "当前状态暂无可执行的下一步操作。";
   }
@@ -46,6 +49,7 @@ const PROCESSING_STATES = new Set([
   "CODE_REVIEWING",
   "CODE_REPAIRING",
   "WRITING_ARTIFACTS",
+  "BUSINESS_ENTRY_CONFIGURING",
 ]);
 
 export function isSessionSwitchConfirmationRequired(

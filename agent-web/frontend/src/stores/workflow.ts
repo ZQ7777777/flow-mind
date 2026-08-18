@@ -418,18 +418,23 @@ export const useWorkflowStore = defineStore("workflow", () => {
   async function confirmGenerationWrite(): Promise<void> {
     const generation = snapshot.value?.activeGeneration;
     if (!snapshot.value || !currentUser.value || !generation?.manifest) return;
-    await run(async () => {
-      await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/confirm-write`, {
-        method: "POST",
-        rowVersion: snapshot.value!.rowVersion,
-        idempotencyKey: crypto.randomUUID(),
-        body: JSON.stringify({
-          generationRevision: generation.generationRevision,
-          files: generation.manifest!.files.map(({ relativePath, stagedSha256 }) => ({ relativePath, stagedSha256 })),
-        }),
+    try {
+      await run(async () => {
+        await apiRequest(`/api/agent/sessions/${snapshot.value!.sessionId}/code-generations/${generation.generationId}/confirm-write`, {
+          method: "POST",
+          rowVersion: snapshot.value!.rowVersion,
+          idempotencyKey: crypto.randomUUID(),
+          body: JSON.stringify({
+            generationRevision: generation.generationRevision,
+            files: generation.manifest!.files.map(({ relativePath, stagedSha256 }) => ({ relativePath, stagedSha256 })),
+          }),
+        });
+        await refresh();
       });
-      await refresh();
-    });
+    } catch (cause) {
+      try { await refresh(); } catch { /* preserve the original write/configuration error */ }
+      throw cause;
+    }
   }
 
   async function loadManagementLists(): Promise<void> {
