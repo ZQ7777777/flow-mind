@@ -1,8 +1,10 @@
 package com.flowmind.business.admin;
 
+import com.flowmind.business.common.BusinessApiException;
 import com.flowmind.business.entry.BusinessEntryConfigService;
 import com.flowmind.business.entry.dto.BusinessEntryConfigResponse;
 import com.flowmind.business.entry.dto.BusinessEntryConfigWriteRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,6 +39,18 @@ public class AdminBusinessEntryConfigController {
     public List<BusinessEntryConfigResponse> list() {
         accessGuard.requireAdministrator();
         return service.listAdminConfigs();
+    }
+
+    @GetMapping("/by-definition/{definitionId}")
+    public BusinessEntryConfigResponse getByDefinition(@PathVariable String definitionId) {
+        accessGuard.requireAdministrator();
+        for (BusinessEntryConfigResponse response : service.listAdminConfigs()) {
+            if (definitionId.equals(response.getDefinitionId())) {
+                return response;
+            }
+        }
+        throw new BusinessApiException(HttpStatus.NOT_FOUND, "BUSINESS_ENTRY_CONFIG_NOT_FOUND",
+                "business entry config not found");
     }
 
     @PostMapping
