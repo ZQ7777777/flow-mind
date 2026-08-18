@@ -8,6 +8,8 @@ public enum NodeTypeEnum {
     START,
     /** 用户任务节点。 */
     USER_TASK,
+    /** 自动知会节点，不创建待办并在生成知会事件后继续推进。 */
+    NOTICE,
     /** 排他网关。 */
     EXCLUSIVE_GATEWAY,
     /** 并行分支网关。 */

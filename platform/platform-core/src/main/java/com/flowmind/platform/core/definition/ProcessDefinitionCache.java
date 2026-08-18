@@ -183,6 +183,7 @@ public class ProcessDefinitionCache {
         target.setListenerConfig(source.getListenerConfig());
         target.setTimeoutConfig(source.getTimeoutConfig());
         target.setReminderConfig(source.getReminderConfig());
+        target.setNoticeConfig(source.getNoticeConfig());
         target.setPositionX(source.getPositionX());
         target.setPositionY(source.getPositionY());
         target.setSortOrder(source.getSortOrder());

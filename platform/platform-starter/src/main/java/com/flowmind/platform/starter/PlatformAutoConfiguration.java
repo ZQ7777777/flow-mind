@@ -41,6 +41,7 @@ import com.flowmind.platform.core.query.RuntimeQueryAssembler;
 import com.flowmind.platform.core.audit.AuditLogWriter;
 import com.flowmind.platform.core.audit.DefaultAuditLogWriter;
 import com.flowmind.platform.core.callback.CallbackDispatchService;
+import com.flowmind.platform.core.callback.CallbackDispatchScheduler;
 import com.flowmind.platform.core.callback.CallbackFailureAlertService;
 import com.flowmind.platform.core.callback.CallbackLogMapper;
 import com.flowmind.platform.core.callback.CallbackOutboxService;
@@ -657,6 +658,17 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "flow-mind.platform.callback", name = "async-enabled",
+            havingValue = "true", matchIfMissing = true)
+    public CallbackDispatchScheduler callbackDispatchScheduler(CallbackDispatchService dispatchService,
+                                                               PlatformProperties properties) {
+        PlatformProperties.Callback callback = properties.getCallback();
+        return new CallbackDispatchScheduler(dispatchService, callback.getInitialDelayMs(),
+                callback.getFixedDelayMs(), callback.getLimit());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public ProcessMonitorService processMonitorService(ActiveTaskRepository activeTaskRepository,
                                                        ProcessInstanceRepository instanceRepository,
                                                        ReminderRecordRepository reminderRepository,
@@ -782,6 +794,8 @@ public class PlatformAutoConfiguration {
                 "schema/sqlite/005_delegate_from_user_name.sql";
         private static final String DUE_SOON_REMINDER_TYPE_MIGRATION =
                 "schema/sqlite/006_due_soon_reminder_type.sql";
+        private static final String NOTICE_NODE_CONFIG_MIGRATION =
+                "schema/sqlite/007_notice_node_config.sql";
 
         private final DataSource dataSource;
 
@@ -811,6 +825,10 @@ public class PlatformAutoConfiguration {
                 if (!tableContainsAction(connection, "process_reminder_record", "DUE_SOON")) {
                     ScriptUtils.executeSqlScript(connection,
                             new ClassPathResource(DUE_SOON_REMINDER_TYPE_MIGRATION));
+                }
+                if (!tableHasColumn(connection, "process_node", "notice_config")) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(NOTICE_NODE_CONFIG_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);

@@ -63,6 +63,7 @@ export interface ProcessNode {
   listenerConfig?: string;
   timeoutConfig?: string;
   reminderConfig?: string;
+  noticeConfig?: string;
   positionX?: number;
   positionY?: number;
   sortOrder?: number;
@@ -213,7 +214,6 @@ export interface ProcessInstanceDetail extends ProcessInstance {
 
 export type TraceType = "history-tasks" | "comments" | "callback-logs" | "read-records" | "audit-logs";
 export type AdminRecord = Record<string, unknown>;
-
 
 
 

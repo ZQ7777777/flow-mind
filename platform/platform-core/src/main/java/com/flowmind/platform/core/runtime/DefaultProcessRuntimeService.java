@@ -8,6 +8,7 @@ import com.flowmind.platform.api.dto.ProcessCommentDTO;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.ProcessNoticeDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
@@ -1228,6 +1229,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                 advanceResult.getCreatedTasks());
         publishCreatedTaskEvents(operationId, ActionTypeEnum.START, instance, starter,
                 advanceResult.getCreatedTasks());
+        publishCreatedNoticeEvents(operationId, ActionTypeEnum.START, instance, starter,
+                advanceResult.getCreatedNotices());
         if (advanceResult.isInstanceCompleted()) {
             publishEvent(operationId, WorkflowEventTypeEnum.PROCESS_COMPLETED, instance.getInstanceId(),
                     ActionTypeEnum.START, instance, starter, Collections.<HistoryTaskDTO>emptyList(),
@@ -1246,6 +1249,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         publishEvent(operationId, eventType, targetId, actionType, result.getInstance(), operator,
                 result.getArchivedTasks(), result.getCreatedTasks());
         publishCreatedTaskEvents(operationId, actionType, result.getInstance(), operator, result.getCreatedTasks());
+        publishCreatedNoticeEvents(operationId, actionType, result.getInstance(), operator,
+                advanceResult.getCreatedNotices());
         if (advanceResult.isInstanceCompleted()) {
             publishEvent(operationId, WorkflowEventTypeEnum.PROCESS_COMPLETED,
                     result.getInstance().getInstanceId(), actionType, result.getInstance(), operator,
@@ -1265,6 +1270,8 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                 ActionTypeEnum.SEND, instance, starter, Collections.singletonList(archivedTask),
                 advanceResult.getCreatedTasks());
         publishCreatedTaskEvents(operationId, ActionTypeEnum.SEND, instance, starter, advanceResult.getCreatedTasks());
+        publishCreatedNoticeEvents(operationId, ActionTypeEnum.SEND, instance, starter,
+                advanceResult.getCreatedNotices());
         if (advanceResult.isInstanceCompleted()) {
             publishEvent(operationId, WorkflowEventTypeEnum.PROCESS_COMPLETED, instance.getInstanceId(),
                     ActionTypeEnum.SEND, instance, starter, Collections.singletonList(archivedTask),
@@ -1284,6 +1291,18 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         }
     }
 
+    private void publishCreatedNoticeEvents(String operationId,
+                                            ActionTypeEnum actionType,
+                                            ProcessInstanceDTO instance,
+                                            UserContext operator,
+                                            List<ProcessNoticeDTO> createdNotices) {
+        for (ProcessNoticeDTO notice : createdNotices) {
+            publishEvent(operationId, WorkflowEventTypeEnum.NOTICE_CREATED, notice.getNodeCode(), actionType,
+                    instance, operator, Collections.<HistoryTaskDTO>emptyList(), Collections.<TaskDTO>emptyList(),
+                    Collections.singletonList(notice));
+        }
+    }
+
     private void publishEvent(String operationId,
                               WorkflowEventTypeEnum eventType,
                               String targetId,
@@ -1292,6 +1311,19 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
                               UserContext operator,
                               List<HistoryTaskDTO> archivedTasks,
                               List<TaskDTO> createdTasks) {
+        publishEvent(operationId, eventType, targetId, actionType, instance, operator,
+                archivedTasks, createdTasks, Collections.<ProcessNoticeDTO>emptyList());
+    }
+
+    private void publishEvent(String operationId,
+                              WorkflowEventTypeEnum eventType,
+                              String targetId,
+                              ActionTypeEnum actionType,
+                              ProcessInstanceDTO instance,
+                              UserContext operator,
+                              List<HistoryTaskDTO> archivedTasks,
+                              List<TaskDTO> createdTasks,
+                              List<ProcessNoticeDTO> createdNotices) {
         if (callbackService == null) {
             throw new RuntimeStateException(RuntimeErrorCodes.INVALID_ACTION, "callback service is unavailable");
         }
@@ -1305,6 +1337,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         event.setOperator(copyUser(operator));
         event.setArchivedTasks(new ArrayList<HistoryTaskDTO>(archivedTasks));
         event.setCreatedTasks(new ArrayList<TaskDTO>(createdTasks));
+        event.setCreatedNotices(new ArrayList<ProcessNoticeDTO>(createdNotices));
         event.setVariables(new LinkedHashMap<String, Object>(instance.getVariables()));
         event.setOccurredAt(LocalDateTime.now());
         callbackService.publishCallback(event);

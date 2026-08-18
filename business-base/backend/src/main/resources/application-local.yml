@@ -8,6 +8,6 @@ flow-mind:
     sqlite:
       path: ${FLOW_MIND_PLATFORM_SQLITE_PATH:./data/business-flow-local.db}
     callback:
-      async-enabled: false
+      async-enabled: true
     timeout-scan:
       enabled: true

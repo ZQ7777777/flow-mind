@@ -1,6 +1,7 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 import ProcessGraphDesigner from "./ProcessGraphDesigner.vue";
+import type { ProcessNode } from "../../types/admin";
 
 function button(wrapper: ReturnType<typeof mount>, label: string) {
   const found = wrapper.findAll("button").find((item) => item.text().includes(label));
@@ -93,6 +94,34 @@ describe("ProcessGraphDesigner", () => {
     await field(wrapper, "指定部门").find("select").setValue("d1");
     config = JSON.parse((wrapper.props("nodes") as typeof graph.nodes)[1].approverRuleConfig!);
     expect(config).toEqual({ roleCode: "manager", departmentFrom: "fixed", departmentId: "d1", custom: "kept" });
+  });
+
+  it("configures a notice node with starter recipients and message text", async () => {
+    const noticeGraph = structuredClone(graph) as { nodes: ProcessNode[]; edges: typeof graph.edges };
+    noticeGraph.nodes.splice(2, 0, {
+      nodeCode: "notify",
+      nodeName: "知会经办",
+      nodeType: "NOTICE",
+      positionX: 420,
+      positionY: 20,
+      approverRuleType: "USER",
+      approverRuleConfig: '{"userIds":["u1"]}',
+      noticeConfig: "{}",
+    });
+    const wrapper = mount(ProcessGraphDesigner, { props: { ...noticeGraph } });
+
+    await wrapper.findAll(".designer-node")[2].trigger("pointerdown", {
+      clientX: 430, clientY: 30, pointerId: 1, button: 0,
+    });
+    expect(wrapper.text()).toContain("接收人来源");
+    expect(wrapper.text()).toContain("消息正文");
+    await field(wrapper, "接收人来源").find("select").setValue("STARTER");
+    await field(wrapper, "消息标题").find("input").setValue("办理完成");
+    await field(wrapper, "消息标题").find("input").trigger("change");
+
+    const notice = (wrapper.props("nodes") as typeof noticeGraph.nodes)[2];
+    expect(notice.approverRuleType).toBe("STARTER");
+    expect(JSON.parse(notice.noticeConfig!)).toEqual({ title: "办理完成" });
   });
 
   it("auto-layouts nodes and exposes zoom controls", async () => {

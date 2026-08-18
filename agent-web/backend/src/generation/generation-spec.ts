@@ -27,6 +27,7 @@ const CODE_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/;
 const BUSINESS_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9]*(?:[_-][A-Za-z0-9]+)*$/;
 const APPLY_SUCCESSOR_NODE_TYPES = new Set<ProcessNodeType>([
   "USER_TASK",
+  "NOTICE",
   "EXCLUSIVE_GATEWAY",
   "PARALLEL_SPLIT_GATEWAY",
 ]);
@@ -140,7 +141,7 @@ export function validateGenerationRequirement(requirement: BusinessRequirement):
     issues.push("首个发起任务必须使用节点编码 apply、节点类型 USER_TASK 和 STARTER 审批人规则");
   }
   if (outgoing.length !== 1 || !next || !APPLY_SUCCESSOR_NODE_TYPES.has(next.nodeType)) {
-    issues.push("apply 必须且只能流向一个后续用户任务、排他网关或并行分支网关");
+    issues.push("apply 必须且只能流向一个后续用户任务、知会节点、排他网关或并行分支网关");
   }
   return [...new Set(issues)];
 }

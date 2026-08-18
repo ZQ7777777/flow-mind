@@ -7,3 +7,5 @@
 - Existing databases must apply `003_attachment_operation_actions.sql` and then
   `004_attachment_replace_operation_action.sql`; both migrations preserve existing
   operation and audit records while extending their action constraints.
+- `007_notice_node_config.sql` 在单一事务中重建 `process_node`，保留原节点数据和索引，
+  同时增加 `NOTICE` 节点约束与 `notice_config` 字段；启动器会在检测到字段缺失时自动执行。

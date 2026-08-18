@@ -227,6 +227,8 @@ public class PlatformStandaloneConfiguration {
                 "schema/sqlite/005_delegate_from_user_name.sql";
         private static final String DUE_SOON_REMINDER_TYPE_MIGRATION =
                 "schema/sqlite/006_due_soon_reminder_type.sql";
+        private static final String NOTICE_NODE_CONFIG_MIGRATION =
+                "schema/sqlite/007_notice_node_config.sql";
 
         private final DataSource dataSource;
 
@@ -256,6 +258,10 @@ public class PlatformStandaloneConfiguration {
                 if (!tableContainsAction(connection, "process_reminder_record", "DUE_SOON")) {
                     ScriptUtils.executeSqlScript(connection,
                             new ClassPathResource(DUE_SOON_REMINDER_TYPE_MIGRATION));
+                }
+                if (!tableHasColumn(connection, "process_node", "notice_config")) {
+                    ScriptUtils.executeSqlScript(connection,
+                            new ClassPathResource(NOTICE_NODE_CONFIG_MIGRATION));
                 }
             } finally {
                 DataSourceUtils.releaseConnection(connection, dataSource);

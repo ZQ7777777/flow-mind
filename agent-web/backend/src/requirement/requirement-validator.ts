@@ -147,7 +147,22 @@ function validateNode(
     if (node.approverRule) validateApproverRuleConfig(node, ambiguities);
     if (!node.multiInstanceMode) missing.add(`用户任务 ${node.nodeName} 的多人模式`);
     validateRuntimeTaskPolicies(node, nodeByCode, ambiguities);
-  } else if (node.listenerConfig !== undefined || node.timeoutConfig !== undefined || node.reminderConfig !== undefined) {
+  } else if (node.nodeType === "NOTICE") {
+    if (!node.approverRule) missing.add(`知会节点 ${node.nodeName} 的接收人规则`);
+    if (node.approverRule) validateApproverRuleConfig(node, ambiguities);
+    if (node.multiInstanceMode && node.multiInstanceMode !== "SINGLE") {
+      ambiguities.add(`知会节点 ${node.nodeName} 不支持或签或会签`);
+    }
+    for (const [field, value] of Object.entries(node.noticeConfig || {})) {
+      if ((field === "title" || field === "content") && !hasTextValue(value)) {
+        ambiguities.add(`知会节点 ${node.nodeName} 的 ${field} 必须是非空文本`);
+      }
+    }
+    if (node.listenerConfig !== undefined || node.timeoutConfig !== undefined || node.reminderConfig !== undefined) {
+      ambiguities.add(`知会节点 ${node.nodeName} 不支持任务监听、超时或催办配置`);
+    }
+  } else if (node.listenerConfig !== undefined || node.timeoutConfig !== undefined
+    || node.reminderConfig !== undefined || node.noticeConfig !== undefined) {
     ambiguities.add(`节点 ${node.nodeName} 的运行时配置仅支持 USER_TASK`);
   }
   if (node.nodeType.startsWith("PARALLEL_")) {

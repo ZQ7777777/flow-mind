@@ -2,11 +2,32 @@ import { describe, expect, it } from "vitest";
 import { ENTRY_APPLICATION_REQUIREMENT } from "@flowmind/agent-contracts";
 import {
   normalizeExtensions,
+  mapProcessNode,
   selectAttachmentTemplate,
   templateMatches,
 } from "../src/platform/platform-client.service.js";
 
 describe("platform attachment mapping", () => {
+  it("maps a NOTICE recipient and plain-text message configuration", () => {
+    expect(mapProcessNode({
+      nodeCode: "0199-notify-starter",
+      nodeName: "知会经办",
+      nodeType: "NOTICE",
+      approverRule: { type: "STARTER", config: {} },
+      multiInstanceMode: "SINGLE",
+      noticeConfig: { title: "流程知会", content: "已办理完成，请知悉。" },
+      positionX: 800,
+      positionY: 300,
+      sortOrder: 9,
+    })).toEqual(expect.objectContaining({
+      nodeType: "NOTICE",
+      approverRuleType: "STARTER",
+      approverRuleConfig: "{}",
+      multiInstanceMode: "SINGLE",
+      noticeConfig: "{\"content\":\"已办理完成，请知悉。\",\"title\":\"流程知会\"}",
+    }));
+  });
+
   it("normalizes extension sets deterministically", () => {
     expect(normalizeExtensions([".PNG", "pdf", " png ", "JPG"])).toEqual(["jpg", "pdf", "png"]);
   });

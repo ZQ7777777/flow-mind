@@ -27,7 +27,7 @@ public class ProcessNodeEntity {
      */
     private String nodeName;
     /**
-     * 节点类型，典型值：START、USER_TASK、EXCLUSIVE_GATEWAY、PARALLEL_SPLIT_GATEWAY、PARALLEL_JOIN_GATEWAY、END。
+     * 节点类型，典型值：START、USER_TASK、NOTICE、EXCLUSIVE_GATEWAY、PARALLEL_SPLIT_GATEWAY、PARALLEL_JOIN_GATEWAY、END。
      */
     private String nodeType;
     /**
@@ -58,6 +58,10 @@ public class ProcessNodeEntity {
      * 催办 JSON，包含提醒频率和目标人规则。
      */
     private String reminderConfig;
+    /**
+     * 知会配置 JSON，仅 NOTICE 节点使用。
+     */
+    private String noticeConfig;
     /**
      * 流程图横坐标。
      */

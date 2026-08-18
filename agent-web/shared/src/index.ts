@@ -102,6 +102,7 @@ export interface AttachmentRequirement {
 export type ProcessNodeType =
   | "START"
   | "USER_TASK"
+  | "NOTICE"
   | "EXCLUSIVE_GATEWAY"
   | "PARALLEL_SPLIT_GATEWAY"
   | "PARALLEL_JOIN_GATEWAY"
@@ -123,6 +124,8 @@ export interface ProcessNodeRequirement {
   timeoutConfig?: Record<string, unknown>;
   /** Runtime reminder configuration persisted to the platform as reminderConfig JSON. */
   reminderConfig?: Record<string, unknown>;
+  /** Plain-text message configuration persisted to the platform for NOTICE nodes. */
+  noticeConfig?: { title?: string; content?: string };
   positionX: number;
   positionY: number;
   sortOrder: number;
@@ -381,7 +384,7 @@ export const businessRequirementSchema = {
         properties: {
           nodeCode: { type: "string" },
           nodeName: { type: "string" },
-          nodeType: { enum: ["START", "USER_TASK", "EXCLUSIVE_GATEWAY", "PARALLEL_SPLIT_GATEWAY", "PARALLEL_JOIN_GATEWAY", "END"] },
+          nodeType: { enum: ["START", "USER_TASK", "NOTICE", "EXCLUSIVE_GATEWAY", "PARALLEL_SPLIT_GATEWAY", "PARALLEL_JOIN_GATEWAY", "END"] },
           pairedGatewayCode: { type: "string" },
           approverRule: {
             type: "object",
@@ -396,6 +399,11 @@ export const businessRequirementSchema = {
           listenerConfig: { type: "object" },
           timeoutConfig: { type: "object" },
           reminderConfig: { type: "object" },
+          noticeConfig: {
+            type: "object",
+            additionalProperties: false,
+            properties: { title: { type: "string" }, content: { type: "string" } },
+          },
           positionX: { type: "number" },
           positionY: { type: "number" },
           sortOrder: { type: "integer" },

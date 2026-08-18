@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -94,6 +95,35 @@ class RuntimeNodeAdvancerTest {
         assertEquals(Collections.singletonList("user-1"), requestCaptor.getValue()
                 .getApproverRuleConfig().get("userIds"));
         verify(instanceRepository).updateCurrentNodeCodes("instance-1", "[\"review\"]");
+    }
+
+    @Test
+    void createsStarterNoticeWithoutTaskAndAutomaticallyCompletesInstance() {
+        when(approverResolver.resolveApprovers(any())).thenReturn(
+                Collections.singletonList(new UserDTO("starter-1", "Starter")));
+        when(instanceRepository.complete(eq("instance-1"), any())).thenReturn(1);
+        ProcessNodeDTO notice = node("notify-starter", NodeTypeEnum.NOTICE);
+        notice.setNodeName("知会经办");
+        notice.setApproverRuleType(ApproverRuleTypeEnum.STARTER);
+        notice.setMultiInstanceMode(MultiInstanceModeEnum.SINGLE);
+        notice.setNoticeConfig("{\"title\":\"办理完成\"}");
+        ProcessInstanceEntity instance = instance();
+        instance.setInstanceTitle("仓单质押申请-001");
+
+        RuntimeAdvanceResult result = advancer.advanceToNode(instance, definition(
+                nodes(notice, node("end", NodeTypeEnum.END)),
+                edges(edge("e1", "notify-starter", "end"))), "notify-starter", null, null);
+
+        assertTrue(result.isInstanceCompleted());
+        assertTrue(result.getCreatedTasks().isEmpty());
+        assertEquals(1, result.getCreatedNotices().size());
+        assertEquals("办理完成", result.getCreatedNotices().get(0).getTitle());
+        assertEquals("流程「仓单质押申请-001」已办理完成，请知悉",
+                result.getCreatedNotices().get(0).getContent());
+        assertEquals(Collections.singletonList("starter-1"),
+                result.getCreatedNotices().get(0).getTargetUserIds());
+        verify(activeTaskRepository, never()).insert(any(ProcessActiveTaskEntity.class));
+        verify(instanceRepository).complete(eq("instance-1"), any());
     }
 
     @Test

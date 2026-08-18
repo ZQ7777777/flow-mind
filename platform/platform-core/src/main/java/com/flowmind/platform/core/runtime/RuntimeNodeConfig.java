@@ -23,7 +23,7 @@ public class RuntimeNodeConfig {
     private ProcessNodeDTO node;
 
     /**
-     * 节点类型，典型取值：START、USER_TASK、EXCLUSIVE_GATEWAY、PARALLEL_SPLIT_GATEWAY、PARALLEL_JOIN_GATEWAY、END。
+     * 节点类型，典型取值：START、USER_TASK、NOTICE、EXCLUSIVE_GATEWAY、PARALLEL_SPLIT_GATEWAY、PARALLEL_JOIN_GATEWAY、END。
      */
     private NodeTypeEnum nodeType;
 
@@ -61,4 +61,9 @@ public class RuntimeNodeConfig {
      * 提醒配置，来源于 reminderConfig JSON 对象。
      */
     private Map<String, Object> reminderConfig;
+
+    /**
+     * 知会配置，来源于 noticeConfig JSON 对象。
+     */
+    private Map<String, Object> noticeConfig;
 }

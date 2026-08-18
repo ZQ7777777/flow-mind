@@ -14,6 +14,7 @@ const MESSAGE_META: Record<string, MessageMeta> = {
   TASK_TIMEOUT: { label: "已超时", tone: "error", defaultTitle: "任务超时提醒" },
   TASK_DUE_SOON: { label: "即将超时", tone: "warning", defaultTitle: "任务即将超时" },
   TASK_REMIND: { label: "手动催办", tone: "info", defaultTitle: "任务催办" },
+  PROCESS_NOTICE: { label: "流程知会", tone: "info", defaultTitle: "流程知会" },
 };
 
 const DEFAULT_MESSAGE_META: MessageMeta = { label: "消息", tone: "info", defaultTitle: "新消息" };
@@ -95,6 +96,7 @@ export const MESSAGE_TYPE_FILTERS: ReadonlyArray<{ value: string; label: string 
   { value: "TASK_TIMEOUT", label: "已超时" },
   { value: "TASK_DUE_SOON", label: "即将超时" },
   { value: "TASK_REMIND", label: "手动催办" },
+  { value: "PROCESS_NOTICE", label: "流程知会" },
 ];
 
 export const READ_STATUS_FILTERS: ReadonlyArray<{ value: string; label: string }> = [

@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS process_node (
     node_code TEXT NOT NULL,
     node_name TEXT NOT NULL,
     node_type TEXT NOT NULL
-        CHECK (node_type IN ('START', 'USER_TASK', 'EXCLUSIVE_GATEWAY', 'PARALLEL_SPLIT_GATEWAY', 'PARALLEL_JOIN_GATEWAY', 'END')),
+        CHECK (node_type IN ('START', 'USER_TASK', 'NOTICE', 'EXCLUSIVE_GATEWAY', 'PARALLEL_SPLIT_GATEWAY', 'PARALLEL_JOIN_GATEWAY', 'END')),
     paired_gateway_code TEXT,
     approver_rule_type TEXT
         CHECK (approver_rule_type IS NULL OR approver_rule_type IN ('USER', 'STARTER', 'DEPARTMENT', 'ROLE', 'ROLE_IN_DEPARTMENT', 'APPROVER_EXPRESSION')),
@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS process_node (
     listener_config TEXT,
     timeout_config TEXT,
     reminder_config TEXT,
+    notice_config TEXT,
     position_x REAL,
     position_y REAL,
     sort_order INTEGER NOT NULL DEFAULT 0,
