@@ -9,6 +9,11 @@ import type {
   WorkflowDetailResponse,
   WorkflowListRecord,
   WorkflowListType,
+  WorkflowStartContext,
+  WorkflowStartPayload,
+  WorkflowStartResponse,
+  WorkflowProcessEntryLink,
+  WorkflowStartableProcessResponse,
   WorkflowProcessEntryLink,
   WorkflowStartableProcessResponse,
   WorkflowUserResponse,
@@ -70,6 +75,37 @@ export async function fetchProcessEntryLink(
     `${WORKFLOW_BASE}/process-entry-links/${encodeURIComponent(definitionId)}`,
   );
 }
+
+export async function fetchWorkflowStartContext(processCode: string): Promise<WorkflowStartContext> {
+  return requestJson<WorkflowStartContext>(
+    `${WORKFLOW_BASE}/processes/${encodeURIComponent(processCode)}/start-context`,
+  );
+}
+
+export async function startWorkflowProcess(
+  processCode: string,
+  payload: WorkflowStartPayload,
+): Promise<WorkflowStartResponse> {
+  const formData = new FormData();
+  formData.append("payload", new Blob([
+    JSON.stringify({ variables: payload.variables }),
+  ], { type: "application/json" }));
+  for (const [attachmentCode, files] of Object.entries(payload.attachments)) {
+    for (const file of files) {
+      formData.append(attachmentCode, file, file.name);
+    }
+  }
+
+  return requestJson<WorkflowStartResponse>(
+    `${WORKFLOW_BASE}/processes/${encodeURIComponent(processCode)}/start-submit`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": payload.idempotencyKey },
+      body: formData,
+    },
+  );
+}
+
 export async function fetchWorkflowList(
   type: WorkflowListType,
   params: WorkflowListQuery,
@@ -228,5 +264,3 @@ async function uploadAttachment(
     body: formData,
   });
 }
-
-

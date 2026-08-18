@@ -3,12 +3,14 @@ import {
   approveTask,
   remindTask,
   fetchEntryApplicationProcess,
+  fetchWorkflowStartContext,
   fetchWorkflowList,
   fetchWorkflowUsers,
   fetchProcessEntryLink,
   fetchProcessEntryLinks,
   deleteAttachment,
   downloadAttachment,
+  startWorkflowProcess,
   uploadInstanceAttachment,
   replaceInstanceAttachment,
   uploadTaskAttachment,
@@ -95,6 +97,115 @@ describe("workflow api", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/workflow/process-entry-links");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/workflow/process-entry-links/definition%20%2F%201");
     expect(result[0].entryPageUrl).toBe("/generated/demo/apply");
+  });
+
+  it("loads configured process entry links from the workflow namespace", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ definitionId: "definition-1", entryPageUrl: "/generated/demo/apply" }]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchProcessEntryLinks();
+    await fetchProcessEntryLink("definition / 1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/workflow/process-entry-links");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/workflow/process-entry-links/definition%20%2F%201");
+    expect(result[0].entryPageUrl).toBe("/generated/demo/apply");
+  });
+
+
+  it("loads a generic workflow start context by process code", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          definitionId: "definition-1",
+          definitionVersion: 3,
+          processCode: "entry_application",
+          processName: "入金申请",
+          startable: true,
+          formFields: [],
+          fieldPermissions: [],
+          attachmentTemplates: [],
+          defaultVariables: {},
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchWorkflowStartContext("entry_application");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/workflow/processes/entry_application/start-context",
+    );
+    expect(result.definitionVersion).toBe(3);
+    expect(result.processName).toBe("入金申请");
+  });
+
+  it("starts a workflow process with variables, attachments and idempotency key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ instanceId: "instance-1", createdTasks: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const receipt = new File(["receipt"], "receipt.pdf", { type: "application/pdf" });
+    const proof = new File(["proof"], "proof.png", { type: "image/png" });
+    const result = await startWorkflowProcess("entry_application", {
+      definitionId: "definition-1",
+      definitionVersion: 3,
+      variables: { amount: 1000, bankName: "招商银行" },
+      attachments: { receipt: [receipt, proof] },
+      idempotencyKey: "idem-start",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = init.body as FormData;
+    expect(url).toBe("/api/workflow/processes/entry_application/start-submit");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-start");
+    expect(body.has("definitionId")).toBe(false);
+    expect(body.has("definitionVersion")).toBe(false);
+    expect((body.get("payload") as File).type).toBe("application/json");
+    expect((body.get("payload") as File).size).toBeGreaterThan(0);
+    expect(body.getAll("receipt")).toEqual([receipt, proof]);
+    expect(body.has("attachments[receipt]")).toBe(false);
+    expect(result.instanceId).toBe("instance-1");
+  });
+
+  it("loads backend start attachments from the compatible attachments field", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          definitionId: "definition-1",
+          definitionVersion: 3,
+          processCode: "entry_application",
+          processName: "入金申请",
+          startable: true,
+          formFields: [],
+          fieldPermissions: [],
+          attachments: [{
+            attachmentCode: "receipt",
+            attachmentName: "回单",
+            minCount: 1,
+            maxCount: 2,
+            allowedExtensions: ["pdf"],
+          }],
+          defaultVariables: {},
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchWorkflowStartContext("entry_application");
+
+    expect(result.attachments?.[0].attachmentCode).toBe("receipt");
   });
 
   it("sends task actions with the expected task version and idempotency key", async () => {

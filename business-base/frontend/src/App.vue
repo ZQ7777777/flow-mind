@@ -20,6 +20,7 @@ const resizeState = ref<{
   startHeight: number;
 } | null>(null);
 const publicLayout = computed(() => route.meta.public === true);
+const standaloneLayout = computed(() => route.meta.standalone === true);
 const isAdmin = computed(() => auth.user?.administrator === true);
 
 watch(
@@ -86,11 +87,41 @@ function resizeMessagePanel(event: PointerEvent): void {
   };
 }
 
+function resizeMessagePanel(event: PointerEvent): void {
+  const state = resizeState.value;
+  if (!state) return;
+  const deltaX = event.clientX - state.startX;
+  const deltaY = event.clientY - state.startY;
+  const maxWidth = Math.max(320, window.innerWidth - 32);
+  const maxHeight = Math.max(360, window.innerHeight - 96);
+  let width = state.startWidth;
+  let height = state.startHeight;
+  if (state.edge.includes("e")) width += deltaX;
+  if (state.edge.includes("w")) width -= deltaX;
+  if (state.edge.includes("s")) height += deltaY;
+  if (state.edge.includes("n")) height -= deltaY;
+  messagePanelSize.value = {
+    width: Math.min(Math.max(width, 320), maxWidth),
+    height: Math.min(Math.max(height, 360), maxHeight),
+  };
+}
+
 function stopResizeMessagePanel(): void {
   resizeState.value = null;
   window.removeEventListener("pointermove", resizeMessagePanel);
   window.removeEventListener("pointerup", stopResizeMessagePanel);
 }
+function readableGeneratedLabel(value: string): string {
+  return value
+      .split("-")
+      .filter((part) => part.length > 0)
+      .map((part) => part[0].toUpperCase() + part.slice(1))
+      .join(" ");
+}
+
+onBeforeUnmount(() => {
+  stopResizeMessagePanel();
+});
 
 onBeforeUnmount(() => {
   stopResizeMessagePanel();
@@ -103,7 +134,7 @@ async function logout(): Promise<void> {
 </script>
 
 <template>
-  <RouterView v-if="publicLayout" />
+  <RouterView v-if="publicLayout || standaloneLayout" />
   <div v-else class="business-app-shell">
     <ToastHost />
     <header class="topbar">
@@ -112,48 +143,6 @@ async function logout(): Promise<void> {
         <h1>业务大厅</h1>
       </div>
       <div class="user-panel" aria-label="当前用户">
-        <div class="message-popover">
-          <button
-            class="message-entry"
-            data-test="messages-link"
-            type="button"
-            title="消息中心"
-            aria-label="消息中心"
-            :aria-expanded="messagePanelOpen"
-            @click="toggleMessagePanel"
-          >
-            <span aria-hidden="true">✉</span>
-            <span
-              v-if="messageStore.unreadCount > 0"
-              class="unread-badge"
-              data-test="unread-badge"
-            >
-              {{ messageStore.unreadCount }}
-            </span>
-          </button>
-          <div
-            v-if="messagePanelOpen"
-            class="message-popover-backdrop"
-            data-test="messages-popover-backdrop"
-            @click="closeMessagePanel"
-          >
-            <div
-              class="message-popover-panel"
-              :style="messagePanelStyle"
-              @click.stop
-            >
-              <MessageCenterView variant="popup" />
-              <span
-                v-for="handle in resizeHandles"
-                :key="handle"
-                class="message-resize-handle"
-                :class="`is-${handle}`"
-                aria-hidden="true"
-                @pointerdown="startResize(handle, $event)"
-              ></span>
-            </div>
-          </div>
-        </div>
         <div class="user-summary">
           <strong>{{ auth.user?.realName }}</strong>
           <span>{{ auth.user?.departmentName }}</span>
@@ -172,7 +161,14 @@ async function logout(): Promise<void> {
 
     <div class="workspace">
       <nav class="side-nav" aria-label="功能导航">
-        <RouterLink class="nav-link" to="/business-hall">首页</RouterLink>
+        <RouterLink
+          v-for="route in generatedEntryRoutes"
+          :key="route.path"
+          class="nav-link"
+          :to="route.path"
+        >
+          {{ route.label }}
+        </RouterLink>
         <RouterLink class="nav-link" to="/workflow/started">我发起的</RouterLink>
         <RouterLink class="nav-link" to="/workflow/todo">我的待办</RouterLink>
         <RouterLink class="nav-link" to="/workflow/completed">我的已办</RouterLink>
