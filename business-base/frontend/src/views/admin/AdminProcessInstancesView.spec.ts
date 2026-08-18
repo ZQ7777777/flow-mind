@@ -69,14 +69,14 @@ describe("AdminProcessInstancesView", () => {
 
     void wrapper.findAll("button").find((item) => item.text() === "查看详情")!.trigger("click");
     await nextTick();
-    expect(wrapper.get('[data-test="instance-detail-backdrop"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="instance-detail-backdrop"]').exists()).toBe(true);
     expect(wrapper.get(".detail-loading").text()).toContain("正在加载实例详情");
     expect(wrapper.find(".detail-card").exists()).toBe(false);
 
     resolveDetail!(json({ ...listRecord, businessKey: "BUS-1", variables: { amount: 100 } }));
     await flushPromises();
     expect(wrapper.get(".detail-modal").text()).toContain("BUS-1");
-    expect(wrapper.get('[data-test="process-graph-stub"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="process-graph-stub"]').exists()).toBe(true);
 
     await wrapper.findAll(".detail-header button").at(-1)!.trigger("click");
     expect(wrapper.find(".detail-modal").exists()).toBe(false);

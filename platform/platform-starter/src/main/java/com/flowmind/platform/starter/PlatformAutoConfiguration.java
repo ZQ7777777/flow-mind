@@ -569,13 +569,14 @@ public class PlatformAutoConfiguration {
                                              ProcessTraceAssembler traceAssembler,
                                              RuntimeQueryAssembler queryAssembler,
                                              ReadRecordManager readRecordManager,
+                                             ProcessNodeRepository nodeRepository,
                                              ObjectProvider<CurrentUserProvider> currentUserProvider) {
         CurrentUserProvider currentUser = currentUserProvider.getIfAvailable();
         if (currentUser == null) {
             currentUser = new RequiredCurrentUserProvider();
         }
         return new DefaultTaskQueryService(historyTaskRepository, activeTaskRepository, instanceRepository,
-                traceAssembler, queryAssembler, currentUser, readRecordManager);
+                traceAssembler, queryAssembler, currentUser, readRecordManager, nodeRepository);
     }
 
     @Bean

@@ -118,6 +118,7 @@ public class PlatformDtoMapper {
         target.setStarterDepartmentId(source.getStarterDeptId());
         target.setInstanceStatus(name(source.getInstanceStatus()));
         target.setCurrentNodeCodes(source.getCurrentNodeCodes());
+        target.setCurrentNodeNames(source.getCurrentNodeNames());
         target.setVariables(visibleVariables(source.getVariables(), visibleVariables));
         target.setStartedAt(source.getStartedAt());
         target.setEndedAt(source.getEndedAt());

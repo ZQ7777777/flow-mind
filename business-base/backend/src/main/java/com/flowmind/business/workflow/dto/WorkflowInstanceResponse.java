@@ -18,6 +18,7 @@ public class WorkflowInstanceResponse {
     private String starterDepartmentId;
     private String instanceStatus;
     private List<String> currentNodeCodes = new ArrayList<String>();
+    private List<String> currentNodeNames = new ArrayList<String>();
     private Map<String, Object> variables = new LinkedHashMap<String, Object>();
     private LocalDateTime startedAt;
     private LocalDateTime endedAt;
@@ -44,6 +45,8 @@ public class WorkflowInstanceResponse {
     public void setInstanceStatus(String instanceStatus) { this.instanceStatus = instanceStatus; }
     public List<String> getCurrentNodeCodes() { return currentNodeCodes; }
     public void setCurrentNodeCodes(List<String> currentNodeCodes) { this.currentNodeCodes = currentNodeCodes == null ? new ArrayList<String>() : currentNodeCodes; }
+    public List<String> getCurrentNodeNames() { return currentNodeNames; }
+    public void setCurrentNodeNames(List<String> currentNodeNames) { this.currentNodeNames = currentNodeNames == null ? new ArrayList<String>() : currentNodeNames; }
     public Map<String, Object> getVariables() { return variables; }
     public void setVariables(Map<String, Object> variables) { this.variables = variables == null ? new LinkedHashMap<String, Object>() : variables; }
     public LocalDateTime getStartedAt() { return startedAt; }

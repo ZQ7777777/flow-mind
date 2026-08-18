@@ -18,15 +18,19 @@ import com.flowmind.platform.core.runtime.RuntimeStateException;
 import com.flowmind.platform.persistence.entity.HistoryTaskQueryEntity;
 import com.flowmind.platform.persistence.entity.ProcessHistoryTaskEntity;
 import com.flowmind.platform.persistence.entity.ProcessInstanceEntity;
+import com.flowmind.platform.persistence.entity.ProcessNodeEntity;
 import com.flowmind.platform.persistence.entity.TaskQueryEntity;
 import com.flowmind.platform.persistence.repository.ActiveTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessHistoryTaskRepository;
 import com.flowmind.platform.persistence.repository.ProcessInstanceRepository;
+import com.flowmind.platform.persistence.repository.ProcessNodeRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * M3 任务查询服务实现，提供待办、已办、我发起、活动任务、历史和意见查询。
@@ -41,6 +45,7 @@ public class DefaultTaskQueryService implements TaskQueryService {
     private final RuntimeQueryAssembler queryAssembler;
     private final CurrentUserProvider currentUserProvider;
     private final ReadRecordManager readRecordManager;
+    private final ProcessNodeRepository nodeRepository;
 
     @Autowired
     public DefaultTaskQueryService(ProcessHistoryTaskRepository historyTaskRepository,
@@ -49,7 +54,8 @@ public class DefaultTaskQueryService implements TaskQueryService {
                                    ProcessTraceAssembler traceAssembler,
                                    RuntimeQueryAssembler queryAssembler,
                                    CurrentUserProvider currentUserProvider,
-                                   ReadRecordManager readRecordManager) {
+                                   ReadRecordManager readRecordManager,
+                                   ProcessNodeRepository nodeRepository) {
         this.historyTaskRepository = historyTaskRepository;
         this.activeTaskRepository = activeTaskRepository;
         this.instanceRepository = instanceRepository;
@@ -57,6 +63,18 @@ public class DefaultTaskQueryService implements TaskQueryService {
         this.queryAssembler = queryAssembler;
         this.currentUserProvider = currentUserProvider;
         this.readRecordManager = readRecordManager;
+        this.nodeRepository = nodeRepository;
+    }
+
+    public DefaultTaskQueryService(ProcessHistoryTaskRepository historyTaskRepository,
+                                   ActiveTaskRepository activeTaskRepository,
+                                   ProcessInstanceRepository instanceRepository,
+                                   ProcessTraceAssembler traceAssembler,
+                                   RuntimeQueryAssembler queryAssembler,
+                                   CurrentUserProvider currentUserProvider,
+                                   ReadRecordManager readRecordManager) {
+        this(historyTaskRepository, activeTaskRepository, instanceRepository, traceAssembler, queryAssembler,
+                currentUserProvider, readRecordManager, null);
     }
 
     public DefaultTaskQueryService(ProcessHistoryTaskRepository historyTaskRepository,
@@ -66,7 +84,7 @@ public class DefaultTaskQueryService implements TaskQueryService {
                                    RuntimeQueryAssembler queryAssembler,
                                    CurrentUserProvider currentUserProvider) {
         this(historyTaskRepository, activeTaskRepository, instanceRepository, traceAssembler, queryAssembler,
-                currentUserProvider, null);
+                currentUserProvider, null, null);
     }
 
     /**
@@ -126,9 +144,12 @@ public class DefaultTaskQueryService implements TaskQueryService {
         int pageNo = PageQueryNormalizer.normalizePageNo(normalized.getPageNo());
         int pageSize = PageQueryNormalizer.normalizePageSize(normalized.getPageSize());
         List<ProcessInstanceDTO> records = new ArrayList<ProcessInstanceDTO>();
+        Map<String, Map<String, String>> nodeNamesByDefinition = new LinkedHashMap<String, Map<String, String>>();
         for (ProcessInstanceEntity entity : instanceRepository.queryStartedInstances(normalized,
                 currentUser.getUserId())) {
-            records.add(queryAssembler.toProcessInstanceDTO(entity));
+            ProcessInstanceDTO dto = queryAssembler.toProcessInstanceDTO(entity);
+            dto.setCurrentNodeNames(resolveCurrentNodeNames(dto, nodeNamesByDefinition));
+            records.add(dto);
         }
         return page(records, pageNo, pageSize,
                 instanceRepository.countStartedInstances(normalized, currentUser.getUserId()));
@@ -175,6 +196,39 @@ public class DefaultTaskQueryService implements TaskQueryService {
         ReadRecordQuery normalized = query == null ? new ReadRecordQuery() : query;
         normalized.setUserId(currentUser().getUserId());
         return readRecordManager.query(normalized);
+    }
+
+    private List<String> resolveCurrentNodeNames(ProcessInstanceDTO instance,
+                                                 Map<String, Map<String, String>> nodeNamesByDefinition) {
+        List<String> names = new ArrayList<String>();
+        if (instance == null || instance.getCurrentNodeCodes() == null || instance.getCurrentNodeCodes().isEmpty()) {
+            return names;
+        }
+        Map<String, String> nodeNames = nodeNamesByCode(instance.getDefinitionId(), nodeNamesByDefinition);
+        for (String code : instance.getCurrentNodeCodes()) {
+            if (!isBlank(code)) {
+                String name = nodeNames.get(code);
+                names.add(isBlank(name) ? code : name);
+            }
+        }
+        return names;
+    }
+
+    private Map<String, String> nodeNamesByCode(String definitionId,
+                                                Map<String, Map<String, String>> nodeNamesByDefinition) {
+        if (nodeNamesByDefinition.containsKey(definitionId)) {
+            return nodeNamesByDefinition.get(definitionId);
+        }
+        Map<String, String> nodeNames = new LinkedHashMap<String, String>();
+        if (nodeRepository != null && !isBlank(definitionId)) {
+            for (ProcessNodeEntity node : nodeRepository.findByDefinitionId(definitionId)) {
+                if (!isBlank(node.getNodeCode())) {
+                    nodeNames.put(node.getNodeCode(), node.getNodeName());
+                }
+            }
+        }
+        nodeNamesByDefinition.put(definitionId, nodeNames);
+        return nodeNames;
     }
 
     /**

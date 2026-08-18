@@ -44,13 +44,6 @@ const instanceStatusLabels: Record<string, string> = {
   CANCELED: "已取消",
 };
 
-const knownNodeLabels: Record<string, string> = {
-  start: "开始",
-  apply: "申请",
-  manager_approve: "部门经理审批",
-  finance_confirm: "财务确认",
-  end: "结束",
-};
 
 export function formatWorkflowDateTime(value: string | undefined | null): string {
   if (!value) return workflowEmptyText;
@@ -112,5 +105,5 @@ export function workflowNodeLabel(
   if (name) return name;
   const code = nodeCode?.trim();
   if (!code) return workflowEmptyText;
-  return knownNodeLabels[code] ?? "流程节点";
+  return code;
 }

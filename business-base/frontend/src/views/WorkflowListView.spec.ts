@@ -193,6 +193,7 @@ describe("WorkflowListView", () => {
               processName: "入金流程",
               instanceStatus: "RUNNING",
               currentNodeCodes: ["manager_approve"],
+              currentNodeNames: ["部门经理审批"],
               variables: {},
               startedAt: "2026-08-12T11:10:00",
               endedAt: null,

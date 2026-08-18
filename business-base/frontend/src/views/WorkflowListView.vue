@@ -51,7 +51,7 @@ const columns = computed(() => {
     return ["processName", "nodeName", "actionType", "comment", "completedAt"];
   }
   if (props.type === "started") {
-    return ["processName", "instanceStatus", "currentNodeCodes", "startedAt", "endedAt"];
+    return ["processName", "instanceStatus", "currentNodeNames", "startedAt", "endedAt"];
   }
   if (props.type === "read") {
     return ["processName", "instanceStatus", "readAt"];
@@ -165,7 +165,7 @@ function columnLabel(column: string): string {
     actionType: "办理动作",
     comment: "办理意见",
     instanceStatus: "状态",
-    currentNodeCodes: "当前节点",
+    currentNodeNames: "当前节点",
     starterUserName: "发起人",
     createdAt: "创建时间",
     dueAt: "到期时间",
@@ -197,11 +197,19 @@ function rawColumnValue(row: WorkflowListRecord, column: string): unknown {
   return (row as unknown as Record<string, unknown>)[column];
 }
 
+function rawStringColumnValue(row: WorkflowListRecord, column: string): string | null | undefined {
+  const value = rawColumnValue(row, column);
+  if (value == null || typeof value === "string") {
+    return value;
+  }
+  return String(value);
+}
+
 function columnValue(row: WorkflowListRecord, column: string): string {
   if (column === "source" && isTask(row)) {
     return row.delegateFromUserId ? "委托代办任务" : "自己的任务";
   }
-  if (column === "currentNodeCodes" && isInstance(row)) {
+  if (column === "currentNodeNames" && isInstance(row)) {
     return currentNodeNames(row);
   }
   const value = (row as unknown as Record<string, unknown>)[column];
@@ -219,12 +227,8 @@ function starterName(row: WorkflowListRecord): string | undefined {
 }
 
 function currentNodeNames(row: WorkflowInstanceResponse): string {
-  const names = (row as { currentNodeNames?: string[] }).currentNodeNames;
-  if (names?.length) {
-    return names.map((name) => displayWorkflowValue(name)).join("、");
-  }
-  return row.currentNodeCodes.length
-    ? row.currentNodeCodes.map((code) => workflowNodeLabel(code)).join("、")
+  return row.currentNodeNames?.length
+    ? row.currentNodeNames.map((name) => displayWorkflowValue(name)).join("、")
     : workflowEmptyText;
 }
 
@@ -346,18 +350,18 @@ function actionDataTest(row: WorkflowListRecord): string | undefined {
               <span
                 v-else-if="column === 'instanceStatus'"
                 class="status-badge"
-                :class="instanceStatusBadgeClass(rawColumnValue(row, column))"
+                :class="instanceStatusBadgeClass(rawStringColumnValue(row, column))"
                 :data-test="statusDataTest(row)"
               >
-                {{ instanceStatusLabel(rawColumnValue(row, column)) }}
+                {{ instanceStatusLabel(rawStringColumnValue(row, column)) }}
               </span>
               <span
                 v-else-if="column === 'actionType'"
                 class="action-badge"
-                :class="taskActionBadgeClass(rawColumnValue(row, column))"
+                :class="taskActionBadgeClass(rawStringColumnValue(row, column))"
                 :data-test="actionDataTest(row)"
               >
-                {{ taskActionLabel(rawColumnValue(row, column)) }}
+                {{ taskActionLabel(rawStringColumnValue(row, column)) }}
               </span>
               <template v-else>{{ columnValue(row, column) }}</template>
             </td>

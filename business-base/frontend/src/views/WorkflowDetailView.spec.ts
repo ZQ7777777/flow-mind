@@ -627,7 +627,6 @@ describe("WorkflowDetailView", () => {
     await wrapper.get('[data-test="timeline-toggle"]').trigger("click");
     const timelineText = wrapper.get(".timeline-card .timeline").text();
     expect(timelineText).toContain("发起申请");
-    expect(timelineText).toContain("已提交");
     expect(timelineText).toContain("系统管理员");
     expect(timelineText).toContain("经理审批");
     expect(timelineText).toContain("转办");

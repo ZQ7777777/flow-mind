@@ -31,10 +31,10 @@ describe("workflowDisplay", () => {
     expect(formatWorkflowDateTime("2026-08-12T11:10:00")).toContain("2026");
   });
 
-  it("prefers node names and hides raw node codes behind Chinese fallbacks", () => {
-    expect(workflowNodeLabel("manager_approve")).toBe("部门经理审批");
+  it("prefers node names and falls back to raw node codes", () => {
+    expect(workflowNodeLabel("manager_approve", "部门经理审批")).toBe("部门经理审批");
     expect(workflowNodeLabel("custom_review", "自定义审批")).toBe("自定义审批");
-    expect(workflowNodeLabel("custom_review")).toBe("流程节点");
+    expect(workflowNodeLabel("custom_review")).toBe("custom_review");
     expect(workflowNodeLabel(undefined)).toBe(workflowEmptyText);
   });
 });

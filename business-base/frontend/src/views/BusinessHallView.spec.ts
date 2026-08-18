@@ -102,8 +102,8 @@ describe("BusinessHallView", () => {
     expect(wrapper.text()).toContain("付款申请");
     expect(wrapper.text()).toContain("借款申请");
     expect(wrapper.text()).not.toContain("隐藏流程");
-    expect(wrapper.get('[data-test="business-card-deposit"] .business-icon svg').exists()).toBe(true);
-    expect(wrapper.get(".welcome-visual svg").exists()).toBe(true);
+    expect(wrapper.find('[data-test="business-card-deposit"] .business-icon svg').exists()).toBe(true);
+    expect(wrapper.find(".welcome-visual svg").exists()).toBe(true);
     expect(wrapper.text()).toContain("待办事项");
     expect(wrapper.text()).toContain("8");
     expect(wrapper.text()).toContain("入金申请（RK202405210001）");

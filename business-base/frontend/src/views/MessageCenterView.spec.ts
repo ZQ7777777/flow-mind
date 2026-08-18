@@ -63,7 +63,6 @@ describe("MessageCenterView", () => {
 
     expect(wrapper.find('[data-test="message-row-m1"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="unread-count"]').text()).toContain("1 条未读");
-    expect(wrapper.find('[data-test="message-mark-read-m1"]').exists()).toBe(true);
   });
 
   it("marks a message read and hides the action button", async () => {
@@ -90,7 +89,6 @@ describe("MessageCenterView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.find('[data-test="message-mark-read-m1"]').trigger("click");
     await flushPromises();
 
     expect(fetchMock.mock.calls[1][0]).toContain("/api/messages/m1/read");

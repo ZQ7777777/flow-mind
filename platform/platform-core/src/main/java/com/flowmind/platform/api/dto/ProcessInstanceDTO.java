@@ -34,6 +34,8 @@ public class ProcessInstanceDTO {
     private InstanceStatusEnum instanceStatus;
     /** 当前等待办理的节点编码；并行流程可同时包含多个节点。 */
     private List<String> currentNodeCodes;
+    /** 当前等待办理的节点名称；并行流程可同时包含多个节点。 */
+    private List<String> currentNodeNames;
     /** 当前流程变量集合。 */
     private Map<String, Object> variables;
     /** 流程实例启动时间。 */
@@ -148,6 +150,14 @@ public class ProcessInstanceDTO {
 
     public void setCurrentNodeCodes(List<String> currentNodeCodes) {
         this.currentNodeCodes = currentNodeCodes;
+    }
+
+    public List<String> getCurrentNodeNames() {
+        return currentNodeNames;
+    }
+
+    public void setCurrentNodeNames(List<String> currentNodeNames) {
+        this.currentNodeNames = currentNodeNames;
     }
 
     public Map<String, Object> getVariables() {

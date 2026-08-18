@@ -133,6 +133,7 @@ export interface WorkflowInstanceResponse {
   starterDepartmentId?: string;
   instanceStatus?: string;
   currentNodeCodes: string[];
+  currentNodeNames?: string[];
   variables: Record<string, unknown>;
   startedAt?: string;
   endedAt?: string;
