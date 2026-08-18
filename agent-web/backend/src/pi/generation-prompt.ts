@@ -4,6 +4,7 @@ import type { GenerationSpec } from "../generation/generation-spec.js";
 export interface GenerationApiReferences {
   platformRuntime: string;
   trustedUserContext: string;
+  businessReferenceData?: string;
 }
 
 const FRONTEND_VISUAL_CONTRACT = [
@@ -66,6 +67,7 @@ Hard runtime boundary:
 - The authoritative references below are part of the generation contract. Never guess or substitute Java packages, return types, nested user types, getters, or setters.
 - Generated Vitest tests run in the target's configured jsdom environment: do not assume Blob.text() exists, and assert form behavior rather than Element Plus internal CSS classes.
 - Generated file-size fixtures must allocate the requested bytes, for example new File([new Uint8Array(size)], name, ...); never accept a size argument and ignore it. Use Uint8Array(size) so size-limit tests exercise the real boundary.
+- When a form field declares referenceDataSource, use the registered business reference-data API below. Never replace it with hardcoded options. Implement parameterBindings, cascading clears, loading/error states, multiple values, and autofillBindings exactly as confirmed.
 
 ${FRONTEND_VISUAL_CONTRACT}
 
@@ -74,6 +76,8 @@ ${apiReferences.platformRuntime}
 
 Authoritative trusted user context source:
 ${apiReferences.trustedUserContext}
+
+${apiReferences.businessReferenceData ? `Authoritative business reference-data API:\n${apiReferences.businessReferenceData}\n` : ""}
 
 Required exact paths:
 ${spec.files.map((path) => `- ${path}`).join("\n")}

@@ -116,4 +116,36 @@ describe("RequirementEditor", () => {
     expect(edge?.conditionExpression).toBe("amount > 50000");
     expect(edge?.defaultEdge).toBe(true);
   });
+
+  it("preserves version 1.1 dynamic reference-data bindings when saving", async () => {
+    const input = revision();
+    input.requirement.formFields.push({
+      fieldCode: "productCodes",
+      fieldName: "品种",
+      fieldType: "select",
+      controlType: "select",
+      required: true,
+      validation: {},
+      multiple: true,
+      sortOrder: 4,
+      referenceDataSource: {
+        resource: "FUTURES_PRODUCTS",
+        parameterBindings: { exchangeCode: "accountNo" },
+        autofillBindings: { contractMultiplier: "amount" },
+      },
+    });
+    const wrapper = mount(RequirementEditor, {
+      props: { revision: input, disabled: false },
+      global: { stubs: elementStubs },
+    });
+
+    await saveButton(wrapper).trigger("click");
+
+    const saved = wrapper.emitted("save")?.[0]?.[0] as RequirementRevision["requirement"];
+    expect(saved.schemaVersion).toBe("1.1");
+    expect(saved.formFields.at(-1)).toEqual(expect.objectContaining({
+      multiple: true,
+      referenceDataSource: expect.objectContaining({ resource: "FUTURES_PRODUCTS" }),
+    }));
+  });
 });

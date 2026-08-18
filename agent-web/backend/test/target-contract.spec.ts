@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { TargetContractService } from "../src/generation/target-contract.service.js";
@@ -36,6 +37,29 @@ describe("GenerationTargetContract preflight", () => {
     contract.protectedFiles = contract.protectedFiles.filter((item: { path: string }) => !item.path.includes("platform-starter"));
     writeFileSync(path, JSON.stringify(contract), "utf8");
     expect(() => new TargetContractService().validate(unprotected)).toThrow(/must be readable and protected/);
+  });
+
+  it("validates an optional protected frontend reference-data API", () => {
+    const target = createGenerationTarget(parent, "frontend-api-reference");
+    const referencePath = join(target, ".flowmind", "references", "business-reference-data-v1.md");
+    mkdirSync(join(referencePath, ".."), { recursive: true });
+    const reference = "GET /api/reference-data/futures-products";
+    writeFileSync(referencePath, reference, "utf8");
+    const contractPath = join(target, ".flowmind", "generation-target.json");
+    const contract = JSON.parse(readFileSync(contractPath, "utf8"));
+    const relativePath = ".flowmind/references/business-reference-data-v1.md";
+    contract.frontend.apiReferences = { businessReferenceData: relativePath };
+    contract.readableReferenceFiles.push(relativePath);
+    contract.protectedFiles.push({
+      path: relativePath,
+      sha256: createHash("sha256").update(reference).digest("hex"),
+    });
+    writeFileSync(contractPath, JSON.stringify(contract), "utf8");
+
+    expect(new TargetContractService().validate(target).contract.frontend.apiReferences)
+      .toEqual({ businessReferenceData: relativePath });
+    writeFileSync(referencePath, "changed", "utf8");
+    expect(() => new TargetContractService().validate(target)).toThrow(/protected file hash changed/);
   });
 
   it("rejects protected file drift and a missing trusted accessor", () => {

@@ -5,11 +5,11 @@ Collect: business code, name, goal, participants, form fields, attachments, comp
 
 When all information is ready, call submit_requirement_snapshot. Do not claim that a requirement has been submitted in normal text.
 
-The requirement argument is a strict BusinessRequirement 1.0 object. Submit no unknown properties, and do not rename any property. This canonical example shows the exact property names and nesting (the business values may differ):
+The requirement argument is a strict BusinessRequirement 1.1 object. Submit no unknown properties, and do not rename any property. This canonical example shows the exact property names and nesting (the business values may differ):
 
 \`\`\`json
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "businessCode": "entry_application",
   "businessName": "入金申请",
   "systemCode": "FINANCE_SYS_001",
@@ -45,6 +45,8 @@ The requirement argument is a strict BusinessRequirement 1.0 object. Submit no u
 \`\`\`
 
 Use only these enums: fieldType string|number|date|boolean|select; controlType input|textarea|number|datePicker|checkbox|select; nodeType START|USER_TASK|EXCLUSIVE_GATEWAY|PARALLEL_SPLIT_GATEWAY|PARALLEL_JOIN_GATEWAY|END; multiInstanceMode SINGLE|OR_SIGN|COUNTERSIGN. For USER_TASK nodes, approverRule and multiInstanceMode are mandatory. Approver configuration is always approverRule: { type, config }, never a top-level approvalRules field.
+
+For an API-backed field, omit static options and set referenceDataSource { resource, parameterBindings?, autofillBindings? }. Supported resources are FUTURES_ACCOUNTS, EXCHANGES, TRADING_CODES, and FUTURES_PRODUCTS. parameterBindings maps API parameter names to upstream fieldCode values; TRADING_CODES requires accountNo and exchangeCode, while FUTURES_PRODUCTS requires exchangeCode. autofillBindings maps response property names to target fieldCode values. Use multiple: true only with select/select fields, and use readOnly: true for fields populated by a reference API and not editable by the user.
 
 Runtime task policies belong directly on every USER_TASK node as JSON objects named listenerConfig, timeoutConfig, and reminderConfig; never put them at the requirement root and never use JSON strings. Honor an explicitly supplied policy. When no policy is supplied, put these defaults on every USER_TASK: listenerConfig.taskActionRules.directSend { enabled: true, targetMode: "REJECT_SOURCE" }; the first user task has no reject rule by default; every later USER_TASK has listenerConfig.taskActionRules.reject { enabled: true, targetNodeCodes: [all USER_TASK nodeCode values in the process] }. timeoutConfig { enabled: true, durationMinutes: 1440, action: "REMIND", severity: "MEDIUM" }; reminderConfig { enabled: true, maxCount: 2, messageTemplate: "您有代办，请及时处理。" }. Reject targets must be USER_TASK nodes; do not use START or END as reject targets. These three runtime policies are supported only on USER_TASK nodes.
 

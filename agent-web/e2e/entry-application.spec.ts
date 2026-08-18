@@ -64,3 +64,56 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
   await previewFrame.locator('[data-preview-action="submit"]').click();
   await expect(previewFrame.getByText("当前仅为界面预览，内容未真实提交。")).toBeVisible();
 });
+
+test("质押动态需求生成同源参考数据调用与多选 DTO", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("用户名").fill("admin01");
+  await page.getByLabel("密码").fill("123456");
+  await page.getByRole("button", { name: "登录" }).click();
+
+  const sessionResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/agent/sessions") && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "开始采集需求" }).click();
+  const { sessionId } = await (await sessionResponse).json() as { sessionId: string };
+  const workflowState = page.locator(".workflow-header .el-tag");
+  const composer = page.getByPlaceholder("描述业务流程，或回答 Agent 的问题…");
+  await composer.fill("我要演示仓单、国债（解）质押申请，所有账户、交易所和品种都从参考数据 API 查询。");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByText(/请补充参与角色/)).toBeVisible();
+  await composer.fill("账号和交易所级联交易编码，多选品种并带出三个合约参数，提交后由风控审核。");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(workflowState).toHaveText("REQUIREMENT_REVIEW");
+  await expect(page.getByRole("textbox", { name: "业务名称" })).toHaveValue("仓单、国债（解）质押申请");
+
+  await page.getByRole("button", { name: "确认需求并创建流程" }).click();
+  await expect(workflowState).toHaveText("PROCESS_REVIEW", { timeout: 10000 });
+  await page.getByRole("button", { name: "确认流程并激活" }).click();
+  await expect(workflowState).toHaveText("PROCESS_ACTIVE", { timeout: 10000 });
+  await page.getByPlaceholder("③ business-base 绝对路径").fill(resolve(".e2e-target", "business-base"));
+  const generationResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/code-generations") && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "生成业务发起代码" }).click();
+  const { generationId } = await (await generationResponse).json() as { generationId: string };
+  await expect(workflowState).toHaveText("CODE_REVIEW", { timeout: 10000 });
+
+  const apiFile = await page.request.get(
+    `/api/agent/sessions/${sessionId}/code-generations/${generationId}/files/frontend/src/api/generated/warehouse-pledge.ts`,
+  );
+  expect(apiFile.ok()).toBe(true);
+  const apiContent = (await apiFile.json() as { content: string }).content;
+  expect(apiContent).toContain("productCodes: string[]");
+  expect(apiContent).toContain("/api/reference-data/futures-accounts");
+  expect(apiContent).toContain("/api/reference-data/futures-products?");
+  expect(apiContent).toContain("/trading-codes?exchangeCode=");
+
+  const viewFile = await page.request.get(
+    `/api/agent/sessions/${sessionId}/code-generations/${generationId}/files/frontend/src/modules/generated/warehouse-pledge/WarehousePledgeApply.vue`,
+  );
+  expect(viewFile.ok()).toBe(true);
+  const viewContent = (await viewFile.json() as { content: string }).content;
+  expect(viewContent).toContain("multiple");
+  expect(viewContent).toContain("codes[codes.length - 1]");
+  expect(viewContent).toContain("form.tradingCode = \"\"");
+});

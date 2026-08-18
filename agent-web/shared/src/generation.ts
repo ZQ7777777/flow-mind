@@ -33,6 +33,9 @@ export interface GenerationTargetContract {
     generatedApiDir: string;
     generatedTestDir: string;
     routeRegistry: string;
+    apiReferences?: {
+      businessReferenceData?: string;
+    };
     verificationProfile: "vue3-npm";
   };
   readableReferenceFiles: string[];
@@ -301,6 +304,10 @@ export const generationTargetContractSchema = {
       properties: {
         rootDir: relativePath, framework: { const: "vue3" }, generatedViewDir: relativePath,
         generatedApiDir: relativePath, generatedTestDir: relativePath, routeRegistry: relativePath,
+        apiReferences: {
+          type: "object", additionalProperties: false,
+          properties: { businessReferenceData: relativePath },
+        },
         verificationProfile: { const: "vue3-npm" },
       },
     },

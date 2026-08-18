@@ -33,12 +33,16 @@
     "generatedApiDir": "src/api/generated",
     "generatedTestDir": "src/modules/generated/__tests__",
     "routeRegistry": "src/router/generated-routes.ts",
+    "apiReferences": {
+      "businessReferenceData": ".flowmind/references/business-reference-data-v1.md"
+    },
     "verificationProfile": "vue3-npm"
   },
   "readableReferenceFiles": [
     "backend/pom.xml",
     ".flowmind/references/platform-starter-0.1.0.md",
     "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java",
+    ".flowmind/references/business-reference-data-v1.md",
     "frontend/package.json",
     "frontend/src/router/generated-routes.ts"
   ],
@@ -65,6 +69,10 @@
     {
       "path": "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java",
       "sha256": "03addaa975a358750c94c6ed5a25bf5346218b172bcfb73cdaf1e27844119141"
+    },
+    {
+      "path": ".flowmind/references/business-reference-data-v1.md",
+      "sha256": "d502edb61caeef43aa7d784769570c8b6e27f818da03d9a0adf015dfc2caf68a"
     }
   ]
 }

@@ -13,6 +13,7 @@ describe("generation prompt", () => {
       {
         platformRuntime: "com.flowmind.platform.api.service.ProcessRuntimeService com.flowmind.platform.api.dto.TaskDTO setVariables setAttachments getCreatedTasks getTaskId getNodeCode getNodeName",
         trustedUserContext: "CurrentBusinessUserProvider.BusinessUser",
+        businessReferenceData: "GET /api/reference-data/futures-products FUTURES_PRODUCTS parameterBindings autofillBindings",
       },
     );
     expect(prompt).toContain("com.flowmind.platform.api.service.ProcessRuntimeService");
@@ -42,5 +43,7 @@ describe("generation prompt", () => {
     expect(prompt).toContain("<style scoped>");
     expect(prompt).toContain("repeat(auto-fit, minmax(240px, 1fr))");
     expect(prompt).toContain("No gradients, decorative blobs, oversized hero typography, or nested cards");
+    expect(prompt).toContain("GET /api/reference-data/futures-products");
+    expect(prompt).toContain("Never replace it with hardcoded options");
   });
 });

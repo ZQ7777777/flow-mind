@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import {
   ENTRY_APPLICATION_REQUIREMENT,
+  WAREHOUSE_PLEDGE_REQUIREMENT,
   businessRequirementSchema,
   type BusinessRequirement,
   type ConversationMessage,
@@ -340,8 +341,10 @@ export class PiAdapterService implements OnModuleDestroy {
           callbacks.onEvent("assistant.delta", { delta: content });
           callbacks.onEvent("assistant.completed", messages[messages.length - 1]);
         } else {
-          await callbacks.onRequirement(ENTRY_APPLICATION_REQUIREMENT, [], []);
-          const content = "入金申请结构化需求已准备完成，请在右侧预览并确认。";
+          const isPledgeRequest = messages.some((message) => message.role === "user" && /质押/.test(message.content));
+          const requirement = isPledgeRequest ? WAREHOUSE_PLEDGE_REQUIREMENT : ENTRY_APPLICATION_REQUIREMENT;
+          await callbacks.onRequirement(requirement, [], []);
+          const content = `${requirement.businessName}结构化需求已准备完成，请在右侧预览并确认。`;
           persist({ id: `msg_${Date.now()}_a`, role: "assistant", content, createdAt: new Date().toISOString() });
           callbacks.onEvent("assistant.delta", { delta: content });
           callbacks.onEvent("assistant.completed", messages[messages.length - 1]);

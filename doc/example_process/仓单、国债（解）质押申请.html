@@ -1,0 +1,2146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>仓单、国债（解）质押申请</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --primary: #0875c9;
+      --primary-dark: #075fa2;
+      --primary-soft: #eef7fd;
+      --page: #f5f7f9;
+      --surface: #ffffff;
+      --text: #202934;
+      --muted: #66727f;
+      --border: #cfd6dc;
+      --border-strong: #8d969e;
+      --table-head: #f0f2f4;
+      --success: #17834b;
+      --danger: #c53030;
+      --warning: #9a5a00;
+      --shadow: 0 5px 18px rgba(23, 43, 59, 0.13);
+      --control-height: 34px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      background: var(--page);
+    }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--page);
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      color: inherit;
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled,
+    input:disabled,
+    select:disabled {
+      cursor: not-allowed;
+      opacity: 0.62;
+    }
+
+    .page {
+      width: min(100%, 1600px);
+      margin: 0 auto;
+      padding: 12px;
+    }
+
+    .title-bar {
+      display: flex;
+      align-items: center;
+      min-height: 24px;
+      margin: 0 2px 10px;
+      padding: 4px 14px;
+      color: #fff;
+      background: var(--primary);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .panel {
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+    }
+
+    .tabs {
+      display: flex;
+      min-height: 42px;
+      padding: 0 8px;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+    }
+
+    .tab {
+      position: relative;
+      min-width: 124px;
+      height: 42px;
+      padding: 0 18px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: #343c44;
+      font-weight: 600;
+    }
+
+    .tab:hover {
+      color: var(--primary-dark);
+      background: #f8fbfd;
+    }
+
+    .tab[aria-selected="true"] {
+      color: var(--primary-dark);
+      border-bottom-color: var(--primary);
+    }
+
+    .tab-count {
+      position: absolute;
+      top: 2px;
+      right: 5px;
+      display: grid;
+      min-width: 17px;
+      height: 17px;
+      padding: 0 4px;
+      place-items: center;
+      color: #fff;
+      background: #2da9d7;
+      font-size: 10px;
+      line-height: 17px;
+    }
+
+    .tab-panel {
+      min-height: 430px;
+      padding: 10px 8px 20px;
+    }
+
+    .tab-panel[hidden] {
+      display: none;
+    }
+
+    .account-strip {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      min-height: 62px;
+      padding: 12px 10px;
+      border-bottom: 1px solid #e4e8eb;
+      background: #fbfcfd;
+    }
+
+    .account-strip .field-label {
+      width: 92px;
+      padding-top: 8px;
+      flex: 0 0 auto;
+    }
+
+    .account-control {
+      display: flex;
+      width: min(620px, calc(100vw - 170px));
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .required {
+      margin-right: 3px;
+      color: var(--danger);
+    }
+
+    .combo {
+      position: relative;
+      width: min(440px, 100%);
+    }
+
+    .combo-input-wrap {
+      position: relative;
+      display: flex;
+      height: var(--control-height);
+      border: 1px solid #b9c2ca;
+      background: #fff;
+    }
+
+    .combo-input-wrap:focus-within {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(8, 117, 201, 0.12);
+    }
+
+    .combo-input-wrap.invalid {
+      border-color: var(--danger);
+    }
+
+    .combo-input {
+      min-width: 0;
+      height: 100%;
+      padding: 6px 62px 6px 10px;
+      flex: 1;
+      border: 0;
+      outline: 0;
+      background: transparent;
+    }
+
+    .combo-clear,
+    .combo-toggle {
+      position: absolute;
+      top: 0;
+      width: 30px;
+      height: 32px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #697580;
+      line-height: 32px;
+    }
+
+    .combo-clear {
+      right: 29px;
+      display: none;
+      font-size: 18px;
+    }
+
+    .combo-clear.visible {
+      display: block;
+    }
+
+    .combo-toggle {
+      right: 0;
+    }
+
+    .combo-toggle::before {
+      display: inline-block;
+      width: 0;
+      height: 0;
+      border-top: 5px solid #697580;
+      border-right: 4px solid transparent;
+      border-left: 4px solid transparent;
+      content: "";
+    }
+
+    .combo-list {
+      position: absolute;
+      z-index: 30;
+      top: calc(100% + 3px);
+      left: 0;
+      display: none;
+      width: 100%;
+      max-height: 240px;
+      margin: 0;
+      padding: 4px 0;
+      overflow-y: auto;
+      border: 1px solid #aeb8c1;
+      background: #fff;
+      box-shadow: var(--shadow);
+      list-style: none;
+    }
+
+    .combo-list.open {
+      display: block;
+    }
+
+    .combo-option {
+      display: grid;
+      min-height: 43px;
+      padding: 6px 10px;
+      align-content: center;
+      gap: 2px;
+      cursor: pointer;
+    }
+
+    .combo-option:hover,
+    .combo-option.active {
+      background: var(--primary-soft);
+    }
+
+    .combo-option[aria-selected="true"] {
+      color: var(--primary-dark);
+      background: #e5f3fc;
+    }
+
+    .combo-option-code {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .combo-option-name {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .combo-empty {
+      padding: 18px 10px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .button {
+      display: inline-flex;
+      min-height: 32px;
+      padding: 0 14px;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+
+    .button-primary {
+      color: #fff;
+      border-color: var(--primary);
+      background: var(--primary);
+    }
+
+    .button-primary:hover:not(:disabled) {
+      border-color: var(--primary-dark);
+      background: var(--primary-dark);
+    }
+
+    .button-secondary {
+      color: #37424c;
+      border-color: #aeb7bf;
+      background: #fff;
+    }
+
+    .button-secondary:hover:not(:disabled) {
+      color: var(--primary-dark);
+      border-color: var(--primary);
+      background: #f7fbfe;
+    }
+
+    .button-link {
+      min-height: var(--control-height);
+      padding: 0 8px;
+      border: 0;
+      background: transparent;
+      color: var(--primary-dark);
+      font-weight: 600;
+    }
+
+    .button-link:hover:not(:disabled) {
+      text-decoration: underline;
+    }
+
+    .subsection {
+      padding: 9px 0 2px;
+    }
+
+    .subsection-title {
+      display: flex;
+      min-height: 28px;
+      margin: 0 0 10px;
+      padding: 5px 9px;
+      align-items: center;
+      color: #26313b;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .subsection-title::before {
+      width: 4px;
+      height: 18px;
+      margin-right: 13px;
+      background: var(--primary);
+      content: "";
+    }
+
+    .form-grid {
+      display: grid;
+      padding: 2px 10px 14px;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 16px 28px;
+    }
+
+    .field {
+      display: grid;
+      min-width: 0;
+      min-height: var(--control-height);
+      grid-template-columns: 92px minmax(0, 1fr);
+      align-items: center;
+      gap: 6px;
+    }
+
+    .field-label {
+      color: #313b45;
+      line-height: 1.35;
+    }
+
+    .control,
+    .select {
+      width: 100%;
+      height: var(--control-height);
+      min-width: 0;
+      padding: 5px 8px;
+      border: 1px solid #b9c2ca;
+      border-radius: 0;
+      outline: 0;
+      background: #fff;
+    }
+
+    .control:hover:not(:disabled),
+    .select:hover:not(:disabled) {
+      border-color: #8e9ba6;
+    }
+
+    .control:focus,
+    .select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(8, 117, 201, 0.12);
+    }
+
+    .control[readonly] {
+      color: #4f5b65;
+      background: #f5f6f7;
+    }
+
+    .control.invalid,
+    .select.invalid {
+      border-color: var(--danger);
+    }
+
+    .select {
+      padding-right: 28px;
+    }
+
+    .number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .amount {
+      color: #ad2222 !important;
+      font-weight: 700;
+    }
+
+    .multi {
+      position: relative;
+      min-width: 0;
+    }
+
+    .multi-control {
+      display: flex;
+      min-height: var(--control-height);
+      padding: 2px 27px 2px 4px;
+      align-items: center;
+      gap: 3px;
+      overflow: hidden;
+      border: 1px solid #b9c2ca;
+      background: #fff;
+      cursor: text;
+    }
+
+    .multi-control:focus-within {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(8, 117, 201, 0.12);
+    }
+
+    .multi-control.disabled {
+      background: #f3f4f5;
+      cursor: not-allowed;
+      opacity: 0.62;
+    }
+
+    .multi-control.invalid {
+      border-color: var(--danger);
+    }
+
+    .multi-chips {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 3px;
+      overflow: hidden;
+    }
+
+    .chip {
+      display: inline-flex;
+      max-width: 100px;
+      height: 25px;
+      padding: 0 4px 0 7px;
+      align-items: center;
+      gap: 3px;
+      flex: 0 0 auto;
+      border: 1px solid #a8cde7;
+      border-radius: 3px;
+      background: #eaf5fc;
+      color: #155d8c;
+    }
+
+    .chip-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chip-remove {
+      width: 18px;
+      height: 20px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #526b7b;
+      font-size: 16px;
+      line-height: 20px;
+    }
+
+    .multi-input {
+      width: 40px;
+      min-width: 28px;
+      height: 27px;
+      padding: 3px;
+      flex: 1;
+      border: 0;
+      outline: 0;
+      background: transparent;
+    }
+
+    .multi-arrow {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 28px;
+      height: 34px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
+    .multi-arrow::before {
+      display: inline-block;
+      width: 0;
+      height: 0;
+      border-top: 5px solid #697580;
+      border-right: 4px solid transparent;
+      border-left: 4px solid transparent;
+      content: "";
+    }
+
+    .multi-list {
+      position: absolute;
+      z-index: 25;
+      top: calc(100% + 3px);
+      right: 0;
+      left: 0;
+      display: none;
+      max-height: 220px;
+      margin: 0;
+      padding: 4px 0;
+      overflow-y: auto;
+      border: 1px solid #aeb8c1;
+      background: #fff;
+      box-shadow: var(--shadow);
+      list-style: none;
+    }
+
+    .multi-list.open {
+      display: block;
+    }
+
+    .multi-option {
+      display: flex;
+      min-height: 34px;
+      padding: 5px 8px;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+
+    .multi-option:hover,
+    .multi-option.active {
+      background: var(--primary-soft);
+    }
+
+    .multi-check {
+      display: grid;
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid #9ba8b3;
+      color: #fff;
+      background: #fff;
+      font-size: 11px;
+    }
+
+    .multi-option[aria-selected="true"] .multi-check {
+      border-color: var(--primary);
+      background: var(--primary);
+    }
+
+    .multi-option-code {
+      min-width: 35px;
+      font-weight: 700;
+    }
+
+    .check-toolbar {
+      display: flex;
+      min-height: 34px;
+      margin-top: -43px;
+      padding: 0 8px 6px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .refresh-icon {
+      display: inline-block;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .refresh-icon.spinning {
+      animation: spin 0.55s linear;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .table-wrap {
+      width: 100%;
+      padding: 0 8px 8px;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      height: 31px;
+      padding: 5px 9px;
+      border: 1px solid #d9dee2;
+      line-height: 1.45;
+      text-align: center;
+      vertical-align: middle;
+    }
+
+    th {
+      background: var(--table-head);
+      color: #303942;
+      font-weight: 700;
+    }
+
+    .check-table {
+      min-width: 920px;
+    }
+
+    .check-table col:nth-child(1) {
+      width: 15%;
+    }
+
+    .check-table col:nth-child(2) {
+      width: 62%;
+    }
+
+    .check-table col:nth-child(3) {
+      width: 23%;
+    }
+
+    .check-result {
+      font-weight: 700;
+    }
+
+    .result-pass {
+      color: var(--success);
+    }
+
+    .result-fail {
+      color: var(--danger);
+    }
+
+    .result-skip {
+      color: #89929a;
+    }
+
+    .result-missing {
+      color: #252b30;
+    }
+
+    .upload-pane {
+      padding: 8px;
+    }
+
+    .drop-zone {
+      display: grid;
+      min-height: 150px;
+      margin: 4px 10px 16px;
+      padding: 18px;
+      place-items: center;
+      border: 1px dashed #8fb6d1;
+      background: #f8fcfe;
+      text-align: center;
+    }
+
+    .drop-zone.dragover {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+    }
+
+    .drop-zone-icon {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--primary);
+      font-size: 31px;
+      line-height: 1;
+    }
+
+    .drop-zone-title {
+      display: block;
+      margin-bottom: 9px;
+      color: #34414c;
+      font-weight: 700;
+    }
+
+    .file-table {
+      min-width: 700px;
+    }
+
+    .file-table col:nth-child(1) {
+      width: 18%;
+    }
+
+    .file-table col:nth-child(2) {
+      width: 52%;
+    }
+
+    .file-table col:nth-child(3) {
+      width: 15%;
+    }
+
+    .file-table col:nth-child(4) {
+      width: 15%;
+    }
+
+    .empty-row {
+      height: 68px;
+      color: var(--muted);
+    }
+
+    .delete-file {
+      width: 28px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--danger);
+      font-size: 18px;
+    }
+
+    .approval {
+      margin-top: 46px;
+    }
+
+    .approval .panel {
+      min-height: 162px;
+      padding: 9px 8px 14px;
+    }
+
+    .approval-table {
+      width: min(840px, 100%);
+      margin: 0 2px;
+    }
+
+    .approval-table col {
+      width: 50%;
+    }
+
+    .radio-group {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 70px;
+    }
+
+    .radio {
+      display: inline-flex;
+      min-height: 24px;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+    }
+
+    .radio input {
+      width: 15px;
+      height: 15px;
+      margin: 0;
+      accent-color: var(--primary);
+    }
+
+    .action-row {
+      display: flex;
+      margin-top: 18px;
+      padding-right: 2px;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    dialog {
+      width: min(760px, calc(100vw - 32px));
+      max-height: calc(100vh - 48px);
+      padding: 0;
+      overflow: auto;
+      border: 1px solid #78838c;
+      background: #fff;
+      box-shadow: 0 16px 48px rgba(15, 28, 38, 0.24);
+    }
+
+    dialog::backdrop {
+      background: rgba(25, 35, 43, 0.38);
+    }
+
+    .dialog-head {
+      display: flex;
+      min-height: 42px;
+      padding: 0 8px 0 14px;
+      align-items: center;
+      justify-content: space-between;
+      color: #fff;
+      background: var(--primary);
+      font-weight: 700;
+    }
+
+    .dialog-close {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #fff;
+      font-size: 22px;
+    }
+
+    .dialog-body {
+      padding: 16px;
+    }
+
+    .detail-summary {
+      display: grid;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px 20px;
+      border-bottom: 1px solid #dfe4e8;
+    }
+
+    .detail-item {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 8px;
+    }
+
+    .detail-label {
+      color: var(--muted);
+    }
+
+    .fund-table {
+      min-width: 620px;
+    }
+
+    .fund-table td:nth-child(odd) {
+      width: 18%;
+      background: #f6f7f8;
+      color: #53606a;
+    }
+
+    .fund-table td:nth-child(even) {
+      width: 32%;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .toast {
+      position: fixed;
+      z-index: 100;
+      top: 24px;
+      left: 50%;
+      display: flex;
+      min-width: 260px;
+      max-width: calc(100vw - 32px);
+      min-height: 42px;
+      padding: 9px 14px;
+      align-items: center;
+      border: 1px solid #8e9ba5;
+      background: #fff;
+      box-shadow: var(--shadow);
+      transform: translate(-50%, -18px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+
+    .toast.show {
+      transform: translate(-50%, 0);
+      opacity: 1;
+    }
+
+    .toast.success {
+      border-left: 4px solid var(--success);
+    }
+
+    .toast.error {
+      border-left: 4px solid var(--danger);
+    }
+
+    @media (max-width: 1320px) {
+      .form-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 920px) {
+      .form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .account-control {
+        width: calc(100vw - 170px);
+      }
+    }
+
+    @media (max-width: 620px) {
+      .page {
+        padding: 6px;
+      }
+
+      .title-bar {
+        margin-right: 0;
+        margin-left: 0;
+      }
+
+      .tabs {
+        padding: 0;
+      }
+
+      .tab {
+        min-width: 0;
+        padding: 0 15px;
+        flex: 1;
+      }
+
+      .account-strip {
+        display: block;
+      }
+
+      .account-strip .field-label {
+        width: auto;
+        padding: 0 0 7px;
+      }
+
+      .account-control {
+        width: 100%;
+        flex-wrap: wrap;
+      }
+
+      .combo {
+        width: 100%;
+      }
+
+      .form-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .approval {
+        margin-top: 24px;
+      }
+
+      .radio-group {
+        gap: 35px;
+      }
+
+      .detail-summary {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section aria-labelledby="handling-title">
+      <h1 class="title-bar" id="handling-title">办理详情</h1>
+      <div class="panel">
+        <div class="tabs" role="tablist" aria-label="办理详情页签">
+          <button class="tab" id="application-tab" type="button" role="tab" aria-selected="true" aria-controls="application-panel" data-panel="application-panel">
+            申请详情
+            <span class="tab-count" aria-label="2项">2</span>
+          </button>
+          <button class="tab" id="attachment-tab" type="button" role="tab" aria-selected="false" aria-controls="attachment-panel" data-panel="attachment-panel" tabindex="-1">
+            影像资料上传
+            <span class="tab-count" id="attachment-count" aria-label="0个附件">0</span>
+          </button>
+        </div>
+
+        <div class="tab-panel" id="application-panel" role="tabpanel" aria-labelledby="application-tab">
+          <form id="pledge-form" novalidate>
+            <div class="account-strip">
+              <label class="field-label" for="fund-account-input"><span class="required">*</span>期货账号</label>
+              <div class="account-control">
+                <div class="combo" id="fund-account-combo">
+                  <div class="combo-input-wrap" id="fund-account-wrap">
+                    <input
+                      class="combo-input"
+                      id="fund-account-input"
+                      type="text"
+                      role="combobox"
+                      aria-autocomplete="list"
+                      aria-expanded="false"
+                      aria-controls="fund-account-list"
+                      autocomplete="off"
+                      placeholder="期货账号 / 客户名称"
+                    >
+                    <button class="combo-clear" id="fund-account-clear" type="button" title="清空期货账号" aria-label="清空期货账号">×</button>
+                    <button class="combo-toggle" id="fund-account-toggle" type="button" title="展开期货账号列表" aria-label="展开期货账号列表" tabindex="-1"></button>
+                  </div>
+                  <ul class="combo-list" id="fund-account-list" role="listbox" aria-label="期货账号建议"></ul>
+                </div>
+                <button class="button-link" id="fund-detail-button" type="button" disabled>查看资金详情</button>
+              </div>
+            </div>
+
+            <section class="subsection" aria-labelledby="business-info-title">
+              <h2 class="subsection-title" id="business-info-title">业务信息</h2>
+              <div class="form-grid">
+                <div class="field">
+                  <label class="field-label" for="business-type"><span class="required">*</span>业务类型</label>
+                  <select class="select" id="business-type" required>
+                    <option value="仓单质押">仓单质押</option>
+                    <option value="仓单解质押">仓单解质押</option>
+                    <option value="国债质押">国债质押</option>
+                    <option value="国债解质押">国债解质押</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="exchange"><span class="required">*</span>交易所</label>
+                  <select class="select" id="exchange" required>
+                    <option value="">请选择</option>
+                    <option value="中金所">中金所</option>
+                    <option value="郑商所">郑商所</option>
+                    <option value="大商所">大商所</option>
+                    <option value="广期所">广期所</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="trading-code">交易编码</label>
+                  <input class="control" id="trading-code" type="text" readonly placeholder="自动带出">
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="product-search"><span class="required">*</span>品种</label>
+                  <div class="multi" id="product-combo">
+                    <div class="multi-control disabled" id="product-control">
+                      <div class="multi-chips" id="product-chips"></div>
+                      <input
+                        class="multi-input"
+                        id="product-search"
+                        type="text"
+                        role="combobox"
+                        aria-autocomplete="list"
+                        aria-expanded="false"
+                        aria-controls="product-list"
+                        autocomplete="off"
+                        placeholder="请选择"
+                        disabled
+                      >
+                      <button class="multi-arrow" id="product-toggle" type="button" title="展开品种列表" aria-label="展开品种列表" disabled tabindex="-1"></button>
+                    </div>
+                    <ul class="multi-list" id="product-list" role="listbox" aria-label="品种列表" aria-multiselectable="true"></ul>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="quantity"><span class="required">*</span>数量（张）</label>
+                  <input class="control number" id="quantity" type="number" min="1" step="1" inputmode="numeric" required>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="multiplier"><span class="required">*</span>合约乘数</label>
+                  <input class="control number" id="multiplier" type="number" min="1" step="1" inputmode="numeric" required>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="pledge-unit"><span class="required">*</span>质押品单位数量</label>
+                  <input class="control number" id="pledge-unit" type="number" min="1" step="1" inputmode="numeric" required>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="settlement-price"><span class="required">*</span>昨结算价</label>
+                  <input class="control number" id="settlement-price" type="number" min="0.0001" step="0.0001" inputmode="decimal" required>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="amount">金额</label>
+                  <input class="control number amount" id="amount" type="text" readonly placeholder="自动计算">
+                </div>
+              </div>
+            </section>
+
+            <section class="subsection" aria-labelledby="business-check-title">
+              <h2 class="subsection-title" id="business-check-title">业务核查</h2>
+              <div class="check-toolbar">
+                <button class="button button-primary" id="refresh-checks" type="button" title="刷新业务核查结果">
+                  <span class="refresh-icon" aria-hidden="true">↻</span>
+                  <span>刷新</span>
+                </button>
+              </div>
+              <div class="table-wrap">
+                <table class="check-table">
+                  <colgroup><col><col><col></colgroup>
+                  <thead>
+                    <tr>
+                      <th scope="col">核查项</th>
+                      <th scope="col">核查内容</th>
+                      <th scope="col">核查结果</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>满足质押要求</td>
+                      <td>当前权益 + 本次金额 ≥ 1.25 ×（质押金额 + 本次金额），或实有货币资金 ≥ 1/4 ×（质押金额 + 本次金额）</td>
+                      <td class="check-result result-missing" data-check="pledge">缺少数据，无法核查</td>
+                    </tr>
+                    <tr>
+                      <td>满足解质押要求</td>
+                      <td>可用资金 + 本次金额 ≥ 0</td>
+                      <td class="check-result result-skip" data-check="release">不需核查</td>
+                    </tr>
+                    <tr>
+                      <td>满足大商所特定要求</td>
+                      <td>大商所质押金额 + 本次金额 ≤ 大商所持仓保证金</td>
+                      <td class="check-result result-skip" data-check="dce">不需核查</td>
+                    </tr>
+                    <tr>
+                      <td>满足郑商所特定要求</td>
+                      <td>郑商所质押金额 + 本次金额 ≤ 1.2 × 郑商所持仓保证金</td>
+                      <td class="check-result result-skip" data-check="czce">不需核查</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </form>
+        </div>
+
+        <div class="tab-panel upload-pane" id="attachment-panel" role="tabpanel" aria-labelledby="attachment-tab" hidden>
+          <section class="subsection" aria-labelledby="attachment-title">
+            <h2 class="subsection-title" id="attachment-title">影像资料上传</h2>
+            <div class="drop-zone" id="drop-zone">
+              <div>
+                <span class="drop-zone-icon" aria-hidden="true">⇧</span>
+                <span class="drop-zone-title">拖放文件至此处</span>
+                <button class="button button-primary" id="choose-file-button" type="button">选择文件</button>
+                <input id="file-input" type="file" multiple hidden accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx">
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="file-table">
+                <colgroup><col><col><col><col></colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col">影像类型</th>
+                    <th scope="col">文件名</th>
+                    <th scope="col">文件大小</th>
+                    <th scope="col">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="file-list">
+                  <tr><td class="empty-row" colspan="4">暂无影像资料</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="approval" aria-labelledby="approval-title">
+      <h2 class="title-bar" id="approval-title">审批详情</h2>
+      <div class="panel">
+        <section class="subsection" aria-labelledby="delivery-operation-title">
+          <h3 class="subsection-title" id="delivery-operation-title">交割操作</h3>
+          <div class="table-wrap">
+            <table class="approval-table">
+              <colgroup><col><col></colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">确认项</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>申请文件已盖章上传</td>
+                  <td>
+                    <div class="radio-group" role="radiogroup" aria-label="申请文件是否已盖章上传">
+                      <label class="radio"><input type="radio" name="stamped-file" value="是">是</label>
+                      <label class="radio"><input type="radio" name="stamped-file" value="否">否</label>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="action-row">
+            <button class="button button-secondary" id="save-button" type="button">暂存</button>
+            <button class="button button-primary" id="submit-button" type="button">提交</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="fund-detail-dialog" aria-labelledby="fund-detail-title">
+    <div class="dialog-head">
+      <span id="fund-detail-title">客户资金详情</span>
+      <button class="dialog-close" id="dialog-close" type="button" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body">
+      <div class="detail-summary">
+        <div class="detail-item"><span class="detail-label">期货账号</span><strong id="detail-fund-account"></strong></div>
+        <div class="detail-item"><span class="detail-label">客户名称</span><strong id="detail-customer-name"></strong></div>
+        <div class="detail-item"><span class="detail-label">币种</span><span>人民币</span></div>
+        <div class="detail-item"><span class="detail-label">账户状态</span><span class="result-pass">正常</span></div>
+      </div>
+      <div class="table-wrap">
+        <table class="fund-table">
+          <tbody>
+            <tr>
+              <td>当前权益</td><td id="detail-current-equity"></td>
+              <td>可用资金</td><td id="detail-available-funds"></td>
+            </tr>
+            <tr>
+              <td>质押金额</td><td id="detail-pledge-amount"></td>
+              <td>实有货币资金</td><td id="detail-actual-cash"></td>
+            </tr>
+            <tr>
+              <td>大商所质押金额</td><td id="detail-dce-pledge"></td>
+              <td>大商所持仓保证金</td><td id="detail-dce-margin"></td>
+            </tr>
+            <tr>
+              <td>郑商所质押金额</td><td id="detail-czce-pledge"></td>
+              <td>郑商所持仓保证金</td><td id="detail-czce-margin"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var accounts = [
+        {
+          fundAccount: "80000188",
+          customerName: "上海启明实业有限公司",
+          funds: {
+            currentEquity: 32500000,
+            availableFunds: 16800000,
+            pledgeAmount: 7800000,
+            actualCash: 22400000,
+            dcePledge: 3200000,
+            dceMargin: 14800000,
+            czcePledge: 2100000,
+            czceMargin: 9600000
+          }
+        },
+        {
+          fundAccount: "80000236",
+          customerName: "浙江远航贸易有限公司",
+          funds: {
+            currentEquity: 18600000,
+            availableFunds: 7200000,
+            pledgeAmount: 5900000,
+            actualCash: 9100000,
+            dcePledge: 5100000,
+            dceMargin: 11500000,
+            czcePledge: 3600000,
+            czceMargin: 7800000
+          }
+        },
+        {
+          fundAccount: "80000621",
+          customerName: "深圳华远投资有限公司",
+          funds: {
+            currentEquity: 52600000,
+            availableFunds: 24100000,
+            pledgeAmount: 12600000,
+            actualCash: 31500000,
+            dcePledge: 7600000,
+            dceMargin: 22600000,
+            czcePledge: 4800000,
+            czceMargin: 13800000
+          }
+        },
+        {
+          fundAccount: "80000852",
+          customerName: "北京恒盛资产管理有限公司",
+          funds: {
+            currentEquity: 14300000,
+            availableFunds: 3900000,
+            pledgeAmount: 4700000,
+            actualCash: 6100000,
+            dcePledge: 3300000,
+            dceMargin: 8200000,
+            czcePledge: 2900000,
+            czceMargin: 6400000
+          }
+        },
+        {
+          fundAccount: "80001027",
+          customerName: "江苏中禾供应链有限公司",
+          funds: {
+            currentEquity: 27800000,
+            availableFunds: 10900000,
+            pledgeAmount: 6900000,
+            actualCash: 15200000,
+            dcePledge: 4400000,
+            dceMargin: 13200000,
+            czcePledge: 3500000,
+            czceMargin: 9900000
+          }
+        }
+      ];
+
+      var products = {
+        "中金所": [
+          { code: "IF", name: "沪深300股指", multiplier: 300, unit: 1, price: 3952.6 },
+          { code: "IC", name: "中证500股指", multiplier: 200, unit: 1, price: 5846.2 },
+          { code: "T", name: "10年期国债", multiplier: 10000, unit: 1, price: 105.3864 },
+          { code: "TF", name: "5年期国债", multiplier: 10000, unit: 1, price: 104.822 }
+        ],
+        "郑商所": [
+          { code: "CF", name: "棉花", multiplier: 5, unit: 8, price: 14980 },
+          { code: "SR", name: "白糖", multiplier: 10, unit: 20, price: 6125 },
+          { code: "TA", name: "PTA", multiplier: 5, unit: 20, price: 4978 },
+          { code: "MA", name: "甲醇", multiplier: 10, unit: 10, price: 2543 }
+        ],
+        "大商所": [
+          { code: "i", name: "铁矿石", multiplier: 100, unit: 1, price: 842.5 },
+          { code: "m", name: "豆粕", multiplier: 10, unit: 10, price: 3126 },
+          { code: "y", name: "豆油", multiplier: 10, unit: 10, price: 7854 },
+          { code: "p", name: "棕榈油", multiplier: 10, unit: 10, price: 8162 }
+        ],
+        "广期所": [
+          { code: "si", name: "工业硅", multiplier: 5, unit: 5, price: 11345 },
+          { code: "lc", name: "碳酸锂", multiplier: 1, unit: 1, price: 89750 },
+          { code: "ps", name: "多晶硅", multiplier: 3, unit: 1, price: 42180 }
+        ]
+      };
+
+      var exchangeCodes = {
+        "中金所": "CFFEX",
+        "郑商所": "CZCE",
+        "大商所": "DCE",
+        "广期所": "GFEX"
+      };
+
+      var selectedAccount = null;
+      var accountMatches = accounts.slice();
+      var accountActiveIndex = -1;
+      var selectedProducts = [];
+      var productActiveIndex = -1;
+      var uploadedFiles = [];
+      var toastTimer = 0;
+
+      var fundAccountInput = document.getElementById("fund-account-input");
+      var fundAccountWrap = document.getElementById("fund-account-wrap");
+      var fundAccountList = document.getElementById("fund-account-list");
+      var fundAccountClear = document.getElementById("fund-account-clear");
+      var fundAccountToggle = document.getElementById("fund-account-toggle");
+      var fundDetailButton = document.getElementById("fund-detail-button");
+      var businessType = document.getElementById("business-type");
+      var exchange = document.getElementById("exchange");
+      var tradingCode = document.getElementById("trading-code");
+      var productControl = document.getElementById("product-control");
+      var productSearch = document.getElementById("product-search");
+      var productToggle = document.getElementById("product-toggle");
+      var productList = document.getElementById("product-list");
+      var productChips = document.getElementById("product-chips");
+      var quantity = document.getElementById("quantity");
+      var multiplier = document.getElementById("multiplier");
+      var pledgeUnit = document.getElementById("pledge-unit");
+      var settlementPrice = document.getElementById("settlement-price");
+      var amount = document.getElementById("amount");
+      var refreshChecksButton = document.getElementById("refresh-checks");
+      var fundDetailDialog = document.getElementById("fund-detail-dialog");
+      var toast = document.getElementById("toast");
+
+      function accountText(account) {
+        return account.fundAccount + " - " + account.customerName;
+      }
+
+      function normalize(value) {
+        return String(value || "").trim().toLowerCase();
+      }
+
+      function showToast(message, type) {
+        window.clearTimeout(toastTimer);
+        toast.textContent = message;
+        toast.className = "toast " + (type || "success") + " show";
+        toastTimer = window.setTimeout(function () {
+          toast.classList.remove("show");
+        }, 2200);
+      }
+
+      function openAccountList() {
+        renderAccountOptions(fundAccountInput.value);
+        fundAccountList.classList.add("open");
+        fundAccountInput.setAttribute("aria-expanded", "true");
+      }
+
+      function closeAccountList() {
+        fundAccountList.classList.remove("open");
+        fundAccountInput.setAttribute("aria-expanded", "false");
+        fundAccountInput.removeAttribute("aria-activedescendant");
+        accountActiveIndex = -1;
+      }
+
+      function renderAccountOptions(query) {
+        var keyword = normalize(query);
+        if (selectedAccount && query === accountText(selectedAccount)) {
+          keyword = "";
+        }
+        accountMatches = accounts.filter(function (account) {
+          return normalize(account.fundAccount).indexOf(keyword) !== -1 ||
+            normalize(account.customerName).indexOf(keyword) !== -1;
+        });
+        accountActiveIndex = -1;
+        fundAccountList.innerHTML = "";
+
+        if (!accountMatches.length) {
+          var empty = document.createElement("li");
+          empty.className = "combo-empty";
+          empty.textContent = "未找到匹配的期货账号";
+          fundAccountList.appendChild(empty);
+          return;
+        }
+
+        accountMatches.forEach(function (account, index) {
+          var option = document.createElement("li");
+          option.className = "combo-option";
+          option.id = "fund-option-" + index;
+          option.setAttribute("role", "option");
+          option.setAttribute("aria-selected", selectedAccount === account ? "true" : "false");
+          option.dataset.index = String(index);
+
+          var code = document.createElement("span");
+          code.className = "combo-option-code";
+          code.textContent = account.fundAccount;
+
+          var name = document.createElement("span");
+          name.className = "combo-option-name";
+          name.textContent = account.customerName;
+
+          option.appendChild(code);
+          option.appendChild(name);
+          option.addEventListener("mousedown", function (event) {
+            event.preventDefault();
+          });
+          option.addEventListener("click", function () {
+            selectAccount(account);
+          });
+          fundAccountList.appendChild(option);
+        });
+      }
+
+      function setAccountActive(index) {
+        var options = fundAccountList.querySelectorAll(".combo-option");
+        if (!options.length) {
+          return;
+        }
+        accountActiveIndex = (index + options.length) % options.length;
+        options.forEach(function (option, optionIndex) {
+          option.classList.toggle("active", optionIndex === accountActiveIndex);
+        });
+        var activeOption = options[accountActiveIndex];
+        fundAccountInput.setAttribute("aria-activedescendant", activeOption.id);
+        activeOption.scrollIntoView({ block: "nearest" });
+      }
+
+      function selectAccount(account) {
+        selectedAccount = account;
+        fundAccountInput.value = accountText(account);
+        fundAccountClear.classList.add("visible");
+        fundAccountWrap.classList.remove("invalid");
+        fundDetailButton.disabled = false;
+        closeAccountList();
+        updateTradingCode();
+        updateChecks();
+      }
+
+      function clearAccount() {
+        selectedAccount = null;
+        fundAccountInput.value = "";
+        fundAccountClear.classList.remove("visible");
+        fundDetailButton.disabled = true;
+        tradingCode.value = "";
+        closeAccountList();
+        updateChecks();
+      }
+
+      function updateTradingCode() {
+        if (!selectedAccount || !exchange.value) {
+          tradingCode.value = "";
+          return;
+        }
+        tradingCode.value = exchangeCodes[exchange.value] + "-" + selectedAccount.fundAccount + "-正常";
+      }
+
+      function availableProducts() {
+        return products[exchange.value] || [];
+      }
+
+      function filteredProducts() {
+        var keyword = normalize(productSearch.value);
+        return availableProducts().filter(function (product) {
+          return normalize(product.code).indexOf(keyword) !== -1 ||
+            normalize(product.name).indexOf(keyword) !== -1;
+        });
+      }
+
+      function openProductList() {
+        if (productSearch.disabled) {
+          return;
+        }
+        renderProductOptions();
+        productList.classList.add("open");
+        productSearch.setAttribute("aria-expanded", "true");
+      }
+
+      function closeProductList() {
+        productList.classList.remove("open");
+        productSearch.setAttribute("aria-expanded", "false");
+        productSearch.removeAttribute("aria-activedescendant");
+        productActiveIndex = -1;
+      }
+
+      function renderProductOptions() {
+        var matches = filteredProducts();
+        productActiveIndex = -1;
+        productList.innerHTML = "";
+
+        if (!matches.length) {
+          var empty = document.createElement("li");
+          empty.className = "combo-empty";
+          empty.textContent = "未找到匹配的期货品种";
+          productList.appendChild(empty);
+          return;
+        }
+
+        matches.forEach(function (product, index) {
+          var selected = selectedProducts.some(function (item) {
+            return item.code === product.code;
+          });
+          var option = document.createElement("li");
+          option.className = "multi-option";
+          option.id = "product-option-" + index;
+          option.setAttribute("role", "option");
+          option.setAttribute("aria-selected", selected ? "true" : "false");
+          option.dataset.code = product.code;
+
+          var check = document.createElement("span");
+          check.className = "multi-check";
+          check.textContent = selected ? "✓" : "";
+          check.setAttribute("aria-hidden", "true");
+
+          var code = document.createElement("span");
+          code.className = "multi-option-code";
+          code.textContent = product.code;
+
+          var name = document.createElement("span");
+          name.textContent = product.name;
+
+          option.appendChild(check);
+          option.appendChild(code);
+          option.appendChild(name);
+          option.addEventListener("mousedown", function (event) {
+            event.preventDefault();
+          });
+          option.addEventListener("click", function () {
+            toggleProduct(product);
+          });
+          productList.appendChild(option);
+        });
+      }
+
+      function setProductActive(index) {
+        var options = productList.querySelectorAll(".multi-option");
+        if (!options.length) {
+          return;
+        }
+        productActiveIndex = (index + options.length) % options.length;
+        options.forEach(function (option, optionIndex) {
+          option.classList.toggle("active", optionIndex === productActiveIndex);
+        });
+        var activeOption = options[productActiveIndex];
+        productSearch.setAttribute("aria-activedescendant", activeOption.id);
+        activeOption.scrollIntoView({ block: "nearest" });
+      }
+
+      function toggleProduct(product) {
+        var existingIndex = selectedProducts.findIndex(function (item) {
+          return item.code === product.code;
+        });
+        if (existingIndex === -1) {
+          selectedProducts.push(product);
+          applyProductDetails(product);
+        } else {
+          selectedProducts.splice(existingIndex, 1);
+          if (selectedProducts.length) {
+            applyProductDetails(selectedProducts[selectedProducts.length - 1]);
+          } else {
+            clearProductDetails();
+          }
+        }
+        productSearch.value = "";
+        productControl.classList.remove("invalid");
+        renderProductChips();
+        renderProductOptions();
+        productSearch.focus();
+        calculateAmount();
+      }
+
+      function removeProduct(code) {
+        selectedProducts = selectedProducts.filter(function (product) {
+          return product.code !== code;
+        });
+        if (selectedProducts.length) {
+          applyProductDetails(selectedProducts[selectedProducts.length - 1]);
+        } else {
+          clearProductDetails();
+        }
+        renderProductChips();
+        renderProductOptions();
+        calculateAmount();
+      }
+
+      function renderProductChips() {
+        productChips.innerHTML = "";
+        selectedProducts.forEach(function (product) {
+          var chip = document.createElement("span");
+          chip.className = "chip";
+          chip.title = product.code + " - " + product.name;
+
+          var text = document.createElement("span");
+          text.className = "chip-text";
+          text.textContent = product.code;
+
+          var remove = document.createElement("button");
+          remove.className = "chip-remove";
+          remove.type = "button";
+          remove.title = "移除" + product.name;
+          remove.setAttribute("aria-label", "移除" + product.name);
+          remove.textContent = "×";
+          remove.addEventListener("click", function (event) {
+            event.stopPropagation();
+            removeProduct(product.code);
+          });
+
+          chip.appendChild(text);
+          chip.appendChild(remove);
+          productChips.appendChild(chip);
+        });
+        productSearch.placeholder = selectedProducts.length ? "" : "请选择";
+      }
+
+      function clearProducts() {
+        selectedProducts = [];
+        productSearch.value = "";
+        renderProductChips();
+        clearProductDetails();
+        closeProductList();
+      }
+
+      function applyProductDetails(product) {
+        multiplier.value = String(product.multiplier);
+        pledgeUnit.value = String(product.unit);
+        settlementPrice.value = Number(product.price).toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+        [multiplier, pledgeUnit, settlementPrice].forEach(function (control) {
+          control.classList.remove("invalid");
+        });
+      }
+
+      function clearProductDetails() {
+        multiplier.value = "";
+        pledgeUnit.value = "";
+        settlementPrice.value = "";
+        amount.value = "";
+        delete amount.dataset.raw;
+      }
+
+      function isPositiveInteger(value) {
+        var number = Number(value);
+        return Number.isInteger(number) && number > 0;
+      }
+
+      function calculateAmount() {
+        var quantityValue = Number(quantity.value);
+        var multiplierValue = Number(multiplier.value);
+        var unitValue = Number(pledgeUnit.value);
+        var settlementValue = Number(settlementPrice.value);
+        var valuesValid = isPositiveInteger(quantity.value) &&
+          isPositiveInteger(multiplier.value) &&
+          isPositiveInteger(pledgeUnit.value) &&
+          Number.isFinite(settlementValue) &&
+          settlementValue > 0;
+
+        if (!valuesValid) {
+          amount.value = "";
+          delete amount.dataset.raw;
+          updateChecks();
+          return;
+        }
+
+        var calculated = settlementValue * quantityValue * unitValue * multiplierValue * 0.8;
+        if (businessType.value === "仓单解质押" || businessType.value === "国债解质押") {
+          calculated = -calculated;
+        }
+        amount.dataset.raw = String(calculated);
+        amount.value = new Intl.NumberFormat("zh-CN", {
+          minimumFractionDigits: 4,
+          maximumFractionDigits: 4
+        }).format(calculated);
+        updateChecks();
+      }
+
+      function resultFor(value) {
+        return value ? { text: "通过", className: "result-pass" } : { text: "不通过", className: "result-fail" };
+      }
+
+      function missingResult() {
+        return { text: "缺少数据，无法核查", className: "result-missing" };
+      }
+
+      function skippedResult() {
+        return { text: "不需核查", className: "result-skip" };
+      }
+
+      function setCheckResult(name, result) {
+        var cell = document.querySelector('[data-check="' + name + '"]');
+        cell.textContent = result.text;
+        cell.className = "check-result " + result.className;
+      }
+
+      function updateChecks() {
+        var pledge = businessType.value === "仓单质押" || businessType.value === "国债质押";
+        var release = businessType.value === "仓单解质押" || businessType.value === "国债解质押";
+        var rawAmount = amount.dataset.raw === undefined ? NaN : Number(amount.dataset.raw);
+        var hasData = selectedAccount && Number.isFinite(rawAmount);
+
+        if (pledge) {
+          if (hasData) {
+            var pledgeFunds = selectedAccount.funds;
+            var totalPledge = pledgeFunds.pledgeAmount + rawAmount;
+            var passesPledge = pledgeFunds.currentEquity + rawAmount >= 1.25 * totalPledge ||
+              pledgeFunds.actualCash >= 0.25 * totalPledge;
+            setCheckResult("pledge", resultFor(passesPledge));
+          } else {
+            setCheckResult("pledge", missingResult());
+          }
+          setCheckResult("release", skippedResult());
+        } else if (release) {
+          setCheckResult("pledge", skippedResult());
+          if (hasData) {
+            setCheckResult("release", resultFor(selectedAccount.funds.availableFunds + rawAmount >= 0));
+          } else {
+            setCheckResult("release", missingResult());
+          }
+        }
+
+        if (pledge && exchange.value === "大商所") {
+          if (hasData) {
+            setCheckResult("dce", resultFor(selectedAccount.funds.dcePledge + rawAmount <= selectedAccount.funds.dceMargin));
+          } else {
+            setCheckResult("dce", missingResult());
+          }
+        } else {
+          setCheckResult("dce", skippedResult());
+        }
+
+        if (pledge && exchange.value === "郑商所") {
+          if (hasData) {
+            setCheckResult("czce", resultFor(selectedAccount.funds.czcePledge + rawAmount <= 1.2 * selectedAccount.funds.czceMargin));
+          } else {
+            setCheckResult("czce", missingResult());
+          }
+        } else {
+          setCheckResult("czce", skippedResult());
+        }
+      }
+
+      function formatMoney(value) {
+        return new Intl.NumberFormat("zh-CN", {
+          style: "currency",
+          currency: "CNY",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }).format(value);
+      }
+
+      function showFundDetails() {
+        if (!selectedAccount) {
+          return;
+        }
+        document.getElementById("detail-fund-account").textContent = selectedAccount.fundAccount;
+        document.getElementById("detail-customer-name").textContent = selectedAccount.customerName;
+        document.getElementById("detail-current-equity").textContent = formatMoney(selectedAccount.funds.currentEquity);
+        document.getElementById("detail-available-funds").textContent = formatMoney(selectedAccount.funds.availableFunds);
+        document.getElementById("detail-pledge-amount").textContent = formatMoney(selectedAccount.funds.pledgeAmount);
+        document.getElementById("detail-actual-cash").textContent = formatMoney(selectedAccount.funds.actualCash);
+        document.getElementById("detail-dce-pledge").textContent = formatMoney(selectedAccount.funds.dcePledge);
+        document.getElementById("detail-dce-margin").textContent = formatMoney(selectedAccount.funds.dceMargin);
+        document.getElementById("detail-czce-pledge").textContent = formatMoney(selectedAccount.funds.czcePledge);
+        document.getElementById("detail-czce-margin").textContent = formatMoney(selectedAccount.funds.czceMargin);
+        fundDetailDialog.showModal();
+      }
+
+      function switchTab(tab) {
+        document.querySelectorAll('[role="tab"]').forEach(function (item) {
+          var selected = item === tab;
+          item.setAttribute("aria-selected", selected ? "true" : "false");
+          item.tabIndex = selected ? 0 : -1;
+          document.getElementById(item.dataset.panel).hidden = !selected;
+        });
+      }
+
+      function formatFileSize(size) {
+        if (size < 1024) {
+          return size + " B";
+        }
+        if (size < 1024 * 1024) {
+          return (size / 1024).toFixed(1) + " KB";
+        }
+        return (size / (1024 * 1024)).toFixed(1) + " MB";
+      }
+
+      function fileType(fileName) {
+        var extension = fileName.split(".").pop().toLowerCase();
+        if (["jpg", "jpeg", "png"].indexOf(extension) !== -1) {
+          return "图片";
+        }
+        if (extension === "pdf") {
+          return "PDF";
+        }
+        if (["doc", "docx"].indexOf(extension) !== -1) {
+          return "文档";
+        }
+        if (["xls", "xlsx"].indexOf(extension) !== -1) {
+          return "表格";
+        }
+        return "其他";
+      }
+
+      function addFiles(fileList) {
+        Array.prototype.forEach.call(fileList, function (file) {
+          var duplicate = uploadedFiles.some(function (item) {
+            return item.name === file.name && item.size === file.size;
+          });
+          if (!duplicate) {
+            uploadedFiles.push(file);
+          }
+        });
+        renderFiles();
+      }
+
+      function renderFiles() {
+        var fileList = document.getElementById("file-list");
+        var count = document.getElementById("attachment-count");
+        fileList.innerHTML = "";
+        count.textContent = String(uploadedFiles.length);
+        count.setAttribute("aria-label", uploadedFiles.length + "个附件");
+
+        if (!uploadedFiles.length) {
+          fileList.innerHTML = '<tr><td class="empty-row" colspan="4">暂无影像资料</td></tr>';
+          return;
+        }
+
+        uploadedFiles.forEach(function (file, index) {
+          var row = document.createElement("tr");
+          var typeCell = document.createElement("td");
+          var nameCell = document.createElement("td");
+          var sizeCell = document.createElement("td");
+          var actionCell = document.createElement("td");
+          var remove = document.createElement("button");
+
+          typeCell.textContent = fileType(file.name);
+          nameCell.textContent = file.name;
+          nameCell.title = file.name;
+          sizeCell.textContent = formatFileSize(file.size);
+          remove.type = "button";
+          remove.className = "delete-file";
+          remove.textContent = "×";
+          remove.title = "删除" + file.name;
+          remove.setAttribute("aria-label", "删除" + file.name);
+          remove.addEventListener("click", function () {
+            uploadedFiles.splice(index, 1);
+            renderFiles();
+          });
+
+          actionCell.appendChild(remove);
+          row.appendChild(typeCell);
+          row.appendChild(nameCell);
+          row.appendChild(sizeCell);
+          row.appendChild(actionCell);
+          fileList.appendChild(row);
+        });
+      }
+
+      function markInvalid(control, invalid) {
+        control.classList.toggle("invalid", invalid);
+      }
+
+      function validateForm() {
+        var firstInvalid = null;
+        markInvalid(fundAccountWrap, !selectedAccount);
+        if (!selectedAccount) {
+          firstInvalid = fundAccountInput;
+        }
+
+        [businessType, exchange, quantity, multiplier, pledgeUnit, settlementPrice].forEach(function (control) {
+          var invalid = !control.value || !control.checkValidity();
+          markInvalid(control, invalid);
+          if (invalid && !firstInvalid) {
+            firstInvalid = control;
+          }
+        });
+
+        var productsInvalid = !selectedProducts.length;
+        markInvalid(productControl, productsInvalid);
+        if (productsInvalid && !firstInvalid) {
+          firstInvalid = productSearch;
+        }
+
+        if (firstInvalid) {
+          firstInvalid.focus();
+          showToast("请完整填写申请详情中的必填项", "error");
+          return false;
+        }
+        return true;
+      }
+
+      fundAccountInput.addEventListener("focus", openAccountList);
+      fundAccountInput.addEventListener("input", function () {
+        if (selectedAccount && fundAccountInput.value !== accountText(selectedAccount)) {
+          selectedAccount = null;
+          fundDetailButton.disabled = true;
+          tradingCode.value = "";
+          updateChecks();
+        }
+        fundAccountClear.classList.toggle("visible", Boolean(fundAccountInput.value));
+        fundAccountWrap.classList.remove("invalid");
+        renderAccountOptions(fundAccountInput.value);
+        fundAccountList.classList.add("open");
+        fundAccountInput.setAttribute("aria-expanded", "true");
+      });
+      fundAccountInput.addEventListener("keydown", function (event) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          if (!fundAccountList.classList.contains("open")) {
+            openAccountList();
+          }
+          setAccountActive(accountActiveIndex + 1);
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setAccountActive(accountActiveIndex - 1);
+        } else if (event.key === "Enter" && accountActiveIndex >= 0) {
+          event.preventDefault();
+          selectAccount(accountMatches[accountActiveIndex]);
+        } else if (event.key === "Escape") {
+          closeAccountList();
+        }
+      });
+      fundAccountClear.addEventListener("click", function () {
+        clearAccount();
+        fundAccountInput.focus();
+      });
+      fundAccountToggle.addEventListener("click", function () {
+        if (fundAccountList.classList.contains("open")) {
+          closeAccountList();
+        } else {
+          fundAccountInput.focus();
+          openAccountList();
+        }
+      });
+      fundDetailButton.addEventListener("click", showFundDetails);
+
+      businessType.addEventListener("change", function () {
+        calculateAmount();
+      });
+      exchange.addEventListener("change", function () {
+        exchange.classList.remove("invalid");
+        clearProducts();
+        var enabled = Boolean(exchange.value);
+        productSearch.disabled = !enabled;
+        productToggle.disabled = !enabled;
+        productControl.classList.toggle("disabled", !enabled);
+        updateTradingCode();
+        updateChecks();
+      });
+
+      productControl.addEventListener("click", function (event) {
+        if (!productSearch.disabled && event.target !== productToggle) {
+          productSearch.focus();
+          openProductList();
+        }
+      });
+      productToggle.addEventListener("click", function () {
+        if (productList.classList.contains("open")) {
+          closeProductList();
+        } else {
+          productSearch.focus();
+          openProductList();
+        }
+      });
+      productSearch.addEventListener("focus", openProductList);
+      productSearch.addEventListener("input", function () {
+        renderProductOptions();
+        openProductList();
+      });
+      productSearch.addEventListener("keydown", function (event) {
+        var matches = filteredProducts();
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setProductActive(productActiveIndex + 1);
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setProductActive(productActiveIndex - 1);
+        } else if (event.key === "Enter" && productActiveIndex >= 0) {
+          event.preventDefault();
+          toggleProduct(matches[productActiveIndex]);
+        } else if (event.key === "Backspace" && !productSearch.value && selectedProducts.length) {
+          removeProduct(selectedProducts[selectedProducts.length - 1].code);
+        } else if (event.key === "Escape") {
+          closeProductList();
+        }
+      });
+
+      [quantity, multiplier, pledgeUnit, settlementPrice].forEach(function (control) {
+        control.addEventListener("input", function () {
+          control.classList.remove("invalid");
+          calculateAmount();
+        });
+      });
+
+      refreshChecksButton.addEventListener("click", function () {
+        var icon = refreshChecksButton.querySelector(".refresh-icon");
+        icon.classList.remove("spinning");
+        void icon.offsetWidth;
+        icon.classList.add("spinning");
+        updateChecks();
+        showToast("业务核查结果已刷新", "success");
+      });
+
+      document.querySelectorAll('[role="tab"]').forEach(function (tab) {
+        tab.addEventListener("click", function () {
+          switchTab(tab);
+        });
+        tab.addEventListener("keydown", function (event) {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+            return;
+          }
+          event.preventDefault();
+          var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+          var nextIndex = (tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+          tabs[nextIndex].focus();
+          switchTab(tabs[nextIndex]);
+        });
+      });
+
+      var fileInput = document.getElementById("file-input");
+      var dropZone = document.getElementById("drop-zone");
+      document.getElementById("choose-file-button").addEventListener("click", function () {
+        fileInput.click();
+      });
+      fileInput.addEventListener("change", function () {
+        addFiles(fileInput.files);
+        fileInput.value = "";
+      });
+      ["dragenter", "dragover"].forEach(function (eventName) {
+        dropZone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          dropZone.classList.add("dragover");
+        });
+      });
+      ["dragleave", "drop"].forEach(function (eventName) {
+        dropZone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          dropZone.classList.remove("dragover");
+        });
+      });
+      dropZone.addEventListener("drop", function (event) {
+        addFiles(event.dataTransfer.files);
+      });
+
+      document.getElementById("dialog-close").addEventListener("click", function () {
+        fundDetailDialog.close();
+      });
+      fundDetailDialog.addEventListener("click", function (event) {
+        if (event.target === fundDetailDialog) {
+          fundDetailDialog.close();
+        }
+      });
+
+      document.getElementById("save-button").addEventListener("click", function () {
+        showToast("申请已暂存", "success");
+      });
+      document.getElementById("submit-button").addEventListener("click", function () {
+        if (validateForm()) {
+          showToast("申请校验通过，已提交", "success");
+        }
+      });
+
+      document.addEventListener("click", function (event) {
+        if (!document.getElementById("fund-account-combo").contains(event.target)) {
+          closeAccountList();
+        }
+        if (!document.getElementById("product-combo").contains(event.target)) {
+          closeProductList();
+        }
+      });
+
+      renderAccountOptions("");
+      updateChecks();
+    }());
+  </script>
+</body>
+</html>

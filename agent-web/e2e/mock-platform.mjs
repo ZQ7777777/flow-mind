@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 let definitionStatus = "DRAFT";
 let activationStatus = "INACTIVE";
 let graph = { nodes: [], edges: [], formFields: [], attachmentConfigs: [] };
+let currentDefinitionId = "definition_entry_application_v1";
+let currentDefinition = { processCode: "entry_application", processName: "入金申请" };
 const businessEntryConfigs = new Map();
 const template = {
   attachmentTemplateId: "tpl_bank_receipt_v1",
@@ -52,14 +54,16 @@ export function startMockPlatform(port = 18080) {
   } else if (url.pathname === "/api/platform/definitions" && request.method === "POST") {
     definitionStatus = "DRAFT";
     activationStatus = "INACTIVE";
-    payload = { id: "definition_entry_v1", version: 1, ...body };
+    currentDefinition = body;
+    currentDefinitionId = `definition_${String(body.processCode || "generated").replace(/[^a-zA-Z0-9_-]/g, "_")}_v1`;
+    payload = { id: currentDefinitionId, version: 1, ...body };
   } else if (url.pathname === "/api/platform/attachment-templates" && request.method === "GET") {
     payload = [];
   } else if (url.pathname === "/api/platform/attachment-templates" && request.method === "POST") {
     payload = { ...template, ...body };
-  } else if (url.pathname === "/api/platform/definitions/definition_entry_v1/graph" && request.method === "PUT") {
+  } else if (url.pathname === `/api/platform/definitions/${currentDefinitionId}/graph` && request.method === "PUT") {
     graph = body;
-    payload = { id: "definition_entry_v1", version: 1 };
+    payload = { id: currentDefinitionId, version: 1 };
   } else if (url.pathname.endsWith("/publish-validation")) {
     payload = { valid: true, issues: [] };
   } else if (url.pathname === "/api/platform/definitions/publish") {
@@ -68,7 +72,7 @@ export function startMockPlatform(port = 18080) {
   } else if (url.pathname === "/api/platform/definitions/activate") {
     activationStatus = "ACTIVE";
     payload = detail();
-  } else if (url.pathname === "/api/platform/definitions/definition_entry_v1") {
+  } else if (url.pathname === `/api/platform/definitions/${currentDefinitionId}`) {
     payload = detail();
   } else if (request.method === "PUT" && url.pathname.startsWith("/api/admin/business-entry-configs/by-definition/")) {
     const definitionId = decodeURIComponent(url.pathname.slice("/api/admin/business-entry-configs/by-definition/".length));
@@ -92,9 +96,9 @@ export function startMockPlatform(port = 18080) {
 
 function detail() {
   return {
-    id: "definition_entry_v1",
-    processCode: "entry_application",
-    processName: "入金申请",
+    id: currentDefinitionId,
+    processCode: currentDefinition.processCode,
+    processName: currentDefinition.processName,
     version: 1,
     definitionStatus,
     activationStatus,

@@ -525,6 +525,9 @@ export class GenerationService {
     const apiReferences = {
       platformRuntime: this.targets.readReference(target, referencePaths.platformRuntime, generation.session_id),
       trustedUserContext: this.targets.readReference(target, referencePaths.trustedUserContext, generation.session_id),
+      businessReferenceData: contract.frontend.apiReferences?.businessReferenceData
+        ? this.targets.readReference(target, contract.frontend.apiReferences.businessReferenceData, generation.session_id)
+        : undefined,
     };
     const callbacks: GenerationPiCallbacks = {
       requirement,

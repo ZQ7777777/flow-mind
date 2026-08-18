@@ -29,7 +29,7 @@ export function createFakeGenerationFiles(
     [spec.paths.controllerTest]: controllerTestSource(spec),
     [spec.paths.serviceTest]: serviceTestSource(spec, fields, accessorImport, accessorMethod),
     [spec.paths.view]: viewSource(spec, fields, formType, submitFunction),
-    [spec.paths.viewTest]: viewTestSource(spec),
+    [spec.paths.viewTest]: viewTestSource(spec, fields),
     [spec.paths.api]: apiSource(spec, fields, formType, submitFunction),
     [spec.paths.apiTest]: apiTestSource(spec, fields, submitFunction),
     [spec.paths.routeRegistry]: mergeGeneratedRoute(existingRouteRegistry, spec),
@@ -175,6 +175,7 @@ function requestSource(spec: GenerationSpec, fields: FormFieldRequirement[]): st
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
 import javax.validation.constraints.DecimalMax;
 import javax.validation.constraints.DecimalMin;
@@ -304,31 +305,43 @@ ${attachmentSetup}
 
 function viewSource(spec: GenerationSpec, fields: FormFieldRequirement[], formType: string, submitFunction: string): string {
   const formValues = fields.map((field) => `${field.fieldCode}: ${tsDefault(field)}`).concat(spec.applyAttachments.map((item) => `${item.attachmentCode}: [] as File[]`)).join(", ");
-  const requiredChecks = fields.filter((field) => field.required).map((field) => `!form.${field.fieldCode}`).concat(spec.applyAttachments.filter((item) => item.required).map((item) => `!form.${item.attachmentCode}.length`));
+  const requiredChecks = fields.filter((field) => field.required).map((field) => field.multiple ? `!form.${field.fieldCode}.length` : `!form.${field.fieldCode}`).concat(spec.applyAttachments.filter((item) => item.required).map((item) => `!form.${item.attachmentCode}.length`));
   const controls = fields.map((field) => vueControl(field)).concat(spec.applyAttachments.map((item) => `<input aria-label="${escapeHtml(item.attachmentName)}" type="file" ${item.required ? "required " : ""}multiple @change="form.${item.attachmentCode} = Array.from(($event.target as HTMLInputElement).files || [])" />`)).join("\n    ");
+  const dynamicFields = fields.filter((field) => field.referenceDataSource);
+  const referenceFunctions = [...new Set(dynamicFields.map((field) => referenceFunction(field.referenceDataSource!.resource)))];
+  const referenceImports = referenceFunctions.length ? `, ${referenceFunctions.join(", ")}` : "";
+  const optionDeclarations = dynamicFields.filter((field) => field.controlType === "select")
+    .map((field) => `const ${field.fieldCode}Options = ref<any[]>([]);`).join("\n");
+  const referenceSetup = dynamicReferenceSetup(dynamicFields);
   return `<script setup lang="ts">
-import { reactive, ref } from "vue";
-import { ${submitFunction}, type ${formType} } from "../../../api/generated/${spec.kebabCode}";
+import { onMounted, reactive, ref, watch } from "vue";
+import { ${submitFunction}${referenceImports}, type ${formType} } from "../../../api/generated/${spec.kebabCode}";
 const form = reactive<${formType}>({ ${formValues} });
 const success = ref("");
+const referenceLoading = ref(false);
+const referenceError = ref("");
+${optionDeclarations}
+${referenceSetup}
 async function submit() {
   if (${requiredChecks.length ? requiredChecks.join(" || ") : "false"}) throw new Error("请完整填写必填项");
   const result = await ${submitFunction}(form, crypto.randomUUID());
   success.value = "提交成功，下一处理节点：" + (result.createdTasks?.[0]?.taskName || "待处理");
 }
 </script>
-<template><form @submit.prevent="submit"><h1>${escapeHtml(spec.businessName)}</h1>
+<template><form @submit.prevent="submit"><h1>${escapeHtml(spec.businessName)}</h1><p v-if="referenceError" role="alert">{{ referenceError }}</p>
     ${controls}
     <button type="submit">提交申请</button><p v-if="success">{{ success }}</p></form></template>
 `;
 }
 
-function viewTestSource(spec: GenerationSpec): string {
+function viewTestSource(spec: GenerationSpec, fields: FormFieldRequirement[]): string {
   const firstLabel = spec.applyAttachments[0]?.attachmentName;
+  const referenceMocks = [...new Set(fields.filter((field) => field.referenceDataSource)
+    .map((field) => `${referenceFunction(field.referenceDataSource!.resource)}: vi.fn().mockResolvedValue([])`))];
   return `import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 import ${spec.classPrefix}Apply from "../${spec.kebabCode}/${spec.classPrefix}Apply.vue";
-vi.mock("../../../api/generated/${spec.kebabCode}", () => ({ submit${spec.classPrefix}: vi.fn().mockResolvedValue({ createdTasks: [{ nodeName: "下一节点" }] }) }));
+vi.mock("../../../api/generated/${spec.kebabCode}", () => ({ submit${spec.classPrefix}: vi.fn().mockResolvedValue({ createdTasks: [{ nodeName: "下一节点" }] })${referenceMocks.length ? `, ${referenceMocks.join(", ")}` : ""} }));
 describe("${spec.businessName} apply", () => { it("renders confirmed initiation controls", () => {
   const wrapper = mount(${spec.classPrefix}Apply);
   expect(wrapper.text()).toContain("${escapeTs(spec.businessName)}");${firstLabel ? `
@@ -341,7 +354,7 @@ function apiSource(spec: GenerationSpec, fields: FormFieldRequirement[], formTyp
   const properties = fields.map((field) => `${field.fieldCode}: ${tsType(field)};`).concat(spec.applyAttachments.map((item) => `${item.attachmentCode}: File[];`)).join(" ");
   const payload = fields.map((field) => `${field.fieldCode}: input.${field.fieldCode}`).join(", ");
   const attachments = spec.applyAttachments.map((item) => `input.${item.attachmentCode}.forEach((file) => body.append("${item.attachmentCode}", file));`).join("\n  ");
-  return `export interface ${formType} { ${properties} }
+  return `${referenceApiSource(fields)}export interface ${formType} { ${properties} }
 export async function ${submitFunction}(input: ${formType}, idempotencyKey: string): Promise<any> {
   const body = new FormData();
   body.append("payload", new Blob([JSON.stringify({ ${payload} })], { type: "application/json" }));
@@ -379,6 +392,7 @@ function mergeGeneratedRoute(existing: string, spec: GenerationSpec): string {
 }
 
 function javaType(field: FormFieldRequirement): string {
+  if (field.multiple) return "java.util.List<String>";
   if (field.fieldType === "number") return "BigDecimal";
   if (field.fieldType === "date") return "LocalDate";
   if (field.fieldType === "boolean") return "Boolean";
@@ -387,7 +401,7 @@ function javaType(field: FormFieldRequirement): string {
 
 function validationAnnotations(field: FormFieldRequirement): string {
   const annotations: string[] = [];
-  if (field.required) annotations.push(field.fieldType === "string" || field.fieldType === "select" ? "@NotBlank" : "@NotNull");
+  if (field.required) annotations.push(field.multiple ? "@NotEmpty" : field.fieldType === "string" || field.fieldType === "select" ? "@NotBlank" : "@NotNull");
   if (field.fieldType === "number" && finiteNumber(field.validation.minimum)) annotations.push(`@DecimalMin("${field.validation.minimum}")`);
   if (field.fieldType === "number" && finiteNumber(field.validation.maximum)) annotations.push(`@DecimalMax("${field.validation.maximum}")`);
   const minLength = nonNegativeInteger(field.validation.minLength);
@@ -400,12 +414,14 @@ function validationAnnotations(field: FormFieldRequirement): string {
 }
 
 function tsType(field: FormFieldRequirement): string {
+  if (field.multiple) return "string[]";
   if (field.fieldType === "number") return "number";
   if (field.fieldType === "boolean") return "boolean";
   return "string";
 }
 
 function tsDefault(field: FormFieldRequirement): string {
+  if (field.multiple) return "[]";
   if (field.defaultValue !== undefined) {
     if (field.fieldType === "number") return String(Number(field.defaultValue));
     if (field.fieldType === "boolean") return String(field.defaultValue.toLowerCase() === "true");
@@ -417,12 +433,14 @@ function tsDefault(field: FormFieldRequirement): string {
 }
 
 function tsTestValue(field: FormFieldRequirement): string {
+  if (field.multiple) return '["value"]';
   if (field.fieldType === "number") return "1";
   if (field.fieldType === "boolean") return "true";
   return '"value"';
 }
 
 function javaTestValue(field: FormFieldRequirement): string {
+  if (field.multiple) return 'java.util.Collections.singletonList("value")';
   if (field.fieldType === "number") return 'new java.math.BigDecimal("1")';
   if (field.fieldType === "boolean") return "Boolean.TRUE";
   if (field.fieldType === "date") return "java.time.LocalDate.now()";
@@ -438,7 +456,13 @@ function extensionValidation(name: string, extensions: string[]): string {
 
 function vueControl(field: FormFieldRequirement): string {
   if (field.controlType === "checkbox") return `<input v-model="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" type="checkbox" />`;
-  if (field.controlType === "select") return `<select v-model="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" ${field.required ? "required" : ""}>${(field.options || []).map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("")}</select>`;
+  if (field.controlType === "select") {
+    const source = field.referenceDataSource;
+    const options = source
+      ? `<option v-for="option in ${field.fieldCode}Options" :key="option.${referenceValueProperty(source.resource)}" :value="option.${referenceValueProperty(source.resource)}">{{ ${referenceLabelExpression(source.resource)} }}</option>`
+      : (field.options || []).map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("");
+    return `<select v-model="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" ${field.required ? "required" : ""} ${field.multiple ? "multiple" : ""} :disabled="referenceLoading">${options}</select>`;
+  }
   if (field.controlType === "textarea") return `<textarea v-model="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" ${field.required ? "required" : ""}></textarea>`;
   const type = field.controlType === "number" ? "number" : field.controlType === "datePicker" ? "date" : "text";
   const model = field.controlType === "number" ? "v-model.number" : "v-model";
@@ -449,7 +473,84 @@ function vueControl(field: FormFieldRequirement): string {
     nonNegativeInteger(field.validation.maxLength) !== undefined ? `maxlength="${field.validation.maxLength}"` : "",
     typeof field.validation.pattern === "string" && field.validation.pattern ? `pattern="${escapeHtml(field.validation.pattern)}"` : "",
   ].filter(Boolean).join(" ");
-  return `<input ${model}="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" type="${type}" ${field.required ? "required" : ""} ${validation} />`;
+  return `<input ${model}="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" type="${type}" ${field.required ? "required" : ""} ${field.readOnly ? "readonly" : ""} ${validation} />`;
+}
+
+function referenceFunction(resource: NonNullable<FormFieldRequirement["referenceDataSource"]>["resource"]): string {
+  return {
+    FUTURES_ACCOUNTS: "loadFuturesAccounts",
+    EXCHANGES: "loadExchanges",
+    TRADING_CODES: "loadTradingCodes",
+    FUTURES_PRODUCTS: "loadFuturesProducts",
+  }[resource];
+}
+
+function referenceValueProperty(resource: NonNullable<FormFieldRequirement["referenceDataSource"]>["resource"]): string {
+  return {
+    FUTURES_ACCOUNTS: "accountNo",
+    EXCHANGES: "exchangeCode",
+    TRADING_CODES: "tradingCode",
+    FUTURES_PRODUCTS: "productCode",
+  }[resource];
+}
+
+function referenceLabelExpression(resource: NonNullable<FormFieldRequirement["referenceDataSource"]>["resource"]): string {
+  return {
+    FUTURES_ACCOUNTS: 'option.accountNo + " - " + option.customerName',
+    EXCHANGES: "option.exchangeName",
+    TRADING_CODES: 'option.tradingCode + "（" + option.tradingStatus + "）"',
+    FUTURES_PRODUCTS: 'option.productCode + " - " + option.productName',
+  }[resource];
+}
+
+function dynamicReferenceSetup(fields: FormFieldRequirement[]): string {
+  const lines: string[] = [];
+  for (const field of fields) {
+    const source = field.referenceDataSource!;
+    if (source.resource === "FUTURES_ACCOUNTS" || source.resource === "EXCHANGES") {
+      lines.push(`onMounted(async () => { referenceLoading.value = true; try { ${field.fieldCode}Options.value = await ${referenceFunction(source.resource)}(); } catch { referenceError.value = "参考数据加载失败"; } finally { referenceLoading.value = false; } });`);
+      continue;
+    }
+    const bindings = source.parameterBindings || {};
+    const dependencies = Object.values(bindings);
+    const dependencyExpression = dependencies.length === 1
+      ? `() => form.${dependencies[0]}`
+      : `() => [${dependencies.map((code) => `form.${code}`).join(", ")}]`;
+    const values = dependencies.length === 1 ? ["value"] : dependencies.map((_item, index) => `values[${index}]`);
+    const parameterValue = new Map(Object.keys(bindings).map((parameter, index) => [parameter, values[index]]));
+    const clearValue = field.multiple ? "[]" : '""';
+    if (source.resource === "TRADING_CODES") {
+      lines.push(`watch(${dependencyExpression}, async (${dependencies.length === 1 ? "value" : "values"}) => { form.${field.fieldCode} = ${clearValue}; const accountNo = ${parameterValue.get("accountNo")}; const exchangeCode = ${parameterValue.get("exchangeCode")}; if (!accountNo || !exchangeCode) return; referenceLoading.value = true; try { const items = await loadTradingCodes(String(accountNo), String(exchangeCode)); form.${field.fieldCode} = items[0]?.tradingCode || ""; } catch { referenceError.value = "交易编码加载失败"; } finally { referenceLoading.value = false; } }, { immediate: true });`);
+    } else if (source.resource === "FUTURES_PRODUCTS") {
+      const exchangeValue = parameterValue.get("exchangeCode");
+      const clearAutofill = Object.values(source.autofillBindings || {}).map((target) => `form.${target} = ${fieldDefaultForCode(fields, target)};`).join(" ");
+      lines.push(`watch(${dependencyExpression}, async (${dependencies.length === 1 ? "value" : "values"}) => { form.${field.fieldCode} = ${clearValue}; ${clearAutofill} ${field.fieldCode}Options.value = []; const exchangeCode = ${exchangeValue}; if (!exchangeCode) return; referenceLoading.value = true; try { ${field.fieldCode}Options.value = await loadFuturesProducts(String(exchangeCode)); } catch { referenceError.value = "期货品种加载失败"; } finally { referenceLoading.value = false; } }, { immediate: true });`);
+      if (source.autofillBindings && Object.keys(source.autofillBindings).length) {
+        const selectedCodes = field.multiple ? `form.${field.fieldCode}` : `[form.${field.fieldCode}]`;
+        const assignments = Object.entries(source.autofillBindings).map(([property, target]) => `form.${target} = selected ? selected.${property} : ${fieldDefaultForCode(fields, target)};`).join(" ");
+        lines.push(`watch(() => form.${field.fieldCode}, () => { const codes = ${selectedCodes}; const selected = ${field.fieldCode}Options.value.find((item) => item.productCode === codes[codes.length - 1]); ${assignments} }, { deep: true });`);
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function fieldDefaultForCode(fields: FormFieldRequirement[], fieldCode: string): string {
+  const target = fields.find((field) => field.fieldCode === fieldCode);
+  return target ? tsDefault(target) : '""';
+}
+
+function referenceApiSource(fields: FormFieldRequirement[]): string {
+  const resources = new Set(fields.flatMap((field) => field.referenceDataSource ? [field.referenceDataSource.resource] : []));
+  if (!resources.size) return "";
+  const blocks = [
+    `async function requestReferenceData<T>(url: string): Promise<T> { const response = await fetch(url); if (!response.ok) throw new Error("参考数据加载失败"); return response.json() as Promise<T>; }`,
+  ];
+  if (resources.has("FUTURES_ACCOUNTS")) blocks.push(`export interface FuturesAccountOption { accountNo: string; customerName: string; accountStatus: "NORMAL" | "DORMANT"; }\nexport function loadFuturesAccounts(keyword = ""): Promise<FuturesAccountOption[]> { const query = keyword ? "?keyword=" + encodeURIComponent(keyword) : ""; return requestReferenceData("/api/reference-data/futures-accounts" + query); }`);
+  if (resources.has("EXCHANGES")) blocks.push(`export interface ExchangeOption { exchangeCode: string; exchangeName: string; sourcePrefix: string; }\nexport function loadExchanges(): Promise<ExchangeOption[]> { return requestReferenceData("/api/reference-data/exchanges"); }`);
+  if (resources.has("TRADING_CODES")) blocks.push(`export interface TradingCodeOption { accountNo: string; exchangeCode: string; tradingCode: string; tradingStatus: "NORMAL" | "DORMANT"; }\nexport function loadTradingCodes(accountNo: string, exchangeCode: string): Promise<TradingCodeOption[]> { return requestReferenceData("/api/reference-data/futures-accounts/" + encodeURIComponent(accountNo) + "/trading-codes?exchangeCode=" + encodeURIComponent(exchangeCode)); }`);
+  if (resources.has("FUTURES_PRODUCTS")) blocks.push(`export interface FuturesProductOption { exchangeCode: string; exchangeName: string; productCode: string; productName: string; productType: "FUTURES"; contractMultiplier: number; pledgeUnitQuantity: number; previousSettlementPrice: number; dataSource: "HTML_EXTRACTED" | "DEMO_GENERATED"; }\nexport function loadFuturesProducts(exchangeCode: string, keyword = ""): Promise<FuturesProductOption[]> { const query = new URLSearchParams({ exchangeCode, productType: "FUTURES" }); if (keyword) query.set("keyword", keyword); return requestReferenceData("/api/reference-data/futures-products?" + query.toString()); }`);
+  return `${blocks.join("\n\n")}\n\n`;
 }
 
 function getter(code: string): string { return `get${code.slice(0, 1).toUpperCase()}${code.slice(1)}`; }

@@ -73,3 +73,29 @@ Business Base 后端首次部署业务大厅入口配置和通用发起接口时
 - 仅新增或修改 Agent 生成的前端表单页：重新构建并发布 Business Base 前端，不需要重启后端。
 - 修改 `/api/workflow/process-entry-links`、`/api/workflow/processes/{processCode}/start-context`、`start-submit` 或其他通用后端契约：重新构建并重启 Business Base 后端，并同步验证前端调用。
 - 生产和测试环境首期不支持后端运行时插件热加载；历史 `/api/generated/entry-application/submit` 接口继续作为入金样例兼容入口。
+
+## 质押流程演示参考数据
+
+“仓单、国债（解）质押申请”生成页面使用 Business Base 同源的统一账户演示查询接口。首次拉取代码或需要刷新演示库时，在仓库根目录执行：
+
+```powershell
+node .\scripts\sync-demo-reference-data.mjs
+```
+
+脚本默认同步到 `data/business-flow-local.db`。需要创建或更新其他 SQLite 文件时使用：
+
+```powershell
+node .\scripts\sync-demo-reference-data.mjs --database .\data\my-demo.db
+```
+
+同步是事务化且幂等的：它创建 6 张 `mock_*` 参考表，写入 5 个期货账户、4 家交易所、20 个交易编码和 `doc/example_process/品种数据.txt` 中的 68 个品种。HTML 未提供参数的品种使用稳定生成的演示值，并通过 API 的 `dataSource=DEMO_GENERATED` 明确标识。源文件中移除的品种只会停用，不会删除历史记录。
+
+登录 Business Base 后可调用以下只读接口：
+
+- `/api/reference-data/futures-accounts`
+- `/api/reference-data/futures-accounts/{accountNo}/funds`
+- `/api/reference-data/futures-accounts/{accountNo}/trading-codes`
+- `/api/reference-data/exchanges`
+- `/api/reference-data/futures-products`
+
+完整参数、响应字段和 Agent 级联调用约定见 `business-base/.flowmind/references/business-reference-data-v1.md`。演示行情不得当作生产或实时行情使用。

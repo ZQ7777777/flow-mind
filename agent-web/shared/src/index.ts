@@ -54,6 +54,23 @@ export interface Participant {
   responsibility: string;
 }
 
+export const REFERENCE_DATA_RESOURCES = [
+  "FUTURES_ACCOUNTS",
+  "EXCHANGES",
+  "TRADING_CODES",
+  "FUTURES_PRODUCTS",
+] as const;
+
+export type ReferenceDataResource = (typeof REFERENCE_DATA_RESOURCES)[number];
+
+export interface ReferenceDataSource {
+  resource: ReferenceDataResource;
+  /** API parameter or path variable name -> upstream form field code. */
+  parameterBindings?: Record<string, string>;
+  /** Selected response property -> target form field code. */
+  autofillBindings?: Record<string, string>;
+}
+
 export interface FormFieldRequirement {
   fieldCode: string;
   fieldName: string;
@@ -63,6 +80,9 @@ export interface FormFieldRequirement {
   validation: Record<string, unknown>;
   defaultValue?: string;
   options?: Array<{ label: string; value: string }>;
+  multiple?: boolean;
+  readOnly?: boolean;
+  referenceDataSource?: ReferenceDataSource;
   sortOrder: number;
 }
 
@@ -172,7 +192,7 @@ export interface BusinessRule {
 }
 
 export interface BusinessRequirement {
-  schemaVersion: "1.0";
+  schemaVersion: "1.0" | "1.1";
   businessCode: string;
   businessName: string;
   systemCode: string;
@@ -266,7 +286,7 @@ export const businessRequirementSchema = {
     "participants", "formFields", "attachments", "nodes", "edges", "businessRules",
   ],
   properties: {
-    schemaVersion: { const: "1.0" },
+    schemaVersion: { enum: ["1.0", "1.1"] },
     businessCode: { type: "string" },
     businessName: { type: "string" },
     systemCode: { type: "string" },
@@ -305,6 +325,24 @@ export const businessRequirementSchema = {
               additionalProperties: false,
               required: ["label", "value"],
               properties: { label: { type: "string" }, value: { type: "string" } },
+            },
+          },
+          multiple: { type: "boolean" },
+          readOnly: { type: "boolean" },
+          referenceDataSource: {
+            type: "object",
+            additionalProperties: false,
+            required: ["resource"],
+            properties: {
+              resource: { enum: REFERENCE_DATA_RESOURCES },
+              parameterBindings: {
+                type: "object",
+                additionalProperties: { type: "string", minLength: 1 },
+              },
+              autofillBindings: {
+                type: "object",
+                additionalProperties: { type: "string", minLength: 1 },
+              },
             },
           },
           sortOrder: { type: "integer" },
@@ -399,7 +437,7 @@ export const businessRequirementSchema = {
 const ENTRY_APPLICATION_USER_TASK_CODES = ["apply", "manager_approve", "finance_confirm"];
 
 export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
-  schemaVersion: "1.0",
+  schemaVersion: "1.1",
   businessCode: "entry_application",
   businessName: "入金申请",
   systemCode: DEFAULT_SYSTEM_CODE,
@@ -442,4 +480,74 @@ export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
     { edgeCode: "e4", sourceNodeCode: "finance_confirm", targetNodeCode: "end", defaultEdge: false, sortOrder: 4 },
   ],
   businessRules: [],
+};
+
+const WAREHOUSE_PLEDGE_USER_TASK_CODES = ["apply", "risk_review"];
+
+/** Fake Agent/E2E 使用的质押申请动态参考数据需求。 */
+export const WAREHOUSE_PLEDGE_REQUIREMENT: BusinessRequirement = {
+  schemaVersion: "1.1",
+  businessCode: "warehouse_pledge",
+  businessName: "仓单、国债（解）质押申请",
+  systemCode: DEFAULT_SYSTEM_CODE,
+  goal: "客户经理选择统一账户、交易所和多个期货品种，系统带出交易编码及合约参数后提交风控审核。",
+  participants: [
+    { roleCode: "account_manager", roleName: "客户经理", responsibility: "提交质押申请" },
+    { roleCode: "risk_reviewer", roleName: "风控审核员", responsibility: "审核质押申请" },
+  ],
+  formFields: [
+    {
+      fieldCode: "futuresAccount", fieldName: "期货账号", fieldType: "string", controlType: "select",
+      required: true, validation: {}, sortOrder: 1,
+      referenceDataSource: {
+        resource: "FUTURES_ACCOUNTS",
+        autofillBindings: { customerName: "customerName" },
+      },
+    },
+    { fieldCode: "customerName", fieldName: "客户名称", fieldType: "string", controlType: "input", required: true, readOnly: true, validation: {}, sortOrder: 2 },
+    {
+      fieldCode: "exchangeCode", fieldName: "交易所", fieldType: "string", controlType: "select",
+      required: true, validation: {}, sortOrder: 3,
+      referenceDataSource: { resource: "EXCHANGES" },
+    },
+    {
+      fieldCode: "tradingCode", fieldName: "交易编码", fieldType: "string", controlType: "input",
+      required: true, readOnly: true, validation: {}, sortOrder: 4,
+      referenceDataSource: {
+        resource: "TRADING_CODES",
+        parameterBindings: { accountNo: "futuresAccount", exchangeCode: "exchangeCode" },
+      },
+    },
+    {
+      fieldCode: "productCodes", fieldName: "期货品种", fieldType: "select", controlType: "select",
+      required: true, multiple: true, validation: {}, sortOrder: 5,
+      referenceDataSource: {
+        resource: "FUTURES_PRODUCTS",
+        parameterBindings: { exchangeCode: "exchangeCode" },
+        autofillBindings: {
+          contractMultiplier: "contractMultiplier",
+          pledgeUnitQuantity: "pledgeUnitQuantity",
+          previousSettlementPrice: "previousSettlementPrice",
+        },
+      },
+    },
+    { fieldCode: "contractMultiplier", fieldName: "合约乘数", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 1 }, sortOrder: 6 },
+    { fieldCode: "pledgeUnitQuantity", fieldName: "质押品单位数量", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 1 }, sortOrder: 7 },
+    { fieldCode: "previousSettlementPrice", fieldName: "昨结算价", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 0.0001 }, sortOrder: 8 },
+  ],
+  attachments: [],
+  nodes: [
+    { nodeCode: "start", nodeName: "开始", nodeType: "START", positionX: 80, positionY: 120, sortOrder: 1 },
+    { nodeCode: "apply", nodeName: "申请", nodeType: "USER_TASK", approverRule: { type: "STARTER", config: {} }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs({ rejectEnabled: false, rejectTargetNodeCodes: WAREHOUSE_PLEDGE_USER_TASK_CODES }), positionX: 280, positionY: 120, sortOrder: 2 },
+    { nodeCode: "risk_review", nodeName: "风控审核", nodeType: "USER_TASK", approverRule: { type: "ROLE", config: { roleCode: "risk_reviewer" } }, multiInstanceMode: "SINGLE", ...createDefaultUserTaskConfigs({ rejectTargetNodeCodes: WAREHOUSE_PLEDGE_USER_TASK_CODES }), positionX: 500, positionY: 120, sortOrder: 3 },
+    { nodeCode: "end", nodeName: "结束", nodeType: "END", positionX: 720, positionY: 120, sortOrder: 4 },
+  ],
+  edges: [
+    { edgeCode: "e1", sourceNodeCode: "start", targetNodeCode: "apply", defaultEdge: false, sortOrder: 1 },
+    { edgeCode: "e2", sourceNodeCode: "apply", targetNodeCode: "risk_review", defaultEdge: false, sortOrder: 2 },
+    { edgeCode: "e3", sourceNodeCode: "risk_review", targetNodeCode: "end", defaultEdge: false, sortOrder: 3 },
+  ],
+  businessRules: [
+    { ruleCode: "last_product_autofill", description: "多选品种最后一次选择负责带出合约乘数、质押品单位数量和昨结算价" },
+  ],
 };

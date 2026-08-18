@@ -125,6 +125,17 @@ class BusinessBaseApplicationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void referenceDataApisRequireAuthenticationAndRemainQueryableBeforeExplicitSync() throws Exception {
+        mockMvc.perform(get("/api/reference-data/exchanges"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("BUSINESS_AUTHENTICATION_REQUIRED"));
+
+        mockMvc.perform(get("/api/reference-data/exchanges").session(login()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray());
+    }
+
     private MockHttpSession login() throws Exception {
         return login("sales01");
     }

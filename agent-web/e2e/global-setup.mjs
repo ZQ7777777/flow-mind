@@ -56,18 +56,29 @@ public interface CurrentBusinessUserProvider {
 
 Map every TaskDTO returned by ProcessInstanceDTO.getCreatedTasks() to taskId, nodeCode and taskName.
 `;
+  const businessReferenceData = `# Business Reference Data API v1
+
+- GET /api/reference-data/futures-accounts?keyword=
+- GET /api/reference-data/futures-accounts/{accountNo}/funds?currency=CNY
+- GET /api/reference-data/futures-accounts/{accountNo}/trading-codes?exchangeCode=
+- GET /api/reference-data/exchanges
+- GET /api/reference-data/futures-products?exchangeCode=&keyword=&productType=FUTURES
+
+Use same-origin requests. FUTURES_PRODUCTS returns contractMultiplier, pledgeUnitQuantity, previousSettlementPrice and dataSource.
+`;
   write("backend/pom.xml", pom);
   write("frontend/package.json", packageJson);
   write("frontend/src/router/generated-routes.ts", routes);
   write("backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java", currentUserProvider);
   write(".flowmind/references/platform-starter-0.1.0.md", platformReference);
+  write(".flowmind/references/business-reference-data-v1.md", businessReferenceData);
   write(".flowmind/generation-target.json", `${JSON.stringify({
     contractVersion: "1.1", projectId: "flowmind-business-base",
     backend: { rootDir: "backend", javaVersion: "8", springBootVersion: "2.7.18", basePackage: "com.flowmind.business", generatedSourceDir: "src/main/java/com/flowmind/business/generated", generatedTestDir: "src/test/java/com/flowmind/business/generated", starter: { groupId: "com.flowmind", artifactId: "platform-starter", version: "0.1.0-SNAPSHOT", allowedApi: "ProcessRuntimeService#startAndSubmit(StartProcessRequest)" }, trustedUserContext: { accessorType: "com.flowmind.business.security.CurrentBusinessUserProvider", accessorMethod: "currentUser", userIdProperty: "userId", departmentIdProperty: "departmentId" }, apiReferences: { platformRuntime: ".flowmind/references/platform-starter-0.1.0.md", trustedUserContext: "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java" }, verificationProfile: "maven-java8" },
-    frontend: { rootDir: "frontend", framework: "vue3", generatedViewDir: "src/modules/generated", generatedApiDir: "src/api/generated", generatedTestDir: "src/modules/generated/__tests__", routeRegistry: "src/router/generated-routes.ts", verificationProfile: "vue3-npm" },
-    readableReferenceFiles: ["backend/pom.xml", ".flowmind/references/platform-starter-0.1.0.md", "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java", "frontend/package.json", "frontend/src/router/generated-routes.ts"],
+    frontend: { rootDir: "frontend", framework: "vue3", generatedViewDir: "src/modules/generated", generatedApiDir: "src/api/generated", generatedTestDir: "src/modules/generated/__tests__", routeRegistry: "src/router/generated-routes.ts", apiReferences: { businessReferenceData: ".flowmind/references/business-reference-data-v1.md" }, verificationProfile: "vue3-npm" },
+    readableReferenceFiles: ["backend/pom.xml", ".flowmind/references/platform-starter-0.1.0.md", ".flowmind/references/business-reference-data-v1.md", "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java", "frontend/package.json", "frontend/src/router/generated-routes.ts"],
     allowedOutputPatterns: ["backend/src/main/java/com/flowmind/business/generated/**/*.java", "backend/src/test/java/com/flowmind/business/generated/**/*.java", "frontend/src/modules/generated/**/*", "frontend/src/api/generated/**/*", "frontend/src/router/generated-routes.ts"],
-    protectedFiles: [{ path: "backend/pom.xml", sha256: hash(pom) }, { path: "frontend/package.json", sha256: hash(packageJson) }, { path: ".flowmind/references/platform-starter-0.1.0.md", sha256: hash(platformReference) }, { path: "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java", sha256: hash(currentUserProvider) }],
+    protectedFiles: [{ path: "backend/pom.xml", sha256: hash(pom) }, { path: "frontend/package.json", sha256: hash(packageJson) }, { path: ".flowmind/references/platform-starter-0.1.0.md", sha256: hash(platformReference) }, { path: ".flowmind/references/business-reference-data-v1.md", sha256: hash(businessReferenceData) }, { path: "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java", sha256: hash(currentUserProvider) }],
   }, null, 2)}\n`);
   function write(relativePath, content) { const path = resolve(root, relativePath); mkdirSync(resolve(path, ".."), { recursive: true }); writeFileSync(path, content, "utf8"); }
 }

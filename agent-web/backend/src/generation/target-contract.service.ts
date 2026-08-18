@@ -44,6 +44,15 @@ export function apiReferencePaths(contract: GenerationTargetContract): { platfor
   return normalizeGenerationContract(contract).backend.apiReferences!;
 }
 
+export function declaredApiReferencePaths(contract: GenerationTargetContract): string[] {
+  const normalized = normalizeGenerationContract(contract);
+  return [
+    normalized.backend.apiReferences!.platformRuntime,
+    normalized.backend.apiReferences!.trustedUserContext,
+    normalized.frontend.apiReferences?.businessReferenceData,
+  ].filter((path): path is string => Boolean(path));
+}
+
 @Injectable()
 export class TargetContractService {
   private readonly config = loadConfig();
@@ -94,9 +103,10 @@ export class TargetContractService {
     }
     if (contract.contractVersion === "1.1") {
       const references = contract.backend.apiReferences;
+      const declaredReferences = references ? declaredApiReferencePaths(contract) : [];
       if (!references
-        || !Object.values(references).every((path) => contract.readableReferenceFiles.includes(path))
-        || !Object.values(references).every((path) => contract.protectedFiles.some((item) => item.path === path))) {
+        || !declaredReferences.every((path) => contract.readableReferenceFiles.includes(path))
+        || !declaredReferences.every((path) => contract.protectedFiles.some((item) => item.path === path))) {
         throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "generation API references must be readable and protected", sessionId);
       }
     }

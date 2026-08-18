@@ -2,6 +2,7 @@
 import { reactive, watch } from "vue";
 import {
   type BusinessRequirement,
+  type ReferenceDataSource,
   type RequirementRevision,
 } from "@flowmind/agent-contracts";
 import ProcessGraphDesigner from "./ProcessGraphDesigner.vue";
@@ -90,6 +91,11 @@ function jsonText(value: Record<string, unknown>): string {
 
 function parseRecord(text: string): Record<string, unknown> {
   try { return JSON.parse(text || "{}"); } catch { return {}; }
+}
+
+function parseReferenceDataSource(text: string): ReferenceDataSource | undefined {
+  if (!text.trim()) return undefined;
+  try { return JSON.parse(text) as ReferenceDataSource; } catch { return undefined; }
 }
 
 function replaceAttachmentNodeCode(oldNodeCode: string, newNodeCode: string): void {
@@ -183,6 +189,8 @@ function uniqueValues(values: string[]): string[] {
           </div>
           <div class="edit-row four compact">
             <el-checkbox v-model="field.required" :disabled="disabled">必填</el-checkbox>
+            <el-checkbox v-model="field.multiple" :disabled="disabled">多选</el-checkbox>
+            <el-checkbox v-model="field.readOnly" :disabled="disabled">只读</el-checkbox>
             <el-input v-model="field.defaultValue" placeholder="默认值" :disabled="disabled" />
             <el-input
               :model-value="jsonText(field.validation)"
@@ -191,6 +199,14 @@ function uniqueValues(values: string[]): string[] {
               @change="field.validation = parseRecord($event)"
             />
             <el-button link type="danger" :disabled="disabled" @click="draft.formFields.splice(index, 1)">删除</el-button>
+          </div>
+          <div class="edit-row two compact">
+            <el-input
+              :model-value="field.referenceDataSource ? jsonText(field.referenceDataSource) : ''"
+              placeholder='动态数据源 JSON，例如 {"resource":"EXCHANGES"}'
+              :disabled="disabled"
+              @change="field.referenceDataSource = parseReferenceDataSource($event)"
+            />
           </div>
         </div>
       </div>

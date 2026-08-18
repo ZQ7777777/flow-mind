@@ -78,4 +78,48 @@ describe("validateRequirement", () => {
     expect(result.readyForReview).toBe(false);
     expect(result.ambiguities.join(" ")).toContain("roleCode");
   });
+
+  it("keeps version 1.0 compatible and accepts valid version 1.1 dynamic sources", () => {
+    const legacy = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    legacy.schemaVersion = "1.0";
+    expect(validateRequirement(legacy).readyForReview).toBe(true);
+
+    const dynamic = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    dynamic.formFields.push(
+      {
+        fieldCode: "exchangeCode", fieldName: "交易所", fieldType: "select", controlType: "select",
+        required: true, validation: {}, sortOrder: 4,
+        referenceDataSource: { resource: "EXCHANGES" },
+      },
+      {
+        fieldCode: "productCodes", fieldName: "品种", fieldType: "select", controlType: "select",
+        required: true, validation: {}, sortOrder: 5, multiple: true,
+        referenceDataSource: {
+          resource: "FUTURES_PRODUCTS",
+          parameterBindings: { exchangeCode: "exchangeCode" },
+        },
+      },
+    );
+
+    const result = validateRequirement(dynamic);
+    expect(result.structurallyValid).toBe(true);
+    expect(result.readyForReview).toBe(true);
+  });
+
+  it("rejects missing, self-referencing, and unknown dynamic field dependencies", () => {
+    const input = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    input.formFields.push({
+      fieldCode: "tradingCode", fieldName: "交易编码", fieldType: "string", controlType: "input",
+      required: true, validation: {}, readOnly: true, sortOrder: 4,
+      referenceDataSource: {
+        resource: "TRADING_CODES",
+        parameterBindings: { accountNo: "tradingCode", exchangeCode: "missingExchange" },
+      },
+    });
+
+    const result = validateRequirement(input);
+    expect(result.readyForReview).toBe(false);
+    expect(result.ambiguities.join(" ")).toContain("不能依赖自身");
+    expect(result.ambiguities.join(" ")).toContain("missingExchange");
+  });
 });

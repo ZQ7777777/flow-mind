@@ -45,5 +45,5 @@ business-base/frontend/src/api/generated/
 business-base/frontend/src/modules/generated/
 business-base/frontend/src/router/generated-routes.ts
 
-#  范例流程
-doc/example_process/
+# #  范例流程
+# doc/example_process/
