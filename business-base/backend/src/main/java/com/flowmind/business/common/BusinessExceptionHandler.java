@@ -58,6 +58,12 @@ public class BusinessExceptionHandler {
         return error(HttpStatus.FORBIDDEN, "BUSINESS_ACCESS_DENIED", exception.getMessage(), request);
     }
 
+    @ExceptionHandler(BusinessApiException.class)
+    public ResponseEntity<ApiErrorResponse> handleBusinessApi(BusinessApiException exception,
+                                                              HttpServletRequest request) {
+        return error(exception.getStatus(), exception.getCode(), exception.getMessage(), request);
+    }
+
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ApiErrorResponse> handleDataAccess(DataAccessException exception,
                                                              HttpServletRequest request) {

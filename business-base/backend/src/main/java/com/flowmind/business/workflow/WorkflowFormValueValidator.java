@@ -37,6 +37,27 @@ public class WorkflowFormValueValidator {
         if (node == null || !ApproverRuleTypeEnum.STARTER.equals(node.getApproverRuleType())) {
             throw new IllegalArgumentException("仅申请返工节点允许修改表单字段");
         }
+        return validateFields(definition, variables, false);
+    }
+
+    /**
+     * 校验通用发起页提交的变量，并把定义中的默认值转换为对应类型后补入结果。
+     *
+     * @param definition 当前活动流程定义
+     * @param variables  浏览器提交的业务变量
+     * @return 可安全传递给流程运行时的变量
+     */
+    public Map<String, Object> validateStart(ProcessDefinitionDetailDTO definition,
+                                             Map<String, Object> variables) {
+        if (definition == null || variables == null) {
+            throw new IllegalArgumentException("发起表单变量不能为空");
+        }
+        return validateFields(definition, variables, true);
+    }
+
+    private Map<String, Object> validateFields(ProcessDefinitionDetailDTO definition,
+                                               Map<String, Object> variables,
+                                               boolean applyDefaults) {
         List<ProcessFormFieldDTO> fields = definition.getFormFields() == null
                 ? Collections.<ProcessFormFieldDTO>emptyList() : definition.getFormFields();
         Set<String> allowedCodes = new LinkedHashSet<String>();
@@ -44,14 +65,41 @@ public class WorkflowFormValueValidator {
         for (String key : variables.keySet()) {
             if (!allowedCodes.contains(key)) throw new IllegalArgumentException("未声明的表单字段: " + key);
         }
+        Map<String, Object> effective = new LinkedHashMap<String, Object>(variables);
+        if (applyDefaults) {
+            for (ProcessFormFieldDTO field : fields) {
+                if (field != null && !effective.containsKey(field.getFieldCode())
+                        && hasText(field.getDefaultValue())) {
+                    effective.put(field.getFieldCode(), defaultValue(field));
+                }
+            }
+        }
         Map<String, Object> validated = new LinkedHashMap<String, Object>();
         for (ProcessFormFieldDTO field : fields) {
             if (field == null) continue;
-            Object value = variables.get(field.getFieldCode());
+            Object value = effective.get(field.getFieldCode());
             validateField(field, value);
-            if (variables.containsKey(field.getFieldCode())) validated.put(field.getFieldCode(), value);
+            if (effective.containsKey(field.getFieldCode())) validated.put(field.getFieldCode(), value);
         }
         return validated;
+    }
+
+    private Object defaultValue(ProcessFormFieldDTO field) {
+        String value = field.getDefaultValue();
+        String type = normalize(field.getFieldType());
+        try {
+            if ("number".equals(type)) return new BigDecimal(value);
+            if ("boolean".equals(type)) {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw new IllegalArgumentException("字段默认值无效: " + field.getFieldCode());
+                }
+                return Boolean.valueOf(value);
+            }
+            if ("date".equals(type)) return LocalDate.parse(value).toString();
+            return value;
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("字段默认值无效: " + field.getFieldCode());
+        }
     }
 
     private void validateField(ProcessFormFieldDTO field, Object value) {
