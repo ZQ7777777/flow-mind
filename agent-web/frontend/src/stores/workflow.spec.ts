@@ -306,6 +306,73 @@ describe("workflow SSE lifecycle", () => {
       }),
     );
   });
+
+  it("refreshes the retryable entry-registration state after confirm-write fails", async () => {
+    const ready: WorkflowSnapshot = {
+      ...snapshot,
+      state: "CODE_REVIEW",
+      rowVersion: 4,
+      activeGeneration: {
+        generationId: "acg_entry",
+        status: "REVIEW",
+        generationRevision: 2,
+        targetRoot: "E:\\workspace\\business-base",
+        contractVersion: "1.0",
+        manifest: {
+          generationId: "acg_entry",
+          targetRoot: "E:\\workspace\\business-base",
+          contractVersion: "1.0",
+          revision: 2,
+          files: [{
+            relativePath: "frontend/src/router/generated-routes.ts",
+            changeType: "MODIFY",
+            stagedSha256: "a".repeat(64),
+            baseSha256: "b".repeat(64),
+            sizeBytes: 10,
+            validationStatus: "VALID",
+            editedByUser: false,
+          }],
+        },
+        createdAt: "2026-08-03T00:00:00Z",
+        updatedAt: "2026-08-03T00:01:00Z",
+      },
+      allowedActions: ["CONFIRM_WRITE"],
+    };
+    const failed: WorkflowSnapshot = {
+      ...ready,
+      state: "BUSINESS_ENTRY_CONFIG_FAILED",
+      rowVersion: 6,
+      activeGeneration: ready.activeGeneration && {
+        ...ready.activeGeneration,
+        status: "ENTRY_CONFIG_FAILED",
+      },
+      lastError: {
+        code: "AGENT_BUSINESS_ENTRY_CONFIG_FAILED",
+        message: "代码已写入，但业务入口登记失败；请重试入口登记。",
+      },
+    };
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path.endsWith("/confirm-write")) {
+        throw new ApiError(502, "AGENT_BUSINESS_ENTRY_CONFIG_FAILED", failed.lastError!.message);
+      }
+      if (path === "/api/agent/sessions/ags_1") return failed;
+      return ready;
+    });
+    const store = useWorkflowStore();
+    store.currentUser = user;
+    store.snapshot = ready;
+
+    await expect(store.confirmGenerationWrite()).rejects.toThrow("业务入口登记失败");
+
+    expect(store.state).toBe("BUSINESS_ENTRY_CONFIG_FAILED");
+    expect(store.snapshot?.rowVersion).toBe(6);
+    expect(store.snapshot?.activeGeneration?.status).toBe("ENTRY_CONFIG_FAILED");
+    expect(mocks.apiRequest).toHaveBeenCalledWith(
+      "/api/agent/sessions/ags_1/code-generations/acg_entry/confirm-write",
+      expect.objectContaining({ method: "POST", rowVersion: 4 }),
+    );
+  });
+
   it("stops the currently running quality gate", async () => {
     const verifying: WorkflowSnapshot = {
       ...snapshot,

@@ -209,6 +209,8 @@ export type CodeGenerationStatus =
   | "REVIEW"
   | "WRITING"
   | "WRITE_FAILED"
+  | "CONFIGURING_ENTRY"
+  | "ENTRY_CONFIG_FAILED"
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED"

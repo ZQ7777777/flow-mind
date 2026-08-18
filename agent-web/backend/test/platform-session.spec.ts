@@ -56,4 +56,37 @@ describe("PlatformClientService session mode", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(registry.get(admin.userId)).toBeUndefined();
   });
+
+  it("upserts the generated business entry with the administrator session", async () => {
+    const registry = new PlatformSessionRegistry();
+    registry.set(admin.userId, "JSESSIONID=admin-session");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "entry-1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const payload = {
+      entryDisplayName: "入金申请",
+      entryPageUrl: "/generated/entry-application/apply",
+      entrySource: "AGENT_GENERATED" as const,
+      enabled: true as const,
+      generationId: "generation-1",
+      artifactRevision: "3",
+    };
+
+    await new PlatformClientService(registry)
+      .upsertBusinessEntryConfig("definition / 1", payload, admin);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://business.test/api/admin/business-entry-configs/by-definition/definition%20%2F%201",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify(payload),
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          Cookie: "JSESSIONID=admin-session",
+        }),
+      }),
+    );
+  });
 });

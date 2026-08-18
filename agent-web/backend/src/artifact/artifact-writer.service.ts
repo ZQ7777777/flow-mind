@@ -170,12 +170,12 @@ export class ArtifactWriterService implements OnModuleInit {
         this.database.db.prepare("UPDATE agent_artifact_write SET status = 'COMPLETED', journal_json = ?, completed_at = ? WHERE id = ?")
           .run(JSON.stringify(entries), writtenAt, writeId);
         this.database.db.prepare(`
-          UPDATE agent_code_generation SET status = 'COMPLETED', write_status = 'COMPLETED',
+          UPDATE agent_code_generation SET status = 'CONFIGURING_ENTRY', write_status = 'FILES_WRITTEN',
             write_journal_json = ?, written_at = ?, confirmed_by = created_by,
             confirmed_at = ?, updated_at = ? WHERE id = ?
         `).run(JSON.stringify(entries), writtenAt, writtenAt, writtenAt, generation.id);
         this.database.db.prepare(`
-          UPDATE agent_session SET state = 'COMPLETED', row_version = row_version + 1,
+          UPDATE agent_session SET state = 'BUSINESS_ENTRY_CONFIGURING', row_version = row_version + 1,
             last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ?
         `).run(writtenAt, generation.session_id);
       });
@@ -205,11 +205,99 @@ export class ArtifactWriterService implements OnModuleInit {
     }
   }
 
+  resumeEntryConfiguration(
+    generation: GenerationRow,
+    request: ConfirmArtifactWriteRequest,
+  ): ArtifactWriteResult {
+    if (generation.status !== "ENTRY_CONFIG_FAILED" || generation.write_status !== "ENTRY_CONFIG_FAILED") {
+      throw new AgentError(
+        HttpStatus.CONFLICT,
+        "AGENT_GENERATION_STATE_CONFLICT",
+        "Generation is not waiting for business entry registration.",
+        generation.session_id,
+      );
+    }
+    this.targets.validate(generation.target_root, generation.session_id);
+    this.validateConfirmation(generation, request);
+    const completedWrite = this.database.db.prepare(`
+      SELECT completed_at FROM agent_artifact_write
+      WHERE generation_id = ? AND status = 'COMPLETED'
+      ORDER BY started_at DESC LIMIT 1
+    `).get(generation.id) as { completed_at: string | null } | undefined;
+    const writtenAt = generation.written_at || completedWrite?.completed_at;
+    if (!completedWrite || !writtenAt) {
+      throw new AgentError(
+        HttpStatus.CONFLICT,
+        "AGENT_ARTIFACT_WRITE_NOT_COMPLETED",
+        "Business entry registration cannot be retried before the artifact write completes.",
+        generation.session_id,
+      );
+    }
+    const now = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET status = 'CONFIGURING_ENTRY', write_status = 'FILES_WRITTEN',
+          last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ?
+      `).run(now, generation.id);
+      this.database.db.prepare(`
+        UPDATE agent_session SET state = 'BUSINESS_ENTRY_CONFIGURING', row_version = row_version + 1,
+          last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ?
+      `).run(now, generation.session_id);
+    });
+    return {
+      completed: true,
+      generationId: generation.id,
+      revision: generation.generation_revision,
+      writtenAt,
+    };
+  }
+
+  completeEntryConfiguration(generationId: string, sessionId: string): void {
+    const now = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET status = 'COMPLETED', write_status = 'COMPLETED',
+          last_error_code = NULL, last_error_message = NULL, updated_at = ?
+        WHERE id = ? AND status = 'CONFIGURING_ENTRY'
+      `).run(now, generationId);
+      this.database.db.prepare(`
+        UPDATE agent_session SET state = 'COMPLETED', row_version = row_version + 1,
+          last_error_code = NULL, last_error_message = NULL, updated_at = ?
+        WHERE id = ? AND state = 'BUSINESS_ENTRY_CONFIGURING'
+      `).run(now, sessionId);
+    });
+  }
+
+  failEntryConfiguration(
+    generationId: string,
+    sessionId: string,
+    errorCode: string,
+    errorMessage: string,
+  ): void {
+    const now = new Date().toISOString();
+    this.database.transaction(() => {
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET status = 'ENTRY_CONFIG_FAILED', write_status = 'ENTRY_CONFIG_FAILED',
+          can_write = 1, last_error_code = ?, last_error_message = ?, updated_at = ?
+        WHERE id = ? AND status = 'CONFIGURING_ENTRY'
+      `).run(errorCode, errorMessage, now, generationId);
+      this.database.db.prepare(`
+        UPDATE agent_session SET state = 'BUSINESS_ENTRY_CONFIG_FAILED', row_version = row_version + 1,
+          last_error_code = ?, last_error_message = ?, updated_at = ?
+        WHERE id = ? AND state = 'BUSINESS_ENTRY_CONFIGURING'
+      `).run(errorCode, errorMessage, now, sessionId);
+    });
+  }
+
   private validate(generation: GenerationRow, request: ConfirmArtifactWriteRequest): ArtifactManifest {
     this.targets.validate(generation.target_root, generation.session_id);
     if (generation.status !== "REVIEW" && !(generation.status === "WRITE_FAILED" && generation.write_status === "ROLLED_BACK")) {
       throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_STATE_CONFLICT", "Generation is not ready to write.", generation.session_id);
     }
+    return this.validateConfirmation(generation, request);
+  }
+
+  private validateConfirmation(generation: GenerationRow, request: ConfirmArtifactWriteRequest): ArtifactManifest {
     if (generation.generation_revision !== request.generationRevision
       || generation.quality_revision !== request.generationRevision
       || !generation.hard_gate_passed || !generation.can_write) {
@@ -291,4 +379,3 @@ export class ArtifactWriterService implements OnModuleInit {
 function hashJson(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
-

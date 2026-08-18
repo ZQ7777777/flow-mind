@@ -138,6 +138,18 @@ describe("QualityPanel", () => {
     expect(buttons.find((button) => button.text().includes("写入工程"))?.attributes("disabled")).toBeDefined();
   });
 
+  it("allows retry when only business entry registration failed", () => {
+    const store = useWorkflowStore();
+    store.qualityReport = quality;
+    const wrapper = shallowMount(QualityPanel, {
+      props: { generation: generation("ENTRY_CONFIG_FAILED") },
+      global: { stubs },
+    });
+
+    const write = wrapper.findAll("button").find((button) => button.text().includes("写入工程"));
+    expect(write?.attributes("disabled")).toBeUndefined();
+  });
+
   it("allows reverify after a failed revision is edited and its stale quality report is cleared", async () => {
     const store = useWorkflowStore();
     const failedGeneration = { ...generation("FAILED"), quality: undefined };

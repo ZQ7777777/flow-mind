@@ -286,21 +286,82 @@ export class GenerationService {
     });
   }
 
-  confirmWrite(
+  async confirmWrite(
     sessionId: string,
     generationId: string,
     user: MockUser,
     rowVersion: number,
     request: ConfirmArtifactWriteRequest,
     idempotencyKey: string,
-  ) {
+  ): Promise<ReturnType<ArtifactWriterService["confirm"]>> {
+    requireKey(idempotencyKey, sessionId);
     const session = this.ownedSession(sessionId, user);
     const generation = this.ownedGeneration(sessionId, generationId, user);
     if (!this.writer) throw new AgentError(HttpStatus.SERVICE_UNAVAILABLE, "AGENT_WRITER_UNAVAILABLE", "Artifact writer is unavailable.", sessionId);
-    const replay = this.writer.replay(generation, request, idempotencyKey);
-    if (replay) return replay;
-    this.expectVersion(session, rowVersion);
-    return this.writer.confirm(generation, request, idempotencyKey);
+    let result: ReturnType<ArtifactWriterService["confirm"]>;
+    if (generation.status === "ENTRY_CONFIG_FAILED") {
+      this.expectVersion(session, rowVersion);
+      result = this.writer.resumeEntryConfiguration(generation, request);
+    } else {
+      const replay = this.writer.replay(generation, request, idempotencyKey);
+      if (replay) {
+        if (generation.status === "COMPLETED") return replay;
+        throw new AgentError(
+          HttpStatus.CONFLICT,
+          "AGENT_GENERATION_STATE_CONFLICT",
+          "Generation is already processing the confirmed write.",
+          sessionId,
+        );
+      }
+      this.expectVersion(session, rowVersion);
+      result = this.writer.confirm(generation, request, idempotencyKey);
+    }
+
+    try {
+      await this.configureBusinessEntry(this.ownedGeneration(sessionId, generationId, user), user);
+      this.writer.completeEntryConfiguration(generationId, sessionId);
+      return result;
+    } catch (error) {
+      const entryError = businessEntryConfigurationError(error, sessionId);
+      this.writer.failEntryConfiguration(
+        generationId,
+        sessionId,
+        "AGENT_BUSINESS_ENTRY_CONFIG_FAILED",
+        "代码已写入，但业务入口登记失败；请重试入口登记。",
+      );
+      throw entryError;
+    }
+  }
+
+  private async configureBusinessEntry(generation: GenerationRow, user: MockUser): Promise<void> {
+    if (!this.platform) {
+      throw new AgentError(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "AGENT_PLATFORM_UNAVAILABLE",
+        "Business system client is unavailable.",
+        generation.session_id,
+      );
+    }
+    const processDefinition = this.database.getProcess(generation.process_definition_record_id);
+    const definitionId = processDefinition?.platform_definition_id;
+    if (!definitionId) {
+      throw new AgentError(
+        HttpStatus.CONFLICT,
+        "AGENT_PROCESS_DEFINITION_MISSING",
+        "The generated artifacts are not linked to a platform definition.",
+        generation.session_id,
+      );
+    }
+    const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
+    const spec = deriveGenerationSpec(requirement, generationContract(generation));
+    await this.platform.upsertBusinessEntryConfig(definitionId, {
+      entryDisplayName: generation.business_name,
+      entryPageUrl: spec.routePath,
+      entrySource: "AGENT_GENERATED",
+      enabled: true,
+      generationId: generation.id,
+      artifactRevision: String(generation.generation_revision),
+    }, user);
   }
 
   async listDefinitions(user: MockUser) {
@@ -604,5 +665,19 @@ function invalidRequirement(sessionId: string, issues: string[]): AgentError {
     "confirmed requirement cannot be safely generated",
     sessionId,
     { issues: [...new Set(issues)] },
+  );
+}
+
+function businessEntryConfigurationError(error: unknown, sessionId: string): AgentError {
+  const status = error instanceof AgentError ? error.getStatus() : HttpStatus.BAD_GATEWAY;
+  const upstream = error instanceof AgentError
+    ? error.getResponse()
+    : { message: error instanceof Error ? error.message : String(error) };
+  return new AgentError(
+    status,
+    "AGENT_BUSINESS_ENTRY_CONFIG_FAILED",
+    "代码已写入，但业务入口登记失败；请重试入口登记。",
+    sessionId,
+    { upstream },
   );
 }

@@ -48,7 +48,7 @@ const stepIndex = computed(() => {
   if (["PROCESS_ACTIVE", "CODE_GENERATING"].includes(state || "")) return 4;
   return 5;
 });
-const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING", "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING", "WRITING_ARTIFACTS"].includes(store.state || ""));
+const processing = computed(() => ["PROCESS_PROVISIONING", "PROCESS_ACTIVATING", "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING", "WRITING_ARTIFACTS", "BUSINESS_ENTRY_CONFIGURING"].includes(store.state || ""));
 
 watch(() => auth.user, async (user) => {
   if (!user) {
@@ -63,7 +63,7 @@ watch(() => auth.user, async (user) => {
 });
 watch(() => store.snapshot?.targetRoot, (value) => { if (value) generationTargetRoot.value = value; }, { immediate: true });
 watch(() => store.defaultTargetRoot, (value) => { if (value && !targetRoot.value) targetRoot.value = value; }, { immediate: true });
-watch(() => store.state, (value) => { if (["CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING", "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "COMPLETED"].includes(value || "")) activeTab.value = "code"; });
+watch(() => store.state, (value) => { if (["CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING", "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "BUSINESS_ENTRY_CONFIGURING", "BUSINESS_ENTRY_CONFIG_FAILED", "COMPLETED"].includes(value || "")) activeTab.value = "code"; });
 watch(() => store.lastCompaction, (compaction) => {
   if (!compaction) return;
   const tokensBefore = formatTokens(compaction.tokensBefore);
@@ -132,7 +132,8 @@ function handleSessionOpened(): void {
   sessionHistoryVisible.value = false;
   activeTab.value = [
     "CODE_GENERATING", "CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING",
-    "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED", "COMPLETED",
+    "CODE_REVIEW", "CODE_PIPELINE_FAILED", "WRITING_ARTIFACTS", "ARTIFACT_WRITE_FAILED",
+    "BUSINESS_ENTRY_CONFIGURING", "BUSINESS_ENTRY_CONFIG_FAILED", "COMPLETED",
   ].includes(store.state || "") ? "code" : "requirement";
 }
 

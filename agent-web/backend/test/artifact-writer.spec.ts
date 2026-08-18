@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import { StagingService, parseManifest } from "../src/generation/staging.service
 import { TargetContractService } from "../src/generation/target-contract.service.js";
 import { PiAdapterService } from "../src/pi/pi-adapter.service.js";
 import { ArtifactWriterService } from "../src/artifact/artifact-writer.service.js";
+import { PlatformClientService } from "../src/platform/platform-client.service.js";
 import { createGenerationTarget, seedActiveWorkflow } from "./generation-fixture.js";
 
 describe("safe artifact writer", () => {
@@ -17,6 +18,8 @@ describe("safe artifact writer", () => {
   let target: string;
   let generation: GenerationService;
   let writer: ArtifactWriterService;
+  let platform: PlatformClientService;
+  let upsertBusinessEntryConfig: MockInstance<PlatformClientService["upsertBusinessEntryConfig"]>;
   const user = { userId: "user_sales", userName: "Sales User" };
 
   beforeEach(() => {
@@ -30,6 +33,8 @@ describe("safe artifact writer", () => {
     const targets = new TargetContractService();
     const staging = new StagingService(database);
     writer = new ArtifactWriterService(database, targets);
+    platform = new PlatformClientService();
+    upsertBusinessEntryConfig = vi.spyOn(platform, "upsertBusinessEntryConfig").mockResolvedValue({});
     generation = new GenerationService(
       database,
       targets,
@@ -38,6 +43,7 @@ describe("safe artifact writer", () => {
       new EventBusService(),
       undefined,
       writer,
+      platform,
     );
     seedActiveWorkflow(database, "session-writer", target);
   });
@@ -60,6 +66,9 @@ describe("safe artifact writer", () => {
     };
     const result = writer.confirm(row, request, "write-success");
     expect(result.completed).toBe(true);
+    expect(database.getGeneration(row.id)?.status).toBe("CONFIGURING_ENTRY");
+    expect(database.getSession(row.session_id)?.state).toBe("BUSINESS_ENTRY_CONFIGURING");
+    writer.completeEntryConfiguration(row.id, row.session_id);
     expect(database.getGeneration(row.id)?.status).toBe("COMPLETED");
     expect(database.getSession(row.session_id)?.state).toBe("COMPLETED");
     for (const file of manifest.files) expect(existsSync(join(target, ...file.relativePath.split("/")))).toBe(true);
@@ -73,7 +82,7 @@ describe("safe artifact writer", () => {
       files: manifest.files.map(({ relativePath, stagedSha256 }) => ({ relativePath, stagedSha256 })),
     };
     const rowVersion = database.getSession(row.session_id)!.row_version;
-    const first = generation.confirmWrite(
+    const first = await generation.confirmWrite(
       row.session_id,
       row.id,
       user,
@@ -81,7 +90,7 @@ describe("safe artifact writer", () => {
       request,
       "write-replay",
     );
-    const replay = generation.confirmWrite(
+    const replay = await generation.confirmWrite(
       row.session_id,
       row.id,
       user,
@@ -90,6 +99,95 @@ describe("safe artifact writer", () => {
       "write-replay",
     );
     expect(replay).toEqual(first);
+    expect(upsertBusinessEntryConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps written files and retries only business entry registration", async () => {
+    const row = await generatedRow();
+    const manifest = parseManifest(row);
+    const request = {
+      generationRevision: row.generation_revision,
+      files: manifest.files.map(({ relativePath, stagedSha256 }) => ({ relativePath, stagedSha256 })),
+    };
+    const confirm = vi.spyOn(writer, "confirm");
+    upsertBusinessEntryConfig.mockRejectedValueOnce(new Error("business system unavailable"));
+
+    await expect(generation.confirmWrite(
+      row.session_id,
+      row.id,
+      user,
+      database.getSession(row.session_id)!.row_version,
+      request,
+      "write-entry-failure",
+    )).rejects.toMatchObject({
+      response: expect.objectContaining({ code: "AGENT_BUSINESS_ENTRY_CONFIG_FAILED" }),
+    });
+
+    for (const file of manifest.files) {
+      expect(existsSync(join(target, ...file.relativePath.split("/")))).toBe(true);
+    }
+    expect(database.getGeneration(row.id)).toEqual(expect.objectContaining({
+      status: "ENTRY_CONFIG_FAILED",
+      write_status: "ENTRY_CONFIG_FAILED",
+    }));
+    expect(database.getSession(row.session_id)?.state).toBe("BUSINESS_ENTRY_CONFIG_FAILED");
+
+    upsertBusinessEntryConfig.mockResolvedValueOnce({ id: "entry-1" });
+    const retried = await generation.confirmWrite(
+      row.session_id,
+      row.id,
+      user,
+      database.getSession(row.session_id)!.row_version,
+      request,
+      "write-entry-retry",
+    );
+
+    expect(retried.completed).toBe(true);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(upsertBusinessEntryConfig).toHaveBeenCalledTimes(2);
+    expect(upsertBusinessEntryConfig).toHaveBeenLastCalledWith(
+      "definition_session-writer",
+      {
+        entryDisplayName: "入金申请",
+        entryPageUrl: "/generated/entry-application/apply",
+        entrySource: "AGENT_GENERATED",
+        enabled: true,
+        generationId: row.id,
+        artifactRevision: String(row.generation_revision),
+      },
+      user,
+    );
+    expect(database.getGeneration(row.id)?.status).toBe("COMPLETED");
+    expect(database.getSession(row.session_id)?.state).toBe("COMPLETED");
+  });
+
+  it("recovers interrupted business entry registration without rolling files back", async () => {
+    const row = await generatedRow();
+    const manifest = parseManifest(row);
+    const request = {
+      generationRevision: row.generation_revision,
+      files: manifest.files.map(({ relativePath, stagedSha256 }) => ({ relativePath, stagedSha256 })),
+    };
+    writer.confirm(row, request, "write-before-restart");
+
+    database.recoverInterruptedStates();
+
+    expect(database.getGeneration(row.id)?.status).toBe("ENTRY_CONFIG_FAILED");
+    expect(database.getSession(row.session_id)?.state).toBe("BUSINESS_ENTRY_CONFIG_FAILED");
+    for (const file of manifest.files) {
+      expect(existsSync(join(target, ...file.relativePath.split("/")))).toBe(true);
+    }
+    const confirm = vi.spyOn(writer, "confirm");
+    await generation.confirmWrite(
+      row.session_id,
+      row.id,
+      user,
+      database.getSession(row.session_id)!.row_version,
+      request,
+      "register-after-restart",
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(database.getGeneration(row.id)?.status).toBe("COMPLETED");
   });
 
   it("rolls target files back in reverse order after a partial failure", async () => {
@@ -176,4 +274,3 @@ describe("safe artifact writer", () => {
     throw new Error("generation did not reach review");
   }
 });
-

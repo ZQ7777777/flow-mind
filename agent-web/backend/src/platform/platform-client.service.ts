@@ -17,6 +17,15 @@ export interface PlatformOperations {
   activateOperationId: string;
 }
 
+export interface BusinessEntryConfigPayload {
+  entryDisplayName: string;
+  entryPageUrl: string;
+  entrySource: "AGENT_GENERATED";
+  enabled: true;
+  generationId: string;
+  artifactRevision: string;
+}
+
 @Injectable()
 export class PlatformClientService {
   private readonly config = loadConfig();
@@ -141,6 +150,19 @@ export class PlatformClientService {
 
   async getDefinition(definitionId: string, user: MockUser): Promise<any> {
     return this.request("GET", `/api/platform/definitions/${encodeURIComponent(definitionId)}`, undefined, user);
+  }
+
+  async upsertBusinessEntryConfig(
+    definitionId: string,
+    payload: BusinessEntryConfigPayload,
+    user: MockUser,
+  ): Promise<any> {
+    return this.request(
+      "PUT",
+      `/api/admin/business-entry-configs/by-definition/${encodeURIComponent(definitionId)}`,
+      payload,
+      user,
+    );
   }
 
   async publish(definitionId: string, user: MockUser, operationId: string): Promise<any> {

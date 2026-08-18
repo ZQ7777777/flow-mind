@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { INestApplication } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import request from "supertest";
@@ -27,6 +27,7 @@ describe("Agent API contract", () => {
 
   afterEach(async () => {
     await app.close();
+    vi.unstubAllGlobals();
     rmSync(root, { recursive: true, force: true });
     delete process.env.AGENT_DB_PATH;
     delete process.env.AGENT_DATA_DIR;
@@ -91,5 +92,62 @@ describe("Agent API contract", () => {
       .set("X-Agent-User-Id", "user_sales");
     expect(fileResponse.status, JSON.stringify(fileResponse.body)).toBe(200);
     expect(fileResponse.body.content).toContain("entry-application-apply");
+  });
+
+  it("writes artifacts and registers the generated business entry through confirm-write", async () => {
+    const target = createGenerationTarget(root);
+    const database = app.get(DatabaseService);
+    seedActiveWorkflow(database, "session-api-write", null);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "entry-api" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const started = await request(app.getHttpServer())
+      .post("/api/agent/sessions/session-api-write/code-generations")
+      .set("X-Agent-User-Id", "user_sales")
+      .set("If-Match", "0")
+      .set("Idempotency-Key", "api-write-generate")
+      .send({ targetRoot: target })
+      .expect(202);
+    let detail: { body: any } | undefined;
+    for (let index = 0; index < 50; index += 1) {
+      detail = await request(app.getHttpServer())
+        .get(`/api/agent/sessions/session-api-write/code-generations/${started.body.generationId}`)
+        .set("X-Agent-User-Id", "user_sales");
+      if (detail.body.status === "REVIEW") break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(detail?.body.status).toBe("REVIEW");
+    database.db.prepare(`
+      UPDATE agent_code_generation SET quality_revision = generation_revision,
+        hard_gate_passed = 1, override_required = 0, can_write = 1 WHERE id = ?
+    `).run(started.body.generationId);
+    const session = database.getSession("session-api-write")!;
+
+    await request(app.getHttpServer())
+      .post(`/api/agent/sessions/session-api-write/code-generations/${started.body.generationId}/confirm-write`)
+      .set("X-Agent-User-Id", "user_sales")
+      .set("If-Match", String(session.row_version))
+      .set("Idempotency-Key", "api-write-confirm")
+      .send({
+        generationRevision: detail!.body.generationRevision,
+        files: detail!.body.manifest.files.map(({ relativePath, stagedSha256 }: any) => ({
+          relativePath,
+          stagedSha256,
+        })),
+      })
+      .expect(201)
+      .expect((response) => expect(response.body.completed).toBe(true));
+
+    expect(database.getGeneration(started.body.generationId)?.status).toBe("COMPLETED");
+    expect(database.getSession("session-api-write")?.state).toBe("COMPLETED");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8080/api/admin/business-entry-configs/by-definition/definition_session-api-write",
+      expect.objectContaining({
+        method: "PUT",
+        body: expect.stringContaining('"entryPageUrl":"/generated/entry-application/apply"'),
+      }),
+    );
   });
 });

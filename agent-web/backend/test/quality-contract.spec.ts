@@ -10,6 +10,8 @@ describe("M4-M5 quality workflow contract", () => {
         "CODE_REPAIRING",
         "WRITING_ARTIFACTS",
         "ARTIFACT_WRITE_FAILED",
+        "BUSINESS_ENTRY_CONFIGURING",
+        "BUSINESS_ENTRY_CONFIG_FAILED",
         "COMPLETED",
       ]),
     );

@@ -15,6 +15,7 @@ export default async function globalSetup() {
   process.env.AGENT_DATA_DIR = dataDir;
   process.env.AGENT_ALLOWED_TARGET_ROOTS = targetRoot;
   process.env.FLOW_PLATFORM_BASE_URL = "http://127.0.0.1:18080";
+  process.env.FLOW_PLATFORM_AUTH_MODE = "session";
 
   const platform = startMockPlatform(18080);
   await new Promise((resolveReady) => platform.once("listening", resolveReady));
