@@ -20,6 +20,7 @@ const resizeState = ref<{
   startHeight: number;
 } | null>(null);
 const publicLayout = computed(() => route.meta.public === true);
+const standaloneLayout = computed(() => route.meta.standalone === true);
 const isAdmin = computed(() => auth.user?.administrator === true);
 
 watch(
@@ -103,7 +104,7 @@ async function logout(): Promise<void> {
 </script>
 
 <template>
-  <RouterView v-if="publicLayout" />
+  <RouterView v-if="publicLayout || standaloneLayout" />
   <div v-else class="business-app-shell">
     <ToastHost />
     <header class="topbar">

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Flow Mind Business Form Generation"
+  short_description: "Generate Flow Mind business form regions safely"
+  default_prompt: "Use $flowmind-business-generation to generate a Flow Mind business form component from the confirmed requirement."
