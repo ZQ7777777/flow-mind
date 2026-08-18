@@ -31,6 +31,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -42,6 +43,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -56,6 +58,56 @@ class WorkflowB2B3IntegrationTest {
     @Autowired private ProcessRuntimeService runtimeService;
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+
+    @Test
+    void businessHallAndGenericStartApiCreateAndReplayARealInstance() throws Exception {
+        MockHttpSession salesSession = login("sales01");
+        bindSession(salesSession);
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        String processCode = "entry_hall_" + suffix;
+        ProcessDefinitionDTO definition = createDefinition(processCode, suffix);
+
+        MockHttpSession adminSession = login("admin01");
+        mockMvc.perform(post("/api/admin/business-entry-configs")
+                        .session(adminSession).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"definitionId\":\"" + definition.getId() + "\","
+                                + "\"entryDisplayName\":\"大厅入金申请\","
+                                + "\"entryPageUrl\":\"/generated/" + processCode + "/apply\","
+                                + "\"enabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entrySource").value("MANUAL"));
+
+        mockMvc.perform(get("/api/workflow/process-entry-links").session(salesSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.definitionId == '" + definition.getId() + "')].entryDisplayName")
+                        .value("大厅入金申请"));
+        mockMvc.perform(get("/api/workflow/processes/{processCode}/start-context", processCode)
+                        .session(salesSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.startable").value(true))
+                .andExpect(jsonPath("$.currentNodeCode").value("apply"))
+                .andExpect(jsonPath("$.formFields.length()").value(3));
+
+        String payloadJson = "{\"businessKey\":\"" + suffix.substring(0, 8) + "\",\"variables\":{"
+                + "\"applicationNo\":\"" + suffix.substring(0, 8) + "\","
+                + "\"amount\":1000,\"currency\":\"CNY\"}}";
+        MockMultipartFile payload = new MockMultipartFile("payload", "payload.json",
+                MediaType.APPLICATION_JSON_VALUE, payloadJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String first = mockMvc.perform(multipart("/api/workflow/processes/{processCode}/start-submit", processCode)
+                        .file(payload).session(salesSession).header("Idempotency-Key", "hall-start-" + suffix))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.definitionId").value(definition.getId()))
+                .andExpect(jsonPath("$.createdTasks[0].nodeCode").value("manager"))
+                .andReturn().getResponse().getContentAsString();
+
+        MockMultipartFile replayPayload = new MockMultipartFile("payload", "payload.json",
+                MediaType.APPLICATION_JSON_VALUE, payloadJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String replay = mockMvc.perform(multipart("/api/workflow/processes/{processCode}/start-submit", processCode)
+                        .file(replayPayload).session(salesSession).header("Idempotency-Key", "hall-start-" + suffix))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(objectMapper.readTree(replay).path("instanceId").asText())
+                .isEqualTo(objectMapper.readTree(first).path("instanceId").asText());
+    }
 
     @Test
     void generatedInitiationAndGenericActionsCompleteARealWorkflow() throws Exception {
