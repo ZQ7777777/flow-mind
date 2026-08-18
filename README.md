@@ -62,3 +62,14 @@ Agent Web M0-M2 实现位于 `agent-web/`，提供需求对话、结构化需求
 ```
 
 首次运行前请确保已安装 Java 8、Maven、Node.js `>= 22.19.0` 和 npm，并已分别在 `agent-web`、`business-base/frontend` 安装 npm 依赖。真实对话模式还需按 [Agent Web 运行说明](agent-web/README.md) 配置 `agent-web/.env`。
+
+## Business Base 业务入口发布边界
+
+Business Base 后端首次部署业务大厅入口配置和通用发起接口时，需要重新构建并重启后端。启动过程中会幂等创建 `business_entry_config` 表，不需要手工执行 SQLite 脚本。
+
+功能部署完成后，各类变更按以下边界处理：
+
+- 新增或修改流程定义的业务入口配置：保存配置并刷新业务大厅，不需要重启后端。
+- 仅新增或修改 Agent 生成的前端表单页：重新构建并发布 Business Base 前端，不需要重启后端。
+- 修改 `/api/workflow/process-entry-links`、`/api/workflow/processes/{processCode}/start-context`、`start-submit` 或其他通用后端契约：重新构建并重启 Business Base 后端，并同步验证前端调用。
+- 生产和测试环境首期不支持后端运行时插件热加载；历史 `/api/generated/entry-application/submit` 接口继续作为入金样例兼容入口。

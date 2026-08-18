@@ -108,6 +108,21 @@ class BusinessBaseApplicationTest {
                         .session(login("admin01")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.records").isArray());
+
+        mockMvc.perform(get("/api/admin/business-entry-configs"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/admin/business-entry-configs").session(login("sales01")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/business-entry-configs").session(login("admin01")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+    }
+
+    @Test
+    void businessHallAndGenericStartApisRequireAuthentication() throws Exception {
+        mockMvc.perform(get("/api/workflow/process-entry-links"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/workflow/processes/entry_application/start-context"))
+                .andExpect(status().isUnauthorized());
     }
 
     private MockHttpSession login() throws Exception {
