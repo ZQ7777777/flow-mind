@@ -5,7 +5,7 @@ export function nextStepMessage(state: string | undefined): string {
     case "REQUIREMENT_REVIEW":
       return "检查并保存需求，然后完成人工门禁一。";
     case "PROCESS_REVIEW":
-      return "检查流程图、字段、附件和校验结果，然后完成人工门禁二。";
+      return "检查流程图、字段、附件和校验结果；门禁二校验不通过时可回退需求预览修改。";
     case "PROCESS_PROVISIONING":
     case "PROCESS_ACTIVATING":
     case "CODE_VERIFYING":

@@ -355,13 +355,20 @@ function formatTokens(value: number | undefined): string {
               @click="action(store.confirmRequirement, '门禁一已通过，正在创建流程')"
             >确认需求并创建流程</el-button>
           </template>
-          <el-button
-            v-else-if="store.state === 'PROCESS_REVIEW'"
-            type="primary"
-            :loading="store.busy"
-            :disabled="!store.snapshot.processPreview?.validation.valid"
-            @click="action(store.confirmProcess, '门禁二已通过，正在发布并激活')"
-          >确认流程并激活</el-button>
+          <template v-else-if="store.state === 'PROCESS_REVIEW'">
+            <el-button
+              type="primary"
+              :loading="store.busy"
+              :disabled="!store.snapshot.processPreview?.validation.valid"
+              @click="action(store.confirmProcess, '门禁二已通过，正在发布并激活')"
+            >确认流程并激活</el-button>
+            <el-button
+              v-if="store.allowedActions.includes('REOPEN_REQUIREMENT_FROM_PROCESS_FAILURE')"
+              type="warning"
+              :loading="store.busy"
+              @click="reopenRequirementFromProcessFailure"
+            >回退需求预览</el-button>
+          </template>
           <el-button
             v-else-if="store.state === 'PROCESS_PROVISION_FAILED' || (store.state === 'PROCESS_ACTIVATION_FAILED' && store.allowedActions.includes('RETRY_PROCESS'))"
             type="danger"

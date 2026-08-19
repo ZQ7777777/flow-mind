@@ -419,7 +419,16 @@ export class WorkflowService {
     );
     if (replay) return this.getSnapshot(sessionId, user);
     this.expectVersion(session, rowVersion);
-    this.expectState(session, ["PROCESS_ACTIVATION_FAILED"]);
+    this.expectState(session, ["PROCESS_REVIEW", "PROCESS_ACTIVATION_FAILED"]);
+    const validation = parseJson(process.validation_json, { valid: false, issues: [] });
+    if (session.state === "PROCESS_REVIEW" && validation.valid) {
+      throw new AgentError(
+        HttpStatus.CONFLICT,
+        "AGENT_PROCESS_REOPEN_UNAVAILABLE",
+        "门禁二校验已通过，请确认流程或继续编辑流程预览。",
+        sessionId,
+      );
+    }
     if (!process.platform_definition_id) {
       throw new AgentError(HttpStatus.CONFLICT, "AGENT_PROCESS_REOPEN_UNAVAILABLE", "process definition is unavailable; retry the failed step", sessionId);
     }
@@ -908,7 +917,7 @@ function allowedActions(state: WorkflowState, validationPassed: boolean, process
     REQUIREMENT_REVIEW: ["EDIT_REQUIREMENT", "CONFIRM_REQUIREMENT", "REOPEN_REQUIREMENT"],
     PROCESS_PROVISIONING: [],
     PROCESS_PROVISION_FAILED: ["RETRY_PROCESS"],
-    PROCESS_REVIEW: validationPassed ? ["CONFIRM_PROCESS"] : [],
+    PROCESS_REVIEW: validationPassed ? ["CONFIRM_PROCESS"] : ["REOPEN_REQUIREMENT_FROM_PROCESS_FAILURE"],
     PROCESS_ACTIVATING: [],
     PROCESS_ACTIVATION_FAILED: process?.status === "PUBLISHED" ? ["RETRY_PROCESS"] : ["REOPEN_REQUIREMENT_FROM_PROCESS_FAILURE"],
     PROCESS_ACTIVE: [],

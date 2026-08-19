@@ -30,6 +30,7 @@ describe("M0-M2 workflow", () => {
   let definitionStatus = "DRAFT";
   let activationStatus = "INACTIVE";
   let publishStatus = 200;
+  let validationValid = true;
   let organizationStatus = 200;
   let registeredRoles: Array<{ roleCode: string; roleName: string }> = [];
   const calls: Array<{ method: string; path: string; body?: any; headers: Headers }> = [];
@@ -43,6 +44,7 @@ describe("M0-M2 workflow", () => {
     definitionStatus = "DRAFT";
     activationStatus = "INACTIVE";
     publishStatus = 200;
+    validationValid = true;
     organizationStatus = 200;
     registeredRoles = [
       { roleCode: "sales", roleName: "业务员" },
@@ -76,7 +78,10 @@ describe("M0-M2 workflow", () => {
       } else if (url.pathname === "/api/platform/attachment-templates" && method === "POST") {
         payload = { attachmentTemplateId: "tpl-bank-v1", templateVersion: 1, ...body };
       } else if (url.pathname.endsWith("/publish-validation")) {
-        payload = { valid: true, issues: [] };
+        payload = validationValid ? { valid: true, issues: [] } : {
+          valid: false,
+          issues: [{ code: "FLOW_NODE_INVALID", message: "审批节点配置不完整" }],
+        };
       } else if (url.pathname === "/api/platform/definitions/publish") {
         if (publishStatus !== 200) {
           return new Response(JSON.stringify({ message: "发布服务暂不可用" }), {
@@ -294,6 +299,32 @@ describe("M0-M2 workflow", () => {
     expect(processAfterReuse.publish_operation_id).not.toBe(processBeforeRollback.publish_operation_id);
     expect(processAfterReuse.activate_operation_id).not.toBe(processBeforeRollback.activate_operation_id);
     expect(calls.filter((call) => call.method === "POST" && call.path === "/api/platform/definitions")).toHaveLength(createCallsBeforeReuse);
+  });
+
+  it("returns a failed gate-two review to requirement review while retaining the session history", async () => {
+    let snapshot = await workflow.createSession(user);
+    await (workflow as any).saveAgentRequirement(snapshot.sessionId, ENTRY_APPLICATION_REQUIREMENT, [], []);
+    snapshot = await workflow.getSnapshot(snapshot.sessionId, user);
+    const messagesBeforeRollback = snapshot.messages;
+    validationValid = false;
+
+    await workflow.confirmRequirement(snapshot.sessionId, user, snapshot.rowVersion, snapshot.requirement!.revision, "gate-one");
+    snapshot = await waitForState(snapshot.sessionId, "PROCESS_REVIEW");
+    expect(snapshot.processPreview?.validation.valid).toBe(false);
+    expect(snapshot.allowedActions).toContain("REOPEN_REQUIREMENT_FROM_PROCESS_FAILURE");
+    const processBeforeRollback = database.getProcessBySession(snapshot.sessionId)!;
+
+    await workflow.reopenRequirementFromProcessFailure(snapshot.sessionId, user, snapshot.rowVersion, "reopen-gate-two");
+    snapshot = await workflow.getSnapshot(snapshot.sessionId, user);
+    const processAfterRollback = database.getProcessBySession(snapshot.sessionId)!;
+    expect(snapshot).toMatchObject({ state: "REQUIREMENT_REVIEW", messages: messagesBeforeRollback });
+    expect(snapshot.requirement?.revision).toBe(1);
+    expect(processAfterRollback).toMatchObject({
+      id: processBeforeRollback.id,
+      platform_definition_id: processBeforeRollback.platform_definition_id,
+      status: "DRAFT",
+      validation_json: null,
+    });
   });
 
   it("keeps published activation failures retry-only and rejects a rollback", async () => {
