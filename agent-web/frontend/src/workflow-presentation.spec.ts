@@ -12,7 +12,7 @@ describe("workflow presentation", () => {
 
   it("uses state-specific failure guidance and a neutral unknown-state fallback", () => {
     expect(nextStepMessage("PROCESS_PROVISION_FAILED")).toContain("创建流程失败");
-    expect(nextStepMessage("PROCESS_ACTIVATION_FAILED")).toContain("激活流程失败");
+    expect(nextStepMessage("PROCESS_ACTIVATION_FAILED")).toContain("回退需求预览");
     expect(nextStepMessage("ARTIFACT_WRITE_FAILED")).toContain("写入工程失败");
     expect(nextStepMessage("BUSINESS_ENTRY_CONFIG_FAILED")).toContain("重试不会重复写入文件");
     expect(nextStepMessage("UNKNOWN")).toBe("当前状态暂无可执行的下一步操作。");

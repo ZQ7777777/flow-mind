@@ -258,6 +258,11 @@ export const useWorkflowStore = defineStore("workflow", () => {
     await command(`/api/agent/sessions/${snapshot.value.sessionId}/process/retry`, true);
   }
 
+  async function reopenRequirementFromProcessFailure(): Promise<void> {
+    if (!snapshot.value) return;
+    await command(`/api/agent/sessions/${snapshot.value.sessionId}/process/reopen-requirement`, true);
+  }
+
   async function startGeneration(targetRoot?: string): Promise<void> {
     if (!snapshot.value || !currentUser.value) return;
     await run(async () => {
@@ -669,6 +674,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     resetSession,
     confirmProcess,
     retryProcess,
+    reopenRequirementFromProcessFailure,
     startGeneration,
     loadGeneratedFile,
     loadGeneratedPreviewFile,

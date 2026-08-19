@@ -128,6 +128,14 @@ async function resetCurrentSession(): Promise<void> {
   } catch { /* store exposes error */ }
 }
 
+async function reopenRequirementFromProcessFailure(): Promise<void> {
+  try {
+    await store.reopenRequirementFromProcessFailure();
+    activeTab.value = "requirement";
+    ElMessage.success("已回退到需求预览；历史会话和对话记录已保留");
+  } catch { /* store exposes error */ }
+}
+
 function handleSessionOpened(): void {
   sessionHistoryVisible.value = false;
   activeTab.value = [
@@ -355,11 +363,17 @@ function formatTokens(value: number | undefined): string {
             @click="action(store.confirmProcess, '门禁二已通过，正在发布并激活')"
           >确认流程并激活</el-button>
           <el-button
-            v-else-if="['PROCESS_PROVISION_FAILED','PROCESS_ACTIVATION_FAILED'].includes(store.state || '')"
+            v-else-if="store.state === 'PROCESS_PROVISION_FAILED' || (store.state === 'PROCESS_ACTIVATION_FAILED' && store.allowedActions.includes('RETRY_PROCESS'))"
             type="danger"
             :loading="store.busy"
             @click="action(store.retryProcess, '已按失败步骤重新执行')"
           >重试失败步骤</el-button>
+          <el-button
+            v-else-if="store.state === 'PROCESS_ACTIVATION_FAILED' && store.allowedActions.includes('REOPEN_REQUIREMENT_FROM_PROCESS_FAILURE')"
+            type="warning"
+            :loading="store.busy"
+            @click="reopenRequirementFromProcessFailure"
+          >回退需求预览</el-button>
           <template v-else-if="store.state === 'PROCESS_ACTIVE'">
             <el-input v-model="generationTargetRoot" class="target-root-input" placeholder="③ business-base 绝对路径" />
             <el-button type="success" :loading="store.busy" @click="action(() => store.startGeneration(generationTargetRoot), 'M3 代码生成已启动')">生成业务发起代码</el-button>

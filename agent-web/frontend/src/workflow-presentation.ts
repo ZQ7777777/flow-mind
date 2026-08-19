@@ -17,7 +17,7 @@ export function nextStepMessage(state: string | undefined): string {
     case "PROCESS_PROVISION_FAILED":
       return "创建流程失败；请检查错误信息后重试失败步骤。";
     case "PROCESS_ACTIVATION_FAILED":
-      return "激活流程失败；请检查错误信息后重试失败步骤。";
+      return "发布或激活失败；草稿流程可回退需求预览修改，已发布流程请重试失败步骤。";
     case "PROCESS_ACTIVE":
       return "流程已激活；绑定并校验③工程后可按确认需求生成业务发起代码。";
     case "CODE_GENERATING":

@@ -87,7 +87,7 @@ export class WorkflowService {
       lastError: session.last_error_code
         ? { code: session.last_error_code, message: session.last_error_message || "" }
         : undefined,
-      allowedActions: allowedActions(session.state, Boolean(preview?.validation.valid)),
+      allowedActions: allowedActions(session.state, Boolean(preview?.validation.valid), process),
     };
   }
 
@@ -217,6 +217,7 @@ export class WorkflowService {
       throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_REQUIREMENT_INCOMPLETE", "requirement is not ready for confirmation", sessionId);
     }
     const requirement = JSON.parse(session.requirement_json) as BusinessRequirement;
+    const reusableProcess = this.database.getProcessBySession(sessionId);
     const now = new Date().toISOString();
     const result = { accepted: true as const, sessionId, state: "PROCESS_PROVISIONING" as WorkflowState };
     this.database.transaction(() => {
@@ -226,17 +227,34 @@ export class WorkflowService {
           requirement_confirm_result_json = ?, last_error_code = NULL, last_error_message = NULL, updated_at = ?
         WHERE id = ? AND row_version = ?
       `).run(now, idempotencyKey, requestHash, JSON.stringify(result), now, sessionId, rowVersion);
-      this.database.db.prepare(`
-        INSERT INTO agent_process_definition (
-          id, session_id, requirement_revision, process_code, process_name, status, saga_step,
-          requirement_snapshot_json, create_operation_id, save_operation_id, publish_operation_id,
-          activate_operation_id, created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PENDING_CREATE', ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        `apd_${randomUUID()}`, sessionId, requirementRevision, requirement.businessCode, requirement.businessName,
-        JSON.stringify(requirement), `op_create_${randomUUID()}`, `op_save_${randomUUID()}`,
-        `op_publish_${randomUUID()}`, `op_activate_${randomUUID()}`, user.userId, now, now,
-      );
+      if (reusableProcess?.platform_definition_id && reusableProcess.status === "DRAFT") {
+        this.database.db.prepare(`
+          UPDATE agent_process_definition SET
+            requirement_revision = ?, process_code = ?, process_name = ?, saga_step = 'PENDING_SAVE',
+            requirement_snapshot_json = ?, validation_json = NULL, platform_snapshot_json = NULL,
+            save_operation_id = ?, publish_operation_id = ?, activate_operation_id = ?,
+            process_confirm_key = NULL, process_confirm_hash = NULL, process_confirm_result_json = NULL,
+            retry_key = NULL, retry_hash = NULL, retry_result_json = NULL,
+            last_error_code = NULL, last_error_message = NULL, updated_at = ?
+          WHERE id = ?
+        `).run(
+          requirementRevision, requirement.businessCode, requirement.businessName, JSON.stringify(requirement),
+          `op_save_${randomUUID()}`, `op_publish_${randomUUID()}`, `op_activate_${randomUUID()}`,
+          now, reusableProcess.id,
+        );
+      } else {
+        this.database.db.prepare(`
+          INSERT INTO agent_process_definition (
+            id, session_id, requirement_revision, process_code, process_name, status, saga_step,
+            requirement_snapshot_json, create_operation_id, save_operation_id, publish_operation_id,
+            activate_operation_id, created_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 'DRAFT', 'PENDING_CREATE', ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          `apd_${randomUUID()}`, sessionId, requirementRevision, requirement.businessCode, requirement.businessName,
+          JSON.stringify(requirement), `op_create_${randomUUID()}`, `op_save_${randomUUID()}`,
+          `op_publish_${randomUUID()}`, `op_activate_${randomUUID()}`, user.userId, now, now,
+        );
+      }
     });
     this.events.publish(sessionId, { type: "workflow.state_changed", data: result });
     setImmediate(() => void this.provision(sessionId, user));
@@ -383,6 +401,73 @@ export class WorkflowService {
       ? void this.provision(sessionId, user)
       : void this.activate(sessionId, user));
     return result;
+  }
+
+  async reopenRequirementFromProcessFailure(
+    sessionId: string,
+    user: MockUser,
+    rowVersion: number,
+    idempotencyKey: string,
+  ): Promise<WorkflowSnapshot> {
+    requireIdempotencyKey(idempotencyKey, sessionId);
+    const session = this.ownedSession(sessionId, user);
+    const process = this.requiredProcess(sessionId);
+    const requestHash = hash({ failedState: session.state, processId: process.id });
+    const replay = checkReplay<{ accepted: true; sessionId: string; state: WorkflowState }>(
+      process.reopen_requirement_key, process.reopen_requirement_hash, process.reopen_requirement_result_json,
+      idempotencyKey, requestHash, sessionId,
+    );
+    if (replay) return this.getSnapshot(sessionId, user);
+    this.expectVersion(session, rowVersion);
+    this.expectState(session, ["PROCESS_ACTIVATION_FAILED"]);
+    if (!process.platform_definition_id) {
+      throw new AgentError(HttpStatus.CONFLICT, "AGENT_PROCESS_REOPEN_UNAVAILABLE", "process definition is unavailable; retry the failed step", sessionId);
+    }
+    if (process.status === "PUBLISHED") {
+      throw new AgentError(
+        HttpStatus.CONFLICT,
+        "AGENT_PROCESS_REOPEN_UNAVAILABLE",
+        "流程定义已发布或当前状态无法确认，请重试失败步骤。",
+        sessionId,
+      );
+    }
+
+    // A failed publish request can be ambiguous. Only the platform's current state
+    // is authoritative; never permit overwriting a definition that was published.
+    const platformDefinition = await this.platform.getDefinition(process.platform_definition_id, user);
+    if (platformDefinition?.definitionStatus !== "DRAFT") {
+      throw new AgentError(
+        HttpStatus.CONFLICT,
+        "AGENT_PROCESS_REOPEN_UNAVAILABLE",
+        "流程定义已发布或当前状态无法确认，请重试失败步骤。",
+        sessionId,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const result = { accepted: true as const, sessionId, state: "REQUIREMENT_REVIEW" as WorkflowState };
+    this.database.transaction(() => {
+      this.database.db.prepare(`
+        UPDATE agent_process_definition SET
+          status = 'DRAFT', saga_step = 'PENDING_SAVE', definition_version = ?,
+          validation_json = NULL, platform_snapshot_json = NULL,
+          last_error_code = NULL, last_error_message = NULL,
+          reopen_requirement_key = ?, reopen_requirement_hash = ?, reopen_requirement_result_json = ?,
+          updated_at = ? WHERE id = ?
+      `).run(
+        platformDefinition.version || process.definition_version || null,
+        idempotencyKey, requestHash, JSON.stringify(result), now, process.id,
+      );
+      this.database.db.prepare(`
+        UPDATE agent_session SET state = 'REQUIREMENT_REVIEW', row_version = row_version + 1,
+          requirement_confirmed_at = NULL, requirement_confirm_key = NULL, requirement_confirm_hash = NULL,
+          requirement_confirm_result_json = NULL,
+          last_error_code = NULL, last_error_message = NULL, updated_at = ?
+        WHERE id = ? AND row_version = ?
+      `).run(now, sessionId, rowVersion);
+    });
+    this.events.publish(sessionId, { type: "workflow.state_changed", data: result });
+    return this.getSnapshot(sessionId, user);
   }
 
   private async saveAgentRequirement(
@@ -817,7 +902,7 @@ function hasGenerationPreview(state: WorkflowState): boolean {
   ].includes(state);
 }
 
-function allowedActions(state: WorkflowState, validationPassed: boolean): string[] {
+function allowedActions(state: WorkflowState, validationPassed: boolean, process?: ProcessRow): string[] {
   const mapping: Record<WorkflowState, string[]> = {
     COLLECTING: ["SEND_MESSAGE"],
     REQUIREMENT_REVIEW: ["EDIT_REQUIREMENT", "CONFIRM_REQUIREMENT", "REOPEN_REQUIREMENT"],
@@ -825,7 +910,7 @@ function allowedActions(state: WorkflowState, validationPassed: boolean): string
     PROCESS_PROVISION_FAILED: ["RETRY_PROCESS"],
     PROCESS_REVIEW: validationPassed ? ["CONFIRM_PROCESS"] : [],
     PROCESS_ACTIVATING: [],
-    PROCESS_ACTIVATION_FAILED: ["RETRY_PROCESS"],
+    PROCESS_ACTIVATION_FAILED: process?.status === "PUBLISHED" ? ["RETRY_PROCESS"] : ["REOPEN_REQUIREMENT_FROM_PROCESS_FAILURE"],
     PROCESS_ACTIVE: [],
     CODE_GENERATING: ["CANCEL_GENERATION"],
     CODE_VERIFYING: ["STOP_QUALITY"],

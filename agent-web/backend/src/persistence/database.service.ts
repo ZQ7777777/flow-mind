@@ -55,6 +55,9 @@ export interface ProcessRow {
   retry_key: string | null;
   retry_hash: string | null;
   retry_result_json: string | null;
+  reopen_requirement_key: string | null;
+  reopen_requirement_hash: string | null;
+  reopen_requirement_result_json: string | null;
   last_error_code: string | null;
   last_error_message: string | null;
   created_by: string;
@@ -199,6 +202,9 @@ export class DatabaseService implements OnModuleDestroy {
         retry_key TEXT,
         retry_hash TEXT,
         retry_result_json TEXT,
+        reopen_requirement_key TEXT,
+        reopen_requirement_hash TEXT,
+        reopen_requirement_result_json TEXT,
         last_error_code TEXT,
         last_error_message TEXT,
         created_by TEXT NOT NULL,
@@ -545,6 +551,28 @@ export class DatabaseService implements OnModuleDestroy {
           this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN generation_context_snapshot_json TEXT NOT NULL DEFAULT '{}'");
         }
         this.recordMigration(10);
+      });
+    }
+    if (!applied.has(11)) {
+      this.transaction(() => {
+        const processTable = this.db.prepare(`
+          SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_process_definition'
+        `).get() as { name?: string } | undefined;
+        if (!processTable) {
+          this.recordMigration(11);
+          return;
+        }
+        const columns = this.db.prepare("PRAGMA table_info(agent_process_definition)").all() as Array<{ name: string }>;
+        const names = new Set(columns.map(({ name }) => name));
+        const additions: Array<[string, string]> = [
+          ["reopen_requirement_key", "TEXT"],
+          ["reopen_requirement_hash", "TEXT"],
+          ["reopen_requirement_result_json", "TEXT"],
+        ];
+        for (const [name, definition] of additions) {
+          if (!names.has(name)) this.db.exec(`ALTER TABLE agent_process_definition ADD COLUMN ${name} ${definition}`);
+        }
+        this.recordMigration(11);
       });
     }
   }

@@ -228,6 +228,23 @@ export class AppController {
     );
   }
 
+  @Post("/api/agent/sessions/:sessionId/process/reopen-requirement")
+  @HttpCode(200)
+  reopenRequirementFromProcessFailure(
+    @Param("sessionId") sessionId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("if-match") ifMatch: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+  ) {
+    return this.workflow.reopenRequirementFromProcessFailure(
+      sessionId,
+      this.identity.resolve(userId, userName),
+      parseVersion(ifMatch),
+      idempotencyKey,
+    );
+  }
+
   @Post("/api/agent/sessions/:sessionId/code-generations")
   @HttpCode(202)
   startGeneration(

@@ -29,6 +29,7 @@ describe("M0-M2 workflow", () => {
   let workflow: WorkflowService;
   let definitionStatus = "DRAFT";
   let activationStatus = "INACTIVE";
+  let publishStatus = 200;
   let organizationStatus = 200;
   let registeredRoles: Array<{ roleCode: string; roleName: string }> = [];
   const calls: Array<{ method: string; path: string; body?: any; headers: Headers }> = [];
@@ -41,6 +42,7 @@ describe("M0-M2 workflow", () => {
     process.env.FLOW_PLATFORM_BASE_URL = "http://platform.test";
     definitionStatus = "DRAFT";
     activationStatus = "INACTIVE";
+    publishStatus = 200;
     organizationStatus = 200;
     registeredRoles = [
       { roleCode: "sales", roleName: "业务员" },
@@ -76,6 +78,12 @@ describe("M0-M2 workflow", () => {
       } else if (url.pathname.endsWith("/publish-validation")) {
         payload = { valid: true, issues: [] };
       } else if (url.pathname === "/api/platform/definitions/publish") {
+        if (publishStatus !== 200) {
+          return new Response(JSON.stringify({ message: "发布服务暂不可用" }), {
+            status: publishStatus,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         definitionStatus = "PUBLISHED";
         payload = { id: "definition-entry", definitionStatus };
       } else if (url.pathname === "/api/platform/definitions/activate") {
@@ -234,6 +242,84 @@ describe("M0-M2 workflow", () => {
       enabled: true, maxCount: 2, messageTemplate: "您有待办，请及时处理。",
     });
     expect(calls.every((call) => call.headers.get("X-Flow-User-Id") === "user_sales")).toBe(true);
+  });
+
+  it("returns a draft publish failure to requirement review and reuses its platform definition", async () => {
+    let snapshot = await workflow.createSession(user);
+    await (workflow as any).saveAgentRequirement(snapshot.sessionId, ENTRY_APPLICATION_REQUIREMENT, [], []);
+    snapshot = await workflow.getSnapshot(snapshot.sessionId, user);
+    const messagesBeforeFailure = snapshot.messages;
+
+    await workflow.confirmRequirement(snapshot.sessionId, user, snapshot.rowVersion, snapshot.requirement!.revision, "gate-one");
+    snapshot = await waitForState(snapshot.sessionId, "PROCESS_REVIEW");
+    const definitionId = snapshot.processPreview!.platformDefinitionId;
+    publishStatus = 500;
+    await workflow.confirmProcess(snapshot.sessionId, user, snapshot.rowVersion, {
+      platformDefinitionId: definitionId,
+      requirementRevision: snapshot.requirement!.revision,
+    }, "gate-two");
+    snapshot = await waitForState(snapshot.sessionId, "PROCESS_ACTIVATION_FAILED");
+    const processBeforeRollback = database.getProcessBySession(snapshot.sessionId)!;
+    expect(snapshot.allowedActions).toContain("REOPEN_REQUIREMENT_FROM_PROCESS_FAILURE");
+
+    await workflow.reopenRequirementFromProcessFailure(
+      snapshot.sessionId, user, snapshot.rowVersion, "reopen-requirement-one",
+    );
+    snapshot = await workflow.getSnapshot(snapshot.sessionId, user);
+    const processAfterRollback = database.getProcessBySession(snapshot.sessionId)!;
+    expect(snapshot.state).toBe("REQUIREMENT_REVIEW");
+    expect(snapshot.messages).toEqual(messagesBeforeFailure);
+    expect(snapshot.requirement?.revision).toBe(1);
+    expect(processAfterRollback).toMatchObject({
+      id: processBeforeRollback.id,
+      platform_definition_id: definitionId,
+      status: "DRAFT",
+      saga_step: "PENDING_SAVE",
+      validation_json: null,
+      platform_snapshot_json: null,
+    });
+
+    const revised = structuredClone(snapshot.requirement!.requirement);
+    revised.businessName = "更新后的入金申请";
+    await workflow.updateRequirement(snapshot.sessionId, user, snapshot.rowVersion, revised);
+    snapshot = await workflow.getSnapshot(snapshot.sessionId, user);
+    const createCallsBeforeReuse = calls.filter((call) => call.method === "POST" && call.path === "/api/platform/definitions").length;
+    publishStatus = 200;
+    await workflow.confirmRequirement(snapshot.sessionId, user, snapshot.rowVersion, snapshot.requirement!.revision, "gate-one-retry");
+    snapshot = await waitForState(snapshot.sessionId, "PROCESS_REVIEW");
+
+    const processAfterReuse = database.getProcessBySession(snapshot.sessionId)!;
+    expect(processAfterReuse.platform_definition_id).toBe(definitionId);
+    expect(processAfterReuse.save_operation_id).not.toBe(processBeforeRollback.save_operation_id);
+    expect(processAfterReuse.publish_operation_id).not.toBe(processBeforeRollback.publish_operation_id);
+    expect(processAfterReuse.activate_operation_id).not.toBe(processBeforeRollback.activate_operation_id);
+    expect(calls.filter((call) => call.method === "POST" && call.path === "/api/platform/definitions")).toHaveLength(createCallsBeforeReuse);
+  });
+
+  it("keeps published activation failures retry-only and rejects a rollback", async () => {
+    const now = new Date().toISOString();
+    database.db.prepare(`
+      INSERT INTO agent_session (
+        id, owner_user_id, owner_user_name, state, row_version, requirement_revision,
+        requirement_json, requirement_ready_for_review, created_at, updated_at
+      ) VALUES ('published-failure', ?, ?, 'PROCESS_ACTIVATION_FAILED', 0, 1, '{}', 1, ?, ?)
+    `).run(user.userId, user.userName, now, now);
+    database.db.prepare(`
+      INSERT INTO agent_process_definition (
+        id, session_id, requirement_revision, platform_definition_id, process_code, process_name,
+        status, saga_step, requirement_snapshot_json, create_operation_id, save_operation_id,
+        publish_operation_id, activate_operation_id, created_by, created_at, updated_at
+      ) VALUES ('published-process', 'published-failure', 1, 'definition-entry', 'entry_application', '入金申请',
+        'PUBLISHED', 'PUBLISHED', '{}', 'create', 'save', 'publish', 'activate', ?, ?, ?)
+    `).run(user.userId, now, now);
+
+    const snapshot = await workflow.getSnapshot("published-failure", user);
+    expect(snapshot.allowedActions).toEqual(expect.arrayContaining(["RETRY_PROCESS"]));
+    expect(snapshot.allowedActions).not.toContain("REOPEN_REQUIREMENT_FROM_PROCESS_FAILURE");
+    definitionStatus = "PUBLISHED";
+    await expect(workflow.reopenRequirementFromProcessFailure("published-failure", user, snapshot.rowVersion, "reopen-published"))
+      .rejects.toThrow("流程定义已发布或当前状态无法确认");
+    expect(database.getSession("published-failure")?.state).toBe("PROCESS_ACTIVATION_FAILED");
   });
 
   it("returns complete submission issues and keeps collecting instead of throwing", async () => {
