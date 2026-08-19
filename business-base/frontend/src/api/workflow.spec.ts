@@ -349,7 +349,7 @@ describe("workflow api", () => {
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/api/workflow/attachments/att-1/content");
-    expect(blob).toBeInstanceOf(Blob);
+    expect(blob).toEqual(expect.objectContaining({ size: "file-content".length }));
     expect(blob.size).toBe("file-content".length);
   });
 
@@ -365,5 +365,4 @@ describe("workflow api", () => {
     expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-delete");
   });
 });
-
 

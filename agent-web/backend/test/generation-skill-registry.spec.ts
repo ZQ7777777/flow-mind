@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { GenerationSkillRegistry } from "../src/generation/generation-skill-registry.service.js";
+import { assertRequiredGenerationContextRead } from "../src/pi/pi-adapter.service.js";
 import { assertRequiredGenerationSkillsRead } from "../src/pi/pi-adapter.service.js";
 
 describe("GenerationSkillRegistry", () => {
@@ -26,7 +27,7 @@ describe("GenerationSkillRegistry", () => {
     expect(snapshots[0].sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(registry.read(snapshots, snapshots[0].name, "SKILL.md")).toContain("BusinessForm.vue");
     expect(registry.read(snapshots, snapshots[0].name, "references/backend-api-contract.md"))
-      .toContain("/api/workflow/processes/{processCode}/start-submit");
+      .toContain("Generated code never creates a business-specific submit API");
   });
 
   it("rejects non-allowlisted skills and path traversal", () => {
@@ -77,6 +78,13 @@ describe("GenerationSkillRegistry", () => {
       ["flowmind-business-generation"],
       new Set(["flowmind-business-generation"]),
     )).not.toThrow();
+  });
+
+  it("blocks generation completion until every mandatory context key was read", () => {
+    const required = ["skill:flowmind-business-generation:SKILL.md", "reference:REPOSITORY:golden.md"];
+    expect(() => assertRequiredGenerationContextRead(required, new Set([required[0]])))
+      .toThrow(/reference:REPOSITORY:golden\.md/);
+    expect(() => assertRequiredGenerationContextRead(required, new Set(required))).not.toThrow();
   });
 
   function createSkillRoot(reference: string): string {

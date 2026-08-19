@@ -54,7 +54,7 @@ Flow Mind Agent Web 基于 Node.js 22、TypeScript、NestJS、Vue 3 和 npm work
 - 修改 REST/SSE 契约、前后端联动、流程平台集成或关键用户路径时，还必须运行 `npm run test:e2e`
 
 ## 相关文档
-
+- **Agent Web 代码生成重设计**：`../doc/业务办理动态页面与Agent前端生成改造执行计划.md`
 - **需求文档**：`../doc/rebuild-functional-requirements-optimized.md`
 - **Agent Web 技术设计（含阶段分工）**：`../doc/agent-web-tech-design.md`
 - **Agent Web 原始技术设计（原始版本，不包括自定义压缩、自动测试验证等新增功能，不冲突的实现细节可以参考该文档）**：`../doc/origin-agent-web-tech-design.md`

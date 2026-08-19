@@ -105,7 +105,8 @@ export class VerificationWorkerService {
       overlayManifest(input, workspaceRoot);
       writeGeneratedFrontendTsconfig(input, workspaceRoot);
       const commands = fixedCommands(input, workspaceRoot);
-      const stages: QualityStageResult[] = [];
+      const frontendOnly = input.contract.generationMode === "FRONTEND_ONLY";
+      const stages: QualityStageResult[] = frontendOnly ? [notApplicableStage("BACKEND_COMPILE")] : [];
       const execute = input.execute || executeVerificationCommand;
       await installFrontendDependencies(input, workspaceRoot, execute, runId, logDir);
       for (const command of commands) {
@@ -138,6 +139,7 @@ export class VerificationWorkerService {
         input.onStage?.(command.stage, stage.status, hardGate);
         if (result.infrastructureError || result.timedOut || result.cancelled) break;
       }
+      if (frontendOnly) stages.push(notApplicableStage("BACKEND_TESTS"));
       linkDerivedFrontendDiagnostics(stages);
       return {
         runId,
@@ -272,17 +274,28 @@ function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string): V
     };
   };
   const mavenRepoArgs = configuredMavenRepoArgs();
-  const backend = resolve(workspaceRoot, input.contract.backend!.rootDir);
+  const frontendOnly = input.contract.generationMode === "FRONTEND_ONLY";
+  const backend = input.contract.backend ? resolve(workspaceRoot, input.contract.backend.rootDir) : "";
   const frontend = resolve(workspaceRoot, input.contract.frontend.rootDir);
   const commands: VerificationCommand[] = [
-    { ...common, stage: "BACKEND_COMPILE", ...command("mvn", ["-q", ...mavenRepoArgs, "-DskipTests", "compile"]), cwd: backend },
+    ...(!frontendOnly ? [{ ...common, stage: "BACKEND_COMPILE" as const, ...command("mvn", ["-q", ...mavenRepoArgs, "-DskipTests", "compile"]), cwd: backend }] : []),
     { ...common, stage: "FRONTEND_TYPECHECK", ...command("npm", ["exec", "--", "vue-tsc", "-p", "tsconfig.generated.json", "--noEmit"]), cwd: frontend },
     { ...common, stage: "FRONTEND_BUILD", ...command("npm", ["run", "build"]), cwd: frontend },
-    { ...common, stage: "BACKEND_TESTS", ...command("mvn", ["-q", ...mavenRepoArgs, "test"]), cwd: backend },
+    ...(!frontendOnly ? [{ ...common, stage: "BACKEND_TESTS" as const, ...command("mvn", ["-q", ...mavenRepoArgs, "test"]), cwd: backend }] : []),
     { ...common, stage: "FRONTEND_TESTS", ...command("npm", ["run", "test", "--", "--run"]), cwd: frontend },
   ];
   const selected = input.stages ? new Set(input.stages) : undefined;
   return selected ? commands.filter(({ stage }) => selected.has(stage)) : commands;
+}
+
+function notApplicableStage(stage: "BACKEND_COMPILE" | "BACKEND_TESTS"): QualityStageResult {
+  return {
+    stage,
+    status: "SKIPPED",
+    hardGate: false,
+    summary: "Not applicable for FRONTEND_ONLY generation.",
+    diagnostics: [],
+  };
 }
 
 function configuredMavenRepoArgs(): string[] {
@@ -482,7 +495,9 @@ function commandBlockers(stage: QualityStageName, stages: QualityStageResult[]):
   };
   for (const dependency of dependencies[stage] || []) {
     const result = stages.find((item) => item.stage === dependency);
-    if (result && result.status !== "PASSED") return result.blockedBy?.length ? result.blockedBy : [dependency];
+    const notApplicable = result?.status === "SKIPPED" && result.hardGate === false
+      && result.diagnostics.length === 0 && result.summary.startsWith("Not applicable");
+    if (result && result.status !== "PASSED" && !notApplicable) return result.blockedBy?.length ? result.blockedBy : [dependency];
   }
   return [];
 }

@@ -23,10 +23,12 @@ export function evaluateQualityGates(
     .filter(({ hardGate }) => hardGate)
     .every(({ status }) => status === "PASSED");
   const softFailures: SoftGateScope[] = [];
-  if (stages.some(({ stage, status }) => stage === "BACKEND_TESTS" && status !== "PASSED")) {
+  if (stages.some(({ stage, status, blockedBy }) => stage === "BACKEND_TESTS"
+    && status !== "PASSED" && !(status === "SKIPPED" && !blockedBy?.length))) {
     softFailures.push("BACKEND_TESTS");
   }
-  if (stages.some(({ stage, status }) => stage === "FRONTEND_TESTS" && status !== "PASSED")) {
+  if (stages.some(({ stage, status, blockedBy }) => stage === "FRONTEND_TESTS"
+    && status !== "PASSED" && !(status === "SKIPPED" && !blockedBy?.length))) {
     softFailures.push("FRONTEND_TESTS");
   }
   const overridden = new Set(overriddenScopes);

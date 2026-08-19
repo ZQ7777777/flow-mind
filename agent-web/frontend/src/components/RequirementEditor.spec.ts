@@ -117,7 +117,7 @@ describe("RequirementEditor", () => {
     expect(edge?.defaultEdge).toBe(true);
   });
 
-  it("preserves version 1.1 dynamic reference-data bindings when saving", async () => {
+  it("migrates to 1.2 while preserving dynamic reference-data bindings", async () => {
     const input = revision();
     input.requirement.formFields.push({
       fieldCode: "productCodes",
@@ -142,7 +142,8 @@ describe("RequirementEditor", () => {
     await saveButton(wrapper).trigger("click");
 
     const saved = wrapper.emitted("save")?.[0]?.[0] as RequirementRevision["requirement"];
-    expect(saved.schemaVersion).toBe("1.1");
+    expect(saved.schemaVersion).toBe("1.2");
+    expect(saved.frontendBehavior?.sections).toBeDefined();
     expect(saved.formFields.at(-1)).toEqual(expect.objectContaining({
       multiple: true,
       referenceDataSource: expect.objectContaining({ resource: "FUTURES_PRODUCTS" }),

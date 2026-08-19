@@ -178,6 +178,34 @@ describe("verification worker", () => {
     expect(existsSync(workspaces[0])).toBe(false);
   });
 
+  it("runs only frontend commands and reports backend stages as not applicable", async () => {
+    const frontendContract = structuredClone(contract);
+    frontendContract.contractVersion = "2.1";
+    frontendContract.generationMode = "FRONTEND_ONLY";
+    delete frontendContract.backend;
+    const commands: string[] = [];
+    const result = await new VerificationWorkerService().run({
+      generationId: "generation-frontend-only",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract: frontendContract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        commands.push(command.stage);
+        return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    expect(commands).toEqual(["FRONTEND_TYPECHECK", "FRONTEND_BUILD", "FRONTEND_TESTS"]);
+    expect(result.stages.filter(({ stage }) => stage.startsWith("BACKEND"))).toEqual([
+      expect.objectContaining({ stage: "BACKEND_COMPILE", status: "SKIPPED", hardGate: false, summary: expect.stringContaining("Not applicable") }),
+      expect.objectContaining({ stage: "BACKEND_TESTS", status: "SKIPPED", hardGate: false, summary: expect.stringContaining("Not applicable") }),
+    ]);
+    expect(result.stages.filter(({ stage }) => stage.startsWith("FRONTEND")).every(({ status }) => status === "PASSED")).toBe(true);
+  });
+
   it("classifies hard and soft failures and truncates command output", async () => {
     const worker = new VerificationWorkerService();
     const result = await worker.run({

@@ -96,6 +96,26 @@ describe("business router", () => {
     );
   });
 
+  it("redirects an anonymous standalone generated route to login", async () => {
+    setActivePinia(createPinia());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "BUSINESS_AUTHENTICATION_REQUIRED", message: "请先登录",
+    }), { status: 401, headers: { "Content-Type": "application/json" } })));
+    const generatedRoute: RouteRecordRaw = {
+      path: "/generated/warehouse-pledge/apply",
+      name: "generated-warehouse-pledge-apply",
+      component: { template: "<div>warehouse pledge</div>" },
+      meta: { standalone: true },
+    };
+    const router = createBusinessRouter([generatedRoute], createMemoryHistory());
+
+    await router.push("/generated/warehouse-pledge/apply");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toBe("/login");
+    expect(router.currentRoute.value.query.redirect).toBe("/generated/warehouse-pledge/apply");
+  });
+
   it("admits administrators to the admin alerts route", async () => {
     setActivePinia(createPinia());
     vi.stubGlobal("fetch", mockMe(true));
@@ -118,4 +138,3 @@ describe("business router", () => {
     expect(router.currentRoute.value.path).toBe("/workflow/todo");
   });
 });
-

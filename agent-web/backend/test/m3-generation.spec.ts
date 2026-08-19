@@ -49,43 +49,39 @@ describe("M3 user-defined business generation", () => {
     const started = generation.start("session-m3", user, 0, "start-m3", target);
     const first = await waitForReview(started.generationId);
     expect(first.manifest?.files.map((file) => file.relativePath).sort()).toEqual([...spec.files].sort());
-    expect(first.manifest?.files).toHaveLength(11);
+    expect(first.manifest?.files).toHaveLength(5);
     expect(first.generationRevision).toBe(1);
-    expect(spec.paths.service).toContain("travelexpense2026/TravelExpense2026Service.java");
-    expect(spec.paths.view).toContain("travel-expense-2026/TravelExpense2026Apply.vue");
+    expect(first.backendRestartRequired).toBe(false);
+    expect(first.context?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(spec.paths.businessForm).toContain("travel-expense-2026/BusinessForm.vue");
+    expect(spec.paths.applyView).toContain("travel-expense-2026/Apply.vue");
 
-    const service = generation.readFile("session-m3", started.generationId, spec.paths.service, user);
-    expect(service.content.match(/startAndSubmit\(/g)).toHaveLength(1);
-    expect(service.content).toContain('request.setProcessCode("travel_expense_2026")');
-    expect(service.content).toContain('request.setInstanceTitle("差旅报销")');
-    expect(service.content).toContain('variables.put("tripDays"');
-    expect(generation.readFile("session-m3", started.generationId, spec.paths.requestDto, user).content).toContain('@DecimalMin("1")');
-    expect(service.content).toContain('item.setAttachmentCode("receipts")');
-    expect(service.content).toContain('item.setAttachmentCode("itinerary")');
-    expect(service.content).not.toContain("financeProofFiles");
-    expect(service.content).not.toMatch(/approve\(|submitTask\(|RestTemplate|Repository/);
+    const form = generation.readFile("session-m3", started.generationId, spec.paths.businessForm, user).content;
+    expect(form).toContain('"tripDays"');
+    expect(form).not.toMatch(/startAndSubmit|FormData|upload|approve\(/);
     expect(() => generation.readFile("session-m3", started.generationId, "../pom.xml", user)).toThrow(/generation boundary/);
 
-    const view = generation.readFile("session-m3", started.generationId, spec.paths.view, user).content;
-    expect(view).toContain("出差天数");
-    expect(view).toContain("报销凭证");
-    expect(view).not.toContain("财务补充材料");
+    const view = generation.readFile("session-m3", started.generationId, spec.paths.applyView, user).content;
+    expect(view).toContain("WorkflowStartShell");
+    expect(view).toContain('process-code="travel_expense_2026"');
+    expect(view).not.toMatch(/附件|FormData|fetch\(/);
     const routeDiff = generation.readDiff("session-m3", started.generationId, spec.paths.routeRegistry, user);
     expect(routeDiff.changeType).toBe("MODIFY");
     expect(routeDiff.stagedContent).toContain("existing-route");
     expect(routeDiff.unifiedDiff).toContain("generated-travel-expense-2026-apply");
 
     const edited = generation.editFile(
-      "session-m3", started.generationId, spec.paths.api,
-      `${generation.readFile("session-m3", started.generationId, spec.paths.api, user).content}\n// reviewed\n`, 1, user,
+      "session-m3", started.generationId, spec.paths.businessForm,
+      `${form}\n<!-- reviewed -->\n`, 1, user,
     );
     expect(edited.revision).toBe(2);
-    expect(edited.files.find((file) => file.relativePath === spec.paths.api)?.editedByUser).toBe(true);
+    expect(edited.files.find((file) => file.relativePath === spec.paths.businessForm)?.editedByUser).toBe(true);
 
     const session = database.getSession("session-m3")!;
     const regenerated = generation.regenerate("session-m3", started.generationId, user, session.row_version, 2, "regen-m3");
     const second = await waitForReview(regenerated.generationId);
     expect(second.generationId).not.toBe(first.generationId);
+    expect(second.context?.sha256).toBe(first.context?.sha256);
     expect(database.getGeneration(started.generationId)?.status).toBe("SUPERSEDED");
     expect(existsSync(database.getGeneration(regenerated.generationId)!.staging_dir)).toBe(true);
   });
@@ -105,15 +101,15 @@ describe("M3 user-defined business generation", () => {
 
     const started = generation.start("session-no-files", user, 0, "start-no-files", target);
     await waitForReview(started.generationId, "session-no-files");
-    const service = generation.readFile("session-no-files", started.generationId, spec.paths.service, user).content;
-    const view = generation.readFile("session-no-files", started.generationId, spec.paths.view, user).content;
-    expect(service).toContain('variables.put("reason"');
-    expect(service).not.toContain("bankReceipt");
-    expect(view).toContain("请假原因");
+    const form = generation.readFile("session-no-files", started.generationId, spec.paths.businessForm, user).content;
+    const view = generation.readFile("session-no-files", started.generationId, spec.paths.applyView, user).content;
+    expect(form).toContain('"reason"');
+    expect(form).not.toContain("bankReceipt");
+    expect(view).toContain('process-code="leave-request"');
     expect(view).not.toContain('type="file"');
   });
 
-  it("appends a required application number to the generated instance title", async () => {
+  it("keeps application numbers inside the delegated frontend form", async () => {
     const target = createGenerationTarget(parent);
     const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
     requirement.businessCode = "numbered_request";
@@ -129,11 +125,11 @@ describe("M3 user-defined business generation", () => {
     await waitForReview(started.generationId, "session-numbered");
 
     const spec = deriveGenerationSpec(requirement, readContract(target));
-    const service = generation.readFile("session-numbered", started.generationId, spec.paths.service, user).content;
-    const serviceTest = generation.readFile("session-numbered", started.generationId, spec.paths.serviceTest, user).content;
-    expect(service).toContain('request.setInstanceTitle("编号申请 - " + input.getApplicationNo())');
-    expect(serviceTest).toContain('request.setApplicationNo("value")');
-    expect(serviceTest).toContain('"编号申请 - value".equals(value.getInstanceTitle())');
+    const form = generation.readFile("session-numbered", started.generationId, spec.paths.businessForm, user).content;
+    const apply = generation.readFile("session-numbered", started.generationId, spec.paths.applyView, user).content;
+    expect(form).toContain('"applicationNo"');
+    expect(apply).toContain('process-code="numbered_request"');
+    expect(apply).not.toContain("setInstanceTitle");
   });
 
   it("generates initiation code when apply enters a parallel split gateway", async () => {
@@ -145,9 +141,9 @@ describe("M3 user-defined business generation", () => {
     await waitForReview(started.generationId, "session-parallel");
 
     const spec = deriveGenerationSpec(requirement, readContract(target));
-    const service = generation.readFile("session-parallel", started.generationId, spec.paths.service, user).content;
-    expect(service.match(/startAndSubmit\(/g)).toHaveLength(1);
-    expect(service).not.toMatch(/approve\(|submitTask\(/);
+    const apply = generation.readFile("session-parallel", started.generationId, spec.paths.applyView, user).content;
+    expect(apply).toContain("WorkflowStartShell");
+    expect(apply).not.toMatch(/startAndSubmit|approve\(|submitTask\(/);
   });
 
   it("preserves the frozen target baseline when a reviewed file is edited", async () => {
@@ -195,6 +191,20 @@ describe("M3 user-defined business generation", () => {
     ).stale).toBe(true);
   });
 
+  it("requires legacy unfinished generations without a context snapshot to restart", async () => {
+    const target = createGenerationTarget(parent);
+    const requirement = travelExpenseRequirement();
+    seedActiveWorkflow(database, "session-legacy-context", null, "user_sales", requirement);
+    const started = generation.start("session-legacy-context", user, 0, "start-legacy-context", target);
+    await waitForReview(started.generationId, "session-legacy-context");
+    database.db.prepare("UPDATE agent_code_generation SET generation_context_snapshot_json = '{}' WHERE id = ?")
+      .run(started.generationId);
+    const session = database.getSession("session-legacy-context")!;
+    expect(() => generation.regenerate(
+      "session-legacy-context", started.generationId, user, session.row_version, 1, "regen-legacy-context",
+    )).toThrow(/context snapshot is missing; start a new generation/);
+  });
+
   it("allows a hard-gate-failed revision to be edited before reverify", async () => {
     const target = createGenerationTarget(parent);
     const requirement = travelExpenseRequirement();
@@ -205,8 +215,8 @@ describe("M3 user-defined business generation", () => {
     database.db.prepare("UPDATE agent_code_generation SET status = 'FAILED' WHERE id = ?").run(started.generationId);
     database.db.prepare("UPDATE agent_session SET state = 'CODE_PIPELINE_FAILED' WHERE id = ?").run("session-m3");
 
-    const content = generation.readFile("session-m3", started.generationId, spec.paths.api, user).content;
-    const edited = generation.editFile("session-m3", started.generationId, spec.paths.api, content + "\\n// fixed\\n", 1, user);
+    const content = generation.readFile("session-m3", started.generationId, spec.paths.businessForm, user).content;
+    const edited = generation.editFile("session-m3", started.generationId, spec.paths.businessForm, content + "\\n<!-- fixed -->\\n", 1, user);
     expect(edited.revision).toBe(2);
   });
 

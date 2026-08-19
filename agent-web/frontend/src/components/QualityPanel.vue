@@ -24,8 +24,8 @@ const failedSoftScopes = computed<OverrideScope[]>(() => {
   const report = quality.value;
   if (!report) return [];
   const result: OverrideScope[] = [];
-  if (report.stages.some(({ stage, status }) => stage === "BACKEND_TESTS" && status !== "PASSED")) result.push("BACKEND_TESTS");
-  if (report.stages.some(({ stage, status }) => stage === "FRONTEND_TESTS" && status !== "PASSED")) result.push("FRONTEND_TESTS");
+  if (report.stages.some(({ stage, status, blockedBy }) => stage === "BACKEND_TESTS" && status !== "PASSED" && !(status === "SKIPPED" && !blockedBy?.length))) result.push("BACKEND_TESTS");
+  if (report.stages.some(({ stage, status, blockedBy }) => stage === "FRONTEND_TESTS" && status !== "PASSED" && !(status === "SKIPPED" && !blockedBy?.length))) result.push("FRONTEND_TESTS");
   if (!report.review || report.review.verdict !== "APPROVE") result.push("REVIEWER");
   return result;
 });

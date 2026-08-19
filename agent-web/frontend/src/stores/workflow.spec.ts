@@ -231,7 +231,7 @@ describe("workflow SSE lifecycle", () => {
       state: "CODE_REVIEW",
       rowVersion: 6,
       activeGeneration: {
-        generationId: "acg_1", status: "REVIEW", generationRevision: 1,
+        generationId: "acg_1", status: "REVIEW", generationRevision: 1, backendRestartRequired: false,
         targetRoot: "E:\\workspace\\business-base", contractVersion: "1.0",
         manifest: { generationId: "acg_1", targetRoot: "E:\\workspace\\business-base", contractVersion: "1.0", revision: 1, files: [] },
         createdAt: "2026-08-03T00:00:00Z", updatedAt: "2026-08-03T00:00:00Z",
@@ -273,6 +273,7 @@ describe("workflow SSE lifecycle", () => {
         generationId: "acg_failed",
         status: "FAILED",
         generationRevision: 2,
+        backendRestartRequired: false,
         targetRoot: "E:\\workspace\\business-base",
         contractVersion: "1.0",
         manifest: {
@@ -316,6 +317,7 @@ describe("workflow SSE lifecycle", () => {
         generationId: "acg_entry",
         status: "REVIEW",
         generationRevision: 2,
+        backendRestartRequired: false,
         targetRoot: "E:\\workspace\\business-base",
         contractVersion: "1.0",
         manifest: {
@@ -382,6 +384,7 @@ describe("workflow SSE lifecycle", () => {
         generationId: "acg_verifying",
         status: "VERIFYING",
         generationRevision: 2,
+        backendRestartRequired: false,
         targetRoot: "E:\\workspace\\business-base",
         contractVersion: "1.0",
         manifest: {

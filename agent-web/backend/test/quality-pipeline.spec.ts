@@ -210,7 +210,7 @@ describe("M4 quality pipeline integration", () => {
           .get(started.generationId)).toEqual({ count: 1 });
         return;
       }
-      if (summary.status === "FAILED") throw new Error(summary.lastError?.message);
+      if (summary.status === "FAILED") throw new Error(`${summary.lastError?.message}: ${JSON.stringify(summary.quality)}`);
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     throw new Error("quality pipeline timed out");
@@ -233,7 +233,7 @@ describe("M4 quality pipeline integration", () => {
           .get(started.generationId)).toEqual({ count: 0 });
         return;
       }
-      if (summary.status === "FAILED") throw new Error(summary.lastError?.message);
+      if (summary.status === "FAILED") throw new Error(`${summary.lastError?.message}: ${JSON.stringify(summary.quality)}`);
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     throw new Error("skipped-review quality pipeline timed out");
@@ -343,7 +343,7 @@ describe("M4 quality pipeline integration", () => {
               message: "Repair the generated boundary.",
               severity: "ERROR" as const,
               hardGate: true,
-              relativePath: "backend/EntryApplicationService.java",
+              relativePath: "frontend/src/modules/generated/entry-application/BusinessForm.vue",
             }],
           };
         }
@@ -372,8 +372,8 @@ describe("M4 quality pipeline integration", () => {
       const brief = JSON.parse(prompt.split("Current Repair Brief:\n")[1]) as {
         actionableDiagnostics: Array<{ diagnosticId: string }>;
       };
-      const changedPath = callbacks.listStaged().find((path) => path.endsWith("Service.java"))!;
-      callbacks.writeStaged(changedPath, `${callbacks.readStaged(changedPath)}\n// repaired from current diagnostic\n`);
+      const changedPath = callbacks.listStaged().find((path) => path.endsWith("BusinessForm.vue"))!;
+      callbacks.writeStaged(changedPath, `${callbacks.readStaged(changedPath)}\n<!-- repaired from current diagnostic -->\n`);
       callbacks.reportComplete(callbacks.listStaged(), brief.actionableDiagnostics.map(({ diagnosticId }) => ({
         diagnosticId,
         status: "RESOLVED",
@@ -533,7 +533,7 @@ describe("M4 quality pipeline integration", () => {
           canWrite: true,
           repairAttempts: [expect.objectContaining({
             outcome: "CHANGED",
-            changedFiles: [expect.stringMatching(/EntryApplicationApply\.spec\.ts$/)],
+            changedFiles: [expect.stringMatching(/entry-application[\\/]__tests__[\\/]Apply\.spec\.ts$/)],
           })],
         }));
         expect(summary.quality.repairAttempts![0].failureCode).toBeUndefined();
@@ -580,8 +580,8 @@ describe("M4 quality pipeline integration", () => {
         expect(() => callbacks.readVerificationDiagnostic!(priorDiagnosticId))
           .toThrow("not part of the current verification run");
       }
-      const changedPath = callbacks.listStaged().find((path) => path.endsWith("Service.java"))!;
-      callbacks.writeStaged(changedPath, `${callbacks.readStaged(changedPath)}\n// repair round ${briefs.length}\n`);
+      const changedPath = callbacks.listStaged().find((path) => path.endsWith("BusinessForm.vue"))!;
+      callbacks.writeStaged(changedPath, `${callbacks.readStaged(changedPath)}\n<!-- repair round ${briefs.length} -->\n`);
       callbacks.reportComplete(callbacks.listStaged(), brief.actionableDiagnostics.map(({ diagnosticId }) => ({
         diagnosticId,
         status: "RESOLVED",

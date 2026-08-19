@@ -41,6 +41,7 @@ export interface GenerationSpec {
   kebabCode: string;
   javaPackage: string;
   apiPath: string;
+  hasBusinessApi: boolean;
   routePath: string;
   routeName: string;
   applyAttachments: AttachmentRequirement[];
@@ -86,8 +87,11 @@ export function deriveGenerationSpec(
     throw new GenerationRequirementError([`业务编码 ${requirement.businessCode} 派生出的 Java 包名是保留字`]);
   }
 
-  if (isFrontendFormOnlyContract(contract)) {
+  if (isFrontendOnlyContract(contract)) {
     const frontendModule = joinPath(contract.frontend.rootDir, contract.frontend.generatedModuleDir);
+    const frontendApi = joinPath(contract.frontend.rootDir, contract.frontend.generatedApiDir || "src/api/generated");
+    const hasBusinessApi = requirement.formFields.some(({ referenceDataSource }) => Boolean(referenceDataSource))
+      || Boolean(requirement.frontendBehavior?.dataQueries.length);
     const paths = {
       controller: "",
       service: "",
@@ -97,8 +101,8 @@ export function deriveGenerationSpec(
       serviceTest: "",
       view: joinPath(frontendModule, kebabCode, "Apply.vue"),
       viewTest: joinPath(frontendModule, kebabCode, "__tests__", "Apply.spec.ts"),
-      api: "",
-      apiTest: "",
+      api: joinPath(frontendApi, kebabCode, `${kebabCode}.ts`),
+      apiTest: joinPath(frontendApi, kebabCode, `${kebabCode}.spec.ts`),
       routeRegistry: joinPath(contract.frontend.rootDir, contract.frontend.routeRegistry),
       businessForm: joinPath(frontendModule, kebabCode, "BusinessForm.vue"),
       businessFormTest: joinPath(frontendModule, kebabCode, "__tests__", "BusinessForm.spec.ts"),
@@ -114,6 +118,7 @@ export function deriveGenerationSpec(
       kebabCode,
       javaPackage: "",
       apiPath: `/api/workflow/processes/${requirement.businessCode}/start-submit`,
+      hasBusinessApi,
       routePath: `/generated/${kebabCode}/apply`,
       routeName: `generated-${kebabCode}-apply`,
       applyAttachments: requirement.attachments
@@ -124,6 +129,7 @@ export function deriveGenerationSpec(
         paths.businessFormTest,
         paths.applyView,
         paths.applyViewTest,
+        ...(hasBusinessApi ? [paths.api, paths.apiTest] : []),
         paths.routeRegistry,
       ],
       paths,
@@ -163,6 +169,7 @@ export function deriveGenerationSpec(
     kebabCode,
     javaPackage: `${backend.basePackage}.generated.${packageSegment}`,
     apiPath: `/api/generated/${kebabCode}/submit`,
+    hasBusinessApi: true,
     routePath: `/generated/${kebabCode}/apply`,
     routeName: `generated-${kebabCode}-apply`,
     applyAttachments: requirement.attachments
@@ -221,10 +228,10 @@ function joinPath(...parts: string[]): string {
   return parts.map((part) => part.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/");
 }
 
-function isFrontendFormOnlyContract(contract: GenerationTargetContract): contract is GenerationTargetContract & {
-  contractVersion: "2.0";
-  generationMode: "FRONTEND_FORM_ONLY";
-  frontend: GenerationTargetContract["frontend"] & { generatedModuleDir: string };
+function isFrontendOnlyContract(contract: GenerationTargetContract): contract is GenerationTargetContract & {
+  contractVersion: "2.0" | "2.1";
+  generationMode: "FRONTEND_FORM_ONLY" | "FRONTEND_ONLY";
+  frontend: GenerationTargetContract["frontend"] & { generatedModuleDir: string; generatedApiDir?: string };
 } {
-  return (contract as { generationMode?: string }).generationMode === "FRONTEND_FORM_ONLY";
+  return ["FRONTEND_FORM_ONLY", "FRONTEND_ONLY"].includes((contract as { generationMode?: string }).generationMode || "");
 }

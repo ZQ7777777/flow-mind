@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -10,6 +10,7 @@ import type {
   QualityStageResult,
   RepairAttemptSummary,
   RepairResolution,
+  GenerationContextSnapshot,
 } from "@flowmind/agent-contracts";
 import { DatabaseService, type GenerationRow } from "../persistence/database.service.js";
 import { EventBusService } from "../workflow/event-bus.service.js";
@@ -17,8 +18,8 @@ import { PiAdapterService, type GenerationPiCallbacks } from "../pi/pi-adapter.s
 import { deriveGenerationSpec } from "../generation/generation-spec.js";
 import { generationContract, StagingService } from "../generation/staging.service.js";
 import { sha256, TargetContractService } from "../generation/target-contract.service.js";
-import { apiReferencePaths } from "../generation/target-contract.service.js";
 import type { GenerationApiReferences } from "../pi/generation-prompt.js";
+import { GenerationContextRegistry } from "../generation/generation-context-registry.service.js";
 import { qualityDiagnostic, sanitizeDiagnosticEvidence } from "../verification/quality-diagnostic.js";
 
 export interface RepairAttemptResult {
@@ -57,6 +58,7 @@ export class RepairCoordinatorService {
     @Inject(StagingService) private readonly staging: StagingService,
     @Inject(PiAdapterService) private readonly pi: PiAdapterService,
     @Inject(EventBusService) private readonly events: EventBusService,
+    @Optional() @Inject(GenerationContextRegistry) private readonly contexts?: GenerationContextRegistry,
   ) {}
 
   async attempt(
@@ -84,10 +86,12 @@ export class RepairCoordinatorService {
     const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
     const spec = deriveGenerationSpec(requirement, contract);
     const target = { targetRoot: generation.target_root, contract };
-    const referencePaths = apiReferencePaths(contract);
+    const contextSnapshot = parseRepairContext(generation.generation_context_snapshot_json);
     const apiReferences: GenerationApiReferences = {
-      platformRuntime: this.targets.readReference(target, referencePaths.platformRuntime, generation.session_id),
-      trustedUserContext: this.targets.readReference(target, referencePaths.trustedUserContext, generation.session_id),
+      businessReferenceData: contract.frontend.apiReferences?.businessReferenceData
+        ? this.targets.readReference(target, contract.frontend.apiReferences.businessReferenceData, generation.session_id)
+        : undefined,
+      contextSummary: this.contexts ? JSON.stringify(this.contexts.summary(contextSnapshot)) : undefined,
     };
     const manifestPaths = this.staging.list(generation);
     const currentStages = attachVerificationContext(stages, verificationRunId, manifestPaths);
@@ -127,6 +131,7 @@ export class RepairCoordinatorService {
       listStaged: () => this.staging.list(this.requiredRepairing(generation.id)),
       writeStaged: (path, content) => this.staging.writeDuringRepair(this.requiredRepairing(generation.id), path, content),
       deleteStaged: () => { throw new Error("Repair cannot delete Manifest files."); },
+      ...repairContextAccess(this.contexts, contextSnapshot, generation.session_id),
       readVerificationDiagnostic: (diagnosticId) => this.readVerificationDiagnostic(
         generation.id,
         verificationRunId,
@@ -400,11 +405,46 @@ export function buildRepairPrompt(
     "Follow expected, repairHint, and acceptedForms exactly. Make the smallest relevant changes and never weaken tests.",
     "If repeatedDiagnostics or ineffectiveRepairSignals.requiresRootCauseRecheck is non-empty, compare previousAttempt.changedFiles with the explicitly remaining subchecks, then stop continuing the same edit pattern: re-confirm the root cause from authoritative source, API/type definitions, imports, Maven/npm dependencies, and Java/TypeScript version limits.",
     "Report one RESOLVED resolution for every actionable diagnostic and actionable reviewer diagnostic. This is a repair claim only; the next verification run decides whether the diagnostic is actually RESOLVED. Do not claim blocked infrastructure, protected-file, or derived findings are resolved.",
-    "Before editing, use the authoritative references below. Never guess Java packages, types, getters, setters, Vue props, or TypeScript payload shapes.",
-    `Authoritative platform runtime API reference:\n${apiReferences?.platformRuntime || "Unavailable in legacy prompt test."}`,
-    `Authoritative trusted user context source:\n${apiReferences?.trustedUserContext || "Unavailable in legacy prompt test."}`,
+    "Before editing, read the immutable project skill and golden references. Keep the frontend-only boundary: no backend files, workflow submission, attachment ownership, or mutation APIs in generated business code.",
+    `Authoritative read-only business API reference:\n${apiReferences?.businessReferenceData || "No generated business API is required."}`,
+    `Immutable generation context summary:\n${apiReferences?.contextSummary || "Unavailable in legacy prompt test."}`,
     `Current Repair Brief:\n${JSON.stringify(brief)}`,
   ].join("\n");
+}
+
+function parseRepairContext(value: string): GenerationContextSnapshot {
+  const parsed = JSON.parse(value || "{}") as GenerationContextSnapshot;
+  if (parsed.version !== "1.0" || !parsed.sha256 || !Array.isArray(parsed.skills) || !Array.isArray(parsed.references)) {
+    throw new Error("generation context snapshot is missing; start a new generation");
+  }
+  return parsed;
+}
+
+function repairContextAccess(
+  registry: GenerationContextRegistry | undefined,
+  snapshot: GenerationContextSnapshot,
+  sessionId: string,
+): Pick<GenerationPiCallbacks, "listGenerationContext" | "readGenerationContext" | "requiredGenerationContextKeys"> {
+  const items = [
+    ...snapshot.skills.flatMap((skill) => skill.files.map((file) => ({
+      key: `skill:${skill.name}:${file.relativePath}`, sha256: file.sha256,
+      required: file.relativePath === "SKILL.md" || file.relativePath === "references/golden-example.md",
+      read: () => registry?.readSkill(snapshot, skill.name, file.relativePath, sessionId) || file.content,
+    }))),
+    ...snapshot.references.map((reference) => ({
+      key: `reference:${reference.source}:${reference.relativePath}`, sha256: reference.sha256, required: reference.source === "REPOSITORY",
+      read: () => registry?.readReference(snapshot, reference.source, reference.relativePath, sessionId) || reference.content,
+    })),
+  ];
+  return {
+    listGenerationContext: () => items.map(({ key, sha256, required }) => ({ key, sha256, required })),
+    readGenerationContext: (key) => {
+      const item = items.find((candidate) => candidate.key === key);
+      if (!item) throw new Error("generation context file was not found");
+      return item.read();
+    },
+    requiredGenerationContextKeys: items.filter(({ required }) => required).map(({ key }) => key),
+  };
 }
 
 function attachVerificationContext(

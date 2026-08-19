@@ -47,22 +47,24 @@ describe("tester quality-gate fixture", () => {
     const fixtureProcess = database.getProcessBySession(fixture.sessionId)!;
     expect(database.getSession(fixture.sessionId)?.state).toBe("CODE_REVIEW");
     expect(summary).toEqual(expect.objectContaining({ status: "REVIEW", generationRevision: 1 }));
-    expect(summary.manifest?.files).toHaveLength(11);
+    expect(summary.manifest?.files).toHaveLength(5);
+    expect(summary.context?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.parse(fixtureProcess.validation_json || "{}")).toEqual({ valid: true, issues: [] });
     expect(fixtureProcess.platform_snapshot_json).not.toBeNull();
     const fixtureCode = generation.readFile(
       fixture.sessionId,
       fixture.generationId,
-      "backend/src/main/java/com/flowmind/business/generated/entryapplication/EntryApplicationService.java",
+      "frontend/src/modules/generated/entry-application/BusinessForm.vue",
       { userId: "user_tester", userName: "Quality Tester" },
     ).content;
-    expect(fixtureCode).toContain("request.setVariables(variables)");
+    expect(fixtureCode).toContain('"applicationNo"');
+    expect(fixtureCode).not.toContain("startAndSubmit");
     const fixtureTest = generation.readFile(
       fixture.sessionId,
       fixture.generationId,
-      "backend/src/test/java/com/flowmind/business/generated/entryapplication/EntryApplicationServiceTest.java",
+      "frontend/src/modules/generated/entry-application/__tests__/Apply.spec.ts",
       { userId: "user_tester", userName: "Quality Tester" },
     ).content;
-    expect(fixtureTest).toContain("new MockMultipartFile");
+    expect(fixtureTest).toContain("WorkflowStartShell");
   });
 });

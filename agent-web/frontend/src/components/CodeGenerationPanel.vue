@@ -14,10 +14,13 @@ interface TreeNode { label: string; path?: string; children?: TreeNode[] }
 const props = defineProps<{ generation: CodeGenerationSummary }>();
 const store = useWorkflowStore();
 const pipelineActive = computed(() => ["CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING"].includes(store.state || ""));
-const previewPath = computed(() => (props.generation.manifest?.files || [])
-  .map((file) => file.relativePath)
-  .filter((path) => path.endsWith(".vue") && !path.includes("/__tests__/") && !/\.spec\.vue$/i.test(path))
-  .sort()[0] || "");
+const previewPath = computed(() => {
+  const candidates = (props.generation.manifest?.files || [])
+    .map((file) => file.relativePath)
+    .filter((path) => path.endsWith(".vue") && !path.includes("/__tests__/") && !/\.spec\.vue$/i.test(path))
+    .sort();
+  return candidates.find((path) => path.endsWith("/BusinessForm.vue")) || candidates[0] || "";
+});
 const selectedPath = ref("");
 const mode = ref<"preview" | "edit" | "diff">(previewPath.value ? "preview" : "edit");
 const editorHost = ref<HTMLElement>();

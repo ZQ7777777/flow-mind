@@ -60,9 +60,8 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
   await page.getByRole("tab", { name: "代码预览" }).click();
   await expect(page.getByText("generated-routes.ts", { exact: true })).toBeVisible();
   const previewFrame = page.frameLocator('iframe[title="Agent 生成前端界面静态预览"]');
-  await expect(previewFrame.locator("form")).toBeVisible();
-  await previewFrame.locator('[data-preview-action="submit"]').click();
-  await expect(previewFrame.getByText("当前仅为界面预览，内容未真实提交。")).toBeVisible();
+  await expect(previewFrame.locator("section")).toBeVisible();
+  await expect(previewFrame.locator('[data-preview-action="submit"]')).toHaveCount(0);
 });
 
 test("质押动态需求生成同源参考数据调用与多选 DTO", async ({ page }) => {
@@ -99,21 +98,31 @@ test("质押动态需求生成同源参考数据调用与多选 DTO", async ({ p
   await expect(workflowState).toHaveText("CODE_REVIEW", { timeout: 10000 });
 
   const apiFile = await page.request.get(
-    `/api/agent/sessions/${sessionId}/code-generations/${generationId}/files/frontend/src/api/generated/warehouse-pledge.ts`,
+    `/api/agent/sessions/${sessionId}/code-generations/${generationId}/files/frontend/src/api/generated/warehouse-pledge/warehouse-pledge.ts`,
   );
   expect(apiFile.ok()).toBe(true);
   const apiContent = (await apiFile.json() as { content: string }).content;
-  expect(apiContent).toContain("productCodes: string[]");
   expect(apiContent).toContain("/api/reference-data/futures-accounts");
   expect(apiContent).toContain("/api/reference-data/futures-products?");
   expect(apiContent).toContain("/trading-codes?exchangeCode=");
+  expect(apiContent).not.toContain('method: "POST"');
 
   const viewFile = await page.request.get(
-    `/api/agent/sessions/${sessionId}/code-generations/${generationId}/files/frontend/src/modules/generated/warehouse-pledge/WarehousePledgeApply.vue`,
+    `/api/agent/sessions/${sessionId}/code-generations/${generationId}/files/frontend/src/modules/generated/warehouse-pledge/BusinessForm.vue`,
   );
   expect(viewFile.ok()).toBe(true);
   const viewContent = (await viewFile.json() as { content: string }).content;
-  expect(viewContent).toContain("multiple");
-  expect(viewContent).toContain("codes[codes.length - 1]");
-  expect(viewContent).toContain("form.tradingCode = \"\"");
+  expect(viewContent).toContain('"productCodes"');
+  expect(viewContent).toContain('"accountFunds"');
+  expect(viewContent).toContain('"amount"');
+  expect(viewContent).not.toContain("fetch(");
+
+  const applyFile = await page.request.get(
+    `/api/agent/sessions/${sessionId}/code-generations/${generationId}/files/frontend/src/modules/generated/warehouse-pledge/Apply.vue`,
+  );
+  expect(applyFile.ok()).toBe(true);
+  const applyContent = (await applyFile.json() as { content: string }).content;
+  expect(applyContent).toContain("WorkflowStartShell");
+  expect(applyContent).toContain('process-code="warehouse_pledge"');
+  expect(applyContent).not.toContain("fetch(");
 });

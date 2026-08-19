@@ -89,6 +89,7 @@ describe("MessageCenterView", () => {
     const wrapper = mountView();
     await flushPromises();
 
+    await wrapper.get('[data-test="message-row-m1"]').trigger("click");
     await flushPromises();
 
     expect(fetchMock.mock.calls[1][0]).toContain("/api/messages/m1/read");

@@ -2,105 +2,47 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getAccountFunds,
   getExchanges,
-  getStartContext,
   getTradingCodes,
   searchFuturesAccounts,
   searchFuturesProducts,
-  startSubmit,
 } from "./sample";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
+  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" }, ...init });
 }
 
-describe("generated sample api", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+describe("warehouse pledge sample read-only api", () => {
+  afterEach(() => vi.restoreAllMocks());
 
-  it("loads sample start context", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ processCode: "sample", processName: "仓单、国债（解）质押申请", startable: true }),
-    );
-
-    const result = await getStartContext("sample");
-
-    expect(result.processCode).toBe("sample");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/workflow/processes/sample/start-context",
-      expect.objectContaining({ credentials: "same-origin" }),
-    );
-  });
-
-  it("queries reference-data endpoints with expected parameters", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
+  it("queries declared reference-data endpoints with encoded parameters", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse({ accountNo: "80000188", exchangeFunds: [] }))
+      .mockResolvedValueOnce(jsonResponse({ accountNo: "8000/01", exchangeFunds: [] }))
       .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([]));
 
-    await searchFuturesAccounts("8000");
-    await getAccountFunds("80000188");
+    await searchFuturesAccounts(" 启明 ");
+    await getAccountFunds("8000/01");
     await getExchanges();
-    await getTradingCodes("80000188", "CFFEX");
+    await getTradingCodes("8000/01", "CFFEX");
     await searchFuturesProducts("CFFEX", "IF");
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "/api/reference-data/futures-accounts?keyword=8000",
-    );
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
-      "/api/reference-data/futures-accounts/80000188/funds?currency=CNY",
-    );
-    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/reference-data/exchanges");
-    expect(fetchMock.mock.calls[3]?.[0]).toBe(
-      "/api/reference-data/futures-accounts/80000188/trading-codes?exchangeCode=CFFEX",
-    );
-    expect(fetchMock.mock.calls[4]?.[0]).toBe(
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/reference-data/futures-accounts?keyword=%E5%90%AF%E6%98%8E",
+      "/api/reference-data/futures-accounts/8000%2F01/funds?currency=CNY",
+      "/api/reference-data/exchanges",
+      "/api/reference-data/futures-accounts/8000%2F01/trading-codes?exchangeCode=CFFEX",
       "/api/reference-data/futures-products?exchangeCode=CFFEX&productType=FUTURES&keyword=IF",
-    );
+    ]);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init).toEqual({ credentials: "same-origin" });
+      expect(init?.method).toBeUndefined();
+    }
   });
 
-  it("submits payload and files using multipart form data", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ instanceId: "pi-1", status: "RUNNING" }),
-    );
-    const receipt = new File(["receipt"], "receipt.pdf", { type: "application/pdf" });
-
-    await startSubmit(
-      "sample",
-      { variables: { businessType: "仓单质押", amount: 1000 } },
-      { 银行回单: [receipt] },
-      "idem-1",
-    );
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe("/api/workflow/processes/sample/start-submit");
-    expect(init).toEqual(
-      expect.objectContaining({
-        method: "POST",
-        headers: { "Idempotency-Key": "idem-1" },
-        credentials: "same-origin",
-      }),
-    );
-
-    const body = init?.body as FormData;
-    expect(body).toBeInstanceOf(FormData);
-    expect(body.get("payload")).toBeInstanceOf(Blob);
-    expect(body.getAll("银行回单")).toEqual([receipt]);
-  });
-
-  it("surfaces backend text error", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("附件数量不符合要求", { status: 400 }),
-    );
-
-    await expect(getStartContext("sample")).rejects.toThrow("附件数量不符合要求");
+  it("surfaces backend text errors", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("统一账户服务不可用", { status: 503 }));
+    await expect(getAccountFunds("80000188")).rejects.toThrow("统一账户服务不可用");
   });
 });

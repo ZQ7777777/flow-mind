@@ -8,6 +8,7 @@ import type {
   CodeGenerationSummary,
   GeneratedFileContent,
   GeneratedFileDiff,
+  GenerationContextSnapshot,
   MockUser,
 } from "@flowmind/agent-contracts";
 import { AgentError } from "../common/agent-error.js";
@@ -27,13 +28,17 @@ import {
   validateGenerationRequirement,
 } from "./generation-spec.js";
 import { StagingService, generationContract, parseManifest } from "./staging.service.js";
-import { apiReferencePaths, TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
+import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
+import { GenerationContextRegistry } from "./generation-context-registry.service.js";
+import { GenerationSkillRegistry } from "./generation-skill-registry.service.js";
 import { PlatformClientService } from "../platform/platform-client.service.js";
 import { loadFrozenTesterFixture } from "./frozen-tester-fixture.js";
 import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
 
 @Injectable()
 export class GenerationService {
+  private fallbackContexts?: GenerationContextRegistry;
+
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
     @Inject(TargetContractService) private readonly targets: TargetContractService,
@@ -43,6 +48,7 @@ export class GenerationService {
     @Optional() @Inject(QualityPipelineService) private readonly quality?: QualityPipelineService,
     @Optional() @Inject(ArtifactWriterService) private readonly writer?: ArtifactWriterService,
     @Optional() @Inject(PlatformClientService) private readonly platform?: PlatformClientService,
+    @Optional() @Inject(GenerationContextRegistry) private readonly contexts?: GenerationContextRegistry,
   ) {}
 
   start(
@@ -93,6 +99,7 @@ export class GenerationService {
       throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_TEST_FIXTURE_FORBIDDEN", "Only the tester mock user can create a quality-gate fixture.");
     }
     const target = this.targets.validate(targetRootInput || "", "tester-fixture");
+    const context = this.requireContexts("tester-fixture").capture(target, "tester-fixture");
     const fixture = loadFrozenTesterFixture();
     const spec = deriveGenerationSpec(fixture.requirement, target.contract);
     // The requirement/process snapshot is frozen, but artifact templates must
@@ -136,12 +143,12 @@ export class GenerationService {
         INSERT INTO agent_code_generation (
           id, session_id, process_definition_record_id, requirement_revision, requirement_snapshot_json,
           process_snapshot_json, business_code, business_name, status, target_root, target_contract_version,
-          target_contract_json, staging_dir, artifact_manifest_json, generation_revision,
+          target_contract_json, generation_context_snapshot_json, staging_dir, artifact_manifest_json, generation_revision,
           created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'GENERATING', ?, ?, ?, ?, '{}', 0, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'GENERATING', ?, ?, ?, ?, ?, '{}', 0, ?, ?, ?)
       `).run(generationId, sessionId, processId, 1, requirementJson, JSON.stringify(snapshot),
         fixture.requirement.businessCode, fixture.requirement.businessName, target.targetRoot, target.contract.contractVersion,
-        JSON.stringify(target.contract), stagingDir, user.userId, now, now);
+        JSON.stringify(target.contract), JSON.stringify(context), stagingDir, user.userId, now, now);
     });
     for (const { relativePath, content } of fixtureFiles) {
       this.staging.writeDuringGeneration(this.requiredGenerating(generationId), relativePath, content);
@@ -468,6 +475,7 @@ export class GenerationService {
       idempotencyKey,
       requestHash,
       old.id,
+      parseGenerationContext(old.generation_context_snapshot_json, sessionId),
     );
     return result;
   }
@@ -484,11 +492,13 @@ export class GenerationService {
     idempotencyKey: string,
     requestHash: string,
     supersedes?: string,
+    inheritedContext?: GenerationContextSnapshot,
   ): { accepted: true; generationId: string; state: "CODE_GENERATING" } {
     const generationId = `acg_${randomUUID()}`;
     const stagingDir = join(this.database.dataDir, "staging", session.id, generationId);
     this.staging.prepare(stagingDir);
     const now = new Date().toISOString();
+    const context = inheritedContext || this.requireContexts(session.id).capture(target, session.id);
     const result = { accepted: true as const, generationId, state: "CODE_GENERATING" as const };
     this.database.transaction(() => {
       if (supersedes) this.database.db.prepare("UPDATE agent_code_generation SET status = 'SUPERSEDED', superseded_by = ?, updated_at = ? WHERE id = ?").run(generationId, now, supersedes);
@@ -496,13 +506,13 @@ export class GenerationService {
         INSERT INTO agent_code_generation (
           id, session_id, process_definition_record_id, requirement_revision, requirement_snapshot_json,
           process_snapshot_json, business_code, business_name, status, target_root, target_contract_version,
-          target_contract_json, staging_dir, artifact_manifest_json, generation_revision,
+          target_contract_json, generation_context_snapshot_json, staging_dir, artifact_manifest_json, generation_revision,
           start_key, start_hash, start_result_json, created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'GENERATING', ?, ?, ?, ?, '{}', 0, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'GENERATING', ?, ?, ?, ?, ?, '{}', 0, ?, ?, ?, ?, ?, ?)
       `).run(
         generationId, session.id, processId, requirementRevision, JSON.stringify(requirement), JSON.stringify(processSnapshot),
         requirement.businessCode, requirement.businessName, target.targetRoot, target.contract.contractVersion,
-        JSON.stringify(target.contract), stagingDir, idempotencyKey, requestHash, JSON.stringify(result), user.userId, now, now,
+        JSON.stringify(target.contract), JSON.stringify(context), stagingDir, idempotencyKey, requestHash, JSON.stringify(result), user.userId, now, now,
       );
       const updated = this.database.db.prepare(`UPDATE agent_session SET target_root = ?, state = 'CODE_GENERATING', row_version = row_version + 1,
         last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ? AND row_version = ?`)
@@ -522,13 +532,13 @@ export class GenerationService {
     const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
     const spec = deriveGenerationSpec(requirement, contract);
     const target: ValidatedGenerationTarget = { targetRoot: generation.target_root, contract };
-    const referencePaths = apiReferencePaths(contract);
+    const context = parseGenerationContext(generation.generation_context_snapshot_json, generation.session_id);
+    const contextAccess = buildContextAccess(this.requireContexts(generation.session_id), context, spec.hasBusinessApi, generation.session_id);
     const apiReferences = {
-      platformRuntime: this.targets.readReference(target, referencePaths.platformRuntime, generation.session_id),
-      trustedUserContext: this.targets.readReference(target, referencePaths.trustedUserContext, generation.session_id),
       businessReferenceData: contract.frontend.apiReferences?.businessReferenceData
         ? this.targets.readReference(target, contract.frontend.apiReferences.businessReferenceData, generation.session_id)
         : undefined,
+      contextSummary: JSON.stringify(this.requireContexts(generation.session_id).summary(context), null, 2),
     };
     const callbacks: GenerationPiCallbacks = {
       requirement,
@@ -541,6 +551,7 @@ export class GenerationService {
       listStaged: () => this.staging.list(this.requiredGenerating(generationId)),
       writeStaged: (path, content) => this.staging.writeDuringGeneration(this.requiredGenerating(generationId), path, content),
       deleteStaged: (path) => this.staging.deleteDuringGeneration(this.requiredGenerating(generationId), path),
+      ...contextAccess,
       reportComplete: (files) => {
         const current = this.requiredGenerating(generationId);
         const manifest = this.staging.complete(current, contract, files);
@@ -576,6 +587,14 @@ export class GenerationService {
     });
     this.events.publish(generation.session_id, { type: "error", data: { code, message, generationId } });
     this.events.publish(generation.session_id, { type: "workflow.state_changed", data: { state: "CODE_PIPELINE_FAILED" } });
+  }
+
+  private requireContexts(sessionId?: string): GenerationContextRegistry {
+    if (this.contexts) return this.contexts;
+    // Keep direct service construction used by tests and embedders on the same
+    // mandatory snapshot path as Nest-managed production instances.
+    this.fallbackContexts ||= new GenerationContextRegistry(new GenerationSkillRegistry(), this.targets);
+    return this.fallbackContexts;
   }
 
   private requiredGenerating(id: string): GenerationRow {
@@ -649,8 +668,61 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
     manifest: manifest.files.length ? manifest : undefined,
     lastError: generation.last_error_code ? { code: generation.last_error_code, message: generation.last_error_message || "" } : undefined,
     quality,
+    backendRestartRequired: false,
+    context: generation.generation_context_snapshot_json && generation.generation_context_snapshot_json !== "{}"
+      ? summarizeContext(parseGenerationContext(generation.generation_context_snapshot_json, generation.session_id))
+      : undefined,
     createdAt: generation.created_at,
     updatedAt: generation.updated_at,
+  };
+}
+
+function parseGenerationContext(value: string, sessionId?: string): GenerationContextSnapshot {
+  try {
+    const parsed = JSON.parse(value || "{}") as GenerationContextSnapshot;
+    if (parsed.version !== "1.0" || !parsed.sha256 || !Array.isArray(parsed.skills) || !Array.isArray(parsed.references)) throw new Error("invalid snapshot");
+    return parsed;
+  } catch {
+    throw new AgentError(HttpStatus.CONFLICT, "AGENT_GENERATION_CONTEXT_MISSING", "generation context snapshot is missing; start a new generation", sessionId);
+  }
+}
+
+function summarizeContext(snapshot: GenerationContextSnapshot) {
+  return {
+    sha256: snapshot.sha256,
+    skills: snapshot.skills.map(({ name, sha256 }) => ({ name, sha256 })),
+    references: snapshot.references.map(({ source, relativePath, sha256 }) => ({ source, relativePath, sha256 })),
+  };
+}
+
+function buildContextAccess(
+  registry: GenerationContextRegistry,
+  snapshot: GenerationContextSnapshot,
+  includeApiExamples: boolean,
+  sessionId?: string,
+): Pick<GenerationPiCallbacks, "listGenerationContext" | "readGenerationContext" | "requiredGenerationContextKeys"> {
+  const items = [
+    ...snapshot.skills.flatMap((skill) => skill.files.map((file) => ({
+      key: `skill:${skill.name}:${file.relativePath}`,
+      sha256: file.sha256,
+      required: file.relativePath === "SKILL.md" || file.relativePath === "references/golden-example.md",
+      read: () => registry.readSkill(snapshot, skill.name, file.relativePath, sessionId),
+    }))),
+    ...snapshot.references.map((reference) => ({
+      key: `reference:${reference.source}:${reference.relativePath}`,
+      sha256: reference.sha256,
+      required: reference.source === "REPOSITORY" || includeApiExamples,
+      read: () => registry.readReference(snapshot, reference.source, reference.relativePath, sessionId),
+    })),
+  ];
+  return {
+    listGenerationContext: () => items.map(({ key, sha256, required }) => ({ key, sha256, required })),
+    readGenerationContext: (key) => {
+      const item = items.find((candidate) => candidate.key === key);
+      if (!item) throw new AgentError(HttpStatus.NOT_FOUND, "AGENT_GENERATION_CONTEXT_FILE_NOT_FOUND", "generation context file was not found", sessionId);
+      return item.read();
+    },
+    requiredGenerationContextKeys: items.filter(({ required }) => required).map(({ key }) => key),
   };
 }
 
