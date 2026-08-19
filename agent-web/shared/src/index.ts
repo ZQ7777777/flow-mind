@@ -202,8 +202,50 @@ export interface BusinessRule {
   expression?: string;
 }
 
+export interface FrontendSectionRequirement {
+  sectionCode: string;
+  title: string;
+  fieldCodes: string[];
+  sortOrder: number;
+}
+
+export interface FrontendDataQueryRequirement {
+  queryCode: string;
+  resource: "ACCOUNT_FUNDS";
+  parameterBindings: Record<string, string>;
+  loadMode: "ON_CHANGE" | "MANUAL";
+  refreshable: boolean;
+}
+
+export interface FrontendCalculationRequirement {
+  calculationCode: string;
+  targetFieldCode: string;
+  expression: string;
+  dependencyFieldCodes: string[];
+  decimalPlaces?: number;
+  sortOrder: number;
+}
+
+export interface FrontendCheckRequirement {
+  checkCode: string;
+  checkName: string;
+  description: string;
+  appliesWhen?: string;
+  passWhen: string;
+  dependencyFieldCodes: string[];
+  dataQueryCodes: string[];
+  sortOrder: number;
+}
+
+export interface FrontendBehaviorRequirement {
+  sections: FrontendSectionRequirement[];
+  dataQueries: FrontendDataQueryRequirement[];
+  calculations: FrontendCalculationRequirement[];
+  checks: FrontendCheckRequirement[];
+}
+
 export interface BusinessRequirement {
-  schemaVersion: "1.0" | "1.1";
+  schemaVersion: "1.0" | "1.1" | "1.2";
   businessCode: string;
   businessName: string;
   entryDisplayName?: string;
@@ -217,6 +259,7 @@ export interface BusinessRequirement {
   edges: ProcessEdgeRequirement[];
   nodeFieldPermissions?: NodeFieldPermissionRequirement[];
   businessRules: BusinessRule[];
+  frontendBehavior?: FrontendBehaviorRequirement;
 }
 
 export type LegacyBusinessRequirement = Omit<
@@ -305,7 +348,7 @@ export const businessRequirementSchema = {
     "participants", "formFields", "attachments", "nodes", "edges", "businessRules",
   ],
   properties: {
-    schemaVersion: { enum: ["1.0", "1.1"] },
+    schemaVersion: { enum: ["1.0", "1.1", "1.2"] },
     businessCode: { type: "string" },
     businessName: { type: "string" },
     entryDisplayName: { type: "string" },
@@ -472,13 +515,72 @@ export const businessRequirementSchema = {
         },
       },
     },
+    frontendBehavior: {
+      type: "object",
+      additionalProperties: false,
+      required: ["sections", "dataQueries", "calculations", "checks"],
+      properties: {
+        sections: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["sectionCode", "title", "fieldCodes", "sortOrder"],
+            properties: {
+              sectionCode: { type: "string", minLength: 1 }, title: { type: "string", minLength: 1 },
+              fieldCodes: { type: "array", items: { type: "string", minLength: 1 } },
+              sortOrder: { type: "integer" },
+            },
+          },
+        },
+        dataQueries: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["queryCode", "resource", "parameterBindings", "loadMode", "refreshable"],
+            properties: {
+              queryCode: { type: "string", minLength: 1 }, resource: { const: "ACCOUNT_FUNDS" },
+              parameterBindings: { type: "object", additionalProperties: { type: "string", minLength: 1 } },
+              loadMode: { enum: ["ON_CHANGE", "MANUAL"] }, refreshable: { type: "boolean" },
+            },
+          },
+        },
+        calculations: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["calculationCode", "targetFieldCode", "expression", "dependencyFieldCodes", "sortOrder"],
+            properties: {
+              calculationCode: { type: "string", minLength: 1 }, targetFieldCode: { type: "string", minLength: 1 },
+              expression: { type: "string", minLength: 1 },
+              dependencyFieldCodes: { type: "array", items: { type: "string", minLength: 1 } },
+              decimalPlaces: { type: "integer", minimum: 0, maximum: 12 }, sortOrder: { type: "integer" },
+            },
+          },
+        },
+        checks: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["checkCode", "checkName", "description", "passWhen", "dependencyFieldCodes", "dataQueryCodes", "sortOrder"],
+            properties: {
+              checkCode: { type: "string", minLength: 1 }, checkName: { type: "string", minLength: 1 },
+              description: { type: "string", minLength: 1 }, appliesWhen: { type: "string", minLength: 1 },
+              passWhen: { type: "string", minLength: 1 },
+              dependencyFieldCodes: { type: "array", items: { type: "string", minLength: 1 } },
+              dataQueryCodes: { type: "array", items: { type: "string", minLength: 1 } },
+              sortOrder: { type: "integer" },
+            },
+          },
+        },
+      },
+    },
   },
 } as const;
 
 const ENTRY_APPLICATION_USER_TASK_CODES = ["apply", "manager_approve", "finance_confirm"];
 
 export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
-  schemaVersion: "1.1",
+  schemaVersion: "1.2",
   businessCode: "entry_application",
   businessName: "入金申请",
   entryDisplayName: "入金申请",
@@ -542,7 +644,7 @@ const WAREHOUSE_PLEDGE_USER_TASK_CODES = ["apply", "risk_review"];
 
 /** Fake Agent/E2E 使用的质押申请动态参考数据需求。 */
 export const WAREHOUSE_PLEDGE_REQUIREMENT: BusinessRequirement = {
-  schemaVersion: "1.1",
+  schemaVersion: "1.2",
   businessCode: "warehouse_pledge",
   businessName: "仓单、国债（解）质押申请",
   entryDisplayName: "仓单、国债（解）质押申请",
@@ -564,13 +666,18 @@ export const WAREHOUSE_PLEDGE_REQUIREMENT: BusinessRequirement = {
     },
     { fieldCode: "customerName", fieldName: "客户名称", fieldType: "string", controlType: "input", required: true, readOnly: true, validation: {}, sortOrder: 2 },
     {
-      fieldCode: "exchangeCode", fieldName: "交易所", fieldType: "string", controlType: "select",
+      fieldCode: "businessType", fieldName: "业务类型", fieldType: "select", controlType: "select",
       required: true, validation: {}, sortOrder: 3,
+      options: ["仓单质押", "仓单解质押", "国债质押", "国债解质押"].map((value) => ({ label: value, value })),
+    },
+    {
+      fieldCode: "exchangeCode", fieldName: "交易所", fieldType: "string", controlType: "select",
+      required: true, validation: {}, sortOrder: 4,
       referenceDataSource: { resource: "EXCHANGES" },
     },
     {
       fieldCode: "tradingCode", fieldName: "交易编码", fieldType: "string", controlType: "input",
-      required: true, readOnly: true, validation: {}, sortOrder: 4,
+      required: true, readOnly: true, validation: {}, sortOrder: 5,
       referenceDataSource: {
         resource: "TRADING_CODES",
         parameterBindings: { accountNo: "futuresAccount", exchangeCode: "exchangeCode" },
@@ -578,7 +685,7 @@ export const WAREHOUSE_PLEDGE_REQUIREMENT: BusinessRequirement = {
     },
     {
       fieldCode: "productCodes", fieldName: "期货品种", fieldType: "select", controlType: "select",
-      required: true, multiple: true, validation: {}, sortOrder: 5,
+      required: true, multiple: true, validation: {}, sortOrder: 6,
       referenceDataSource: {
         resource: "FUTURES_PRODUCTS",
         parameterBindings: { exchangeCode: "exchangeCode" },
@@ -589,9 +696,11 @@ export const WAREHOUSE_PLEDGE_REQUIREMENT: BusinessRequirement = {
         },
       },
     },
-    { fieldCode: "contractMultiplier", fieldName: "合约乘数", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 1 }, sortOrder: 6 },
-    { fieldCode: "pledgeUnitQuantity", fieldName: "质押品单位数量", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 1 }, sortOrder: 7 },
-    { fieldCode: "previousSettlementPrice", fieldName: "昨结算价", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 0.0001 }, sortOrder: 8 },
+    { fieldCode: "quantity", fieldName: "数量（张）", fieldType: "number", controlType: "number", required: true, validation: { minimum: 1 }, sortOrder: 7 },
+    { fieldCode: "contractMultiplier", fieldName: "合约乘数", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 1 }, sortOrder: 8 },
+    { fieldCode: "pledgeUnitQuantity", fieldName: "质押品单位数量", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 1 }, sortOrder: 9 },
+    { fieldCode: "previousSettlementPrice", fieldName: "昨结算价", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { minimum: 0.0001, maxDecimalPlaces: 4 }, sortOrder: 10 },
+    { fieldCode: "amount", fieldName: "金额", fieldType: "number", controlType: "number", required: true, readOnly: true, validation: { maxDecimalPlaces: 4 }, sortOrder: 11 },
   ],
   attachments: [],
   nodes: [
@@ -608,11 +717,34 @@ export const WAREHOUSE_PLEDGE_REQUIREMENT: BusinessRequirement = {
   businessRules: [
     { ruleCode: "last_product_autofill", description: "多选品种最后一次选择负责带出合约乘数、质押品单位数量和昨结算价" },
   ],
+  frontendBehavior: {
+    sections: [
+      { sectionCode: "customer", title: "客户信息", fieldCodes: ["futuresAccount", "customerName"], sortOrder: 1 },
+      { sectionCode: "business", title: "业务信息", fieldCodes: ["businessType", "exchangeCode", "tradingCode", "productCodes", "quantity", "contractMultiplier", "pledgeUnitQuantity", "previousSettlementPrice", "amount"], sortOrder: 2 },
+    ],
+    dataQueries: [
+      { queryCode: "accountFunds", resource: "ACCOUNT_FUNDS", parameterBindings: { accountNo: "futuresAccount" }, loadMode: "ON_CHANGE", refreshable: true },
+    ],
+    calculations: [
+      {
+        calculationCode: "amount", targetFieldCode: "amount",
+        expression: "previousSettlementPrice * quantity * pledgeUnitQuantity * contractMultiplier * 0.8",
+        dependencyFieldCodes: ["previousSettlementPrice", "quantity", "pledgeUnitQuantity", "contractMultiplier", "businessType"],
+        decimalPlaces: 4, sortOrder: 1,
+      },
+    ],
+    checks: [
+      { checkCode: "pledge", checkName: "满足质押要求", description: "当前权益 + 本次金额满足质押比例，或实有货币资金满足比例", appliesWhen: "businessType == '仓单质押' || businessType == '国债质押'", passWhen: "accountFunds.currentEquity + amount >= 1.25 * (accountFunds.pledgeAmount + amount) || accountFunds.actualCash >= 0.25 * (accountFunds.pledgeAmount + amount)", dependencyFieldCodes: ["businessType", "amount"], dataQueryCodes: ["accountFunds"], sortOrder: 1 },
+      { checkCode: "release", checkName: "满足解质押要求", description: "可用资金 + 本次金额大于等于零", appliesWhen: "businessType == '仓单解质押' || businessType == '国债解质押'", passWhen: "accountFunds.availableFunds + amount >= 0", dependencyFieldCodes: ["businessType", "amount"], dataQueryCodes: ["accountFunds"], sortOrder: 2 },
+      { checkCode: "dce", checkName: "满足大商所特定要求", description: "大商所质押金额 + 本次金额不超过持仓保证金", appliesWhen: "(businessType == '仓单质押' || businessType == '国债质押') && exchangeCode == 'DCE'", passWhen: "accountFunds.dcePledgeAmount + amount <= accountFunds.dcePositionMargin", dependencyFieldCodes: ["businessType", "exchangeCode", "amount"], dataQueryCodes: ["accountFunds"], sortOrder: 3 },
+      { checkCode: "czce", checkName: "满足郑商所特定要求", description: "郑商所质押金额 + 本次金额不超过 1.2 倍持仓保证金", appliesWhen: "(businessType == '仓单质押' || businessType == '国债质押') && exchangeCode == 'CZCE'", passWhen: "accountFunds.czcePledgeAmount + amount <= 1.2 * accountFunds.czcePositionMargin", dependencyFieldCodes: ["businessType", "exchangeCode", "amount"], dataQueryCodes: ["accountFunds"], sortOrder: 4 },
+    ],
+  },
 };
 
 export function normalizeBusinessRequirement(input: BusinessRequirement | LegacyBusinessRequirement): BusinessRequirement {
   const requirement = structuredClone(input) as BusinessRequirement;
-  requirement.schemaVersion = "1.1";
+  requirement.schemaVersion = "1.2";
   requirement.entryDisplayName ||= requirement.businessName;
   requirement.entryPageTitle ||= `发起${requirement.businessName}`;
   requirement.nodeFieldPermissions ||= requirement.nodes.flatMap((node) =>
@@ -624,6 +756,17 @@ export function normalizeBusinessRequirement(input: BusinessRequirement | Legacy
       required: node.nodeCode === "apply" && field.required,
     })),
   );
+  requirement.frontendBehavior ||= {
+    sections: [{
+      sectionCode: "business-info",
+      title: "业务信息",
+      fieldCodes: requirement.formFields.slice().sort((left, right) => left.sortOrder - right.sortOrder).map(({ fieldCode }) => fieldCode),
+      sortOrder: 1,
+    }],
+    dataQueries: [],
+    calculations: [],
+    checks: [],
+  };
   return requirement;
 }
 
@@ -656,6 +799,15 @@ export function renderBusinessRequirementMarkdown(input: BusinessRequirement): s
       .map((permission) =>
         `- ${permission.nodeCode}.${permission.fieldCode}：visible=${permission.visible}, editable=${permission.editable}, required=${permission.required}`,
       ),
+    "",
+    "## 页面行为",
+    ...requirement.frontendBehavior!.sections.slice().sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((section) => `- 分区 ${section.sectionCode}：${section.title}（${section.fieldCodes.join("、")}）`),
+    ...requirement.frontendBehavior!.dataQueries.map((query) => `- 查询 ${query.queryCode}：${query.resource}`),
+    ...requirement.frontendBehavior!.calculations.slice().sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((calculation) => `- 计算 ${calculation.calculationCode} → ${calculation.targetFieldCode}：${calculation.expression}`),
+    ...requirement.frontendBehavior!.checks.slice().sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((check) => `- 核查 ${check.checkCode}：${check.checkName}；通过条件=${check.passWhen}`),
   ];
   return `${lines.join("\n")}\n`;
 }

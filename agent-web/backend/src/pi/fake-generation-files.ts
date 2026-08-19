@@ -13,12 +13,16 @@ export function createFakeGenerationFiles(
   existingRouteRegistry: string,
 ): Record<string, string> {
   const fields = [...requirement.formFields].sort((left, right) => left.sortOrder - right.sortOrder);
-  if ((contract as { generationMode?: string }).generationMode === "FRONTEND_FORM_ONLY") {
+  if (["FRONTEND_FORM_ONLY", "FRONTEND_ONLY"].includes((contract as { generationMode?: string }).generationMode || "")) {
     return {
       [spec.paths.businessForm]: businessFormSource(requirement, fields),
       [spec.paths.businessFormTest]: businessFormTestSource(spec),
       [spec.paths.applyView]: applyShellSource(spec),
       [spec.paths.applyViewTest]: applyShellTestSource(spec),
+      ...(spec.hasBusinessApi ? {
+        [spec.paths.api]: frontendReferenceApiSource(requirement, fields),
+        [spec.paths.apiTest]: frontendReferenceApiTestSource(spec),
+      } : {}),
       [spec.paths.routeRegistry]: mergeGeneratedRoute(existingRouteRegistry, spec),
     };
   }
@@ -44,6 +48,22 @@ export function createFakeGenerationFiles(
     [spec.paths.apiTest]: apiTestSource(spec, fields, submitFunction),
     [spec.paths.routeRegistry]: mergeGeneratedRoute(existingRouteRegistry, spec),
   };
+}
+
+function frontendReferenceApiSource(requirement: BusinessRequirement, fields: FormFieldRequirement[]): string {
+  const hasAccountFunds = requirement.frontendBehavior?.dataQueries.some(({ resource }) => resource === "ACCOUNT_FUNDS");
+  let source = referenceApiSource(fields);
+  if (hasAccountFunds && !source) {
+    source = `async function requestReferenceData<T>(url: string): Promise<T> { const response = await fetch(url, { credentials: "same-origin" }); if (!response.ok) throw new Error(await response.text() || "参考数据加载失败"); return response.json() as Promise<T>; }\n\n`;
+  }
+  const accountFunds = hasAccountFunds
+    ? `export interface AccountFunds { accountNo: string; currentEquity: number; availableFunds: number; pledgeAmount: number; actualCash: number; [key: string]: unknown; }\nexport function loadAccountFunds(accountNo: string): Promise<AccountFunds> { return requestReferenceData("/api/reference-data/futures-accounts/" + encodeURIComponent(accountNo) + "/funds?currency=CNY"); }\n`
+    : "";
+  return `${source}${accountFunds}` || "export {};\n";
+}
+
+function frontendReferenceApiTestSource(spec: GenerationSpec): string {
+  return `import { describe, expect, it } from "vitest";\nimport * as api from "./${spec.kebabCode}";\ndescribe("${spec.kebabCode} read-only api", () => { it("exports only read-only helpers", () => {\n  expect(Object.keys(api).every((name) => !/submit|approve|reject|upload/i.test(name))).toBe(true);\n}); });\n`;
 }
 
 function controllerSource(spec: GenerationSpec): string {
@@ -420,6 +440,12 @@ function mergeGeneratedRoute(existing: string, spec: GenerationSpec): string {
 
 function businessFormSource(requirement: BusinessRequirement, fields: FormFieldRequirement[]): string {
   const fieldCodes = fields.map((field) => JSON.stringify(field.fieldCode)).join(", ");
+  const behaviorMetadata = JSON.stringify({
+    sections: requirement.frontendBehavior?.sections.map(({ sectionCode }) => sectionCode) || [],
+    queries: requirement.frontendBehavior?.dataQueries.map(({ queryCode }) => queryCode) || [],
+    calculations: requirement.frontendBehavior?.calculations.map(({ targetFieldCode }) => targetFieldCode) || [],
+    checks: requirement.frontendBehavior?.checks.map(({ checkName }) => checkName) || [],
+  });
   return `<script setup>
 import { computed } from "vue";
 const props = defineProps({
@@ -431,6 +457,8 @@ const props = defineProps({
 });
 const emit = defineEmits(["update:modelValue"]);
 const confirmedFieldCodes = [${fieldCodes}];
+const confirmedBehavior = ${behaviorMetadata};
+void confirmedBehavior;
 const visibleFields = computed(() => props.fields.filter((field) => confirmedFieldCodes.includes(field.fieldCode)));
 function update(fieldCode, value) { emit("update:modelValue", { ...props.modelValue, [fieldCode]: value }); }
 async function validate() { return true; }

@@ -66,6 +66,7 @@ function generation(status: CodeGenerationSummary["status"]): CodeGenerationSumm
     generationId: "acg-quality",
     status,
     generationRevision: 2,
+    backendRestartRequired: false,
     targetRoot: "D:\\business-base",
     contractVersion: "1.0",
     quality,

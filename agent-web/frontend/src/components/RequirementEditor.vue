@@ -9,16 +9,36 @@ import ProcessGraphDesigner from "./ProcessGraphDesigner.vue";
 
 const props = defineProps<{ revision: RequirementRevision; disabled?: boolean }>();
 const emit = defineEmits<{ save: [requirement: BusinessRequirement] }>();
-const draft = reactive<BusinessRequirement>(clone(props.revision.requirement));
+const draft = reactive<BusinessRequirement>(withFrontendBehavior(clone(props.revision.requirement)));
 
 watch(
   () => props.revision,
-  (value) => { Object.assign(draft, clone(value.requirement)); },
+  (value) => { Object.assign(draft, withFrontendBehavior(clone(value.requirement))); },
   { deep: true },
 );
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
+}
+
+function withFrontendBehavior(requirement: BusinessRequirement): BusinessRequirement {
+  requirement.frontendBehavior ||= {
+    sections: [{ sectionCode: "business-info", title: "业务信息", fieldCodes: requirement.formFields.map(({ fieldCode }) => fieldCode), sortOrder: 1 }],
+    dataQueries: [], calculations: [], checks: [],
+  };
+  return requirement;
+}
+
+function frontendBehaviorText(): string {
+  return JSON.stringify(draft.frontendBehavior, null, 2);
+}
+
+function updateFrontendBehavior(value: string): void {
+  try {
+    draft.frontendBehavior = JSON.parse(value) as NonNullable<BusinessRequirement["frontendBehavior"]>;
+  } catch {
+    // Keep the last structurally valid value; backend validation remains authoritative.
+  }
 }
 
 function save(): void {
@@ -249,6 +269,19 @@ function uniqueValues(values: string[]): string[] {
         <el-input v-model="rule.expression" placeholder="表达式（可选）" :disabled="disabled" />
         <el-button link type="danger" :disabled="disabled" @click="draft.businessRules.splice(index, 1)">删除</el-button>
       </div>
+    </section>
+
+    <section class="editor-section">
+      <div class="section-title"><h3>页面行为</h3></div>
+      <el-input
+        type="textarea"
+        :rows="12"
+        :model-value="frontendBehaviorText()"
+        aria-label="页面行为 JSON"
+        placeholder="页面分区、只读查询、计算和核查规则"
+        :disabled="disabled"
+        @change="updateFrontendBehavior($event)"
+      />
     </section>
   </div>
 </template>

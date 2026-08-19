@@ -89,15 +89,83 @@ export class StaticValidatorService {
       } else if (relativePath.endsWith(".ts")) {
         this.parseTypeScript(relativePath, content, diagnostics);
       }
-      if (relativePath === input.spec.paths.businessForm && /<button|fetch\(|start-submit/.test(content)) {
+      if (relativePath === input.spec.paths.businessForm && /fetch\(|start-submit|FormData|type=["']submit["']|\/api\/workflow|approve|reject|upload/i.test(content)) {
         diagnostics.push(diagnostic({
           code: "GENERATED_FORM_BOUNDARY_VIOLATION",
           message: "Generated BusinessForm.vue must not contain submit controls or direct workflow submission logic.",
           relativePath,
-          actual: "BusinessForm.vue contains submit-capable markup or request logic.",
-          expected: "BusinessForm.vue only renders business fields and exposes validate().",
+          actual: "BusinessForm.vue contains workflow mutation, direct fetch, upload, or submit-capable markup.",
+          expected: "BusinessForm.vue renders fields and may call only generated typed read-only API helpers.",
           repairHint: "Move submission, attachment upload, and workflow API calls into the shared WorkflowStartShell.",
         }));
+      }
+      if (relativePath === input.spec.paths.businessForm) {
+        const requiredTokens = [
+          ...input.requirement.formFields.map(({ fieldCode }) => fieldCode),
+          ...(input.requirement.frontendBehavior?.dataQueries.map(({ queryCode }) => queryCode) || []),
+          ...(input.requirement.frontendBehavior?.calculations.map(({ targetFieldCode }) => targetFieldCode) || []),
+          ...(input.requirement.frontendBehavior?.checks.map(({ checkName }) => checkName) || []),
+        ];
+        const missingTokens = [...new Set(requiredTokens)].filter((token) => !content.includes(token));
+        if (missingTokens.length) {
+          diagnostics.push(diagnostic({
+            code: "GENERATED_REQUIREMENT_MAPPING_MISSING",
+            message: "Generated BusinessForm.vue omits confirmed business fields or page behavior.",
+            relativePath,
+            actual: `Missing confirmed tokens: ${missingTokens.join(", ")}`,
+            expected: "Every confirmed field, query, calculation target, and displayed check must be represented.",
+            repairHint: "Implement the missing confirmed fields and page behaviors without adding undeclared business values.",
+          }));
+        }
+      }
+      if (relativePath === input.spec.paths.applyView && /fetch\(|start-submit|FormData|type=["']submit["']|Idempotency-Key|\/api\//i.test(content)) {
+        diagnostics.push(diagnostic({
+          code: "GENERATED_APPLY_BOUNDARY_VIOLATION",
+          message: "Generated Apply.vue must delegate workflow behavior to WorkflowStartShell.",
+          relativePath,
+          actual: "Apply.vue contains request or submission implementation.",
+          expected: "Apply.vue only composes the standalone page, BusinessForm, and WorkflowStartShell.",
+          repairHint: "Remove request, attachment, idempotency, and submission logic from Apply.vue.",
+        }));
+      }
+      if (relativePath === input.spec.paths.api && input.spec.hasBusinessApi
+        && (/\/api\/platform\//.test(content) || /start-submit|\/tasks\/|approve|reject|upload/i.test(content)
+          || /method\s*:\s*["'](?:POST|PUT|PATCH|DELETE)["']/i.test(content))) {
+        diagnostics.push(diagnostic({
+          code: "GENERATED_API_MUTATION_FORBIDDEN",
+          message: "Generated business API modules are read-only.",
+          relativePath,
+          actual: "The API module contains a platform/workflow mutation or a non-GET method.",
+          expected: "Only declared read-only business reference-data GET requests are allowed.",
+          repairHint: "Remove workflow/platform mutations and keep only declared reference-data GET helpers.",
+        }));
+      }
+      if (relativePath === input.spec.paths.api && input.spec.hasBusinessApi) {
+        const allowedPrefixes = declaredApiPrefixes(input.requirement);
+        const endpoints = [...content.matchAll(/["'`](\/api\/[^"'`]*)["'`]/g)].map((match) => match[1]);
+        const undeclared = endpoints.filter((endpoint) => !allowedPrefixes.some((prefix) => endpoint.startsWith(prefix)));
+        if (undeclared.length) {
+          diagnostics.push(diagnostic({
+            code: "GENERATED_API_ENDPOINT_UNDECLARED",
+            message: "Generated business API modules may call only requirement-declared read-only resources.",
+            relativePath,
+            actual: `Undeclared endpoints: ${[...new Set(undeclared)].join(", ")}`,
+            expected: `Allowed endpoint prefixes: ${allowedPrefixes.join(", ") || "none"}`,
+            repairHint: "Remove undeclared endpoints or add the required reference-data/query declaration before regenerating.",
+          }));
+        }
+      }
+      if (relativePath === input.spec.paths.routeRegistry) {
+        if (!content.includes(input.spec.routeName) || !/standalone\s*:\s*true/.test(content) || /public\s*:\s*true/.test(content)) {
+          diagnostics.push(diagnostic({
+            code: "GENERATED_ROUTE_BOUNDARY_VIOLATION",
+            message: "Generated routes must preserve authenticated standalone layout semantics.",
+            relativePath,
+            actual: "The generated route is missing, not standalone, or marked public.",
+            expected: `Route ${input.spec.routeName} uses meta.standalone: true and is not public.`,
+            repairHint: "Register the generated route with standalone metadata while preserving existing entries.",
+          }));
+        }
       }
     }
   }
@@ -192,6 +260,19 @@ export class StaticValidatorService {
       }));
     }
   }
+}
+
+function declaredApiPrefixes(requirement: BusinessRequirement): string[] {
+  const resources = new Set([
+    ...requirement.formFields.flatMap(({ referenceDataSource }) => referenceDataSource ? [referenceDataSource.resource] : []),
+    ...(requirement.frontendBehavior?.dataQueries.map(({ resource }) => resource) || []),
+  ]);
+  const prefixes = new Set<string>();
+  if (resources.has("FUTURES_ACCOUNTS")) prefixes.add("/api/reference-data/futures-accounts");
+  if (resources.has("EXCHANGES")) prefixes.add("/api/reference-data/exchanges");
+  if (resources.has("TRADING_CODES") || resources.has("ACCOUNT_FUNDS")) prefixes.add("/api/reference-data/futures-accounts/");
+  if (resources.has("FUTURES_PRODUCTS")) prefixes.add("/api/reference-data/futures-products");
+  return [...prefixes];
 }
 
 function diagnostic(details: {

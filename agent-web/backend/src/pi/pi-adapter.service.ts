@@ -47,6 +47,9 @@ export interface GenerationPiCallbacks {
   listStaged(): string[];
   writeStaged(path: string, content: string): void;
   deleteStaged(path: string): void;
+  listGenerationContext(): Array<{ key: string; sha256: string; required: boolean }>;
+  readGenerationContext(key: string): string;
+  requiredGenerationContextKeys: string[];
   readVerificationDiagnostic?(diagnosticId: string): {
     diagnostic: QualityDiagnostic;
     stdoutExcerpt?: string;
@@ -65,6 +68,8 @@ export interface ReviewPiCallbacks extends PiEventSink {
   readStaged(path: string): string;
   readDiff(path: string): string;
   readQuality(): string;
+  listGenerationContext?(): Array<{ key: string; sha256: string; required: boolean }>;
+  readGenerationContext?(key: string): string;
   submit(report: {
     verdict: "APPROVE" | "CHANGES_REQUESTED";
     summary: string;
@@ -80,6 +85,11 @@ export function assertRequiredGenerationSkillsRead(
   if (missing.length) {
     throw new Error(`Required generation skills were not read: ${missing.join(", ")}`);
   }
+}
+
+export function assertRequiredGenerationContextRead(requiredKeys: string[], readKeys: Set<string>): void {
+  const missing = requiredKeys.filter((key) => !readKeys.has(key));
+  if (missing.length) throw new Error(`Required generation context was not read: ${missing.join(", ")}`);
 }
 
 @Injectable()
@@ -403,8 +413,11 @@ export class PiAdapterService implements OnModuleDestroy {
     });
     await loader.reload();
     const textResult = (text: string) => ({ content: [{ type: "text", text }], details: {} });
+    const readContextKeys = new Set<string>();
     const pathParameters = Type.Object({ path: Type.String({ minLength: 1 }) });
     const baseTools = [
+      pi.defineTool({ name: "list_generation_context", label: "List immutable generation context", description: "List the snapshotted project skill and golden references available to this generation.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listGenerationContext())) }),
+      pi.defineTool({ name: "read_generation_context", label: "Read immutable generation context", description: "Read one snapshotted skill or golden-reference file by key.", parameters: Type.Object({ key: Type.String({ minLength: 1 }) }), execute: async (_id: string, params: any) => { const content = callbacks.readGenerationContext(params.key); readContextKeys.add(params.key); return textResult(content); } }),
       pi.defineTool({ name: "read_generation_contract_file", label: "Read generation contract reference", description: "Read one target reference allowed by generation-target.json.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readReference(params.path)) }),
       pi.defineTool({ name: "read_staged_file", label: "Read staged file", description: "Read one file in this generation staging area.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readStaged(params.path)) }),
       pi.defineTool({ name: "list_staged_files", label: "List staged files", description: "List files staged by this generation.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listStaged())) }),
@@ -435,6 +448,7 @@ export class PiAdapterService implements OnModuleDestroy {
         ? Type.Object({ files: Type.Array(Type.String()), resolutions: Type.Array(repairResolution) })
         : Type.Object({ files: Type.Array(Type.String()) }),
       execute: async (_id: string, params: any) => {
+        assertRequiredGenerationContextRead(callbacks.requiredGenerationContextKeys, readContextKeys);
         callbacks.reportComplete(params.files, params.resolutions);
         return textResult(repairOnly ? "repair accepted for verification" : "generation accepted for verification");
       },
@@ -473,6 +487,7 @@ export class PiAdapterService implements OnModuleDestroy {
       sessionFile,
       prompt: async () => {
         callbacks.onEvent("agent.started", { purpose: "GENERATOR" });
+        for (const item of callbacks.listGenerationContext().filter(({ required }) => required)) callbacks.readGenerationContext(item.key);
         const existingRoutes = callbacks.readReference(callbacks.spec.paths.routeRegistry);
         for (const [path, content] of Object.entries(createFakeGenerationFiles(callbacks.requirement, callbacks.spec, callbacks.contract, existingRoutes))) {
           if (cancelled) throw new Error("generation cancelled");
@@ -497,6 +512,7 @@ export class PiAdapterService implements OnModuleDestroy {
       sessionId: `pi_fake_repair_${generationId}`,
       sessionFile,
       prompt: async () => {
+        for (const item of callbacks.listGenerationContext().filter(({ required }) => required)) callbacks.readGenerationContext(item.key);
         callbacks.onEvent("agent.started", { purpose: "REPAIR" });
         if (cancelled) throw new Error("repair cancelled");
         callbacks.reportComplete(callbacks.listStaged());
@@ -567,6 +583,8 @@ export class PiAdapterService implements OnModuleDestroy {
       ])),
     });
     const tools = [
+      pi.defineTool({ name: "list_generation_context", label: "List immutable generation context", description: "List the snapshotted skill and golden references used by this generation.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listGenerationContext?.() || [])) }),
+      pi.defineTool({ name: "read_generation_context", label: "Read immutable generation context", description: "Read one snapshotted skill or golden reference by key.", parameters: Type.Object({ key: Type.String({ minLength: 1 }) }), execute: async (_id: string, params: any) => textResult(callbacks.readGenerationContext?.(params.key) || "context unavailable") }),
       pi.defineTool({ name: "read_staged_file", label: "Read staged file", description: "Read one Manifest-managed staged file.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readStaged(params.path)) }),
       pi.defineTool({ name: "read_staged_diff", label: "Read staged diff", description: "Read one Manifest-managed staged diff.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readDiff(params.path)) }),
       pi.defineTool({ name: "read_quality_report", label: "Read quality report", description: "Read normalized static and command verification results.", parameters: Type.Object({}), execute: async () => textResult(callbacks.readQuality()) }),

@@ -14,7 +14,7 @@ vi.mock("monaco-editor/esm/vs/editor/editor.api.js", () => ({
 
 function generationWith(changeType: "ADD" | "MODIFY"): CodeGenerationSummary {
   return {
-    generationId: "acg_1", status: "REVIEW", generationRevision: 1,
+    generationId: "acg_1", status: "REVIEW", generationRevision: 1, backendRestartRequired: false,
     targetRoot: "E:\\business-base", contractVersion: "1.0",
     manifest: {
       generationId: "acg_1", targetRoot: "E:\\business-base", contractVersion: "1.0", revision: 1,
@@ -26,14 +26,18 @@ function generationWith(changeType: "ADD" | "MODIFY"): CodeGenerationSummary {
 
 function generationWithPreview(): CodeGenerationSummary {
   const generation = generationWith("MODIFY");
-  generation.manifest!.files.unshift({
-    relativePath: "frontend/src/modules/generated/entry/EntryApply.vue",
-    changeType: "ADD",
-    stagedSha256: "vue",
-    sizeBytes: 100,
-    validationStatus: "VALID",
-    editedByUser: false,
-  });
+  generation.manifest!.files.unshift(
+    {
+      relativePath: "frontend/src/modules/generated/entry/Apply.vue",
+      changeType: "ADD", stagedSha256: "apply", sizeBytes: 100,
+      validationStatus: "VALID", editedByUser: false,
+    },
+    {
+      relativePath: "frontend/src/modules/generated/entry/BusinessForm.vue",
+      changeType: "ADD", stagedSha256: "form", sizeBytes: 100,
+      validationStatus: "VALID", editedByUser: false,
+    },
+  );
   return generation;
 }
 
@@ -95,7 +99,7 @@ describe("CodeGenerationPanel", () => {
     const loadPreview = vi.spyOn(store, "loadGeneratedPreviewFile").mockResolvedValue({
       generationId: "acg_1",
       generationRevision: 1,
-      relativePath: "frontend/src/modules/generated/entry/EntryApply.vue",
+      relativePath: "frontend/src/modules/generated/entry/BusinessForm.vue",
       content: '<template><section><h1>入金申请</h1><el-input placeholder="申请单号" /></section></template>',
       sha256: "vue",
     });
@@ -111,7 +115,7 @@ describe("CodeGenerationPanel", () => {
     });
     await flushPromises();
 
-    expect(loadPreview).toHaveBeenCalledWith("frontend/src/modules/generated/entry/EntryApply.vue");
+    expect(loadPreview).toHaveBeenCalledWith("frontend/src/modules/generated/entry/BusinessForm.vue");
     expect(wrapper.text()).toContain("静态预览");
     expect(wrapper.text()).toContain("仅展示界面，不执行脚本或提交请求");
     const frame = wrapper.find('iframe[title="Agent 生成前端界面静态预览"]');
@@ -128,7 +132,7 @@ describe("CodeGenerationPanel", () => {
     const store = useWorkflowStore();
     vi.spyOn(store, "loadGeneratedPreviewFile").mockResolvedValue({
       generationId: "acg_1", generationRevision: 1,
-      relativePath: "frontend/src/modules/generated/entry/EntryApply.vue",
+      relativePath: "frontend/src/modules/generated/entry/BusinessForm.vue",
       content: "<template><form /></template>", sha256: "vue",
     });
     vi.spyOn(store, "loadGeneratedFile").mockResolvedValue();
@@ -158,7 +162,7 @@ describe("CodeGenerationPanel", () => {
     const store = useWorkflowStore();
     vi.spyOn(store, "loadGeneratedPreviewFile").mockResolvedValue({
       generationId: "acg_1", generationRevision: 1,
-      relativePath: "frontend/src/modules/generated/entry/EntryApply.vue",
+      relativePath: "frontend/src/modules/generated/entry/BusinessForm.vue",
       content: "<script setup>const invalid = true</script>", sha256: "vue",
     });
     const wrapper = shallowMount(CodeGenerationPanel, {

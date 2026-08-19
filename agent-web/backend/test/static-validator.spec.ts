@@ -1,6 +1,6 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  ENTRY_APPLICATION_REQUIREMENT,
+  WAREHOUSE_PLEDGE_REQUIREMENT,
   type ArtifactManifest,
   type GenerationTargetContract,
 } from "@flowmind/agent-contracts";
@@ -8,230 +8,107 @@ import { deriveGenerationSpec } from "../src/generation/generation-spec.js";
 import { createFakeGenerationFiles } from "../src/pi/fake-generation-files.js";
 import { StaticValidatorService } from "../src/validation/static-validator.service.js";
 
-const contract: GenerationTargetContract = {
-  contractVersion: "1.0",
+const contract = {
+  contractVersion: "2.1",
+  generationMode: "FRONTEND_ONLY",
   projectId: "fixture",
-  backend: {
-    rootDir: "backend",
-    javaVersion: "8",
-    springBootVersion: "2.7.18",
-    basePackage: "com.flowmind.business",
-    generatedSourceDir: "src/main/java/com/flowmind/business/generated",
-    generatedTestDir: "src/test/java/com/flowmind/business/generated",
-    starter: {
-      groupId: "com.flowmind",
-      artifactId: "platform-starter",
-      version: "0.1.0-SNAPSHOT",
-      allowedApi: "ProcessRuntimeService#startAndSubmit(StartProcessRequest)",
-    },
-    trustedUserContext: {
-      accessorType: "com.flowmind.business.security.CurrentBusinessUserProvider",
-      accessorMethod: "currentUser",
-      userIdProperty: "userId",
-      departmentIdProperty: "departmentId",
-    },
-    verificationProfile: "maven-java8",
-  },
   frontend: {
-    rootDir: "frontend",
-    framework: "vue3",
-    generatedViewDir: "src/modules/generated",
-    generatedApiDir: "src/api/generated",
-    generatedTestDir: "src/modules/generated/__tests__",
-    routeRegistry: "src/router/generated-routes.ts",
-    verificationProfile: "vue3-npm",
+    rootDir: "frontend", framework: "vue3", generatedModuleDir: "src/modules/generated",
+    generatedApiDir: "src/api/generated", routeRegistry: "src/router/generated-routes.ts",
+    sharedStartShell: "src/components/workflow/WorkflowStartShell.vue", sharedWorkflowTypes: "src/types/workflow.ts",
+    exampleReferenceFiles: [], verificationProfile: "vue3-npm",
   },
-  readableReferenceFiles: ["backend/pom.xml"],
-  allowedOutputPatterns: [
-    "backend/src/main/java/com/flowmind/business/generated/**/*.java",
-    "backend/src/test/java/com/flowmind/business/generated/**/*.java",
-    "frontend/src/modules/generated/**/*",
-    "frontend/src/api/generated/**/*",
-    "frontend/src/router/generated-routes.ts",
-  ],
-  protectedFiles: [{ path: "backend/pom.xml", sha256: "a".repeat(64) }],
-};
+  readableReferenceFiles: ["frontend/package.json"],
+  allowedOutputPatterns: ["frontend/src/modules/generated/**/*", "frontend/src/api/generated/**/*", "frontend/src/router/generated-routes.ts"],
+  protectedFiles: [{ path: "frontend/package.json", sha256: "a".repeat(64) }],
+} as GenerationTargetContract;
 
-describe("static generated-code validation", () => {
+describe("frontend-only static generated-code validation", () => {
   const validator = new StaticValidatorService();
 
-  it("passes for a complete artifact set with valid Java, TypeScript, and Vue syntax", () => {
-    const result = validator.validate(validInput());
-
-    expect(result.status).toBe("PASSED");
-    expect(result.diagnostics).toEqual([]);
-  });
-
-  it("fails when Java source has a clear syntax error and reports file position", () => {
+  it("passes the exact seven-file dynamic frontend artifact set", () => {
     const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(path, input.files.get(path)!.replace("public class", "public class {"));
-
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("FAILED");
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "JAVA_SYNTAX_ERROR",
-      relativePath: path,
-      line: expect.any(Number),
-      message: expect.any(String),
-    }));
-  });
-
-  it("passes for valid TypeScript syntax", () => {
-    const input = validInput();
-    const path = input.spec.paths.api;
-    input.files.set(path, `${input.files.get(path)!}\nexport const syntaxOnly = { ok: true };\n`);
-
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("PASSED");
-    expect(result.diagnostics).toEqual([]);
-  });
-
-  it("fails when TypeScript source has a clear syntax error", () => {
-    const input = validInput();
-    const path = input.spec.paths.api;
-    input.files.set(path, `${input.files.get(path)!}\nexport const broken = ;\n`);
-
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("FAILED");
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "TYPESCRIPT_SYNTAX_ERROR",
-      relativePath: path,
-      line: expect.any(Number),
-      column: expect.any(Number),
-      message: expect.any(String),
-    }));
-  });
-
-  it("passes for valid Vue SFC syntax", () => {
-    const input = validInput();
-    const path = input.spec.paths.view;
-    input.files.set(path, `<script setup lang="ts">
-const message: string = "ok";
-</script>
-<template><section>{{ message }}</section></template>
-`);
-
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("PASSED");
-    expect(result.diagnostics).toEqual([]);
-  });
-
-  it("fails when Vue script TypeScript has a clear syntax error", () => {
-    const input = validInput();
-    const path = input.spec.paths.view;
-    input.files.set(path, `<script setup lang="ts">
-const message = ;
-</script>
-<template><section>{{ message }}</section></template>
-`);
-
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("FAILED");
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "TYPESCRIPT_SYNTAX_ERROR",
-      relativePath: path,
-      line: expect.any(Number),
-      column: expect.any(Number),
-      message: expect.any(String),
-    }));
-  });
-
-  it("fails when Vue SFC structure has a parser error", () => {
-    const input = validInput();
-    const path = input.spec.paths.view;
-    input.files.set(path, "<script setup lang=\"ts\">const ok = true;</script><template><div></template>");
-
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("FAILED");
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "VUE_SYNTAX_ERROR",
-      relativePath: path,
-      message: expect.any(String),
-    }));
+    expect(input.spec.files).toHaveLength(7);
+    expect(validator.validate(input)).toEqual(expect.objectContaining({ status: "PASSED", diagnostics: [] }));
   });
 
   it("fails when manifest, spec, and staging file sets differ", () => {
     const input = validInput();
     input.files.delete(input.spec.paths.api);
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({ code: "GENERATED_FILE_SET_MISMATCH" }));
+  });
 
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("FAILED");
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "GENERATED_FILE_SET_MISMATCH",
+  it("blocks omitted confirmed fields and displayed checks", () => {
+    const input = validInput();
+    input.files.set(input.spec.paths.businessForm, input.files.get(input.spec.paths.businessForm)!
+      .replaceAll("futuresAccount", "removedAccount")
+      .replaceAll("满足质押要求", "未实现核查"));
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({
+      code: "GENERATED_REQUIREMENT_MAPPING_MISSING", actual: expect.stringContaining("futuresAccount"),
     }));
   });
 
-  it("fails when a required generated source file is empty", () => {
-    const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(path, "   \n");
+  it("fails empty and malformed frontend sources with locations", () => {
+    const empty = validInput();
+    empty.files.set(empty.spec.paths.businessForm, "  \n");
+    expect(validator.validate(empty).diagnostics).toContainEqual(expect.objectContaining({ code: "EMPTY_GENERATED_FILE" }));
 
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("FAILED");
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({
-      code: "EMPTY_GENERATED_FILE",
-      relativePath: path,
+    const malformedTs = validInput();
+    malformedTs.files.set(malformedTs.spec.paths.api, "export const broken = ;");
+    expect(validator.validate(malformedTs).diagnostics).toContainEqual(expect.objectContaining({
+      code: "TYPESCRIPT_SYNTAX_ERROR", line: expect.any(Number), column: expect.any(Number),
     }));
+
+    const malformedVue = validInput();
+    malformedVue.files.set(malformedVue.spec.paths.applyView, '<template><div></template>');
+    expect(validator.validate(malformedVue).diagnostics).toContainEqual(expect.objectContaining({ code: "VUE_SYNTAX_ERROR" }));
   });
 
-  it("passes syntax-valid Java that uses a different business implementation style", () => {
+  it.each([
+    ["direct fetch", "fetch('/api/reference-data/x')"],
+    ["workflow submit", "start-submit"],
+    ["attachment ownership", "new FormData()"],
+    ["approval action", "approve()"],
+  ])("blocks BusinessForm %s logic", (_label, forbidden) => {
     const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(/\s*Map<String, Object> variables = new LinkedHashMap<String, Object>\(\);\n(?:\s*variables\.put\([^\n]+\n)+/, "\n")
-        .replace("request.setVariables(variables);", "request.setVariables(input.toProcessVariables());")
-        .replace("file.getSize() > 10485760L", "file.getSize() > 10 * 1024 * 1024L"),
-    );
-
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("PASSED");
-    expect(result.diagnostics).toEqual([]);
+    input.files.set(input.spec.paths.businessForm, input.files.get(input.spec.paths.businessForm)!.replace("</script>", `${forbidden};\n</script>`));
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({ code: "GENERATED_FORM_BOUNDARY_VIOLATION" }));
   });
 
-  it("does not block when syntax-valid code omits a business field mapping", () => {
+  it("blocks workflow request logic in Apply", () => {
     const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(path, input.files.get(path)!.replace(/\s*variables\.put\("amount"[^\n]+\n/, "\n"));
-
-    const result = validator.validate(input);
-
-    expect(result.status).toBe("PASSED");
-    expect(result.diagnostics).toEqual([]);
+    input.files.set(input.spec.paths.applyView, input.files.get(input.spec.paths.applyView)!.replace("</script>", "fetch('/api/workflow/start');\n</script>"));
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({ code: "GENERATED_APPLY_BOUNDARY_VIOLATION" }));
   });
 
-  it("does not block when syntax-valid code omits attachment business validation", () => {
+  it.each([
+    ["platform endpoint", 'fetch("/api/platform/process")'],
+    ["mutation method", 'fetch("/api/reference-data/x", { method: "POST" })'],
+    ["task action", 'fetch("/api/workflow/tasks/1/approve")'],
+  ])("blocks API %s", (_label, forbidden) => {
     const input = validInput();
-    const path = input.spec.paths.service;
-    input.files.set(
-      path,
-      input.files.get(path)!
-        .replace(/bankReceiptCount < 1/g, "bankReceiptCount < -1")
-        .replace(/bankReceiptCount > 5/g, "bankReceiptCount > 999")
-        .replace(/file\.getSize\(\) > 10485760L/g, "false")
-        .replace(/lowerName\.endsWith\("\.(?:pdf|jpg|png)"\)/g, "true"),
-    );
+    input.files.set(input.spec.paths.api, `${input.files.get(input.spec.paths.api)!}\n${forbidden};\n`);
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({ code: "GENERATED_API_MUTATION_FORBIDDEN" }));
+  });
 
-    const result = validator.validate(input);
+  it("blocks read-only endpoints that the requirement did not declare", () => {
+    const input = validInput();
+    input.files.set(input.spec.paths.api, `${input.files.get(input.spec.paths.api)!}\nfetch("/api/reference-data/internal-secrets");\n`);
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({ code: "GENERATED_API_ENDPOINT_UNDECLARED" }));
+  });
 
-    expect(result.status).toBe("PASSED");
-    expect(result.diagnostics).toEqual([]);
+  it("requires authenticated standalone routing and rejects public routing", () => {
+    const missing = validInput();
+    missing.files.set(missing.spec.paths.routeRegistry, missing.files.get(missing.spec.paths.routeRegistry)!.replace("standalone: true", "standalone: false"));
+    expect(validator.validate(missing).diagnostics).toContainEqual(expect.objectContaining({ code: "GENERATED_ROUTE_BOUNDARY_VIOLATION" }));
+    const publicRoute = validInput();
+    publicRoute.files.set(publicRoute.spec.paths.routeRegistry, publicRoute.files.get(publicRoute.spec.paths.routeRegistry)!.replace("standalone: true", "standalone: true, public: true"));
+    expect(validator.validate(publicRoute).diagnostics).toContainEqual(expect.objectContaining({ code: "GENERATED_ROUTE_BOUNDARY_VIOLATION" }));
   });
 });
 
 function validInput() {
-  const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+  const requirement = structuredClone(WAREHOUSE_PLEDGE_REQUIREMENT);
   const spec = deriveGenerationSpec(requirement, contract);
   const files = new Map(Object.entries(createFakeGenerationFiles(
     requirement,
@@ -240,17 +117,11 @@ function validInput() {
     'import type { RouteRecordRaw } from "vue-router";\nexport const generatedRoutes: RouteRecordRaw[] = [];\n',
   )));
   const manifest: ArtifactManifest = {
-    generationId: "generation-static",
-    targetRoot: "target",
-    contractVersion: contract.contractVersion,
-    revision: 1,
+    generationId: "generation-static", targetRoot: "target", contractVersion: contract.contractVersion, revision: 1,
     files: spec.files.map((relativePath) => ({
-      relativePath,
-      changeType: relativePath === spec.paths.routeRegistry ? "MODIFY" : "ADD",
-      stagedSha256: "b".repeat(64),
-      sizeBytes: Buffer.byteLength(files.get(relativePath) || "", "utf8"),
-      validationStatus: "PENDING",
-      editedByUser: false,
+      relativePath, changeType: relativePath === spec.paths.routeRegistry ? "MODIFY" : "ADD",
+      stagedSha256: "b".repeat(64), sizeBytes: Buffer.byteLength(files.get(relativePath) || "", "utf8"),
+      validationStatus: "PENDING", editedByUser: false,
     })),
   };
   return { generationId: manifest.generationId, revision: 1, requirement, contract, spec, manifest, files };

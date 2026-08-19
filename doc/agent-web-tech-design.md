@@ -1,5 +1,15 @@
 # ② Agent Web 应用技术设计
 
+> 2026-08 前端专用生成修订：代码生成部分已升级为 `GenerationTargetContract 2.1 / FRONTEND_ONLY`。本修订优先于本文后续仍保留的 1.x、Java、Spring、Controller、Service、业务 submit API 和 Maven 门禁历史描述。Agent 固定生成五个前端文件，存在动态参考数据或业务查询时生成只读 API 与测试形成七文件；公共发起、附件、幂等与成功状态统一由 `WorkflowStartShell` 和共享 workflow API 负责。
+
+## 0. 前端专用生成冻结结论
+
+- `BusinessRequirement 1.2` 通过 `frontendBehavior.sections/dataQueries/calculations/checks` 描述页面行为；表达式只允许字段、查询结果属性、字面量、算术、比较、布尔与括号。
+- 每次首次生成冻结 `flowmind-business-generation` Skill、质押流程原始 Markdown、sample 组件/API/测试及 SHA-256；重新生成、Repair、Reviewer 复用同一快照。
+- 输出只允许 `frontend/src/modules/generated/**`、`frontend/src/api/generated/**` 与路由注册文件。`BusinessForm` 不得直接 fetch、提交流程、上传附件或执行任务动作；生成 API 仅允许契约声明的只读 GET。
+- 路由使用 `meta.standalone: true`，不使用匿名 `public`；有登录会话时无感进入，未登录直达时由现有路由守卫跳转登录。
+- 质量门禁执行前端 typecheck、test、build；后端 compile/test 为 `NOT_APPLICABLE`，`backendRestartRequired` 恒为 `false`。
+
 ## 1. 文档说明
 
 ### 1.1 目标
@@ -11,11 +21,11 @@ Agent 面向业务人员，在开发期完成以下主线：
 1. 通过多轮对话采集业务办理需求。
 2. 将自然语言沉淀为可编辑、可确认的结构化需求。
 3. 在用户确认后调用①流程平台创建、校验、发布并激活流程定义。
-4. 基于已确认的用户自定义流程和表单需求，生成对应的 Spring Boot 业务发起适配代码和 Vue3 录入页面。
-5. 自动完成静态边界检查、编译、单元/组件测试、独立 Agent 审核和最多三轮修复。
+4. 基于已确认的用户自定义流程和表单需求，按需生成五个或七个 Vue 3/TypeScript 前端文件。
+5. 自动完成静态边界检查、前端 typecheck/test/build、独立 Agent 审核和最多三轮修复。
 6. 在用户预览、编辑并确认代码后，将文件安全写入③基础底座工作区。
 
-Agent 是开发期生产工具，不参与业务运行期。Agent 生成模块的运行时职责到调用 `ProcessRuntimeService.startAndSubmit()` 成功返回为止：创建流程实例、完成发起人 `apply` 节点并推进至下一用户节点。此后的待办、审批详情、审批动作、流程轨迹和完整流转全部由③基础底座与①流程平台承担。
+Agent 是开发期生产工具，不参与业务运行期。生成产物只负责业务字段、只读查询与页面行为；流程发起、附件、幂等和成功状态由③基础底座现有 `WorkflowStartShell`/workflow API 统一承接，后续待办与审批动作也不由 Agent 生成。
 
 ### 1.2 设计依据
 

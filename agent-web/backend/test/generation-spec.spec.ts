@@ -12,20 +12,38 @@ import {
 } from "../src/generation/generation-spec.js";
 
 const contract = {
-  backend: { rootDir: "backend", generatedSourceDir: "src/main/java/com/example/generated", generatedTestDir: "src/test/java/com/example/generated", basePackage: "com.example" },
-  frontend: { rootDir: "frontend", generatedViewDir: "src/modules/generated", generatedApiDir: "src/api/generated", generatedTestDir: "src/modules/generated/__tests__", routeRegistry: "src/router/generated-routes.ts" },
+  contractVersion: "2.1",
+  generationMode: "FRONTEND_ONLY",
+  frontend: { rootDir: "frontend", generatedModuleDir: "src/modules/generated", generatedApiDir: "src/api/generated", routeRegistry: "src/router/generated-routes.ts" },
 } as GenerationTargetContract;
 const APPLY_SUCCESSOR_ISSUE = "apply 必须且只能流向一个后续用户任务、知会节点、排他网关或并行分支网关";
 
 describe("deriveGenerationSpec", () => {
-  it("derives stable Java and frontend names from underscores and hyphens", () => {
+  it("derives the stable five-file frontend baseline from underscores and hyphens", () => {
     const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
     requirement.businessCode = "travel_expense-2026";
     const spec = deriveGenerationSpec(requirement, contract);
     expect(spec.classPrefix).toBe("TravelExpense2026");
     expect(spec.packageSegment).toBe("travelexpense2026");
     expect(spec.kebabCode).toBe("travel-expense-2026");
-    expect(spec.files).toHaveLength(11);
+    expect(spec.files).toHaveLength(5);
+    expect(spec.hasBusinessApi).toBe(false);
+    expect(spec.paths.businessForm).toContain("travel-expense-2026/BusinessForm.vue");
+    expect(spec.paths.applyView).toContain("travel-expense-2026/Apply.vue");
+    expect(spec.files.some((path) => path.endsWith(".java"))).toBe(false);
+  });
+
+  it("adds the read-only API pair only for dynamic reference data", () => {
+    const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    requirement.formFields.push({
+      fieldCode: "exchangeCode", fieldName: "交易所", fieldType: "select", controlType: "select",
+      required: true, validation: {}, sortOrder: 99, referenceDataSource: { resource: "EXCHANGES" },
+    });
+    const spec = deriveGenerationSpec(requirement, contract);
+    expect(spec.hasBusinessApi).toBe(true);
+    expect(spec.files).toHaveLength(7);
+    expect(spec.files).toContain(spec.paths.api);
+    expect(spec.files).toContain(spec.paths.apiTest);
   });
 
   it("rejects reserved words, illegal identifiers and case-insensitive collisions", () => {

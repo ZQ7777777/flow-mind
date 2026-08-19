@@ -9,6 +9,7 @@ const generation: CodeGenerationSummary = {
   generationId: "acg-ready",
   status: "REVIEW",
   generationRevision: 1,
+  backendRestartRequired: false,
   targetRoot: "D:\\business-base",
   contractVersion: "1.0",
   manifest: { generationId: "acg-ready", targetRoot: "D:\\business-base", contractVersion: "1.0", revision: 1, files: [] },

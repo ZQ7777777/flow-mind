@@ -63,8 +63,9 @@ describe("repair prompt", () => {
       unresolvedDiagnosticIds: ["diagnostic-current"],
     });
     expect(prompt).toContain("REVIEW_BOUNDARY");
-    expect(prompt).toContain("com.flowmind.platform.api.service.ProcessRuntimeService");
-    expect(prompt).toContain("CurrentBusinessUserProvider.BusinessUser");
+    expect(prompt).toContain("frontend-only boundary");
+    expect(prompt).toContain("No generated business API is required");
+    expect(prompt).not.toContain("ProcessRuntimeService");
     expect(prompt).toContain("all failed hard and soft quality stages");
     expect(prompt).toContain("BACKEND_TESTS and FRONTEND_TESTS");
     expect(prompt).toContain("diagnostic-current");

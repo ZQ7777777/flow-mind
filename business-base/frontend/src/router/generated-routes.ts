@@ -15,15 +15,16 @@ export const generatedRoutes: RouteRecordRaw[] = [
     component: () => import("../modules/generated/entry-application/EntryApplicationApply.vue"),
   },
   {
-    path: "/generated/sample/apply",
-    name: "generated-sample-apply",
-    meta: { title: "仓单、国债（解）质押申请" },
-    component: () => import("../modules/generated/sample/SampleApply.vue"),
+    path: "/generated/warehouse-pledge/apply",
+    name: "generated-warehouse-pledge-apply",
+    meta: { title: "仓单、国债（解）质押申请", standalone: true },
+    component: () => import("../modules/generated/sample/Apply.vue"),
   },
 ];
 
 export const generatedBusinessFormRegistry: Record<string, GeneratedBusinessFormLoader> = {
   entry_application: () => import("../modules/generated/entry-application/BusinessForm.vue"),
+  warehouse_pledge: () => import("../modules/generated/sample/BusinessForm.vue"),
 };
 
 export async function resolveGeneratedBusinessForm(processCode?: string): Promise<Component | undefined> {

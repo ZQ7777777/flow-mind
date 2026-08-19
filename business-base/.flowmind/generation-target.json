@@ -1,78 +1,48 @@
 {
-  "contractVersion": "1.1",
+  "contractVersion": "2.1",
+  "generationMode": "FRONTEND_ONLY",
   "projectId": "flowmind-business-base",
-  "backend": {
-    "rootDir": "backend",
-    "javaVersion": "8",
-    "springBootVersion": "2.7.18",
-    "basePackage": "com.flowmind.business",
-    "generatedSourceDir": "src/main/java/com/flowmind/business/generated",
-    "generatedTestDir": "src/test/java/com/flowmind/business/generated",
-    "starter": {
-      "groupId": "com.flowmind",
-      "artifactId": "platform-starter",
-      "version": "0.1.0-SNAPSHOT",
-      "allowedApi": "ProcessRuntimeService#startAndSubmit(StartProcessRequest)"
-    },
-    "trustedUserContext": {
-      "accessorType": "com.flowmind.business.security.CurrentBusinessUserProvider",
-      "accessorMethod": "currentUser",
-      "userIdProperty": "userId",
-      "departmentIdProperty": "departmentId"
-    },
-    "apiReferences": {
-      "platformRuntime": ".flowmind/references/platform-starter-0.1.0.md",
-      "trustedUserContext": "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java"
-    },
-    "verificationProfile": "maven-java8"
-  },
   "frontend": {
     "rootDir": "frontend",
     "framework": "vue3",
-    "generatedViewDir": "src/modules/generated",
+    "generatedModuleDir": "src/modules/generated",
     "generatedApiDir": "src/api/generated",
-    "generatedTestDir": "src/modules/generated/__tests__",
     "routeRegistry": "src/router/generated-routes.ts",
-    "apiReferences": {
-      "businessReferenceData": ".flowmind/references/business-reference-data-v1.md"
-    },
+    "sharedStartShell": "src/components/workflow/WorkflowStartShell.vue",
+    "sharedWorkflowTypes": "src/types/workflow.ts",
+    "exampleReferenceFiles": [
+      "frontend/src/modules/generated/sample/BusinessForm.vue",
+      "frontend/src/modules/generated/sample/Apply.vue",
+      "frontend/src/modules/generated/sample/__tests__/BusinessForm.spec.ts",
+      "frontend/src/modules/generated/sample/__tests__/Apply.spec.ts",
+      "frontend/src/api/generated/sample/sample.ts",
+      "frontend/src/api/generated/sample/sample.spec.ts"
+    ],
+    "apiReferences": { "businessReferenceData": ".flowmind/references/business-reference-data-v1.md" },
     "verificationProfile": "vue3-npm"
   },
   "readableReferenceFiles": [
-    "backend/pom.xml",
-    ".flowmind/references/platform-starter-0.1.0.md",
-    "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java",
     ".flowmind/references/business-reference-data-v1.md",
     "frontend/package.json",
-    "frontend/src/router/generated-routes.ts"
+    "frontend/src/router/generated-routes.ts",
+    "frontend/src/components/workflow/WorkflowStartShell.vue",
+    "frontend/src/types/workflow.ts",
+    "frontend/src/modules/generated/sample/BusinessForm.vue",
+    "frontend/src/modules/generated/sample/Apply.vue",
+    "frontend/src/modules/generated/sample/__tests__/BusinessForm.spec.ts",
+    "frontend/src/modules/generated/sample/__tests__/Apply.spec.ts",
+    "frontend/src/api/generated/sample/sample.ts",
+    "frontend/src/api/generated/sample/sample.spec.ts"
   ],
   "allowedOutputPatterns": [
-    "backend/src/main/java/com/flowmind/business/generated/**/*.java",
-    "backend/src/test/java/com/flowmind/business/generated/**/*.java",
     "frontend/src/modules/generated/**/*",
     "frontend/src/api/generated/**/*",
     "frontend/src/router/generated-routes.ts"
   ],
   "protectedFiles": [
-    {
-      "path": "backend/pom.xml",
-      "sha256": "1a8f94b9506fc5f050061a7509bef86006abcd4eb160ff59b47e2ff4e93309fd"
-    },
-    {
-      "path": "frontend/package.json",
-      "sha256": "6eebe6c7000b7275c649fd62f7f716778f6119874f3302b3750b6a8524da42f2"
-    },
-    {
-      "path": ".flowmind/references/platform-starter-0.1.0.md",
-      "sha256": "c3b9adb0c428412bef4753e7f92475d2fa037b26964c2cf0f644b09cbff10db3"
-    },
-    {
-      "path": "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java",
-      "sha256": "03addaa975a358750c94c6ed5a25bf5346218b172bcfb73cdaf1e27844119141"
-    },
-    {
-      "path": ".flowmind/references/business-reference-data-v1.md",
-      "sha256": "d502edb61caeef43aa7d784769570c8b6e27f818da03d9a0adf015dfc2caf68a"
-    }
+    { "path": "frontend/package.json", "sha256": "c9b53bc59543737cd28b19e4a1a102c50d8c1cc9415eb23ade9d07f92e212021" },
+    { "path": ".flowmind/references/business-reference-data-v1.md", "sha256": "d502edb61caeef43aa7d784769570c8b6e27f818da03d9a0adf015dfc2caf68a" },
+    { "path": "frontend/src/components/workflow/WorkflowStartShell.vue", "sha256": "7200126fdb9c1171928657743b33cb70c4115f7fa1cdaccfc18161d486fa0769" },
+    { "path": "frontend/src/types/workflow.ts", "sha256": "a84a6351e215b808169b646b7608eecf0ed5defcc45f762c6f43395364cfaeb1" }
   ]
 }

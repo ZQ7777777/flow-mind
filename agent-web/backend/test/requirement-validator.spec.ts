@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ENTRY_APPLICATION_REQUIREMENT } from "@flowmind/agent-contracts";
+import { ENTRY_APPLICATION_REQUIREMENT, WAREHOUSE_PLEDGE_REQUIREMENT } from "@flowmind/agent-contracts";
 import { validateRequirement } from "../src/requirement/requirement-validator.js";
 
 describe("validateRequirement", () => {
@@ -8,6 +8,24 @@ describe("validateRequirement", () => {
     expect(result.structurallyValid).toBe(true);
     expect(result.readyForReview).toBe(true);
     expect(result.missingItems).toEqual([]);
+  });
+
+  it("accepts the 1.2 warehouse pledge page behavior gold requirement", () => {
+    const result = validateRequirement(WAREHOUSE_PLEDGE_REQUIREMENT);
+    expect(result).toEqual(expect.objectContaining({ structurallyValid: true, readyForReview: true }));
+  });
+
+  it.each([
+    ["assignment", "quantity = 1"],
+    ["function call", "Math.abs(quantity)"],
+    ["conditional expression", "quantity > 0 ? quantity : 0"],
+    ["unknown identifier", "quantity + secretValue"],
+  ])("rejects unsafe frontend expressions containing %s", (_label, expression) => {
+    const input = structuredClone(WAREHOUSE_PLEDGE_REQUIREMENT);
+    input.frontendBehavior!.calculations[0].expression = expression;
+    const result = validateRequirement(input);
+    expect(result.readyForReview).toBe(false);
+    expect(result.ambiguities.join(" ")).toContain("不允许的语法或未知标识符");
   });
 
   it("accepts a non-blocking NOTICE node addressed to the starter", () => {

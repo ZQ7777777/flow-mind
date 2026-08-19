@@ -41,8 +41,12 @@ business-base/frontend/package.json text eol=lf
 # agent生成文件
 business-base/backend/src/main/java/com/flowmind/business/generated/
 business-base/backend/src/test/java/com/flowmind/business/generated/
-business-base/frontend/src/api/generated/
-business-base/frontend/src/modules/generated/
+business-base/frontend/src/api/generated/*
+!business-base/frontend/src/api/generated/sample/
+!business-base/frontend/src/api/generated/sample/**
+business-base/frontend/src/modules/generated/*
+!business-base/frontend/src/modules/generated/sample/
+!business-base/frontend/src/modules/generated/sample/**
 business-base/frontend/src/router/generated-routes.ts
 
 # #  范例流程

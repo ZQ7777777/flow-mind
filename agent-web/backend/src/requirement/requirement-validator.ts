@@ -1,4 +1,5 @@
 import AjvModule, { type ErrorObject } from "ajv";
+import ts from "typescript";
 import {
   businessRequirementSchema,
   type BusinessRequirement,
@@ -80,6 +81,7 @@ export function validateRequirement(input: unknown): RequirementValidation {
     }
   }
   if (starts.length === 1) validateReachability(starts[0], requirement, missing);
+  validateFrontendBehavior(requirement, fieldByCode, ambiguities);
 
   return {
     structurallyValid: true,
@@ -90,6 +92,99 @@ export function validateRequirement(input: unknown): RequirementValidation {
   };
 }
 
+function validateFrontendBehavior(
+  requirement: BusinessRequirement,
+  fieldByCode: Map<string, BusinessRequirement["formFields"][number]>,
+  ambiguities: Set<string>,
+): void {
+  const behavior = requirement.frontendBehavior;
+  if (!behavior) return;
+  const queryCodes = new Set(behavior.dataQueries.map(({ queryCode }) => queryCode));
+  addDuplicateIssues(behavior.sections.map(({ sectionCode }) => sectionCode), "页面分区编码", ambiguities);
+  addDuplicateIssues([...queryCodes], "页面查询编码", ambiguities);
+  addDuplicateIssues(behavior.calculations.map(({ calculationCode }) => calculationCode), "页面计算编码", ambiguities);
+  addDuplicateIssues(behavior.checks.map(({ checkCode }) => checkCode), "页面核查编码", ambiguities);
+  for (const section of behavior.sections) {
+    for (const fieldCode of section.fieldCodes) {
+      if (!fieldByCode.has(fieldCode)) ambiguities.add(`页面分区 ${section.sectionCode} 引用了不存在的字段 ${fieldCode}`);
+    }
+  }
+  for (const query of behavior.dataQueries) {
+    if (!query.parameterBindings.accountNo) ambiguities.add(`页面查询 ${query.queryCode} 缺少参数绑定 accountNo`);
+    for (const fieldCode of Object.values(query.parameterBindings)) {
+      if (!fieldByCode.has(fieldCode)) ambiguities.add(`页面查询 ${query.queryCode} 引用了不存在的字段 ${fieldCode}`);
+    }
+  }
+  for (const calculation of behavior.calculations) {
+    if (!fieldByCode.has(calculation.targetFieldCode)) ambiguities.add(`页面计算 ${calculation.calculationCode} 的目标字段不存在`);
+    for (const fieldCode of calculation.dependencyFieldCodes) {
+      if (!fieldByCode.has(fieldCode)) ambiguities.add(`页面计算 ${calculation.calculationCode} 引用了不存在的字段 ${fieldCode}`);
+    }
+    validateFrontendExpression(calculation.expression, calculation.calculationCode, fieldByCode, queryCodes, ambiguities);
+  }
+  for (const check of behavior.checks) {
+    for (const fieldCode of check.dependencyFieldCodes) {
+      if (!fieldByCode.has(fieldCode)) ambiguities.add(`页面核查 ${check.checkCode} 引用了不存在的字段 ${fieldCode}`);
+    }
+    for (const queryCode of check.dataQueryCodes) {
+      if (!queryCodes.has(queryCode)) ambiguities.add(`页面核查 ${check.checkCode} 引用了不存在的查询 ${queryCode}`);
+    }
+    if (check.appliesWhen) validateFrontendExpression(check.appliesWhen, check.checkCode, fieldByCode, queryCodes, ambiguities);
+    validateFrontendExpression(check.passWhen, check.checkCode, fieldByCode, queryCodes, ambiguities);
+  }
+}
+
+function validateFrontendExpression(
+  expression: string,
+  label: string,
+  fieldByCode: Map<string, BusinessRequirement["formFields"][number]>,
+  queryCodes: Set<string>,
+  ambiguities: Set<string>,
+): void {
+  const source = ts.createSourceFile("frontend-expression.ts", `const value = (${expression});`, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  const diagnostics = (source as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics || [];
+  if (diagnostics.length) {
+    ambiguities.add(`页面表达式 ${label} 语法无效`);
+    return;
+  }
+  const declaration = (source.statements[0] as ts.VariableStatement | undefined)?.declarationList.declarations[0];
+  const root = declaration?.initializer;
+  if (!root || !isSafeExpression(root, fieldByCode, queryCodes)) ambiguities.add(`页面表达式 ${label} 包含不允许的语法或未知标识符`);
+}
+
+const SAFE_BINARY_OPERATORS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.PlusToken, ts.SyntaxKind.MinusToken, ts.SyntaxKind.AsteriskToken, ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken, ts.SyntaxKind.LessThanToken, ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken, ts.SyntaxKind.GreaterThanEqualsToken, ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken,
+]);
+
+function isSafeExpression(
+  node: ts.Expression,
+  fieldByCode: Map<string, BusinessRequirement["formFields"][number]>,
+  queryCodes: Set<string>,
+): boolean {
+  if (ts.isParenthesizedExpression(node)) return isSafeExpression(node.expression, fieldByCode, queryCodes);
+  if (ts.isNumericLiteral(node) || ts.isStringLiteral(node)
+    || node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword
+    || node.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (ts.isIdentifier(node)) return fieldByCode.has(node.text);
+  if (ts.isPropertyAccessExpression(node)) {
+    return ts.isIdentifier(node.expression) && queryCodes.has(node.expression.text) && ts.isIdentifier(node.name);
+  }
+  if (ts.isPrefixUnaryExpression(node)) {
+    return [ts.SyntaxKind.PlusToken, ts.SyntaxKind.MinusToken, ts.SyntaxKind.ExclamationToken].includes(node.operator)
+      && isSafeExpression(node.operand, fieldByCode, queryCodes);
+  }
+  if (ts.isBinaryExpression(node)) {
+    return SAFE_BINARY_OPERATORS.has(node.operatorToken.kind)
+      && isSafeExpression(node.left, fieldByCode, queryCodes)
+      && isSafeExpression(node.right, fieldByCode, queryCodes);
+  }
+  return false;
+}
+
 function validateReferenceDataSource(
   fieldCode: string,
   source: NonNullable<BusinessRequirement["formFields"][number]["referenceDataSource"]>,
@@ -97,8 +192,8 @@ function validateReferenceDataSource(
   fieldByCode: Map<string, BusinessRequirement["formFields"][number]>,
   ambiguities: Set<string>,
 ): void {
-  if (schemaVersion !== "1.1") {
-    ambiguities.add(`动态参考数据字段 ${fieldCode} 必须使用需求结构 1.1`);
+  if (schemaVersion === "1.0") {
+    ambiguities.add(`动态参考数据字段 ${fieldCode} 必须使用需求结构 1.1 或 1.2`);
   }
   const requiredParameters: Record<typeof source.resource, string[]> = {
     FUTURES_ACCOUNTS: [],

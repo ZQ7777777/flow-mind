@@ -269,7 +269,7 @@ describe("WorkflowDetailView", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[1][0])).toContain("/api/workflow/attachments/saved-att/content");
-    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ size: 13, type: "application/pdf" }));
   });
 
   it("does not delete an attachment when confirmation is cancelled", async () => {

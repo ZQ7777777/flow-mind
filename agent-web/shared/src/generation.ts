@@ -1,6 +1,6 @@
 export interface GenerationTargetContract {
-  contractVersion: "1.0" | "1.1" | "2.0";
-  generationMode?: "FULL_STACK" | "FRONTEND_FORM_ONLY";
+  contractVersion: "1.0" | "1.1" | "2.0" | "2.1";
+  generationMode?: "FULL_STACK" | "FRONTEND_FORM_ONLY" | "FRONTEND_ONLY";
   projectId: string;
   backend?: {
     rootDir: string;
@@ -37,6 +37,7 @@ export interface GenerationTargetContract {
     routeRegistry: string;
     sharedStartShell?: string;
     sharedWorkflowTypes?: string;
+    exampleReferenceFiles?: string[];
     apiReferences?: {
       businessReferenceData?: string;
     };
@@ -58,6 +59,27 @@ export interface GenerationSkillSnapshot {
     sha256: string;
     content: string;
   }>;
+}
+
+export interface GenerationReferenceSnapshot {
+  source: "REPOSITORY" | "TARGET";
+  relativePath: string;
+  required: boolean;
+  sha256: string;
+  content: string;
+}
+
+export interface GenerationContextSnapshot {
+  version: "1.0";
+  sha256: string;
+  skills: GenerationSkillSnapshot[];
+  references: GenerationReferenceSnapshot[];
+}
+
+export interface GenerationContextSummary {
+  sha256: string;
+  skills: Array<{ name: string; sha256: string }>;
+  references: Array<{ source: "REPOSITORY" | "TARGET"; relativePath: string; sha256: string }>;
 }
 
 export type ArtifactChangeType = "ADD" | "MODIFY";
@@ -244,6 +266,9 @@ export interface CodeGenerationSummary {
   contractVersion: string;
   manifest?: ArtifactManifest;
   quality?: GenerationQualityReport;
+  context?: GenerationContextSummary;
+  /** Present on backend responses and always false for FRONTEND_ONLY generation. */
+  backendRestartRequired: false;
   lastError?: { code: string; message: string };
   createdAt: string;
   updatedAt: string;
@@ -278,8 +303,8 @@ export const generationTargetContractSchema = {
   additionalProperties: false,
   required: ["contractVersion", "projectId", "frontend", "readableReferenceFiles", "allowedOutputPatterns", "protectedFiles"],
   properties: {
-    contractVersion: { enum: ["1.0", "1.1", "2.0"] },
-    generationMode: { enum: ["FULL_STACK", "FRONTEND_FORM_ONLY"] },
+    contractVersion: { enum: ["1.0", "1.1", "2.0", "2.1"] },
+    generationMode: { enum: ["FULL_STACK", "FRONTEND_FORM_ONLY", "FRONTEND_ONLY"] },
     projectId: { type: "string", minLength: 1 },
     backend: {
       type: "object", additionalProperties: false,
@@ -325,6 +350,7 @@ export const generationTargetContractSchema = {
         generatedApiDir: relativePath, generatedTestDir: relativePath, routeRegistry: relativePath,
         sharedStartShell: relativePath,
         sharedWorkflowTypes: relativePath,
+        exampleReferenceFiles: { type: "array", uniqueItems: true, items: relativePath },
         apiReferences: {
           type: "object", additionalProperties: false,
           properties: { businessReferenceData: relativePath },
@@ -343,17 +369,20 @@ export const generationTargetContractSchema = {
     },
   },
   allOf: [{
+    if: { properties: { generationMode: { const: "FRONTEND_ONLY" } }, required: ["generationMode"] },
+    then: {
+      properties: {
+        contractVersion: { const: "2.1" },
+        frontend: { required: ["generatedModuleDir", "generatedApiDir", "sharedStartShell", "sharedWorkflowTypes", "exampleReferenceFiles"] },
+      },
+      not: { required: ["backend"] },
+    },
+  }, {
     if: { properties: { generationMode: { const: "FRONTEND_FORM_ONLY" } }, required: ["generationMode"] },
     then: {
       properties: {
         contractVersion: { const: "2.0" },
         frontend: { required: ["generatedModuleDir", "sharedStartShell", "sharedWorkflowTypes"] },
-      },
-    },
-    else: {
-      required: ["backend"],
-      properties: {
-        frontend: { required: ["generatedViewDir", "generatedApiDir", "generatedTestDir"] },
       },
     },
   }, {

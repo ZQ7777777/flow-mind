@@ -76,6 +76,7 @@ export interface GenerationRow {
   target_root: string;
   target_contract_version: string;
   target_contract_json: string;
+  generation_context_snapshot_json: string;
   staging_dir: string;
   backup_dir: string | null;
   artifact_manifest_json: string;
@@ -535,6 +536,15 @@ export class DatabaseService implements OnModuleDestroy {
           this.db.exec("ALTER TABLE agent_repair_attempt ADD COLUMN failure_code TEXT");
         }
         this.recordMigration(9);
+      });
+    }
+    if (!applied.has(10)) {
+      this.transaction(() => {
+        const columns = this.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
+        if (!columns.some(({ name }) => name === "generation_context_snapshot_json")) {
+          this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN generation_context_snapshot_json TEXT NOT NULL DEFAULT '{}'");
+        }
+        this.recordMigration(10);
       });
     }
   }

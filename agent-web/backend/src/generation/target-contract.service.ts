@@ -42,14 +42,16 @@ export function normalizeGenerationContract(contract: GenerationTargetContract):
 }
 
 export function apiReferencePaths(contract: GenerationTargetContract): { platformRuntime: string; trustedUserContext: string } {
-  return normalizeGenerationContract(contract).backend!.apiReferences!;
+  const references = normalizeGenerationContract(contract).backend?.apiReferences;
+  if (!references) throw new Error("backend API references are unavailable for a frontend-only generation target");
+  return references;
 }
 
 export function declaredApiReferencePaths(contract: GenerationTargetContract): string[] {
   const normalized = normalizeGenerationContract(contract);
   return [
-    normalized.backend!.apiReferences!.platformRuntime,
-    normalized.backend!.apiReferences!.trustedUserContext,
+    normalized.backend?.apiReferences?.platformRuntime,
+    normalized.backend?.apiReferences?.trustedUserContext,
     normalized.frontend.apiReferences?.businessReferenceData,
   ].filter((path): path is string => Boolean(path));
 }
@@ -97,21 +99,19 @@ export class TargetContractService {
     } catch {
       throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "generation target contract is not valid JSON", sessionId);
     }
+    if (contract.contractVersion !== "2.1" || contract.generationMode !== "FRONTEND_ONLY" || contract.backend) {
+      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_UPGRADE_REQUIRED", "generation target must use contractVersion 2.1 and generationMode FRONTEND_ONLY without backend configuration", sessionId);
+    }
     if (!this.validateSchema(contract)) {
-      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "generation target contract does not match version 1.0", sessionId, {
+      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "generation target contract does not match the supported schema", sessionId, {
         errors: this.validateSchema.errors || [],
       });
     }
-    if (contract.contractVersion === "1.1") {
-      const references = contract.backend?.apiReferences;
-      const declaredReferences = references ? declaredApiReferencePaths(contract) : [];
-      if (!references
-        || !declaredReferences.every((path) => contract.readableReferenceFiles.includes(path))
-        || !declaredReferences.every((path) => contract.protectedFiles.some((item) => item.path === path))) {
-        throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "generation API references must be readable and protected", sessionId);
-      }
+    const businessReference = contract.frontend.apiReferences?.businessReferenceData;
+    if (businessReference && (!contract.readableReferenceFiles.includes(businessReference)
+      || !contract.protectedFiles.some((item) => item.path === businessReference))) {
+      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "business reference-data API must be readable and protected", sessionId);
     }
-    contract = normalizeGenerationContract(contract);
     if (contract.allowedOutputPatterns.length !== REQUIRED_OUTPUT_PATTERNS.length
       || REQUIRED_OUTPUT_PATTERNS.some((pattern, index) => contract.allowedOutputPatterns[index] !== pattern)) {
       throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", "allowed output patterns do not match the Flow Mind boundary", sessionId);
@@ -126,15 +126,15 @@ export class TargetContractService {
       }
     }
 
-    const backend = contract.backend!;
-    const accessorPath = `${backend.rootDir}/src/main/java/${backend.trustedUserContext.accessorType.replace(/\./g, "/")}.java`;
-    this.requireFile(targetRoot, normalizeRelativePath(accessorPath, sessionId), sessionId, "trusted user accessor");
     const routePath = `${contract.frontend.rootDir}/${contract.frontend.routeRegistry}`;
     this.requireFile(targetRoot, normalizeRelativePath(routePath, sessionId), sessionId, "generated route registry");
-    const pom = this.requireFile(targetRoot, `${backend.rootDir}/pom.xml`, sessionId).toString("utf8");
-    if (!pom.includes("<groupId>com.flowmind</groupId>") || !pom.includes("<artifactId>platform-starter</artifactId>")
-      || !pom.includes("<version>${platform-starter.version}</version>") && !pom.includes("<version>0.1.0-SNAPSHOT</version>")) {
-      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_PREREQUISITE_MISSING", "backend pom.xml does not provide the required platform-starter", sessionId);
+    this.requireFile(targetRoot, `${contract.frontend.rootDir}/${contract.frontend.sharedStartShell}`, sessionId, "shared workflow start shell");
+    this.requireFile(targetRoot, `${contract.frontend.rootDir}/${contract.frontend.sharedWorkflowTypes}`, sessionId, "shared workflow types");
+    for (const path of contract.frontend.exampleReferenceFiles || []) {
+      if (!contract.readableReferenceFiles.includes(path)) {
+        throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", `example reference must be readable: ${path}`, sessionId);
+      }
+      this.requireFile(targetRoot, path, sessionId, "example reference");
     }
     const packageJson = JSON.parse(this.requireFile(targetRoot, `${contract.frontend.rootDir}/package.json`, sessionId).toString("utf8")) as { scripts?: Record<string, string> };
     if (!["typecheck", "test", "build"].every((name) => typeof packageJson.scripts?.[name] === "string")) {

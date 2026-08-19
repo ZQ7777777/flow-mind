@@ -7,7 +7,7 @@ import {
 } from "@flowmind/agent-contracts";
 import { validateRequirement } from "../src/requirement/requirement-validator.js";
 
-describe("BusinessRequirement 1.1", () => {
+describe("BusinessRequirement 1.2", () => {
   it("normalizes legacy 1.0 requirements deterministically", () => {
     const canonical = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
     const legacy = {
@@ -19,7 +19,8 @@ describe("BusinessRequirement 1.1", () => {
     delete (legacy as unknown as Record<string, unknown>).nodeFieldPermissions;
 
     const normalized = normalizeBusinessRequirement(legacy);
-    expect(normalized.schemaVersion).toBe("1.1");
+    expect(normalized.schemaVersion).toBe("1.2");
+    expect(normalized.frontendBehavior?.sections).toHaveLength(1);
     expect(normalized.entryDisplayName).toBe("入金申请");
     expect(normalized.entryPageTitle).toBe("发起入金申请");
     expect(normalized.nodeFieldPermissions).toContainEqual(expect.objectContaining({

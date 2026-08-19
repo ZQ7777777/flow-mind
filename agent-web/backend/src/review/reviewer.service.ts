@@ -1,10 +1,11 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { CodeReviewReport, QualityStageResult } from "@flowmind/agent-contracts";
+import type { CodeReviewReport, GenerationContextSnapshot, QualityStageResult } from "@flowmind/agent-contracts";
 import { DatabaseService, type GenerationRow } from "../persistence/database.service.js";
 import { PiAdapterService } from "../pi/pi-adapter.service.js";
 import { StagingService } from "../generation/staging.service.js";
 import { EventBusService } from "../workflow/event-bus.service.js";
+import { GenerationContextRegistry } from "../generation/generation-context-registry.service.js";
 
 @Injectable()
 export class ReviewerService {
@@ -15,6 +16,7 @@ export class ReviewerService {
     @Optional() @Inject(PiAdapterService) private readonly pi?: PiAdapterService,
     @Optional() @Inject(StagingService) private readonly staging?: StagingService,
     @Optional() @Inject(EventBusService) private readonly events?: EventBusService,
+    @Optional() @Inject(GenerationContextRegistry) private readonly contexts?: GenerationContextRegistry,
   ) {}
 
   async review(
@@ -40,6 +42,18 @@ export class ReviewerService {
     try {
       if (signal?.aborted) throw new Error("quality gate cancelled");
       if (this.pi && this.staging) {
+        const context = JSON.parse(generation.generation_context_snapshot_json || "{}") as GenerationContextSnapshot;
+        const contextItems = context.version === "1.0" ? [
+          ...context.skills.flatMap((skill) => skill.files.map((file) => ({
+            key: `skill:${skill.name}:${file.relativePath}`, sha256: file.sha256,
+            required: file.relativePath === "SKILL.md" || file.relativePath === "references/golden-example.md",
+            read: () => this.contexts?.readSkill(context, skill.name, file.relativePath, generation.session_id) || file.content,
+          }))),
+          ...context.references.map((reference) => ({
+            key: `reference:${reference.source}:${reference.relativePath}`, sha256: reference.sha256, required: false,
+            read: () => this.contexts?.readReference(context, reference.source, reference.relativePath, generation.session_id) || reference.content,
+          })),
+        ] : [];
         session = await this.pi.runReview(
           reviewId,
           "Review the current staged Manifest against the confirmed requirement and quality results. Only investigate diagnostics scoped CURRENT_GENERATION. Do not investigate, report, or request changes for PRE_EXISTING diagnostics or files outside the Manifest. For every issue include concrete evidence, an actionable repairHint, and repairability. Submit exactly one code review.",
@@ -47,6 +61,8 @@ export class ReviewerService {
             readStaged: (path) => this.staging!.read(generation, path).content,
             readDiff: (path) => this.staging!.diff(generation, path).unifiedDiff,
             readQuality: () => JSON.stringify(stages),
+            listGenerationContext: () => contextItems.map(({ key, sha256, required }) => ({ key, sha256, required })),
+            readGenerationContext: (key) => contextItems.find((item) => item.key === key)?.read() || "context unavailable",
             submit: (report) => { submitted = report; },
             onEvent: (type, data) => this.events?.publish(generation.session_id, { type, data }),
             onError: (_code, message) => this.events?.publish(generation.session_id, { type: "error", data: { message } }),

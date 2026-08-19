@@ -1,26 +1,25 @@
-# Flow Mind Agent Web（M0-M3）
+# Flow Mind Agent Web
 
-本工程实现从自然语言需求采集、流程定义发布激活，到受限暂存区中的用户自定义流程发起代码、测试生成和人工代码预览。
+本工程实现从自然语言需求采集、流程定义发布激活，到受限暂存区中的用户自定义流程前端代码、测试生成和人工代码预览。代码生成采用 `GenerationTargetContract 2.1` 的 `FRONTEND_ONLY` 模式，不再生成 Java 或业务专用提交接口。
 
 ## 环境
 
 - Node.js `>= 22.19.0`
-- 已安装 `platform-starter` 依赖并可启动的 `business-base/backend`
+- 可启动的 `business-base` 目标工程
 - 真实对话模式需要 `PI_MODEL=provider/model` 和对应 Provider 服务端凭据
 
 复制 `.env.example` 中的配置到进程环境。`targetRoot` 在 M0-M2 可以留空，M3 启动生成时可补填，
 但必须位于 `AGENT_ALLOWED_TARGET_ROOTS` 下并通过 `.flowmind/generation-target.json` 预检。
-Java 质量门禁可通过 `AGENT_MAVEN_REPO_LOCAL` 指定稳定本地 Maven 仓库；启动脚本默认指向仓库根 `.m2/repository`。
 
 ## M3 目标工程前置条件
 
-目标③工程必须提供契约声明的构建文件、真实 SHA-256、可信用户访问器和
-`frontend/src/router/generated-routes.ts`。缺少任一前置件时会拒绝生成；Agent 不会替目标工程补造基础底座。
+目标③工程必须提供 2.1 契约声明的前端构建脚本、`WorkflowStartShell`、共享 workflow 类型、路由注册文件和金标参考文件。缺少任一前置件时会拒绝生成；1.x 与 2.0 契约会返回明确升级错误。
 
-M3 根据已确认的业务编码、表单字段和 `apply` 节点附件，生成对应的发起 Controller、Service、DTO、Vue 录入页、API、路由注册项及测试。
-生成代码只负责调用 `startAndSubmit()` 发起流程并完成 `apply`，不生成后续审批能力。
+每次生成固定产出 `BusinessForm.vue`、`Apply.vue`、两个组件测试和 `generated-routes.ts` 共五个文件；当需求含动态参考数据或 `frontendBehavior.dataQueries` 时，再产出只读业务 API 客户端和相邻测试，共七个文件。`Apply.vue` 只组合固定 `processCode`、`BusinessForm` 与 `WorkflowStartShell`，公共壳负责发起、附件、幂等和成功状态。
+
+生成前会冻结项目 Skill、原始“仓单、国债（解）质押申请”流程文档及当前 sample 金标源码的内容和 SHA-256。重新生成、修复和 Reviewer 始终复用原快照，避免参考文件更新改变进行中的生成结果。
 产物保存在 `AGENT_DATA_DIR/staging/{sessionId}/{generationId}`，可在代码树中编辑和查看 diff，
-不会写入真实目标工程。编译、Reviewer、自动修复和最终写入属于后续阶段。
+不会写入真实目标工程。质量阶段只执行前端 typecheck、test 和 build；后端 compile/test 在报告中标记为不适用。Reviewer、自动修复和最终写入继续使用同一上下文快照。
 
 ## 开发
 
