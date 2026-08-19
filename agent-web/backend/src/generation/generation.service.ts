@@ -1,6 +1,7 @@
 import { HttpStatus, Inject, Injectable, Optional } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
 import type {
   ArtifactManifest,
   BusinessRequirement,
@@ -654,7 +655,15 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
 }
 
 function samePath(left: string, right: string): boolean {
-  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+  const normalize = (value: string) => {
+    const resolved = resolve(value);
+    return existsSync(resolved) ? realpathSync.native(resolved) : resolved;
+  };
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  return process.platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
 }
 
 function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }

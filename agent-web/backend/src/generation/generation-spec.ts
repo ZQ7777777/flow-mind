@@ -56,6 +56,10 @@ export interface GenerationSpec {
     api: string;
     apiTest: string;
     routeRegistry: string;
+    businessForm: string;
+    businessFormTest: string;
+    applyView: string;
+    applyViewTest: string;
   };
 }
 
@@ -81,11 +85,56 @@ export function deriveGenerationSpec(
     throw new GenerationRequirementError([`业务编码 ${requirement.businessCode} 派生出的 Java 包名是保留字`]);
   }
 
-  const backendSource = joinPath(contract.backend.rootDir, contract.backend.generatedSourceDir, packageSegment);
-  const backendTest = joinPath(contract.backend.rootDir, contract.backend.generatedTestDir, packageSegment);
-  const frontendView = joinPath(contract.frontend.rootDir, contract.frontend.generatedViewDir);
-  const frontendApi = joinPath(contract.frontend.rootDir, contract.frontend.generatedApiDir);
-  const frontendTest = joinPath(contract.frontend.rootDir, contract.frontend.generatedTestDir);
+  if (isFrontendFormOnlyContract(contract)) {
+    const frontendModule = joinPath(contract.frontend.rootDir, contract.frontend.generatedModuleDir);
+    const paths = {
+      controller: "",
+      service: "",
+      requestDto: "",
+      responseDto: "",
+      controllerTest: "",
+      serviceTest: "",
+      view: joinPath(frontendModule, kebabCode, "Apply.vue"),
+      viewTest: joinPath(frontendModule, kebabCode, "__tests__", "Apply.spec.ts"),
+      api: "",
+      apiTest: "",
+      routeRegistry: joinPath(contract.frontend.rootDir, contract.frontend.routeRegistry),
+      businessForm: joinPath(frontendModule, kebabCode, "BusinessForm.vue"),
+      businessFormTest: joinPath(frontendModule, kebabCode, "__tests__", "BusinessForm.spec.ts"),
+      applyView: joinPath(frontendModule, kebabCode, "Apply.vue"),
+      applyViewTest: joinPath(frontendModule, kebabCode, "__tests__", "Apply.spec.ts"),
+    };
+    return {
+      processCode: requirement.businessCode,
+      businessName: requirement.businessName,
+      classPrefix,
+      camelPrefix,
+      packageSegment,
+      kebabCode,
+      javaPackage: "",
+      apiPath: `/api/workflow/processes/${requirement.businessCode}/start-submit`,
+      routePath: `/generated/${kebabCode}/apply`,
+      routeName: `generated-${kebabCode}-apply`,
+      applyAttachments: requirement.attachments
+        .filter((attachment) => attachment.applicableNodeCodes.includes("apply"))
+        .sort((left, right) => left.sortOrder - right.sortOrder),
+      files: [
+        paths.businessForm,
+        paths.businessFormTest,
+        paths.applyView,
+        paths.applyViewTest,
+        paths.routeRegistry,
+      ],
+      paths,
+    };
+  }
+
+  const backend = contract.backend!;
+  const backendSource = joinPath(backend.rootDir, backend.generatedSourceDir, packageSegment);
+  const backendTest = joinPath(backend.rootDir, backend.generatedTestDir, packageSegment);
+  const frontendView = joinPath(contract.frontend.rootDir, contract.frontend.generatedViewDir!);
+  const frontendApi = joinPath(contract.frontend.rootDir, contract.frontend.generatedApiDir!);
+  const frontendTest = joinPath(contract.frontend.rootDir, contract.frontend.generatedTestDir!);
   const paths = {
     controller: joinPath(backendSource, `${classPrefix}Controller.java`),
     service: joinPath(backendSource, `${classPrefix}Service.java`),
@@ -98,6 +147,10 @@ export function deriveGenerationSpec(
     api: joinPath(frontendApi, `${kebabCode}.ts`),
     apiTest: joinPath(frontendApi, `${kebabCode}.spec.ts`),
     routeRegistry: joinPath(contract.frontend.rootDir, contract.frontend.routeRegistry),
+    businessForm: joinPath(frontendView, kebabCode, "BusinessForm.vue"),
+    businessFormTest: joinPath(frontendView, kebabCode, "__tests__", "BusinessForm.spec.ts"),
+    applyView: joinPath(frontendView, kebabCode, "Apply.vue"),
+    applyViewTest: joinPath(frontendView, kebabCode, "__tests__", "Apply.spec.ts"),
   };
 
   return {
@@ -107,7 +160,7 @@ export function deriveGenerationSpec(
     camelPrefix,
     packageSegment,
     kebabCode,
-    javaPackage: `${contract.backend.basePackage}.generated.${packageSegment}`,
+    javaPackage: `${backend.basePackage}.generated.${packageSegment}`,
     apiPath: `/api/generated/${kebabCode}/submit`,
     routePath: `/generated/${kebabCode}/apply`,
     routeName: `generated-${kebabCode}-apply`,
@@ -165,4 +218,12 @@ function capitalize(value: string): string {
 
 function joinPath(...parts: string[]): string {
   return parts.map((part) => part.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/");
+}
+
+function isFrontendFormOnlyContract(contract: GenerationTargetContract): contract is GenerationTargetContract & {
+  contractVersion: "2.0";
+  generationMode: "FRONTEND_FORM_ONLY";
+  frontend: GenerationTargetContract["frontend"] & { generatedModuleDir: string };
+} {
+  return (contract as { generationMode?: string }).generationMode === "FRONTEND_FORM_ONLY";
 }

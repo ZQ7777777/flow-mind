@@ -20,6 +20,7 @@ export interface ValidatedGenerationTarget {
 export const DEFAULT_PLATFORM_API_REFERENCE = ".flowmind/references/platform-starter-0.1.0.md";
 
 export function normalizeGenerationContract(contract: GenerationTargetContract): GenerationTargetContract {
+  if (!contract.backend) return contract;
   if (contract.contractVersion === "1.1" && contract.backend.apiReferences) return contract;
   const trustedUserContext = `${contract.backend.rootDir}/src/main/java/${contract.backend.trustedUserContext.accessorType.replace(/\./g, "/")}.java`;
   return {
@@ -41,14 +42,14 @@ export function normalizeGenerationContract(contract: GenerationTargetContract):
 }
 
 export function apiReferencePaths(contract: GenerationTargetContract): { platformRuntime: string; trustedUserContext: string } {
-  return normalizeGenerationContract(contract).backend.apiReferences!;
+  return normalizeGenerationContract(contract).backend!.apiReferences!;
 }
 
 export function declaredApiReferencePaths(contract: GenerationTargetContract): string[] {
   const normalized = normalizeGenerationContract(contract);
   return [
-    normalized.backend.apiReferences!.platformRuntime,
-    normalized.backend.apiReferences!.trustedUserContext,
+    normalized.backend!.apiReferences!.platformRuntime,
+    normalized.backend!.apiReferences!.trustedUserContext,
     normalized.frontend.apiReferences?.businessReferenceData,
   ].filter((path): path is string => Boolean(path));
 }
@@ -102,7 +103,7 @@ export class TargetContractService {
       });
     }
     if (contract.contractVersion === "1.1") {
-      const references = contract.backend.apiReferences;
+      const references = contract.backend?.apiReferences;
       const declaredReferences = references ? declaredApiReferencePaths(contract) : [];
       if (!references
         || !declaredReferences.every((path) => contract.readableReferenceFiles.includes(path))
@@ -125,11 +126,12 @@ export class TargetContractService {
       }
     }
 
-    const accessorPath = `${contract.backend.rootDir}/src/main/java/${contract.backend.trustedUserContext.accessorType.replace(/\./g, "/")}.java`;
+    const backend = contract.backend!;
+    const accessorPath = `${backend.rootDir}/src/main/java/${backend.trustedUserContext.accessorType.replace(/\./g, "/")}.java`;
     this.requireFile(targetRoot, normalizeRelativePath(accessorPath, sessionId), sessionId, "trusted user accessor");
     const routePath = `${contract.frontend.rootDir}/${contract.frontend.routeRegistry}`;
     this.requireFile(targetRoot, normalizeRelativePath(routePath, sessionId), sessionId, "generated route registry");
-    const pom = this.requireFile(targetRoot, `${contract.backend.rootDir}/pom.xml`, sessionId).toString("utf8");
+    const pom = this.requireFile(targetRoot, `${backend.rootDir}/pom.xml`, sessionId).toString("utf8");
     if (!pom.includes("<groupId>com.flowmind</groupId>") || !pom.includes("<artifactId>platform-starter</artifactId>")
       || !pom.includes("<version>${platform-starter.version}</version>") && !pom.includes("<version>0.1.0-SNAPSHOT</version>")) {
       throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_PREREQUISITE_MISSING", "backend pom.xml does not provide the required platform-starter", sessionId);

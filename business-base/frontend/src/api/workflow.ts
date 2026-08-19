@@ -14,8 +14,6 @@ import type {
   WorkflowStartResponse,
   WorkflowProcessEntryLink,
   WorkflowStartableProcessResponse,
-  WorkflowProcessEntryLink,
-  WorkflowStartableProcessResponse,
   WorkflowUserResponse,
   WorkflowUserCandidateResponse,
 } from "../types/workflow";

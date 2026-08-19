@@ -92,7 +92,7 @@ describe("GenerationTargetContract preflight", () => {
     writeFileSync(path, JSON.stringify(contract), "utf8");
     const normalized = new TargetContractService().validate(target).contract;
     expect(normalized.contractVersion).toBe("1.1");
-    expect(normalized.backend.apiReferences).toEqual({
+    expect(normalized.backend!.apiReferences).toEqual({
       platformRuntime: ".flowmind/references/platform-starter-0.1.0.md",
       trustedUserContext: "backend/src/main/java/com/flowmind/business/security/CurrentBusinessUserProvider.java",
     });

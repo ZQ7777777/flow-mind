@@ -272,7 +272,7 @@ function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string): V
     };
   };
   const mavenRepoArgs = configuredMavenRepoArgs();
-  const backend = resolve(workspaceRoot, input.contract.backend.rootDir);
+  const backend = resolve(workspaceRoot, input.contract.backend!.rootDir);
   const frontend = resolve(workspaceRoot, input.contract.frontend.rootDir);
   const commands: VerificationCommand[] = [
     { ...common, stage: "BACKEND_COMPILE", ...command("mvn", ["-q", ...mavenRepoArgs, "-DskipTests", "compile"]), cwd: backend },

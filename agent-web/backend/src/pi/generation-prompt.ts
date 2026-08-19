@@ -27,6 +27,7 @@ export function buildGenerationPrompt(
   spec: GenerationSpec,
   apiReferences: GenerationApiReferences,
 ): string {
+  const backend = contract.backend!;
   return `You are the Flow Mind business code generator. Generate source files directly from the confirmed requirement; do not use templates or copy values from examples.
 
 Use only the registered tools. You have no shell, Git, platform mutation, target write, or general filesystem access.
@@ -42,10 +43,10 @@ Confirmed generated identity:
 - Frontend route: ${spec.routePath}, route name ${spec.routeName}
 
 Hard runtime boundary:
-- Java 8, Spring Boot 2.7.18, base package ${contract.backend.basePackage}.
-- Inject ${contract.backend.trustedUserContext.accessorType} and ProcessRuntimeService.
-- The only platform runtime call is exactly ${contract.backend.starter.allowedApi}; invoke it once in the service submission path.
-- starterUserId and starterDeptId come only from ${contract.backend.trustedUserContext.accessorMethod}().
+- Java 8, Spring Boot 2.7.18, base package ${backend.basePackage}.
+- Inject ${backend.trustedUserContext.accessorType} and ProcessRuntimeService.
+- The only platform runtime call is exactly ${backend.starter.allowedApi}; invoke it once in the service submission path.
+- starterUserId and starterDeptId come only from ${backend.trustedUserContext.accessorMethod}().
 - The processCode is the literal confirmed value ${JSON.stringify(spec.processCode)}. Never accept processCode, starterUserId, or starterDeptId from the client.
 - Set a non-blank instanceTitle before startAndSubmit. If the confirmed form has a required field whose exact fieldCode is applicationNo, use ${JSON.stringify(spec.businessName + " - ")} + that field value; otherwise use the literal business name ${JSON.stringify(spec.businessName)}. Never accept instanceTitle from the client.
 - Map every confirmed form field into process variables using its exact fieldCode.

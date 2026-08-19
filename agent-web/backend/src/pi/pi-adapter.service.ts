@@ -72,6 +72,16 @@ export interface ReviewPiCallbacks extends PiEventSink {
   }): void;
 }
 
+export function assertRequiredGenerationSkillsRead(
+  requiredSkillNames: string[],
+  readSkillNames: Set<string>,
+): void {
+  const missing = requiredSkillNames.filter((name) => !readSkillNames.has(name));
+  if (missing.length) {
+    throw new Error(`Required generation skills were not read: ${missing.join(", ")}`);
+  }
+}
+
 @Injectable()
 export class PiAdapterService implements OnModuleDestroy {
   private readonly config = loadConfig();

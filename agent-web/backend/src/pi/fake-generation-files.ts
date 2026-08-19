@@ -13,11 +13,21 @@ export function createFakeGenerationFiles(
   existingRouteRegistry: string,
 ): Record<string, string> {
   const fields = [...requirement.formFields].sort((left, right) => left.sortOrder - right.sortOrder);
-  const accessorImport = contract.backend.trustedUserContext.accessorType;
+  if ((contract as { generationMode?: string }).generationMode === "FRONTEND_FORM_ONLY") {
+    return {
+      [spec.paths.businessForm]: businessFormSource(requirement, fields),
+      [spec.paths.businessFormTest]: businessFormTestSource(spec),
+      [spec.paths.applyView]: applyShellSource(spec),
+      [spec.paths.applyViewTest]: applyShellTestSource(spec),
+      [spec.paths.routeRegistry]: mergeGeneratedRoute(existingRouteRegistry, spec),
+    };
+  }
+  const backend = contract.backend!;
+  const accessorImport = backend.trustedUserContext.accessorType;
   const accessorType = simpleName(accessorImport);
-  const accessorMethod = contract.backend.trustedUserContext.accessorMethod;
-  const userIdGetter = getter(contract.backend.trustedUserContext.userIdProperty);
-  const departmentIdGetter = getter(contract.backend.trustedUserContext.departmentIdProperty);
+  const accessorMethod = backend.trustedUserContext.accessorMethod;
+  const userIdGetter = getter(backend.trustedUserContext.userIdProperty);
+  const departmentIdGetter = getter(backend.trustedUserContext.departmentIdProperty);
   const formType = `${spec.classPrefix}Payload`;
   const submitFunction = `submit${spec.classPrefix}`;
 
@@ -380,15 +390,89 @@ describe("${spec.kebabCode} api", () => { it("uses the derived endpoint and idem
 }
 
 function mergeGeneratedRoute(existing: string, spec: GenerationSpec): string {
-  if (existing.includes(`name: "${spec.routeName}"`) || existing.includes(`name: '${spec.routeName}'`)) return existing;
-  const route = `{ path: "${spec.routePath}", name: "${spec.routeName}", component: () => import("../modules/generated/${spec.kebabCode}/${spec.classPrefix}Apply.vue") }`;
+  let result = existing;
+  if (!result.includes(`name: "${spec.routeName}"`) && !result.includes(`name: '${spec.routeName}'`)) {
+    const componentFile = spec.paths.applyView.endsWith("/Apply.vue") ? "Apply.vue" : `${spec.classPrefix}Apply.vue`;
+    const route = `{ path: "${spec.routePath}", name: "${spec.routeName}", meta: { title: "${escapeTs(spec.businessName)}", standalone: true }, component: () => import("../modules/generated/${spec.kebabCode}/${componentFile}") }`;
   const empty = /export const generatedRoutes:\s*RouteRecordRaw\[\]\s*=\s*\[\s*\];/;
-  if (empty.test(existing)) return existing.replace(empty, `export const generatedRoutes: RouteRecordRaw[] = [${route}];`);
-  const closing = existing.lastIndexOf("];");
+    if (empty.test(result)) {
+      result = result.replace(empty, `export const generatedRoutes: RouteRecordRaw[] = [${route}];`);
+    } else {
+      const closing = result.lastIndexOf("];");
   if (closing < 0) throw new Error("generated route registry does not export an array");
-  const before = existing.slice(0, closing).trimEnd();
+      const before = result.slice(0, closing).trimEnd();
   const separator = before.endsWith("[") ? "" : ",";
-  return `${before}${separator}\n  ${route},\n${existing.slice(closing)}`;
+      result = `${before}${separator}\n  ${route},\n${result.slice(closing)}`;
+    }
+  }
+  const registryEntry = `${spec.processCode}: () => import("../modules/generated/${spec.kebabCode}/BusinessForm.vue")`;
+  if (result.includes(`${spec.processCode}: () =>`)) return result;
+  const registryPattern = /export const generatedBusinessFormRegistry\s*=\s*\{([\s\S]*?)\};/;
+  if (registryPattern.test(result)) {
+    return result.replace(registryPattern, (_match, body: string) => {
+      const trimmed = body.trim();
+      const separator = trimmed && !trimmed.endsWith(",") ? "," : "";
+      return `export const generatedBusinessFormRegistry = {${body}${separator}\n  ${registryEntry},\n};`;
+    });
+  }
+  return `${result.trimEnd()}\nexport const generatedBusinessFormRegistry = {\n  ${registryEntry},\n};\n`;
+}
+
+function businessFormSource(requirement: BusinessRequirement, fields: FormFieldRequirement[]): string {
+  const fieldCodes = fields.map((field) => JSON.stringify(field.fieldCode)).join(", ");
+  return `<script setup lang="ts">
+import { computed } from "vue";
+const props = defineProps<{ modelValue: Record<string, unknown>; fields: any[]; fieldPermissions: any[]; mode?: "edit" | "readonly"; disabled?: boolean }>();
+const emit = defineEmits<{ (event: "update:modelValue", value: Record<string, unknown>): void }>();
+const confirmedFieldCodes = [${fieldCodes}];
+const visibleFields = computed(() => props.fields.filter((field) => confirmedFieldCodes.includes(field.fieldCode)));
+function update(fieldCode: string, value: unknown): void { emit("update:modelValue", { ...props.modelValue, [fieldCode]: value }); }
+async function validate(): Promise<boolean> { return true; }
+defineExpose({ validate });
+</script>
+<template>
+  <section aria-label="${escapeHtml(requirement.businessName)}表单">
+    <label v-for="field in visibleFields" :key="field.fieldCode" :data-field-code="field.fieldCode">
+      <span>{{ field.fieldName }}</span>
+      <input :value="String(modelValue[field.fieldCode] ?? '')" :disabled="disabled || mode === 'readonly'" @input="update(field.fieldCode, ($event.target as HTMLInputElement).value)" />
+    </label>
+  </section>
+</template>
+`;
+}
+
+function businessFormTestSource(spec: GenerationSpec): string {
+  return `import { mount } from "@vue/test-utils";
+import { describe, expect, it } from "vitest";
+import BusinessForm from "../BusinessForm.vue";
+describe("${spec.kebabCode} BusinessForm", () => { it("renders confirmed fields only", () => {
+  const wrapper = mount(BusinessForm, { props: { modelValue: {}, fields: [{ fieldCode: "applicantName", fieldName: "申请人" }], fieldPermissions: [] } });
+  expect(wrapper.text()).toContain("申请人");
+}); });
+`;
+}
+
+function applyShellSource(spec: GenerationSpec): string {
+  return `<script setup lang="ts">
+import { defineAsyncComponent } from "vue";
+import WorkflowStartShell from "../../../components/workflow/WorkflowStartShell.vue";
+const BusinessForm = defineAsyncComponent(() => import("./BusinessForm.vue"));
+</script>
+<template>
+  <WorkflowStartShell process-code="${spec.processCode}" :business-form="BusinessForm" />
+</template>
+`;
+}
+
+function applyShellTestSource(spec: GenerationSpec): string {
+  return `import { mount } from "@vue/test-utils";
+import { describe, expect, it } from "vitest";
+import Apply from "../Apply.vue";
+describe("${spec.kebabCode} Apply", () => { it("delegates submission to WorkflowStartShell", () => {
+  const wrapper = mount(Apply, { global: { stubs: { WorkflowStartShell: true } } });
+  expect(wrapper.findComponent({ name: "WorkflowStartShell" }).exists()).toBe(true);
+}); });
+`;
 }
 
 function javaType(field: FormFieldRequirement): string {

@@ -99,6 +99,14 @@ export interface AttachmentRequirement {
   sortOrder: number;
 }
 
+export interface NodeFieldPermissionRequirement {
+  nodeCode: string;
+  fieldCode: string;
+  visible: boolean;
+  editable: boolean;
+  required: boolean;
+}
+
 export type ProcessNodeType =
   | "START"
   | "USER_TASK"
@@ -195,6 +203,8 @@ export interface BusinessRequirement {
   schemaVersion: "1.0" | "1.1";
   businessCode: string;
   businessName: string;
+  entryDisplayName?: string;
+  entryPageTitle?: string;
   systemCode: string;
   goal: string;
   participants: Participant[];
@@ -202,8 +212,14 @@ export interface BusinessRequirement {
   attachments: AttachmentRequirement[];
   nodes: ProcessNodeRequirement[];
   edges: ProcessEdgeRequirement[];
+  nodeFieldPermissions?: NodeFieldPermissionRequirement[];
   businessRules: BusinessRule[];
 }
+
+export type LegacyBusinessRequirement = Omit<
+  BusinessRequirement,
+  "schemaVersion" | "entryDisplayName" | "entryPageTitle" | "nodeFieldPermissions"
+> & { schemaVersion: "1.0" };
 
 export interface RequirementRevision {
   sessionId: string;
@@ -289,6 +305,8 @@ export const businessRequirementSchema = {
     schemaVersion: { enum: ["1.0", "1.1"] },
     businessCode: { type: "string" },
     businessName: { type: "string" },
+    entryDisplayName: { type: "string" },
+    entryPageTitle: { type: "string" },
     systemCode: { type: "string" },
     goal: { type: "string" },
     participants: {
@@ -418,6 +436,21 @@ export const businessRequirementSchema = {
         },
       },
     },
+    nodeFieldPermissions: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["nodeCode", "fieldCode", "visible", "editable", "required"],
+        properties: {
+          nodeCode: { type: "string" },
+          fieldCode: { type: "string" },
+          visible: { type: "boolean" },
+          editable: { type: "boolean" },
+          required: { type: "boolean" },
+        },
+      },
+    },
     businessRules: {
       type: "array",
       items: {
@@ -440,6 +473,8 @@ export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
   schemaVersion: "1.1",
   businessCode: "entry_application",
   businessName: "入金申请",
+  entryDisplayName: "入金申请",
+  entryPageTitle: "发起入金申请",
   systemCode: DEFAULT_SYSTEM_CODE,
   goal: "业务员提交入金申请，由部门经理审批并由财务确认后完成。",
   participants: [
@@ -479,6 +514,19 @@ export const ENTRY_APPLICATION_REQUIREMENT: BusinessRequirement = {
     { edgeCode: "e3", sourceNodeCode: "manager_approve", targetNodeCode: "finance_confirm", defaultEdge: false, sortOrder: 3 },
     { edgeCode: "e4", sourceNodeCode: "finance_confirm", targetNodeCode: "end", defaultEdge: false, sortOrder: 4 },
   ],
+  nodeFieldPermissions: ENTRY_APPLICATION_USER_TASK_CODES.flatMap((nodeCode) =>
+    [
+      { fieldCode: "applicantName", required: true },
+      { fieldCode: "amount", required: true },
+      { fieldCode: "accountNo", required: true },
+    ].map((field) => ({
+      nodeCode,
+      fieldCode: field.fieldCode,
+      visible: true,
+      editable: nodeCode === "apply",
+      required: nodeCode === "apply" && field.required,
+    })),
+  ),
   businessRules: [],
 };
 
@@ -489,6 +537,8 @@ export const WAREHOUSE_PLEDGE_REQUIREMENT: BusinessRequirement = {
   schemaVersion: "1.1",
   businessCode: "warehouse_pledge",
   businessName: "仓单、国债（解）质押申请",
+  entryDisplayName: "仓单、国债（解）质押申请",
+  entryPageTitle: "发起仓单、国债（解）质押申请",
   systemCode: DEFAULT_SYSTEM_CODE,
   goal: "客户经理选择统一账户、交易所和多个期货品种，系统带出交易编码及合约参数后提交风控审核。",
   participants: [
@@ -551,3 +601,53 @@ export const WAREHOUSE_PLEDGE_REQUIREMENT: BusinessRequirement = {
     { ruleCode: "last_product_autofill", description: "多选品种最后一次选择负责带出合约乘数、质押品单位数量和昨结算价" },
   ],
 };
+
+export function normalizeBusinessRequirement(input: BusinessRequirement | LegacyBusinessRequirement): BusinessRequirement {
+  const requirement = structuredClone(input) as BusinessRequirement;
+  requirement.schemaVersion = "1.1";
+  requirement.entryDisplayName ||= requirement.businessName;
+  requirement.entryPageTitle ||= `发起${requirement.businessName}`;
+  requirement.nodeFieldPermissions ||= requirement.nodes.flatMap((node) =>
+    requirement.formFields.map((field) => ({
+      nodeCode: node.nodeCode,
+      fieldCode: field.fieldCode,
+      visible: node.nodeType !== "START" && node.nodeType !== "END",
+      editable: node.nodeCode === "apply",
+      required: node.nodeCode === "apply" && field.required,
+    })),
+  );
+  return requirement;
+}
+
+export function renderBusinessRequirementMarkdown(input: BusinessRequirement): string {
+  const requirement = normalizeBusinessRequirement(input);
+  const lines = [
+    `# ${requirement.businessName}需求文档`,
+    "",
+    `- 业务编码：${requirement.businessCode}`,
+    `- 入口名称：${requirement.entryDisplayName}`,
+    `- 页面标题：${requirement.entryPageTitle}`,
+    `- 发起接口：POST /api/workflow/processes/${requirement.businessCode}/start-submit`,
+    "",
+    "## 表单字段",
+    ...requirement.formFields
+      .slice()
+      .sort((left, right) => left.sortOrder - right.sortOrder)
+      .map((field) => `- ${field.fieldCode}：${field.fieldName}（${field.controlType}${field.required ? "，必填" : ""}）`),
+    "",
+    "## 附件",
+    ...(requirement.attachments.length
+      ? requirement.attachments
+        .slice()
+        .sort((left, right) => left.sortOrder - right.sortOrder)
+        .map((attachment) => `- ${attachment.attachmentCode}：${attachment.attachmentName}`)
+      : ["- 无"]),
+    "",
+    "## 节点字段权限",
+    ...(requirement.nodeFieldPermissions || [])
+      .map((permission) =>
+        `- ${permission.nodeCode}.${permission.fieldCode}：visible=${permission.visible}, editable=${permission.editable}, required=${permission.required}`,
+      ),
+  ];
+  return `${lines.join("\n")}\n`;
+}

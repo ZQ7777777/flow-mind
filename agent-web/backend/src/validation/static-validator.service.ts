@@ -89,6 +89,16 @@ export class StaticValidatorService {
       } else if (relativePath.endsWith(".ts")) {
         this.parseTypeScript(relativePath, content, diagnostics);
       }
+      if (relativePath === input.spec.paths.businessForm && /<button|fetch\(|start-submit/.test(content)) {
+        diagnostics.push(diagnostic({
+          code: "GENERATED_FORM_BOUNDARY_VIOLATION",
+          message: "Generated BusinessForm.vue must not contain submit controls or direct workflow submission logic.",
+          relativePath,
+          actual: "BusinessForm.vue contains submit-capable markup or request logic.",
+          expected: "BusinessForm.vue only renders business fields and exposes validate().",
+          repairHint: "Move submission, attachment upload, and workflow API calls into the shared WorkflowStartShell.",
+        }));
+      }
     }
   }
 

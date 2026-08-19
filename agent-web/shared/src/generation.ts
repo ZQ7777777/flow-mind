@@ -1,7 +1,8 @@
 export interface GenerationTargetContract {
-  contractVersion: "1.0" | "1.1";
+  contractVersion: "1.0" | "1.1" | "2.0";
+  generationMode?: "FULL_STACK" | "FRONTEND_FORM_ONLY";
   projectId: string;
-  backend: {
+  backend?: {
     rootDir: string;
     javaVersion: "8";
     springBootVersion: "2.7.18";
@@ -29,10 +30,13 @@ export interface GenerationTargetContract {
   frontend: {
     rootDir: string;
     framework: "vue3";
-    generatedViewDir: string;
-    generatedApiDir: string;
-    generatedTestDir: string;
+    generatedModuleDir?: string;
+    generatedViewDir?: string;
+    generatedApiDir?: string;
+    generatedTestDir?: string;
     routeRegistry: string;
+    sharedStartShell?: string;
+    sharedWorkflowTypes?: string;
     apiReferences?: {
       businessReferenceData?: string;
     };
@@ -41,6 +45,19 @@ export interface GenerationTargetContract {
   readableReferenceFiles: string[];
   allowedOutputPatterns: string[];
   protectedFiles: Array<{ path: string; sha256: string }>;
+}
+
+export interface GenerationSkillSnapshot {
+  name: string;
+  source: "REPOSITORY";
+  required: boolean;
+  priority: number;
+  sha256: string;
+  files: Array<{
+    relativePath: string;
+    sha256: string;
+    content: string;
+  }>;
 }
 
 export type ArtifactChangeType = "ADD" | "MODIFY";
@@ -259,9 +276,10 @@ export const generationTargetContractSchema = {
   $id: "GenerationTargetContract",
   type: "object",
   additionalProperties: false,
-  required: ["contractVersion", "projectId", "backend", "frontend", "readableReferenceFiles", "allowedOutputPatterns", "protectedFiles"],
+  required: ["contractVersion", "projectId", "frontend", "readableReferenceFiles", "allowedOutputPatterns", "protectedFiles"],
   properties: {
-    contractVersion: { enum: ["1.0", "1.1"] },
+    contractVersion: { enum: ["1.0", "1.1", "2.0"] },
+    generationMode: { enum: ["FULL_STACK", "FRONTEND_FORM_ONLY"] },
     projectId: { type: "string", minLength: 1 },
     backend: {
       type: "object", additionalProperties: false,
@@ -300,10 +318,13 @@ export const generationTargetContractSchema = {
     },
     frontend: {
       type: "object", additionalProperties: false,
-      required: ["rootDir", "framework", "generatedViewDir", "generatedApiDir", "generatedTestDir", "routeRegistry", "verificationProfile"],
+      required: ["rootDir", "framework", "routeRegistry", "verificationProfile"],
       properties: {
         rootDir: relativePath, framework: { const: "vue3" }, generatedViewDir: relativePath,
+        generatedModuleDir: relativePath,
         generatedApiDir: relativePath, generatedTestDir: relativePath, routeRegistry: relativePath,
+        sharedStartShell: relativePath,
+        sharedWorkflowTypes: relativePath,
         apiReferences: {
           type: "object", additionalProperties: false,
           properties: { businessReferenceData: relativePath },
@@ -322,7 +343,21 @@ export const generationTargetContractSchema = {
     },
   },
   allOf: [{
+    if: { properties: { generationMode: { const: "FRONTEND_FORM_ONLY" } }, required: ["generationMode"] },
+    then: {
+      properties: {
+        contractVersion: { const: "2.0" },
+        frontend: { required: ["generatedModuleDir", "sharedStartShell", "sharedWorkflowTypes"] },
+      },
+    },
+    else: {
+      required: ["backend"],
+      properties: {
+        frontend: { required: ["generatedViewDir", "generatedApiDir", "generatedTestDir"] },
+      },
+    },
+  }, {
     if: { properties: { contractVersion: { const: "1.1" } }, required: ["contractVersion"] },
-    then: { properties: { backend: { required: ["apiReferences"] } } },
+    then: { required: ["backend"], properties: { backend: { required: ["apiReferences"] } } },
   }],
 } as const;

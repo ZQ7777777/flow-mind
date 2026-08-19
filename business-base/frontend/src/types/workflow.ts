@@ -162,6 +162,22 @@ export interface WorkflowDefinitionView {
   version?: number;
 }
 
+export interface WorkflowFieldOption {
+  label: string;
+  value: string;
+}
+
+export interface WorkflowFieldValidation {
+  pattern?: string;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  maxDecimalPlaces?: number;
+  options?: WorkflowFieldOption[];
+  [key: string]: unknown;
+}
+
 export interface WorkflowFormField {
   fieldCode: string;
   fieldName: string;
@@ -170,8 +186,65 @@ export interface WorkflowFormField {
   required?: boolean;
   visible?: boolean;
   editable?: boolean;
+  options?: WorkflowFieldOption[];
+  validation?: WorkflowFieldValidation;
   validationRule?: string;
   sortOrder?: number;
+}
+
+export interface WorkflowFieldPermission {
+  nodeCode?: string;
+  fieldCode: string;
+  visible?: boolean;
+  editable?: boolean;
+  required?: boolean;
+}
+
+export interface WorkflowStartAttachmentRule {
+  attachmentCode: string;
+  attachmentName: string;
+  description?: string;
+  fieldCode?: string;
+  ownerType?: "INSTANCE" | "TASK" | string;
+  required?: boolean;
+  minCount: number;
+  maxCount: number;
+  maxSizeBytes?: number;
+  maxSizeMb?: number;
+  allowedExtensions: string[];
+  sortOrder?: number;
+}
+
+export interface WorkflowStartContext {
+  definitionId: string;
+  definitionVersion: number;
+  processCode: string;
+  processName: string;
+  pageTitle?: string;
+  startable?: boolean;
+  canStart?: boolean;
+  disabledReason?: string;
+  unavailableReason?: string;
+  formFields?: WorkflowFormField[];
+  fieldPermissions?: WorkflowFieldPermission[];
+  attachmentTemplates?: WorkflowStartAttachmentRule[];
+  attachments?: WorkflowStartAttachmentRule[];
+  defaultVariables?: Record<string, unknown>;
+}
+
+export interface WorkflowStartPayload {
+  definitionId?: string;
+  definitionVersion?: number;
+  variables: Record<string, unknown>;
+  attachments: Record<string, File[]>;
+  idempotencyKey: string;
+}
+
+export interface WorkflowStartResponse {
+  instanceId: string;
+  operationId?: string;
+  createdTasks: WorkflowTaskResponse[];
+  replayed?: boolean;
 }
 
 export interface WorkflowNodeView {
