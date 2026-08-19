@@ -1,4 +1,7 @@
-BEGIN TRANSACTION;
+-- 文件编码：UTF-8
+-- 脚本可重复执行：按稳定 ID 新增或修复部门、用户记录。
+PRAGMA foreign_keys = ON;
+BEGIN IMMEDIATE;
 
 -- =========================================================
 -- 1. 新增交割部、结算部
@@ -10,7 +13,11 @@ VALUES (
            '交割部',
            'dept_company',
            'u_delivery_manager_01'
-       );
+       )
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    parent_id = excluded.parent_id,
+    manager_id = excluded.manager_id;
 
 INSERT INTO mock_department (id, name, parent_id, manager_id)
 VALUES (
@@ -18,7 +25,11 @@ VALUES (
            '结算部',
            'dept_company',
            'u_settlement_manager_01'
-       );
+       )
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    parent_id = excluded.parent_id,
+    manager_id = excluded.manager_id;
 
 
 -- =========================================================
@@ -88,7 +99,15 @@ VALUES
         '交割经理',
         'USER',
         1
-    );
+    )
+ON CONFLICT(id) DO UPDATE SET
+    username = excluded.username,
+    password = excluded.password,
+    real_name = excluded.real_name,
+    dept_id = excluded.dept_id,
+    position = excluded.position,
+    user_type = excluded.user_type,
+    status = excluded.status;
 
 
 -- =========================================================
@@ -157,6 +176,14 @@ VALUES
         '结算经理',
         'USER',
         1
-    );
+    )
+ON CONFLICT(id) DO UPDATE SET
+    username = excluded.username,
+    password = excluded.password,
+    real_name = excluded.real_name,
+    dept_id = excluded.dept_id,
+    position = excluded.position,
+    user_type = excluded.user_type,
+    status = excluded.status;
 
 COMMIT;
