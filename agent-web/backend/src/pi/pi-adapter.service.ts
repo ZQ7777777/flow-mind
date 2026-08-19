@@ -33,7 +33,61 @@ interface SessionHandle {
 export interface PiCallbacks {
   onEvent(type: string, data: unknown): void;
   onError(code: string, message: string): void;
-  onRequirement(requirement: BusinessRequirement, missingItems: string[], ambiguities: string[]): Promise<void>;
+  listRegisteredRoles(): Promise<RegisteredRole[]>;
+  onRequirement(
+    requirement: BusinessRequirement,
+    missingItems: string[],
+    ambiguities: string[],
+  ): Promise<RequirementSubmissionResult>;
+}
+
+export interface RegisteredRole {
+  roleCode: string;
+  roleName: string;
+}
+
+export type RequirementSubmissionResult =
+  | { accepted: true }
+  | {
+    accepted: false;
+    action: "ASK_USER";
+    missingItems: string[];
+    ambiguities: string[];
+    schemaErrors?: unknown[];
+    availableRoles?: RegisteredRole[];
+    roleLookupError?: { code: string; message: string };
+  };
+
+export interface RequirementSubmissionParams {
+  requirement: BusinessRequirement;
+  missingItems: string[];
+  ambiguities: string[];
+  readyForReview: boolean;
+}
+
+export function createRequirementSubmissionTurn(
+  submit: PiCallbacks["onRequirement"],
+): {
+  reset(): void;
+  submit(params: RequirementSubmissionParams): Promise<RequirementSubmissionResult>;
+} {
+  let rejected: Extract<RequirementSubmissionResult, { accepted: false }> | undefined;
+  return {
+    reset: () => { rejected = undefined; },
+    submit: async (params) => {
+      if (rejected) return rejected;
+      const result: RequirementSubmissionResult = params.readyForReview
+        ? await submit(params.requirement, params.missingItems, params.ambiguities)
+        : {
+          accepted: false,
+          action: "ASK_USER",
+          missingItems: params.missingItems.length ? params.missingItems : ["需求尚未完整"],
+          ambiguities: params.ambiguities,
+        };
+      if (!result.accepted) rejected = result;
+      return result;
+    },
+  };
 }
 
 export interface GenerationPiCallbacks {
@@ -266,6 +320,29 @@ export class PiAdapterService implements OnModuleDestroy {
       })],
     });
     await loader.reload();
+    const submissionTurn = createRequirementSubmissionTurn(callbacks.onRequirement);
+    const submissionResult = (result: RequirementSubmissionResult) => ({
+      content: [{
+        type: "text",
+        text: result.accepted
+          ? "结构化需求已提交，等待人工确认。"
+          : `需求提交校验未通过。不得在本轮再次提交或猜测补全；请根据完整校验结果向用户提出 1–3 个问题。\n${JSON.stringify(result)}`,
+      }],
+      details: result,
+    });
+    const roleTool = pi.defineTool({
+      name: "list_registered_roles",
+      label: "List registered roles",
+      description: "Read the current role codes registered in the Flow Mind role center. Role codes must be used exactly as returned.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const roles = await callbacks.listRegisteredRoles();
+        return {
+          content: [{ type: "text", text: JSON.stringify({ roles }) }],
+          details: { roles },
+        };
+      },
+    });
     const submitTool = pi.defineTool({
       name: "submit_requirement_snapshot",
       label: "Submit requirement snapshot",
@@ -280,9 +357,8 @@ export class PiAdapterService implements OnModuleDestroy {
         readyForReview: Type.Boolean(),
       }),
       execute: async (_callId: string, params: any) => {
-        if (!params.readyForReview) throw new Error("Incomplete requirements must be discussed instead of submitted");
-        await callbacks.onRequirement(params.requirement, params.missingItems, params.ambiguities);
-        return { content: [{ type: "text", text: "结构化需求已提交，等待人工确认。" }], details: {} };
+        const result = await submissionTurn.submit(params);
+        return submissionResult(result);
       },
     });
     const created = await pi.createAgentSession({
@@ -295,7 +371,7 @@ export class PiAdapterService implements OnModuleDestroy {
       settingsManager,
       resourceLoader: loader,
       noTools: "builtin",
-      customTools: [submitTool],
+      customTools: [roleTool, submitTool],
     });
     const session = created.session;
     session.subscribe((event: any) => {
@@ -321,7 +397,10 @@ export class PiAdapterService implements OnModuleDestroy {
     return {
       sessionId: session.sessionId,
       sessionFile: session.sessionFile,
-      prompt: (text) => session.prompt(text),
+      prompt: (text) => {
+        submissionTurn.reset();
+        return session.prompt(text);
+      },
       messages: () => (session.messages || []).map(toConversationMessage).filter(Boolean),
       dispose: () => session.dispose(),
     };
@@ -363,8 +442,10 @@ export class PiAdapterService implements OnModuleDestroy {
         } else {
           const isPledgeRequest = messages.some((message) => message.role === "user" && /质押/.test(message.content));
           const requirement = isPledgeRequest ? WAREHOUSE_PLEDGE_REQUIREMENT : ENTRY_APPLICATION_REQUIREMENT;
-          await callbacks.onRequirement(requirement, [], []);
-          const content = `${requirement.businessName}结构化需求已准备完成，请在右侧预览并确认。`;
+          const result = await callbacks.onRequirement(requirement, [], []);
+          const content = result.accepted
+            ? `${requirement.businessName}结构化需求已准备完成，请在右侧预览并确认。`
+            : `需求仍需补充：${[...result.missingItems, ...result.ambiguities].join("；")}`;
           persist({ id: `msg_${Date.now()}_a`, role: "assistant", content, createdAt: new Date().toISOString() });
           callbacks.onEvent("assistant.delta", { delta: content });
           callbacks.onEvent("assistant.completed", messages[messages.length - 1]);

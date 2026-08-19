@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { MockUser, WorkflowSnapshot } from "@flowmind/agent-contracts";
+import { ENTRY_APPLICATION_REQUIREMENT, type MockUser, type WorkflowSnapshot } from "@flowmind/agent-contracts";
 import { DatabaseService } from "../src/persistence/database.service.js";
 import { PiAdapterService } from "../src/pi/pi-adapter.service.js";
 import { PlatformClientService } from "../src/platform/platform-client.service.js";
@@ -29,6 +29,8 @@ describe("M0-M2 workflow", () => {
   let workflow: WorkflowService;
   let definitionStatus = "DRAFT";
   let activationStatus = "INACTIVE";
+  let organizationStatus = 200;
+  let registeredRoles: Array<{ roleCode: string; roleName: string }> = [];
   const calls: Array<{ method: string; path: string; body?: any; headers: Headers }> = [];
 
   beforeEach(() => {
@@ -39,6 +41,13 @@ describe("M0-M2 workflow", () => {
     process.env.FLOW_PLATFORM_BASE_URL = "http://platform.test";
     definitionStatus = "DRAFT";
     activationStatus = "INACTIVE";
+    organizationStatus = 200;
+    registeredRoles = [
+      { roleCode: "sales", roleName: "业务员" },
+      { roleCode: "department_manager", roleName: "部门经理" },
+      { roleCode: "finance", roleName: "财务" },
+      { roleCode: "delivery_reviewer", roleName: "交割复核员" },
+    ];
     calls.length = 0;
     vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -46,7 +55,19 @@ describe("M0-M2 workflow", () => {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, path: `${url.pathname}${url.search}`, body, headers: new Headers(init?.headers) });
       let payload: any = {};
-      if (url.pathname === "/api/platform/definitions" && method === "POST") {
+      if (url.pathname === "/api/admin/process-definition-options" && method === "GET") {
+        if (organizationStatus !== 200) {
+          return new Response(JSON.stringify({ message: "角色中心暂不可用" }), {
+            status: organizationStatus,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        payload = {
+          users: [],
+          departments: [],
+          roles: registeredRoles,
+        };
+      } else if (url.pathname === "/api/platform/definitions" && method === "POST") {
         payload = { id: "definition-entry", version: 1 };
       } else if (url.pathname === "/api/platform/attachment-templates" && method === "GET") {
         payload = [];
@@ -213,6 +234,83 @@ describe("M0-M2 workflow", () => {
       enabled: true, maxCount: 2, messageTemplate: "您有待办，请及时处理。",
     });
     expect(calls.every((call) => call.headers.get("X-Flow-User-Id") === "user_sales")).toBe(true);
+  });
+
+  it("returns complete submission issues and keeps collecting instead of throwing", async () => {
+    const created = await workflow.createSession(user);
+    const result = await (workflow as any).saveAgentRequirement(
+      created.sessionId,
+      ENTRY_APPLICATION_REQUIREMENT,
+      ["交割复核角色 DELIVERY_REVIEWER 未在参与人列表中"],
+      ["交割操作部门审批配置待确认"],
+    );
+
+    expect(result).toMatchObject({
+      accepted: false,
+      action: "ASK_USER",
+      missingItems: ["交割复核角色 DELIVERY_REVIEWER 未在参与人列表中"],
+      ambiguities: ["交割操作部门审批配置待确认"],
+    });
+    expect(result.availableRoles).toContainEqual({ roleCode: "finance", roleName: "财务" });
+    expect(database.getSession(created.sessionId)?.state).toBe("COLLECTING");
+    expect(database.getSession(created.sessionId)?.requirement_json).toBeNull();
+  });
+
+  it("rejects approver roles missing from participants or the role center with exact codes", async () => {
+    const created = await workflow.createSession(user);
+    const missingParticipant = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    missingParticipant.nodes.find((node) => node.nodeCode === "finance_confirm")!.approverRule = {
+      type: "ROLE",
+      config: { roleCode: "delivery_reviewer" },
+    };
+
+    const first = await (workflow as any).saveAgentRequirement(created.sessionId, missingParticipant, [], []);
+    expect(first.accepted).toBe(false);
+    expect(first.missingItems.join(" ")).toContain("delivery_reviewer");
+    expect(first.missingItems.join(" ")).toContain("参与角色");
+
+    const unregistered = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    unregistered.participants.find((participant) => participant.roleCode === "finance")!.roleCode = "FINANCE";
+    unregistered.nodes.find((node) => node.nodeCode === "finance_confirm")!.approverRule = {
+      type: "ROLE",
+      config: { roleCode: "FINANCE" },
+    };
+
+    const second = await (workflow as any).saveAgentRequirement(created.sessionId, unregistered, [], []);
+    expect(second.accepted).toBe(false);
+    expect(second.missingItems.join(" ")).toContain("FINANCE");
+    expect(second.missingItems.join(" ")).toContain("角色中心");
+    expect(second.missingItems.join(" ")).not.toContain("finance 未在角色中心");
+  });
+
+  it("does not bypass role validation when the role center is empty or unavailable", async () => {
+    const emptySession = await workflow.createSession(user);
+    registeredRoles = [];
+    const empty = await (workflow as any).saveAgentRequirement(
+      emptySession.sessionId,
+      ENTRY_APPLICATION_REQUIREMENT,
+      [],
+      [],
+    );
+    expect(empty.accepted).toBe(false);
+    expect(empty.missingItems.join(" ")).toContain("department_manager");
+    expect(empty.missingItems.join(" ")).toContain("finance");
+
+    const unavailableSession = await workflow.createSession(user);
+    organizationStatus = 503;
+    const unavailable = await (workflow as any).saveAgentRequirement(
+      unavailableSession.sessionId,
+      ENTRY_APPLICATION_REQUIREMENT,
+      [],
+      [],
+    );
+    expect(unavailable).toMatchObject({
+      accepted: false,
+      action: "ASK_USER",
+      roleLookupError: { code: "FLOW_PLATFORM_ERROR", message: "角色中心暂不可用" },
+    });
+    expect(unavailable.ambiguities.join(" ")).toContain("角色中心暂不可用");
+    expect(database.getSession(unavailableSession.sessionId)?.state).toBe("COLLECTING");
   });
 
   it("resets an active workflow into a fresh Pi conversation", async () => {

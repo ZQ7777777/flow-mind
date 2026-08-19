@@ -27,6 +27,27 @@ export interface BusinessEntryConfigPayload {
   artifactRevision: string;
 }
 
+export interface OrganizationRoleOption {
+  roleCode: string;
+  roleName: string;
+}
+
+export interface OrganizationOptions {
+  users: Array<{
+    userId: string;
+    userName: string;
+    departmentId?: string;
+    departmentName?: string;
+    roleCodes: string[];
+  }>;
+  departments: Array<{
+    departmentId: string;
+    departmentName: string;
+    parentDepartmentId?: string;
+  }>;
+  roles: OrganizationRoleOption[];
+}
+
 @Injectable()
 export class PlatformClientService {
   private readonly config = loadConfig();
@@ -40,6 +61,10 @@ export class PlatformClientService {
       userId: "user_sales",
       userName: "Sales User",
     });
+  }
+
+  async getOrganizationOptions(user: MockUser): Promise<OrganizationOptions> {
+    return this.request("GET", "/api/admin/process-definition-options", undefined, user);
   }
 
   async createDefinition(requirement: BusinessRequirement, user: MockUser, operationId: string): Promise<any> {

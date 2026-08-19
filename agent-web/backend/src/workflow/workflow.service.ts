@@ -13,7 +13,12 @@ import {
 } from "@flowmind/agent-contracts";
 import { AgentError } from "../common/agent-error.js";
 import { DatabaseService, type ProcessRow, type SessionRow } from "../persistence/database.service.js";
-import { PiAdapterService, type PiCallbacks } from "../pi/pi-adapter.service.js";
+import {
+  PiAdapterService,
+  type PiCallbacks,
+  type RegisteredRole,
+  type RequirementSubmissionResult,
+} from "../pi/pi-adapter.service.js";
 import { validateRequirement } from "../requirement/requirement-validator.js";
 import { EventBusService } from "./event-bus.service.js";
 import { PlatformClientService } from "../platform/platform-client.service.js";
@@ -385,18 +390,52 @@ export class WorkflowService {
     requirement: BusinessRequirement,
     missingItems: string[],
     ambiguities: string[],
-  ): Promise<void> {
+  ): Promise<RequirementSubmissionResult> {
     const session = this.database.getSession(sessionId);
-    if (!session || session.state !== "COLLECTING") return;
+    if (!session || session.state !== "COLLECTING") {
+      return {
+        accepted: false,
+        action: "ASK_USER",
+        missingItems: [],
+        ambiguities: ["需求会话状态已变化，请刷新后继续"],
+      };
+    }
     const normalizedRequirement = applyRequirementDefaults(requirement);
     const validation = validateRequirement(normalizedRequirement);
     if (!validation.structurallyValid) {
-      throw new Error(`Agent submitted a structurally invalid requirement: ${formatSchemaErrors(validation.schemaErrors)}`);
+      return {
+        accepted: false,
+        action: "ASK_USER",
+        missingItems: [],
+        ambiguities: [`需求结构不符合约束：${formatSchemaErrors(validation.schemaErrors)}`],
+        schemaErrors: validation.schemaErrors,
+      };
     }
     const mergedMissing = [...new Set([...missingItems, ...validation.missingItems])];
     const mergedAmbiguities = [...new Set([...ambiguities, ...validation.ambiguities])];
+    let availableRoles: RegisteredRole[];
+    try {
+      availableRoles = await this.listRegisteredRoles(sessionId);
+    } catch (error) {
+      const roleLookupError = toErrorDescriptor(error);
+      return {
+        accepted: false,
+        action: "ASK_USER",
+        missingItems: mergedMissing,
+        ambiguities: [...mergedAmbiguities, `无法读取角色中心：${roleLookupError.message}`],
+        roleLookupError,
+      };
+    }
+    const roleIssues = validateRequirementRoles(normalizedRequirement as BusinessRequirement, availableRoles);
+    mergedMissing.push(...roleIssues);
     if (!validation.readyForReview || mergedMissing.length || mergedAmbiguities.length) {
-      throw new Error("Agent attempted to submit an incomplete requirement");
+      return {
+        accepted: false,
+        action: "ASK_USER",
+        missingItems: [...new Set(mergedMissing)],
+        ambiguities: mergedAmbiguities,
+        availableRoles,
+      };
     }
     const now = new Date().toISOString();
     this.database.db.prepare(`
@@ -409,6 +448,28 @@ export class WorkflowService {
     `).run(JSON.stringify(normalizedRequirement), now, sessionId);
     this.events.publish(sessionId, { type: "requirement.ready", data: { revision: session.requirement_revision + 1 } });
     this.events.publish(sessionId, { type: "workflow.state_changed", data: { state: "REQUIREMENT_REVIEW" } });
+    return { accepted: true };
+  }
+
+  private async listRegisteredRoles(sessionId: string): Promise<RegisteredRole[]> {
+    const session = this.database.getSession(sessionId);
+    if (!session) throw new AgentError(HttpStatus.NOT_FOUND, "AGENT_SESSION_NOT_FOUND", "session not found", sessionId);
+    const options = await this.platform.getOrganizationOptions({
+      userId: session.owner_user_id,
+      userName: session.owner_user_name,
+      departmentId: session.owner_dept_id || undefined,
+      departmentName: session.owner_dept_name || undefined,
+    });
+    const roles = Array.isArray(options?.roles) ? options.roles : [];
+    const unique = new Map<string, RegisteredRole>();
+    for (const role of roles) {
+      if (!role || typeof role.roleCode !== "string" || !role.roleCode) continue;
+      unique.set(role.roleCode, {
+        roleCode: role.roleCode,
+        roleName: typeof role.roleName === "string" && role.roleName ? role.roleName : role.roleCode,
+      });
+    }
+    return [...unique.values()];
   }
 
   private async provision(sessionId: string, user: MockUser): Promise<void> {
@@ -539,6 +600,7 @@ export class WorkflowService {
         this.setSessionError(sessionId, code, message);
         this.events.publish(sessionId, { type: "error", data: { code, message } });
       },
+      listRegisteredRoles: () => this.listRegisteredRoles(sessionId),
       onRequirement: (requirement, missingItems, ambiguities) =>
         this.saveAgentRequirement(sessionId, requirement, missingItems, ambiguities),
     };
@@ -601,6 +663,47 @@ function formatSchemaErrors(errors: Array<{ instancePath?: string; message?: str
     const path = `${error.instancePath || "requirement"}${missingProperty}`;
     return `${path}: ${error.message || "schema validation failed"}`;
   }).join("; ") || "schema validation failed";
+}
+
+function validateRequirementRoles(
+  requirement: BusinessRequirement,
+  availableRoles: RegisteredRole[],
+): string[] {
+  const participantCodes = new Set(requirement.participants.map(({ roleCode }) => roleCode));
+  const registeredCodes = new Set(availableRoles.map(({ roleCode }) => roleCode));
+  const approverRoleCodes = new Set<string>();
+  const issues: string[] = [];
+  for (const node of requirement.nodes) {
+    if (node.approverRule?.type !== "ROLE" && node.approverRule?.type !== "ROLE_IN_DEPARTMENT") continue;
+    const roleCode = node.approverRule.config?.roleCode;
+    if (typeof roleCode !== "string" || !roleCode) continue;
+    approverRoleCodes.add(roleCode);
+    if (!participantCodes.has(roleCode)) {
+      issues.push(`审批角色 ${roleCode} 未在参与角色列表中`);
+    }
+  }
+  const unregistered = [...approverRoleCodes].filter((roleCode) => !registeredCodes.has(roleCode));
+  if (unregistered.length) {
+    issues.push(`以下角色编码需在角色中心预先注册后方可提交：${unregistered.join("、")}`);
+  }
+  return issues;
+}
+
+function toErrorDescriptor(error: unknown): { code: string; message: string } {
+  if (error instanceof AgentError) {
+    const response = error.getResponse();
+    if (response && typeof response === "object") {
+      const body = response as { code?: unknown; message?: unknown };
+      return {
+        code: typeof body.code === "string" ? body.code : "FLOW_PLATFORM_ERROR",
+        message: typeof body.message === "string" ? body.message : error.message,
+      };
+    }
+  }
+  return {
+    code: "FLOW_PLATFORM_ERROR",
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 function normalizeOptionalTarget(targetRoot?: string): string | undefined {

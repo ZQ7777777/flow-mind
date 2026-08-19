@@ -49,6 +49,18 @@ export function startMockPlatform(port = 18080) {
     });
     response.end();
     return;
+  } else if (url.pathname === "/api/admin/process-definition-options" && request.method === "GET") {
+    payload = {
+      users: [],
+      departments: [],
+      roles: [
+        { roleCode: "sales", roleName: "业务员" },
+        { roleCode: "department_manager", roleName: "部门经理" },
+        { roleCode: "finance", roleName: "财务" },
+        { roleCode: "account_manager", roleName: "客户经理" },
+        { roleCode: "risk_reviewer", roleName: "风控审核员" },
+      ],
+    };
   } else if (url.pathname === "/api/platform/definitions" && request.method === "GET") {
     payload = { items: [], total: 0 };
   } else if (url.pathname === "/api/platform/definitions" && request.method === "POST") {

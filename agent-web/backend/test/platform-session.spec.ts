@@ -40,6 +40,30 @@ describe("PlatformClientService session mode", () => {
     expect(JSON.parse(init.body as string).operatorUserId).toBe("u_admin_01");
   });
 
+  it("loads registered roles with the verified administrator session", async () => {
+    const registry = new PlatformSessionRegistry();
+    registry.set(admin.userId, "JSESSIONID=admin-session");
+    const payload = {
+      users: [],
+      departments: [],
+      roles: [{ roleCode: "finance", roleName: "财务" }],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new PlatformClientService(registry).getOrganizationOptions(admin)).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://business.test/api/admin/process-definition-options",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Cookie: "JSESSIONID=admin-session" }),
+      }),
+    );
+  });
+
   it("clears an expired session and never replays a failed write", async () => {
     const registry = new PlatformSessionRegistry();
     registry.set(admin.userId, "JSESSIONID=expired-session");
