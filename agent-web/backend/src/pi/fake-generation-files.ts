@@ -420,21 +420,27 @@ function mergeGeneratedRoute(existing: string, spec: GenerationSpec): string {
 
 function businessFormSource(requirement: BusinessRequirement, fields: FormFieldRequirement[]): string {
   const fieldCodes = fields.map((field) => JSON.stringify(field.fieldCode)).join(", ");
-  return `<script setup lang="ts">
+  return `<script setup>
 import { computed } from "vue";
-const props = defineProps<{ modelValue: Record<string, unknown>; fields: any[]; fieldPermissions: any[]; mode?: "edit" | "readonly"; disabled?: boolean }>();
-const emit = defineEmits<{ (event: "update:modelValue", value: Record<string, unknown>): void }>();
+const props = defineProps({
+  modelValue: { type: Object, required: true },
+  fields: { type: Array, required: true },
+  fieldPermissions: { type: Array, required: true },
+  mode: { type: String, default: "edit" },
+  disabled: { type: Boolean, default: false },
+});
+const emit = defineEmits(["update:modelValue"]);
 const confirmedFieldCodes = [${fieldCodes}];
 const visibleFields = computed(() => props.fields.filter((field) => confirmedFieldCodes.includes(field.fieldCode)));
-function update(fieldCode: string, value: unknown): void { emit("update:modelValue", { ...props.modelValue, [fieldCode]: value }); }
-async function validate(): Promise<boolean> { return true; }
+function update(fieldCode, value) { emit("update:modelValue", { ...props.modelValue, [fieldCode]: value }); }
+async function validate() { return true; }
 defineExpose({ validate });
 </script>
 <template>
   <section aria-label="${escapeHtml(requirement.businessName)}表单">
     <label v-for="field in visibleFields" :key="field.fieldCode" :data-field-code="field.fieldCode">
       <span>{{ field.fieldName }}</span>
-      <input :value="String(modelValue[field.fieldCode] ?? '')" :disabled="disabled || mode === 'readonly'" @input="update(field.fieldCode, ($event.target as HTMLInputElement).value)" />
+      <input :value="String(modelValue[field.fieldCode] ?? '')" :disabled="disabled || mode === 'readonly'" @input="update(field.fieldCode, $event.target.value)" />
     </label>
   </section>
 </template>
