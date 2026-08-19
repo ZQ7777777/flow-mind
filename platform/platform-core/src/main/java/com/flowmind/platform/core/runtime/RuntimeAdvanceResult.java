@@ -1,6 +1,7 @@
 package com.flowmind.platform.core.runtime;
 
 import com.flowmind.platform.api.dto.TaskDTO;
+import com.flowmind.platform.api.dto.ProcessNoticeDTO;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,6 +19,8 @@ public final class RuntimeAdvanceResult {
 
     /** 本次推进实际新建的活动任务。 */
     private final List<TaskDTO> createdTasks = new ArrayList<TaskDTO>();
+    /** 本次推进产生的自动知会消息。 */
+    private final List<ProcessNoticeDTO> createdNotices = new ArrayList<ProcessNoticeDTO>();
     /** 本次推进是否将实例办结。 */
     private boolean instanceCompleted;
 
@@ -31,9 +34,19 @@ public final class RuntimeAdvanceResult {
         return instanceCompleted;
     }
 
+    /** 返回不可变的自动知会消息视图。 */
+    public List<ProcessNoticeDTO> getCreatedNotices() {
+        return Collections.unmodifiableList(createdNotices);
+    }
+
     /** 供推进器收集一条新建活动任务。 */
     void addCreatedTask(TaskDTO task) {
         createdTasks.add(task);
+    }
+
+    /** 供推进器收集一条自动知会消息。 */
+    void addCreatedNotice(ProcessNoticeDTO notice) {
+        createdNotices.add(notice);
     }
 
     /** 供推进器标识实例已办结。 */

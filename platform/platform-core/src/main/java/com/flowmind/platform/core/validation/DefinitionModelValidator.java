@@ -27,6 +27,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,6 +46,7 @@ import java.util.Set;
 public class DefinitionModelValidator {
 
     private static final NodeTypeEnum USER_TASK = NodeTypeEnum.USER_TASK;
+    private static final NodeTypeEnum NOTICE = NodeTypeEnum.NOTICE;
     private static final NodeTypeEnum EXCLUSIVE_GATEWAY = NodeTypeEnum.EXCLUSIVE_GATEWAY;
     private static final NodeTypeEnum PARALLEL_SPLIT_GATEWAY = NodeTypeEnum.PARALLEL_SPLIT_GATEWAY;
     private static final NodeTypeEnum PARALLEL_JOIN_GATEWAY = NodeTypeEnum.PARALLEL_JOIN_GATEWAY;
@@ -110,6 +112,7 @@ public class DefinitionModelValidator {
         validateEdges(result, graph);
         validateSingleOutgoingNodes(result, graph);
         validateUserTasks(result, graph.getNodes());
+        validateNoticeNodes(result, graph.getNodes());
         validateGatewayNodeConfiguration(result, graph);
         validateMultiInstanceConfiguration(result, graph);
         validateExclusiveGatewayTopology(result, graph);
@@ -187,13 +190,14 @@ public class DefinitionModelValidator {
     private void validateSingleOutgoingNodes(ValidationResult result, DefinitionGraphIndex graph) {
         for (ProcessNodeDTO node : graph.getNodes()) {
             if ((!NodeTypeEnum.START.equals(node.getNodeType())
-                    && !USER_TASK.equals(node.getNodeType()))
+                    && !USER_TASK.equals(node.getNodeType())
+                    && !NOTICE.equals(node.getNodeType()))
                     || isBlank(node.getNodeCode())) {
                 continue;
             }
             if (countResolvableOutgoingEdges(node.getNodeCode(), graph) != 1) {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_NODE_OUTGOING_EDGE_INVALID,
-                        "Start node and user task must have exactly one outgoing edge to an existing node.",
+                        "Start, user task and notice node must have exactly one outgoing edge to an existing node.",
                         node.getNodeCode(), null);
             }
         }
@@ -208,6 +212,71 @@ public class DefinitionModelValidator {
                 addIssue(result, FrozenValidationErrorCodes.MODEL_USER_TASK_APPROVER_REQUIRED,
                         "User task must define approver rule.", node.getNodeCode(), null);
             }
+        }
+    }
+
+    private void validateNoticeNodes(ValidationResult result, List<ProcessNodeDTO> nodes) {
+        for (ProcessNodeDTO node : nodes) {
+            if (!NOTICE.equals(node.getNodeType())) {
+                if (!isBlank(node.getNoticeConfig())) {
+                    addIssue(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID,
+                            "noticeConfig can only be configured on notice node.", node.getNodeCode(), null);
+                }
+                continue;
+            }
+            if (node.getApproverRuleType() == null) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID,
+                        "Notice node must define recipient rule.", node.getNodeCode(), null);
+                continue;
+            }
+            try {
+                Map<String, Object> config = readApproverRuleConfig(node.getApproverRuleConfig());
+                if (!hasResolvableApproverSelector(node.getApproverRuleType(), config)) {
+                    addIssue(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID,
+                            "Notice recipient rule must declare a resolvable selector.", node.getNodeCode(), null);
+                }
+            } catch (IllegalArgumentException ex) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID,
+                        ex.getMessage(), node.getNodeCode(), null);
+            }
+            validateNoticeConfig(result, node);
+        }
+    }
+
+    private void validateNoticeConfig(ValidationResult result, ProcessNodeDTO node) {
+        if (isBlank(node.getNoticeConfig())) {
+            return;
+        }
+        JsonNode config;
+        try {
+            config = OBJECT_MAPPER.readTree(node.getNoticeConfig());
+        } catch (JsonProcessingException ex) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID,
+                    "noticeConfig must be valid JSON.", node.getNodeCode(), null);
+            return;
+        }
+        if (config == null || !config.isObject()) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID,
+                    "noticeConfig must be a JSON object.", node.getNodeCode(), null);
+            return;
+        }
+        Iterator<String> fields = config.fieldNames();
+        while (fields.hasNext()) {
+            String field = fields.next();
+            if (!"title".equals(field) && !"content".equals(field)) {
+                addIssue(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID,
+                        "noticeConfig contains unsupported key: " + field + ".", node.getNodeCode(), null);
+            }
+        }
+        validateOptionalNoticeText(result, node, config.get("title"), "title");
+        validateOptionalNoticeText(result, node, config.get("content"), "content");
+    }
+
+    private void validateOptionalNoticeText(ValidationResult result, ProcessNodeDTO node,
+                                            JsonNode value, String field) {
+        if (value != null && (!value.isTextual() || isBlank(value.asText()))) {
+            addIssue(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID,
+                    "noticeConfig " + field + " must be a non-blank string.", node.getNodeCode(), null);
         }
     }
 

@@ -1,0 +1,31 @@
+{
+  "description": "0199 交割复核完成后知会原发起人的流程图片段",
+  "nodes": [
+    {
+      "nodeCode": "0199-notify-starter",
+      "nodeName": "知会经办",
+      "nodeType": "NOTICE",
+      "approverRuleType": "STARTER",
+      "approverRuleConfig": "{}",
+      "multiInstanceMode": "SINGLE",
+      "noticeConfig": "{\"title\":\"流程知会\",\"content\":\"仓单、国债（解）质押申请已办理完成，请知悉。\"}",
+      "sortOrder": 9
+    }
+  ],
+  "edges": [
+    {
+      "edgeCode": "0199-delivery-check-to-notify-starter",
+      "sourceNodeCode": "0199-delivery-check",
+      "targetNodeCode": "0199-notify-starter",
+      "defaultEdge": false,
+      "sortOrder": 8
+    },
+    {
+      "edgeCode": "0199-notify-starter-to-end",
+      "sourceNodeCode": "0199-notify-starter",
+      "targetNodeCode": "end",
+      "defaultEdge": false,
+      "sortOrder": 9
+    }
+  ]
+}

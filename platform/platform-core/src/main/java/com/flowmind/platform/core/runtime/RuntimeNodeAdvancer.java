@@ -3,6 +3,7 @@ package com.flowmind.platform.core.runtime;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.dto.ProcessNoticeDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
 import com.flowmind.platform.api.dto.UserDTO;
 import com.flowmind.platform.api.enums.BranchStatusEnum;
@@ -205,6 +206,12 @@ public class RuntimeNodeAdvancer {
             case USER_TASK:
                 createUserTask(instance, node, taskGroupId, branchKey, preparation, result);
                 return;
+            case NOTICE:
+                path.enterAutomaticNode(node.getNodeCode());
+                createNotice(instance, node, preparation, result);
+                advance(instance, definition, graph, requireSingleOutgoing(node, graph).getTargetNodeCode(),
+                        taskGroupId, branchKey, path, preparation, result);
+                return;
             case EXCLUSIVE_GATEWAY:
                 path.enterAutomaticNode(node.getNodeCode());
                 String selectedTargetNodeCode = preparation.exclusiveTargetNodeCode(node.getNodeCode());
@@ -254,6 +261,27 @@ public class RuntimeNodeAdvancer {
             return;
         }
         createActiveTask(instance, node, taskGroupId, branchKey, candidateUserIds, result);
+    }
+
+    private void createNotice(ProcessInstanceEntity instance,
+                              ProcessNodeDTO node,
+                              RuntimeAdvancePreparation preparation,
+                              RuntimeAdvanceResult result) {
+        List<String> targetUserIds = preparation.candidateUserIds(node.getNodeCode());
+        if (targetUserIds == null || targetUserIds.isEmpty()) {
+            throw state(RuntimeErrorCodes.APPROVER_RESOLVE_FAILED,
+                    "prepared recipients are missing for notice node: " + node.getNodeCode());
+        }
+        Map<String, Object> config = readObjectMap(node.getNoticeConfig(), "noticeConfig");
+        ProcessNoticeDTO notice = new ProcessNoticeDTO();
+        notice.setNodeCode(node.getNodeCode());
+        notice.setNodeName(node.getNodeName());
+        notice.setInstanceTitle(instance.getInstanceTitle());
+        notice.setTitle(textOrDefault(config.get("title"), "流程知会"));
+        notice.setContent(textOrDefault(config.get("content"),
+                "流程「" + instance.getInstanceTitle() + "」已办理完成，请知悉"));
+        notice.setTargetUserIds(new ArrayList<String>(targetUserIds));
+        result.addCreatedNotice(notice);
     }
 
     private void createOrSignUserTasks(ProcessInstanceEntity instance,
@@ -473,6 +501,12 @@ public class RuntimeNodeAdvancer {
             case USER_TASK:
                 prepareUserTaskCandidates(instance, definition, node, candidatesByNodeCode);
                 return;
+            case NOTICE:
+                prepareUserTaskCandidates(instance, definition, node, candidatesByNodeCode);
+                path.enterAutomaticNode(node.getNodeCode());
+                prepareAdvance(instance, definition, graph, requireSingleOutgoing(node, graph).getTargetNodeCode(),
+                        path, candidatesByNodeCode, exclusiveTargetNodeCodes);
+                return;
             case EXCLUSIVE_GATEWAY:
                 path.enterAutomaticNode(node.getNodeCode());
                 ProcessEdgeDTO selected = selectExclusiveEdge(node, graph, instance);
@@ -566,6 +600,9 @@ public class RuntimeNodeAdvancer {
                     return;
                 case USER_TASK:
                     reachable.add(node.getNodeCode());
+                    collectReachableOutgoing(instance, definition, graph, node, path, reachable);
+                    return;
+                case NOTICE:
                     collectReachableOutgoing(instance, definition, graph, node, path, reachable);
                     return;
                 case EXCLUSIVE_GATEWAY:
@@ -797,6 +834,13 @@ public class RuntimeNodeAdvancer {
 
     private static boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    private static String textOrDefault(Object value, String fallback) {
+        if (!(value instanceof String) || !hasText((String) value)) {
+            return fallback;
+        }
+        return ((String) value).trim();
     }
 
     private static String newId() {

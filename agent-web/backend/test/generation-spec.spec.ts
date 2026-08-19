@@ -15,7 +15,7 @@ const contract = {
   backend: { rootDir: "backend", generatedSourceDir: "src/main/java/com/example/generated", generatedTestDir: "src/test/java/com/example/generated", basePackage: "com.example" },
   frontend: { rootDir: "frontend", generatedViewDir: "src/modules/generated", generatedApiDir: "src/api/generated", generatedTestDir: "src/modules/generated/__tests__", routeRegistry: "src/router/generated-routes.ts" },
 } as GenerationTargetContract;
-const APPLY_SUCCESSOR_ISSUE = "apply 必须且只能流向一个后续用户任务、排他网关或并行分支网关";
+const APPLY_SUCCESSOR_ISSUE = "apply 必须且只能流向一个后续用户任务、知会节点、排他网关或并行分支网关";
 
 describe("deriveGenerationSpec", () => {
   it("derives stable Java and frontend names from underscores and hyphens", () => {
@@ -43,6 +43,7 @@ describe("deriveGenerationSpec", () => {
   });
 
   it.each([
+    "NOTICE",
     "EXCLUSIVE_GATEWAY",
     "PARALLEL_SPLIT_GATEWAY",
   ] satisfies ProcessNodeType[])("allows apply to flow to one %s", (nodeType) => {

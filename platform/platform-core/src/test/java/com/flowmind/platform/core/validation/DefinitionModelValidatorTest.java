@@ -37,6 +37,33 @@ class DefinitionModelValidatorTest {
         assertTrue(result.getIssues().isEmpty());
     }
 
+    @Test
+    void validStarterNoticeNodePasses() {
+        ProcessNodeDTO notice = node("notify", NodeTypeEnum.NOTICE);
+        notice.setApproverRuleType(ApproverRuleTypeEnum.STARTER);
+        notice.setNoticeConfig("{\"title\":\"流程知会\",\"content\":\"办理完成\"}");
+        ValidationResult result = validator.validate(definition(
+                nodes(node("start", NodeTypeEnum.START), userTask("review"), notice,
+                        node("end", NodeTypeEnum.END)),
+                edges(edge("e1", "start", "review"), edge("e2", "review", "notify"),
+                        edge("e3", "notify", "end"))));
+
+        assertTrue(result.isValid());
+    }
+
+    @Test
+    void noticeConfigRejectsNullText() {
+        ProcessNodeDTO notice = node("notify", NodeTypeEnum.NOTICE);
+        notice.setApproverRuleType(ApproverRuleTypeEnum.STARTER);
+        notice.setNoticeConfig("{\"title\":null}");
+        ValidationResult result = validator.validate(definition(
+                nodes(node("start", NodeTypeEnum.START), notice, node("end", NodeTypeEnum.END)),
+                edges(edge("e1", "start", "notify"), edge("e2", "notify", "end"))));
+
+        assertFalse(result.isValid());
+        assertContainsCode(result, FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID);
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("invalidDefinitions")
     void invalidModelsAreRejectedWithFrozenErrorCode(ModelFixture fixture) {
@@ -68,6 +95,11 @@ class DefinitionModelValidatorTest {
                                 nodes(node("start", NodeTypeEnum.START), node("review", NodeTypeEnum.USER_TASK), node("end", NodeTypeEnum.END)),
                                 edges(edge("e1", "start", "review"), edge("e2", "review", "end"))),
                         FrozenValidationErrorCodes.MODEL_USER_TASK_APPROVER_REQUIRED),
+                fixture("notice without recipient", definition(
+                                nodes(node("start", NodeTypeEnum.START), node("notify", NodeTypeEnum.NOTICE),
+                                        node("end", NodeTypeEnum.END)),
+                                edges(edge("e1", "start", "notify"), edge("e2", "notify", "end"))),
+                        FrozenValidationErrorCodes.MODEL_NOTICE_CONFIGURATION_INVALID),
                 fixture("exclusive gateway has two defaults", exclusiveGatewayWithTwoDefaults(),
                         FrozenValidationErrorCodes.MODEL_GATEWAY_DEFAULT_EDGE_INVALID),
                 fixture("parallel gateway pair invalid", invalidParallelGatewayPair(),

@@ -10,6 +10,25 @@ describe("validateRequirement", () => {
     expect(result.missingItems).toEqual([]);
   });
 
+  it("accepts a non-blocking NOTICE node addressed to the starter", () => {
+    const input = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+    const finance = input.nodes.find((node) => node.nodeCode === "finance_confirm")!;
+    finance.nodeType = "NOTICE";
+    finance.nodeName = "知会经办";
+    finance.approverRule = { type: "STARTER", config: {} };
+    finance.multiInstanceMode = "SINGLE";
+    finance.noticeConfig = { title: "流程知会", content: "已办理完成，请知悉。" };
+    delete finance.listenerConfig;
+    delete finance.timeoutConfig;
+    delete finance.reminderConfig;
+    delete input.nodes.find((node) => node.nodeCode === "manager_approve")!.listenerConfig;
+
+    const result = validateRequirement(input);
+
+    expect(result.structurallyValid).toBe(true);
+    expect(result.readyForReview).toBe(true);
+  });
+
   it("reports unreachable nodes and missing approval rules", () => {
     const input = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
     input.edges = input.edges.filter((edge) => edge.targetNodeCode !== "finance_confirm");

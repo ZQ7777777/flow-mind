@@ -7,6 +7,7 @@ import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDetailDTO;
 import com.flowmind.platform.api.dto.ProcessNodeDTO;
+import com.flowmind.platform.api.dto.ProcessNoticeDTO;
 import com.flowmind.platform.api.dto.ProcessAttachmentTemplateDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.TaskDTO;
@@ -172,6 +173,10 @@ class DefaultProcessRuntimeServiceTest {
         managerTaskDto.setTaskId("task-manager");
         managerTaskDto.setNodeCode("manager");
         nextAdvance.addCreatedTask(managerTaskDto);
+        ProcessNoticeDTO notice = new ProcessNoticeDTO();
+        notice.setNodeCode("notify-starter");
+        notice.setTargetUserIds(Collections.singletonList("starter"));
+        nextAdvance.addCreatedNotice(notice);
         AttachmentTemplateCheckResult attachmentCheck = new AttachmentTemplateCheckResult();
         attachmentCheck.setPassed(true);
         ProcessHistoryTaskEntity archived = new ProcessHistoryTaskEntity();
@@ -218,7 +223,12 @@ class DefaultProcessRuntimeServiceTest {
         verify(nodeAdvancer, times(2)).prepareAdvance(any(ProcessInstanceEntity.class), eq(definition), anyString(), any(), any());
         verify(nodeAdvancer, times(2)).advanceToNode(any(ProcessInstanceEntity.class), eq(definition), anyString(), any(), any(),
                 any(RuntimeAdvancePreparation.class));
-        verify(callbackService, times(3)).publishCallback(any(com.flowmind.platform.api.dto.WorkflowEvent.class));
+        ArgumentCaptor<com.flowmind.platform.api.dto.WorkflowEvent> eventCaptor =
+                ArgumentCaptor.forClass(com.flowmind.platform.api.dto.WorkflowEvent.class);
+        verify(callbackService, times(4)).publishCallback(eventCaptor.capture());
+        assertTrue(eventCaptor.getAllValues().stream().anyMatch(event ->
+                com.flowmind.platform.api.enums.WorkflowEventTypeEnum.NOTICE_CREATED.equals(event.getEventType())
+                        && event.getCreatedNotices().size() == 1));
         verify(operationExecutor).markSuccess(request.getOperationId(), result);
     }
 

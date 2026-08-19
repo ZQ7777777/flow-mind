@@ -108,6 +108,7 @@ public final class ProcessDefinitionMapper {
         dto.setListenerConfig(entity.getListenerConfig());
         dto.setTimeoutConfig(entity.getTimeoutConfig());
         dto.setReminderConfig(entity.getReminderConfig());
+        dto.setNoticeConfig(entity.getNoticeConfig());
         dto.setPositionX(entity.getPositionX());
         dto.setPositionY(entity.getPositionY());
         dto.setSortOrder(entity.getSortOrder());
@@ -131,6 +132,7 @@ public final class ProcessDefinitionMapper {
         entity.setListenerConfig(dto.getListenerConfig());
         entity.setTimeoutConfig(dto.getTimeoutConfig());
         entity.setReminderConfig(dto.getReminderConfig());
+        entity.setNoticeConfig(dto.getNoticeConfig());
         entity.setPositionX(dto.getPositionX());
         entity.setPositionY(dto.getPositionY());
         entity.setSortOrder(dto.getSortOrder());

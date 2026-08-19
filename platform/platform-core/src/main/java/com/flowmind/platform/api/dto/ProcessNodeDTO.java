@@ -34,7 +34,7 @@ public class ProcessNodeDTO implements Serializable {
      */
     private String nodeName;
     /**
-     * 节点类型，典型取值为 START、USER_TASK、EXCLUSIVE_GATEWAY、PARALLEL_SPLIT_GATEWAY、PARALLEL_JOIN_GATEWAY、END。
+     * 节点类型，典型取值为 START、USER_TASK、NOTICE、EXCLUSIVE_GATEWAY、PARALLEL_SPLIT_GATEWAY、PARALLEL_JOIN_GATEWAY、END。
      */
     private NodeTypeEnum nodeType;
     /**
@@ -42,11 +42,11 @@ public class ProcessNodeDTO implements Serializable {
      */
     private String pairedGatewayCode;
     /**
-     * 审批人规则类型，典型取值为 USER、STARTER、ROLE。
+     * 参与人规则类型，用户任务表示审批人，知会节点表示消息接收人；典型取值为 USER、STARTER、ROLE。
      */
     private ApproverRuleTypeEnum approverRuleType;
     /**
-     * 审批人规则 JSON 配置，内容由 approverRuleType 决定；STARTER 类型可为空。
+     * 参与人规则 JSON 配置，内容由 approverRuleType 决定；STARTER 类型可为空。
      */
     private String approverRuleConfig;
     /**
@@ -67,6 +67,10 @@ public class ProcessNodeDTO implements Serializable {
      * 催办策略 JSON 配置，记录催办是否启用、间隔和次数等节点运行时参数。
      */
     private String reminderConfig;
+    /**
+     * 知会配置 JSON，仅 NOTICE 节点使用；可包含纯文本 title、content。
+     */
+    private String noticeConfig;
     /**
      * 设计器画布 X 坐标，单位为设计器坐标系像素。
      */

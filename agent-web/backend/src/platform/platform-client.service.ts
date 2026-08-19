@@ -4,6 +4,7 @@ import type {
   BusinessRequirement,
   MockUser,
   ProcessPreview,
+  ProcessNodeRequirement,
   ValidationResult,
 } from "@flowmind/agent-contracts";
 import { loadConfig } from "../config.js";
@@ -90,24 +91,7 @@ export class PlatformClientService {
     return this.request("PUT", `/api/platform/definitions/${encodeURIComponent(definitionId)}/graph`, {
       operationId,
       operatorUserId: user.userId,
-      nodes: requirement.nodes.map((node) => ({
-        nodeCode: node.nodeCode,
-        nodeName: node.nodeName,
-        nodeType: node.nodeType,
-        pairedGatewayCode: node.pairedGatewayCode,
-        approverRuleType: node.approverRule?.type,
-        approverRuleConfig: node.approverRule ? stableJson(node.approverRule.config) : null,
-        multiInstanceMode: node.nodeType === "USER_TASK" ? node.multiInstanceMode || "SINGLE" : "SINGLE",
-        listenerConfig: node.nodeType === "USER_TASK" && node.listenerConfig
-          ? stableJson(node.listenerConfig) : null,
-        timeoutConfig: node.nodeType === "USER_TASK" && node.timeoutConfig
-          ? stableJson(node.timeoutConfig) : null,
-        reminderConfig: node.nodeType === "USER_TASK" && node.reminderConfig
-          ? stableJson(node.reminderConfig) : null,
-        positionX: node.positionX,
-        positionY: node.positionY,
-        sortOrder: node.sortOrder,
-      })),
+      nodes: requirement.nodes.map(mapProcessNode),
       edges: requirement.edges.map((edge) => ({
         edgeCode: edge.edgeCode,
         sourceNodeCode: edge.sourceNodeCode,
@@ -260,6 +244,30 @@ export class PlatformClientService {
       ...(user.departmentName ? { "X-Flow-Dept-Name": user.departmentName } : {}),
     };
   }
+}
+
+export function mapProcessNode(node: ProcessNodeRequirement): Record<string, unknown> {
+  return {
+    nodeCode: node.nodeCode,
+    nodeName: node.nodeName,
+    nodeType: node.nodeType,
+    pairedGatewayCode: node.pairedGatewayCode,
+    approverRuleType: node.approverRule?.type,
+    approverRuleConfig: node.approverRule ? stableJson(node.approverRule.config) : null,
+    multiInstanceMode: node.nodeType === "USER_TASK" || node.nodeType === "NOTICE"
+      ? node.multiInstanceMode || "SINGLE" : "SINGLE",
+    listenerConfig: node.nodeType === "USER_TASK" && node.listenerConfig
+      ? stableJson(node.listenerConfig) : null,
+    timeoutConfig: node.nodeType === "USER_TASK" && node.timeoutConfig
+      ? stableJson(node.timeoutConfig) : null,
+    reminderConfig: node.nodeType === "USER_TASK" && node.reminderConfig
+      ? stableJson(node.reminderConfig) : null,
+    noticeConfig: node.nodeType === "NOTICE" && node.noticeConfig
+      ? stableJson(node.noticeConfig) : null,
+    positionX: node.positionX,
+    positionY: node.positionY,
+    sortOrder: node.sortOrder,
+  };
 }
 
 export function normalizeExtensions(values: string[]): string[] {

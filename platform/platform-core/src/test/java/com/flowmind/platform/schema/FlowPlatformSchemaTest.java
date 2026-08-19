@@ -30,6 +30,8 @@ class FlowPlatformSchemaTest {
             "/schema/sqlite/003_attachment_operation_actions.sql";
     private static final String ATTACHMENT_REPLACE_OPERATION_MIGRATION =
             "/schema/sqlite/004_attachment_replace_operation_action.sql";
+    private static final String NOTICE_NODE_MIGRATION =
+            "/schema/sqlite/007_notice_node_config.sql";
 
     @Test
     void schemaInitializesAndEnforcesDefinitionConstraints() throws Exception {
@@ -54,11 +56,51 @@ class FlowPlatformSchemaTest {
             insertAttachmentTemplate(connection);
 
             assertDoesNotThrow(() -> insertNode(connection, "node-001", "start", "START"));
+            assertDoesNotThrow(() -> insertNode(connection, "node-notice", "notify", "NOTICE"));
             assertThrows(SQLException.class, () -> insertNode(connection, "node-002", "start", "START"));
             assertThrows(SQLException.class, () -> insertNode(connection, "node-003", "bad", "UNKNOWN"));
 
             assertDoesNotThrow(() -> insertAttachmentConfig(connection, "config-row-001", "group-001", false, 0));
             assertThrows(SQLException.class, () -> insertAttachmentConfig(connection, "config-row-002", "group-001", true, 0));
+        }
+    }
+
+    @Test
+    void noticeNodeMigrationPreservesExistingRowsAndEnablesNoticeNodes() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            createPreNoticeDefinitionAndNodeTables(connection);
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("INSERT INTO process_definition (id) VALUES ('definition-001')");
+                statement.executeUpdate("INSERT INTO process_node "
+                        + "(id, definition_id, node_code, node_name, node_type, sort_order) VALUES "
+                        + "('node-start', 'definition-001', 'start', 'Start', 'START', 3)");
+            }
+
+            executeScript(connection, NOTICE_NODE_MIGRATION);
+
+            assertTrue(tableColumns(connection, "process_node").contains("notice_config"));
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery(
+                         "SELECT node_code, node_type, sort_order, notice_config FROM process_node "
+                                 + "WHERE id = 'node-start'")) {
+                assertTrue(resultSet.next());
+                assertEquals("start", resultSet.getString("node_code"));
+                assertEquals("START", resultSet.getString("node_type"));
+                assertEquals(3, resultSet.getInt("sort_order"));
+                assertNull(resultSet.getString("notice_config"));
+                assertFalse(resultSet.next());
+            }
+            try (Statement statement = connection.createStatement()) {
+                assertEquals(1, statement.executeUpdate("INSERT INTO process_node "
+                        + "(id, definition_id, node_code, node_name, node_type, approver_rule_type, "
+                        + "approver_rule_config, notice_config) VALUES "
+                        + "('node-notice', 'definition-001', 'notify', 'Notify', 'NOTICE', "
+                        + "'STARTER', '{}', '{\"title\":\"Done\"}')"));
+            }
+            try (Statement statement = connection.createStatement();
+                 ResultSet resultSet = statement.executeQuery("PRAGMA foreign_key_check")) {
+                assertFalse(resultSet.next());
+            }
         }
     }
 
@@ -349,6 +391,28 @@ class FlowPlatformSchemaTest {
                     + "error_code TEXT, processing_expires_at TEXT NOT NULL, expires_at TEXT NOT NULL, "
                     + "created_at TEXT NOT NULL DEFAULT (datetime('now')), "
                     + "updated_at TEXT NOT NULL DEFAULT (datetime('now')))");
+        }
+    }
+
+    private static void createPreNoticeDefinitionAndNodeTables(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("PRAGMA foreign_keys = ON");
+            statement.execute("CREATE TABLE process_definition (id TEXT PRIMARY KEY)");
+            statement.execute("CREATE TABLE process_node ("
+                    + "id TEXT PRIMARY KEY, definition_id TEXT NOT NULL, node_code TEXT NOT NULL, "
+                    + "node_name TEXT NOT NULL, node_type TEXT NOT NULL CHECK (node_type IN "
+                    + "('START', 'USER_TASK', 'EXCLUSIVE_GATEWAY', 'PARALLEL_SPLIT_GATEWAY', "
+                    + "'PARALLEL_JOIN_GATEWAY', 'END')), paired_gateway_code TEXT, "
+                    + "approver_rule_type TEXT CHECK (approver_rule_type IS NULL OR approver_rule_type IN "
+                    + "('USER', 'STARTER', 'DEPARTMENT', 'ROLE', 'ROLE_IN_DEPARTMENT', "
+                    + "'APPROVER_EXPRESSION')), approver_rule_config TEXT, "
+                    + "multi_instance_mode TEXT NOT NULL DEFAULT 'SINGLE' CHECK (multi_instance_mode IN "
+                    + "('SINGLE', 'OR_SIGN', 'COUNTERSIGN')), listener_config TEXT, timeout_config TEXT, "
+                    + "reminder_config TEXT, position_x REAL, position_y REAL, sort_order INTEGER NOT NULL "
+                    + "DEFAULT 0, FOREIGN KEY (definition_id) REFERENCES process_definition (id), "
+                    + "UNIQUE (definition_id, node_code))");
+            statement.execute("CREATE INDEX idx_process_node_definition_sort "
+                    + "ON process_node (definition_id, sort_order)");
         }
     }
 

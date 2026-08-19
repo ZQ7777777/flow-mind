@@ -47,3 +47,5 @@ business-base/frontend/src/router/generated-routes.ts
 
 # #  范例流程
 # doc/example_process/
+
+outputs/

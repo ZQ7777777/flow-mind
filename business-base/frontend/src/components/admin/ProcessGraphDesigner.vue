@@ -58,6 +58,8 @@ const editor = reactive({
   rejectEnabled: false,
   rejectTargetNodeCodes: [] as string[],
   directSendEnabled: false,
+  noticeTitle: "流程知会",
+  noticeContent: "",
 });
 
 let drag: { code: string; offsetX: number; offsetY: number; moved: boolean } | undefined;
@@ -84,6 +86,7 @@ function loadNodeEditor(node: ProcessNode): void {
   const timeout = parseObject(node.timeoutConfig, "超时配置");
   const reminder = parseObject(node.reminderConfig, "提醒配置");
   const listener = parseObject(node.listenerConfig, "监听器配置");
+  const notice = parseObject(node.noticeConfig, "知会配置");
   if (approver) {
     editor.selectedApproverIds = strings(approver.userIds);
     editor.selectedDepartmentId = typeof approver.departmentId === "string" ? approver.departmentId : "";
@@ -117,6 +120,10 @@ function loadNodeEditor(node: ProcessNode): void {
     editor.rejectTargetNodeCodes = strings(reject.targetNodeCodes);
     editor.directSendEnabled = directSend.enabled === true;
   }
+  if (notice) {
+    editor.noticeTitle = typeof notice.title === "string" ? notice.title : "流程知会";
+    editor.noticeContent = typeof notice.content === "string" ? notice.content : "";
+  }
 }
 
 function selectNode(node: ProcessNode): void {
@@ -136,14 +143,15 @@ function addNode(type = "USER_TASK"): void {
   let code = `${type.toLowerCase()}_${index}`;
   while (nodes.value.some((node) => node.nodeCode === code)) code = `${type.toLowerCase()}_${++index}`;
   const names: Record<string, string> = {
-    START: "开始", USER_TASK: "用户任务", EXCLUSIVE_GATEWAY: "排他网关",
+    START: "开始", USER_TASK: "用户任务", NOTICE: "知会", EXCLUSIVE_GATEWAY: "排他网关",
     PARALLEL_SPLIT_GATEWAY: "并行分支", PARALLEL_JOIN_GATEWAY: "并行汇聚", END: "结束",
   };
   const node: ProcessNode = {
     nodeCode: code, nodeName: names[type] ?? "节点", nodeType: type,
-    approverRuleType: type === "USER_TASK" ? "USER" : undefined,
-    approverRuleConfig: type === "USER_TASK" ? '{"userIds":[]}' : undefined,
-    multiInstanceMode: type === "USER_TASK" ? "SINGLE" : undefined,
+    approverRuleType: type === "USER_TASK" || type === "NOTICE" ? "USER" : undefined,
+    approverRuleConfig: type === "USER_TASK" || type === "NOTICE" ? '{"userIds":[]}' : undefined,
+    multiInstanceMode: type === "USER_TASK" || type === "NOTICE" ? "SINGLE" : undefined,
+    noticeConfig: type === "NOTICE" ? '{}' : undefined,
     positionX: 60 + ((index - 1) % 4) * 180,
     positionY: 60 + Math.floor((index - 1) / 4) * 110,
     sortOrder: index,
@@ -200,6 +208,16 @@ function syncReminder(): void {
     maxCount: Math.max(0, Number(editor.reminderMaxCount) || 0),
     messageTemplate: editor.reminderMessageTemplate,
   });
+}
+
+function syncNotice(): void {
+  const node = selectedNode.value;
+  if (!node) return;
+  const config: Record<string, string> = {};
+  if (editor.noticeTitle.trim()) config.title = editor.noticeTitle.trim();
+  if (editor.noticeContent.trim()) config.content = editor.noticeContent.trim();
+  node.noticeConfig = JSON.stringify(config);
+  configError.value = "";
 }
 
 function syncListener(): void {
@@ -407,7 +425,7 @@ onMounted(() => nextTick(fitView));
 <template>
   <div class="designer" tabindex="0" @keydown="handleKeydown">
     <div class="toolbar">
-      <button v-for="type in ['START','USER_TASK','EXCLUSIVE_GATEWAY','PARALLEL_SPLIT_GATEWAY','PARALLEL_JOIN_GATEWAY','END']"
+      <button v-for="type in ['START','USER_TASK','NOTICE','EXCLUSIVE_GATEWAY','PARALLEL_SPLIT_GATEWAY','PARALLEL_JOIN_GATEWAY','END']"
               :key="type" type="button" @click="addNode(type)">+ {{ type }}</button>
       <button type="button" :class="{ active: connectionMode }" @click="toggleConnection">
         {{ connectionMode ? '结束连线' : '开始连线' }}
@@ -450,7 +468,7 @@ onMounted(() => nextTick(fitView));
       <div class="panel-heading"><h4>节点配置：{{ selectedNode.nodeCode }}</h4><button class="danger" @click="removeSelected">删除节点</button></div>
       <label>节点编码<input :value="selectedNode.nodeCode" @change="renameSelected" /></label>
       <label>节点名称<input v-model="selectedNode.nodeName" /></label>
-      <label>节点类型<select v-model="selectedNode.nodeType"><option v-for="type in ['START','USER_TASK','EXCLUSIVE_GATEWAY','PARALLEL_SPLIT_GATEWAY','PARALLEL_JOIN_GATEWAY','END']" :key="type">{{ type }}</option></select></label>
+      <label>节点类型<select v-model="selectedNode.nodeType"><option v-for="type in ['START','USER_TASK','NOTICE','EXCLUSIVE_GATEWAY','PARALLEL_SPLIT_GATEWAY','PARALLEL_JOIN_GATEWAY','END']" :key="type">{{ type }}</option></select></label>
       <label v-if="selectedNode.nodeType.includes('PARALLEL')">配对网关<select v-model="selectedNode.pairedGatewayCode"><option value="">无</option><option v-for="node in nodes.filter(item => item.nodeCode !== selectedNode?.nodeCode && item.nodeType.includes('PARALLEL'))" :key="node.nodeCode" :value="node.nodeCode">{{ node.nodeName }} / {{ node.nodeCode }}</option></select></label>
 
       <template v-if="selectedNode.nodeType === 'USER_TASK'">
@@ -488,6 +506,26 @@ onMounted(() => nextTick(fitView));
           <label>监听器配置 JSON<textarea v-model="selectedNode.listenerConfig" rows="5" @change="reloadAdvancedJson" /></label>
           <label>超时配置 JSON<textarea v-model="selectedNode.timeoutConfig" rows="3" @change="reloadAdvancedJson" /></label>
           <label>提醒配置 JSON<textarea v-model="selectedNode.reminderConfig" rows="3" @change="reloadAdvancedJson" /></label>
+        </details>
+        <p v-if="configError" class="field-error wide">{{ configError }}</p>
+      </template>
+
+      <template v-if="selectedNode.nodeType === 'NOTICE'">
+        <label>接收人来源<select v-model="selectedNode.approverRuleType" @change="syncApprover"><option value="USER">指定用户</option><option value="STARTER">发起人</option><option value="DEPARTMENT">指定部门</option><option value="ROLE">指定角色</option><option value="ROLE_IN_DEPARTMENT">部门角色</option><option value="APPROVER_EXPRESSION">表达式</option></select></label>
+        <label v-if="selectedNode.approverRuleType === 'USER'">接收人<select v-model="editor.selectedApproverIds" multiple @change="syncApprover"><option v-for="user in props.options.users" :key="user.userId" :value="user.userId">{{ userLabel(user) }}</option></select></label>
+        <label v-if="selectedNode.approverRuleType === 'DEPARTMENT'">指定部门<select v-model="editor.selectedDepartmentId" @change="syncApprover"><option value="">请选择</option><option v-for="department in props.options.departments" :key="department.departmentId" :value="department.departmentId">{{ departmentLabel(department) }}</option></select></label>
+        <label v-if="selectedNode.approverRuleType === 'ROLE'">指定角色<select v-model="editor.selectedRoleCode" @change="syncApprover"><option value="">请选择</option><option v-for="role in props.options.roles" :key="role.roleCode" :value="role.roleCode">{{ roleLabel(role) }}</option></select></label>
+        <template v-if="selectedNode.approverRuleType === 'ROLE_IN_DEPARTMENT'">
+          <label>指定角色<select v-model="editor.selectedRoleCode" @change="syncApprover"><option value="">请选择</option><option v-for="role in props.options.roles" :key="role.roleCode" :value="role.roleCode">{{ roleLabel(role) }}</option></select></label>
+          <label>部门来源<select v-model="editor.selectedRoleDepartmentMode" @change="syncApprover"><option value="STARTER">发起人部门</option><option value="FIXED">指定部门</option></select></label>
+          <label v-if="editor.selectedRoleDepartmentMode === 'FIXED'">指定部门<select v-model="editor.selectedRoleDepartmentId" @change="syncApprover"><option value="">请选择</option><option v-for="department in props.options.departments" :key="department.departmentId" :value="department.departmentId">{{ departmentLabel(department) }}</option></select></label>
+        </template>
+        <label v-if="selectedNode.approverRuleType === 'APPROVER_EXPRESSION'">接收人表达式<input v-model="editor.approverExpression" placeholder="departmentManager(starterDeptId)" @change="syncApprover" /></label>
+        <label>消息标题<input v-model="editor.noticeTitle" placeholder="流程知会" @change="syncNotice" /></label>
+        <label class="wide">消息正文<textarea v-model="editor.noticeContent" rows="3" placeholder="留空时使用默认办结知会文案" @change="syncNotice" /></label>
+        <details class="advanced wide"><summary>高级 JSON 配置</summary>
+          <label>接收人配置 JSON<textarea v-model="selectedNode.approverRuleConfig" rows="3" @change="reloadAdvancedJson" /></label>
+          <label>知会配置 JSON<textarea v-model="selectedNode.noticeConfig" rows="4" @change="reloadAdvancedJson" /></label>
         </details>
         <p v-if="configError" class="field-error wide">{{ configError }}</p>
       </template>

@@ -8,6 +8,8 @@ public enum WorkflowEventTypeEnum {
     PROCESS_STARTED,
     /** 任务创建。 */
     TASK_CREATED,
+    /** 自动知会消息创建。 */
+    NOTICE_CREATED,
     /** 任务发送。 */
     TASK_SUBMITTED,
     /** 任务完成。 */

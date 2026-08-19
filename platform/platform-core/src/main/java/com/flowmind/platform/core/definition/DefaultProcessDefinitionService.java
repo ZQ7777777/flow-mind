@@ -1042,6 +1042,7 @@ public class DefaultProcessDefinitionService implements ProcessDefinitionService
             appendPart(builder, node.getListenerConfig());
             appendPart(builder, node.getTimeoutConfig());
             appendPart(builder, node.getReminderConfig());
+            appendPart(builder, node.getNoticeConfig());
             appendPart(builder, node.getPositionX());
             appendPart(builder, node.getPositionY());
             appendPart(builder, node.getSortOrder());

@@ -75,6 +75,7 @@ public class RuntimeNodeConfigReader {
         config.setListenerConfig(parseObject(node.getListenerConfig(), "listenerConfig", nodeCode));
         config.setTimeoutConfig(parseObject(node.getTimeoutConfig(), "timeoutConfig", nodeCode));
         config.setReminderConfig(parseObject(node.getReminderConfig(), "reminderConfig", nodeCode));
+        config.setNoticeConfig(parseObject(node.getNoticeConfig(), "noticeConfig", nodeCode));
         return config;
     }
 
@@ -88,9 +89,10 @@ public class RuntimeNodeConfigReader {
             throw new RuntimeConfigurationException(RuntimeErrorCodes.NODE_CONFIG_INVALID,
                     "runtime node type must not be null: " + node.getNodeCode());
         }
-        if (NodeTypeEnum.USER_TASK.equals(node.getNodeType()) && node.getApproverRuleType() == null) {
+        if ((NodeTypeEnum.USER_TASK.equals(node.getNodeType()) || NodeTypeEnum.NOTICE.equals(node.getNodeType()))
+                && node.getApproverRuleType() == null) {
             throw new RuntimeConfigurationException(RuntimeErrorCodes.NODE_CONFIG_INVALID,
-                    "user task approverRuleType must not be null: " + node.getNodeCode());
+                    "participant approverRuleType must not be null: " + node.getNodeCode());
         }
     }
 
@@ -101,7 +103,7 @@ public class RuntimeNodeConfigReader {
      * @param approverRuleConfig 已解析的审批规则配置
      */
     private void validateApproverRuleConfig(ProcessNodeDTO node, Map<String, Object> approverRuleConfig) {
-        if (!NodeTypeEnum.USER_TASK.equals(node.getNodeType())) {
+        if (!NodeTypeEnum.USER_TASK.equals(node.getNodeType()) && !NodeTypeEnum.NOTICE.equals(node.getNodeType())) {
             return;
         }
         ApproverRuleTypeEnum ruleType = node.getApproverRuleType();

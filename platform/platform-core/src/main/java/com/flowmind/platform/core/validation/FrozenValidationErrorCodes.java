@@ -37,6 +37,9 @@ public final class FrozenValidationErrorCodes {
             "FLOW_FROZEN_MODEL_EDGE_REFERENCE_INVALID";
     public static final String MODEL_USER_TASK_APPROVER_REQUIRED =
             "FLOW_FROZEN_MODEL_USER_TASK_APPROVER_REQUIRED";
+    /** 知会节点接收人或消息配置不符合要求。 */
+    public static final String MODEL_NOTICE_CONFIGURATION_INVALID =
+            "FLOW_FROZEN_MODEL_NOTICE_CONFIGURATION_INVALID";
     public static final String MODEL_GATEWAY_DEFAULT_EDGE_INVALID =
             "FLOW_FROZEN_MODEL_GATEWAY_DEFAULT_EDGE_INVALID";
     public static final String MODEL_PARALLEL_GATEWAY_PAIR_INVALID =

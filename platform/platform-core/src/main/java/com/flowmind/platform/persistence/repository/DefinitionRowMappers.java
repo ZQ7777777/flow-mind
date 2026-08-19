@@ -55,6 +55,7 @@ final class DefinitionRowMappers {
             entity.setListenerConfig(resultSet.getString("listener_config"));
             entity.setTimeoutConfig(resultSet.getString("timeout_config"));
             entity.setReminderConfig(resultSet.getString("reminder_config"));
+            entity.setNoticeConfig(resultSet.getString("notice_config"));
             entity.setPositionX(getNullableDouble(resultSet, "position_x"));
             entity.setPositionY(getNullableDouble(resultSet, "position_y"));
             entity.setSortOrder(Integer.valueOf(resultSet.getInt("sort_order")));

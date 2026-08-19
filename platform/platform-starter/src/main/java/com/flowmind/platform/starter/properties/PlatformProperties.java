@@ -65,6 +65,9 @@ public class PlatformProperties {
 
     public static class Callback {
         private boolean asyncEnabled = true;
+        private long initialDelayMs = 1000L;
+        private long fixedDelayMs = 1000L;
+        private int limit = 50;
 
         public boolean isAsyncEnabled() {
             return asyncEnabled;
@@ -73,6 +76,13 @@ public class PlatformProperties {
         public void setAsyncEnabled(boolean asyncEnabled) {
             this.asyncEnabled = asyncEnabled;
         }
+
+        public long getInitialDelayMs() { return initialDelayMs; }
+        public void setInitialDelayMs(long initialDelayMs) { this.initialDelayMs = initialDelayMs; }
+        public long getFixedDelayMs() { return fixedDelayMs; }
+        public void setFixedDelayMs(long fixedDelayMs) { this.fixedDelayMs = fixedDelayMs; }
+        public int getLimit() { return limit; }
+        public void setLimit(int limit) { this.limit = limit; }
     }
 
     public static class Attachment {

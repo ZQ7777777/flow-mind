@@ -27,6 +27,8 @@ public class WorkflowEvent {
     private List<HistoryTaskDTO> archivedTasks;
     /** 本次动作新建的活动任务。 */
     private List<TaskDTO> createdTasks;
+    /** 本次推进生成的自动知会消息。 */
+    private List<ProcessNoticeDTO> createdNotices;
     /** 事件发生后的流程变量快照。 */
     private Map<String, Object> variables;
     /** 事件发生时间。 */
@@ -48,6 +50,7 @@ public class WorkflowEvent {
         this.operator = operator;
         this.archivedTasks = archivedTasks;
         this.createdTasks = createdTasks;
+        this.createdNotices = new java.util.ArrayList<ProcessNoticeDTO>();
         this.variables = variables;
         this.occurredAt = occurredAt;
     }
@@ -122,6 +125,14 @@ public class WorkflowEvent {
 
     public void setCreatedTasks(List<TaskDTO> createdTasks) {
         this.createdTasks = createdTasks;
+    }
+
+    public List<ProcessNoticeDTO> getCreatedNotices() {
+        return createdNotices;
+    }
+
+    public void setCreatedNotices(List<ProcessNoticeDTO> createdNotices) {
+        this.createdNotices = createdNotices;
     }
 
     public Map<String, Object> getVariables() {

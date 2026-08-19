@@ -11,6 +11,7 @@ import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
 import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
+import com.flowmind.platform.api.dto.ProcessNoticeDTO;
 import com.flowmind.platform.api.dto.TaskActionResult;
 import com.flowmind.platform.api.dto.TaskGroupViewDTO;
 import com.flowmind.platform.api.dto.TaskDTO;
@@ -199,6 +200,8 @@ public class DefaultAdminProcessService implements AdminProcessService {
                             request.getComment(), archivedTasks.size(), request.getTargetNodeCode());
                     publishEvent(request.getOperationId(), WorkflowEventTypeEnum.PROCESS_JUMPED, resultInstance,
                             operator, ActionTypeEnum.JUMP, archivedTasks, result.getCreatedTasks());
+                    publishNoticeEvents(request.getOperationId(), resultInstance, operator, ActionTypeEnum.JUMP,
+                            advanceResult.getCreatedNotices());
                     if (advanceResult.isInstanceCompleted()) {
                         publishEvent(request.getOperationId(), WorkflowEventTypeEnum.PROCESS_COMPLETED, resultInstance,
                                 operator, ActionTypeEnum.JUMP, archivedTasks, Collections.<TaskDTO>emptyList());
@@ -464,11 +467,38 @@ public class DefaultAdminProcessService implements AdminProcessService {
                 operator.getDepartmentName()));
         event.setArchivedTasks(new ArrayList<HistoryTaskDTO>(archivedTasks));
         event.setCreatedTasks(new ArrayList<TaskDTO>(createdTasks));
+        event.setCreatedNotices(Collections.<ProcessNoticeDTO>emptyList());
         event.setVariables(instance.getVariables() == null
                 ? new LinkedHashMap<String, Object>()
                 : new LinkedHashMap<String, Object>(instance.getVariables()));
         event.setOccurredAt(LocalDateTime.now());
         callbackService.publishCallback(event);
+    }
+
+    private void publishNoticeEvents(String operationId,
+                                     ProcessInstanceDTO instance,
+                                     UserContext operator,
+                                     ActionTypeEnum actionType,
+                                     List<ProcessNoticeDTO> notices) {
+        for (ProcessNoticeDTO notice : notices) {
+            WorkflowEvent event = new WorkflowEvent();
+            event.setEventId(operationId + ":" + WorkflowEventTypeEnum.NOTICE_CREATED.name() + ":"
+                    + notice.getNodeCode());
+            event.setOperationId(operationId);
+            event.setEventType(WorkflowEventTypeEnum.NOTICE_CREATED);
+            event.setProcessCode(instance.getProcessCode());
+            event.setInstanceId(instance.getInstanceId());
+            event.setActionType(actionType);
+            event.setOperator(new UserContext(operator.getUserId(), operator.getUserName(),
+                    operator.getDepartmentId(), operator.getDepartmentName()));
+            event.setArchivedTasks(Collections.<HistoryTaskDTO>emptyList());
+            event.setCreatedTasks(Collections.<TaskDTO>emptyList());
+            event.setCreatedNotices(Collections.singletonList(notice));
+            event.setVariables(instance.getVariables() == null ? new LinkedHashMap<String, Object>()
+                    : new LinkedHashMap<String, Object>(instance.getVariables()));
+            event.setOccurredAt(LocalDateTime.now());
+            callbackService.publishCallback(event);
+        }
     }
 
     private boolean isSuccessfulReplay(OperationIdempotencyDecision decision) {

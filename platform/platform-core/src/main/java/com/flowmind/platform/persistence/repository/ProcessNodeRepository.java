@@ -49,8 +49,8 @@ public class ProcessNodeRepository {
         return jdbcTemplate.batchUpdate("INSERT INTO process_node "
                         + "(id, definition_id, node_code, node_name, node_type, paired_gateway_code, "
                         + "approver_rule_type, approver_rule_config, multi_instance_mode, listener_config, "
-                        + "timeout_config, reminder_config, position_x, position_y, sort_order) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'SINGLE'), ?, ?, ?, ?, ?, COALESCE(?, 0))",
+                        + "timeout_config, reminder_config, notice_config, position_x, position_y, sort_order) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'SINGLE'), ?, ?, ?, ?, ?, ?, COALESCE(?, 0))",
                 new BatchPreparedStatementSetter() {
                     @Override
                     public void setValues(PreparedStatement ps, int i) throws SQLException {
@@ -67,9 +67,10 @@ public class ProcessNodeRepository {
                         ps.setString(10, node.getListenerConfig());
                         ps.setString(11, node.getTimeoutConfig());
                         ps.setString(12, node.getReminderConfig());
-                        JdbcBindingUtils.setNullableDouble(ps, 13, node.getPositionX());
-                        JdbcBindingUtils.setNullableDouble(ps, 14, node.getPositionY());
-                        JdbcBindingUtils.setNullableInteger(ps, 15, node.getSortOrder());
+                        ps.setString(13, node.getNoticeConfig());
+                        JdbcBindingUtils.setNullableDouble(ps, 14, node.getPositionX());
+                        JdbcBindingUtils.setNullableDouble(ps, 15, node.getPositionY());
+                        JdbcBindingUtils.setNullableInteger(ps, 16, node.getSortOrder());
                     }
 
                     @Override
