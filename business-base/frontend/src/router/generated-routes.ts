@@ -12,7 +12,13 @@ export const generatedRoutes: RouteRecordRaw[] = [
     path: "/generated/entry-application/apply",
     name: "generated-entry-application-apply",
     meta: { title: "入金申请", standalone: true },
-    component: () => import("../modules/generated/entry-application/Apply.vue"),
+    component: () => import("../modules/generated/entry-application/EntryApplicationApply.vue"),
+  },
+  {
+    path: "/generated/sample/apply",
+    name: "generated-sample-apply",
+    meta: { title: "仓单、国债（解）质押申请" },
+    component: () => import("../modules/generated/sample/SampleApply.vue"),
   },
 ];
 
