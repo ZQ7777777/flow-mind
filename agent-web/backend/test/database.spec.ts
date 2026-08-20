@@ -142,4 +142,31 @@ describe("agent database", () => {
     const columns = database.db.prepare("PRAGMA table_info(agent_repair_attempt)").all() as Array<{ name: string }>;
     expect(columns.map(({ name }) => name)).toContain("failure_code");
   });
+
+  it("repairs a database that recorded migration ten before adding context snapshots", () => {
+    database!.db.exec(`
+      ALTER TABLE agent_code_generation RENAME TO agent_code_generation_without_context;
+      CREATE TABLE agent_code_generation AS
+      SELECT id, session_id, process_definition_record_id, requirement_revision,
+        requirement_snapshot_json, process_snapshot_json, business_code, business_name,
+        status, target_root, target_contract_version, target_contract_json, staging_dir,
+        backup_dir, artifact_manifest_json, pi_session_id, pi_session_file,
+        generation_revision, quality_revision, repair_round, max_repair_rounds,
+        latest_verification_run_id, latest_review_id, quality_report_json,
+        hard_gate_passed, override_required, quality_override_id, skip_ai_review,
+        can_write, write_status, write_journal_json, start_key, start_hash,
+        start_result_json, superseded_by, created_by, confirmed_by, confirmed_at,
+        write_confirm_key, write_confirm_hash, written_at, last_error_code,
+        last_error_message, created_at, updated_at
+      FROM agent_code_generation_without_context;
+      DROP TABLE agent_code_generation_without_context;
+    `);
+    database!.onModuleDestroy();
+    database = new DatabaseService();
+
+    const columns = database.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
+    expect(columns.map(({ name }) => name)).toContain("generation_context_snapshot_json");
+    expect(database.db.prepare("SELECT version FROM agent_schema_migration WHERE version = 10").get())
+      .toEqual({ version: 10 });
+  });
 });

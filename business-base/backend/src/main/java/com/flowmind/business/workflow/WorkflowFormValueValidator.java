@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collections;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -105,7 +106,8 @@ public class WorkflowFormValueValidator {
     private void validateField(ProcessFormFieldDTO field, Object value) {
         String code = field.getFieldCode();
         if (Boolean.TRUE.equals(field.getRequired()) && (value == null
-                || value instanceof String && ((String) value).trim().isEmpty())) {
+                || value instanceof String && ((String) value).trim().isEmpty()
+                || value instanceof Collection && ((Collection<?>) value).isEmpty())) {
             throw new IllegalArgumentException("必填字段不能为空: " + code);
         }
         if (value == null) return;

@@ -9,10 +9,10 @@ type GeneratedBusinessFormLoader = () => Promise<{ default: Component }>;
  */
 export const generatedRoutes: RouteRecordRaw[] = [
   {
-    path: "/generated/entry-application/apply",
+    path: "/generated/sample/apply",
     name: "generated-entry-application-apply",
-    meta: { title: "入金申请", standalone: true },
-    component: () => import("../modules/generated/entry-application/EntryApplicationApply.vue"),
+    meta: { title: "样例", standalone: true },
+    component: () => import("../modules/generated/sample/Apply.vue"),
   },
   {
     path: "/generated/warehouse-pledge/apply",
@@ -20,16 +20,23 @@ export const generatedRoutes: RouteRecordRaw[] = [
     meta: { title: "仓单、国债（解）质押申请", standalone: true },
     component: () => import("../modules/generated/sample/Apply.vue"),
   },
+  {
+    path: "/generated/warehouse-treasury-pledge-application/apply",
+    name: "generated-warehouse-treasury-pledge-application-apply",
+    meta: { title: "发起仓单、国债（解）质押申请", standalone: true },
+    component: () => import("../modules/generated/warehouse-treasury-pledge-application/Apply.vue"),
+  },
 ];
 
-export const generatedBusinessFormRegistry: Record<string, GeneratedBusinessFormLoader> = {
-  entry_application: () => import("../modules/generated/entry-application/BusinessForm.vue"),
-  warehouse_pledge: () => import("../modules/generated/sample/BusinessForm.vue"),
-};
-
-export async function resolveGeneratedBusinessForm(processCode?: string): Promise<Component | undefined> {
-  if (!processCode) return undefined;
-  const loader = generatedBusinessFormRegistry[processCode];
-  if (!loader) return undefined;
-  return (await loader()).default;
-}
+// export const generatedBusinessFormRegistry: Record<string, GeneratedBusinessFormLoader> = {
+//   entry_application: () => import("../modules/generated/entry-application/BusinessForm.vue"),
+//   warehouse_pledge: () => import("../modules/generated/sample/BusinessForm.vue"),
+//   warehouse_treasury_pledge_application: () => import("../modules/generated/warehouse-treasury-pledge-application/BusinessForm.vue"),
+// };
+//
+// export async function resolveGeneratedBusinessForm(processCode?: string): Promise<Component | undefined> {
+//   if (!processCode) return undefined;
+//   const loader = generatedBusinessFormRegistry[processCode];
+//   if (!loader) return undefined;
+//   return (await loader()).default;
+// }

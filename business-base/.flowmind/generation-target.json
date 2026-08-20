@@ -18,7 +18,9 @@
       "frontend/src/api/generated/sample/sample.ts",
       "frontend/src/api/generated/sample/sample.spec.ts"
     ],
-    "apiReferences": { "businessReferenceData": ".flowmind/references/business-reference-data-v1.md" },
+    "apiReferences": {
+      "businessReferenceData": ".flowmind/references/business-reference-data-v1.md"
+    },
     "verificationProfile": "vue3-npm"
   },
   "readableReferenceFiles": [
@@ -40,9 +42,21 @@
     "frontend/src/router/generated-routes.ts"
   ],
   "protectedFiles": [
-    { "path": "frontend/package.json", "sha256": "c9b53bc59543737cd28b19e4a1a102c50d8c1cc9415eb23ade9d07f92e212021" },
-    { "path": ".flowmind/references/business-reference-data-v1.md", "sha256": "d502edb61caeef43aa7d784769570c8b6e27f818da03d9a0adf015dfc2caf68a" },
-    { "path": "frontend/src/components/workflow/WorkflowStartShell.vue", "sha256": "7200126fdb9c1171928657743b33cb70c4115f7fa1cdaccfc18161d486fa0769" },
-    { "path": "frontend/src/types/workflow.ts", "sha256": "a84a6351e215b808169b646b7608eecf0ed5defcc45f762c6f43395364cfaeb1" }
+    {
+      "path": "frontend/package.json",
+      "sha256": "6eebe6c7000b7275c649fd62f7f716778f6119874f3302b3750b6a8524da42f2"
+    },
+    {
+      "path": ".flowmind/references/business-reference-data-v1.md",
+      "sha256": "68fbd5dc143009eb8ad6b176d52b2fd94211178eaebf16327dc2318485649bba"
+    },
+    {
+      "path": "frontend/src/components/workflow/WorkflowStartShell.vue",
+      "sha256": "ae7aaf6a480b1a69cd41f7ebf98f7c8749c6d88badabfb483435caad2ea9e083"
+    },
+    {
+      "path": "frontend/src/types/workflow.ts",
+      "sha256": "7192d659f7bdf9e01773af1ee9bb68c941dc0a30faf07afeeb6790b0027c76d7"
+    }
   ]
 }

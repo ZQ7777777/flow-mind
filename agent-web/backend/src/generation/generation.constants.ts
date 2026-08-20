@@ -5,3 +5,8 @@ export const REQUIRED_OUTPUT_PATTERNS = [
   "frontend/src/api/generated/**/*",
   "frontend/src/router/generated-routes.ts",
 ] as const;
+
+export const FRONTEND_FORM_ONLY_OUTPUT_PATTERNS = [
+  "frontend/src/modules/generated/**/*",
+  "frontend/src/router/generated-routes.ts",
+] as const;
