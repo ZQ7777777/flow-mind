@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onMounted, ref, shallowRef, toRaw, watch, type Component } from "vue";
+import type { UploadFile } from "element-plus";
+import { UploadFilled } from "@element-plus/icons-vue";
 import { fetchWorkflowStartContext, startWorkflowProcess } from "../../api/workflow";
 import type { WorkflowStartAttachmentRule, WorkflowStartContext } from "../../types/workflow";
 import { createIdempotencyKey } from "../../utils/idempotency";
@@ -18,6 +20,7 @@ const loading = ref(false);
 const submitting = ref(false);
 const error = ref("");
 const success = ref("");
+const activeTab = ref("application");
 let submitKey = createIdempotencyKey("workflow:start");
 
 const orderedAttachments = computed(() => [...(context.value?.attachmentTemplates || [])]
@@ -51,10 +54,21 @@ async function loadContext(): Promise<void> {
   }
 }
 
-function selectFiles(rule: WorkflowStartAttachmentRule, event: Event): void {
-  const input = event.target as HTMLInputElement;
-  attachments.value = { ...attachments.value, [rule.attachmentCode]: Array.from(input.files || []) };
+function selectFiles(rule: WorkflowStartAttachmentRule, fileList: UploadFile[]): void {
+  const files: File[] = [];
+  for (const file of fileList) if (file.raw) files.push(file.raw as File);
+  attachments.value = { ...attachments.value, [rule.attachmentCode]: files };
   error.value = "";
+}
+
+function filesFor(rule: WorkflowStartAttachmentRule): UploadFile[] {
+  return (attachments.value[rule.attachmentCode] || []).map((file, index) => ({ name: file.name, uid: index + 1, status: "ready", size: file.size, raw: file as UploadFile["raw"] }));
+}
+
+function removeFile(rule: WorkflowStartAttachmentRule, file: UploadFile): void {
+  const files = attachments.value[rule.attachmentCode] || [];
+  const index = files.findIndex((item) => item.name === file.name && item.size === file.size && item.lastModified === file.raw?.lastModified);
+  if (index >= 0) attachments.value = { ...attachments.value, [rule.attachmentCode]: files.filter((_, fileIndex) => fileIndex !== index) };
 }
 
 function validateAttachments(): boolean {
@@ -91,7 +105,10 @@ async function submit(): Promise<void> {
       error.value = "请修正表单字段后再提交";
       return;
     }
-    if (!validateAttachments()) return;
+    if (!validateAttachments()) {
+      activeTab.value = "attachments";
+      return;
+    }
     const result = await startWorkflowProcess(props.processCode, {
       definitionId: context.value.definitionId,
       definitionVersion: context.value.definitionVersion,
@@ -110,57 +127,72 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <section class="page-surface workflow-start-shell" aria-labelledby="start-heading">
+  <section class="workflow-start-shell" aria-labelledby="start-heading">
     <p v-if="loading" class="state-line" role="status">加载中...</p>
     <p v-else-if="!context" class="state-line is-error" role="alert">{{ error || "暂无可发起流程" }}</p>
     <template v-else>
-      <header class="section-heading">
-        <p class="eyebrow">Workflow Start</p>
-        <h1 id="start-heading">{{ context.pageTitle || context.processName }}</h1>
-      </header>
+      <header class="block-title"><h1 id="start-heading">{{ context.pageTitle || context.processName || "办理详情" }}</h1></header>
       <p v-if="!startable" class="state-line is-error" role="alert">{{ context.disabledReason || context.unavailableReason || "当前不可发起" }}</p>
-      <component
-        :is="businessFormComponent"
-        ref="formRef"
-        v-model="variables"
-        :fields="context.formFields"
-        :field-permissions="context.fieldPermissions"
-        mode="edit"
-        :disabled="submitting || !startable"
-      />
-      <section v-if="orderedAttachments.length" class="attachment-section" aria-labelledby="start-attachments-heading">
-        <h2 id="start-attachments-heading">发起附件</h2>
-        <label v-for="rule in orderedAttachments" :key="rule.attachmentCode" class="attachment-field">
-          <span>{{ rule.attachmentName }}<b v-if="rule.required"> *</b></span>
-          <small>{{ rule.description || `${rule.minCount}-${rule.maxCount} 个文件` }}</small>
-          <input type="file" :multiple="rule.maxCount > 1" :accept="rule.allowedExtensions.map((item) => `.${item.replace(/^\./, '')}`).join(',')" :disabled="submitting" @change="selectFiles(rule, $event)" />
-        </label>
-      </section>
+      <div class="content-panel">
+        <el-tabs v-model="activeTab" class="workflow-tabs">
+          <el-tab-pane name="application" label="申请详情">
+            <component :is="businessFormComponent" ref="formRef" v-model="variables" :fields="context.formFields" :field-permissions="context.fieldPermissions" mode="edit" :disabled="submitting || !startable" />
+          </el-tab-pane>
+          <el-tab-pane name="attachments" label="影像资料上传">
+            <section class="attachment-section" aria-labelledby="start-attachments-heading">
+              <h2 id="start-attachments-heading">影像资料上传</h2>
+              <div v-if="orderedAttachments.length" class="attachment-list">
+                <div v-for="rule in orderedAttachments" :key="rule.attachmentCode" class="attachment-card">
+                  <div class="attachment-card-heading"><span>{{ rule.attachmentName }}<b v-if="rule.required"> *</b></span><small>{{ rule.description || `${rule.minCount}-${rule.maxCount} 个文件` }}</small></div>
+                  <el-upload drag :auto-upload="false" :show-file-list="false" :multiple="rule.maxCount > 1" :accept="rule.allowedExtensions.map((item) => `.${item.replace(/^\./, '')}`).join(',')" :disabled="submitting || !startable" :file-list="filesFor(rule)" @change="(_file: UploadFile, fileList: UploadFile[]) => selectFiles(rule, fileList)">
+                    <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+                    <div class="el-upload__text">将文件拖到此处，或 <em>点击上传</em></div>
+                  </el-upload>
+                  <el-table v-if="filesFor(rule).length" :data="filesFor(rule)" class="file-table" size="small">
+                    <el-table-column prop="name" label="文件名" min-width="240" />
+                    <el-table-column label="文件大小" width="140"><template #default="scope">{{ `${Math.max(1, Math.ceil((scope.row.size || 0) / 1024))} KB` }}</template></el-table-column>
+                    <el-table-column label="操作" width="100" align="center"><template #default="scope"><el-button link type="danger" @click="removeFile(rule, scope.row)">删除</el-button></template></el-table-column>
+                  </el-table>
+                </div>
+              </div>
+              <el-empty v-else description="暂无影像资料上传要求" />
+            </section>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
       <p v-if="error" class="state-line is-error" role="alert">{{ error }}</p>
       <p v-if="success" class="state-line is-success" role="status">{{ success }}</p>
-      <div class="form-actions">
-        <button type="button" :disabled="submitting || !startable" @click="submit">
-          {{ submitting ? "提交中..." : "提交申请" }}
-        </button>
-      </div>
+      <div class="form-actions"><el-button data-test="submit-button" type="primary" :loading="submitting" :disabled="!startable" @click="submit">{{ submitting ? "提交中..." : "提交" }}</el-button></div>
     </template>
   </section>
 </template>
 
 <style scoped>
-.workflow-start-shell { display: grid; gap: 18px; }
-.section-heading p, .section-heading h1 { margin: 0; }
-.eyebrow { color: #0f766e; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-h1 { color: #17202a; font-size: 24px; }
-.attachment-section { display: grid; gap: 12px; border-top: 1px solid #d8dee8; padding-top: 16px; }
-.attachment-section h2 { margin: 0; font-size: 18px; }
-.attachment-field { display: grid; gap: 6px; color: #17202a; }
-.attachment-field small { color: #5d6978; }
-.attachment-field b { color: #be123c; }
-.form-actions { display: flex; justify-content: flex-end; border-top: 1px solid #d8dee8; padding-top: 16px; }
-.form-actions button { min-height: 36px; border: 0; border-radius: 6px; padding: 0 18px; background: #2563eb; color: #fff; cursor: pointer; }
-.form-actions button:disabled { cursor: not-allowed; opacity: .6; }
+.workflow-start-shell { display: grid; gap: 12px; color: #18324d; }
+.block-title { background: #0879c9; color: #fff; padding: 6px 16px; }
+.block-title h1 { margin: 0; font-size: 16px; font-weight: 700; }
+.content-panel { border: 1px solid #9aaabd; background: #fff; }
+.workflow-tabs { min-height: 380px; }
+.workflow-tabs :deep(.el-tabs__header) { margin: 0; padding: 0 18px; }
+.workflow-tabs :deep(.el-tabs__item) { color: #18324d; font-weight: 600; }
+.workflow-tabs :deep(.el-tabs__item.is-active) { color: #0879c9; }
+.workflow-tabs :deep(.el-tabs__active-bar) { background: #0879c9; }
+.workflow-tabs :deep(.el-tabs__content) { padding: 22px 20px; }
+.attachment-section { display: grid; gap: 16px; }
+.attachment-section h2 { margin: 0; border-left: 5px solid #0879c9; padding-left: 12px; font-size: 16px; }
+.attachment-list { display: grid; gap: 18px; }
+.attachment-card { display: grid; gap: 10px; }
+.attachment-card-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.attachment-card-heading span { font-weight: 650; }
+.attachment-card-heading small { color: #718096; }
+.attachment-card b { color: #d93025; }
+.attachment-card :deep(.el-upload-dragger) { width: 100%; box-sizing: border-box; min-height: 130px; padding: 24px; border-color: #8ebbe0; background: #f8fcff; }
+.attachment-card :deep(.el-icon--upload) { color: #0879c9; font-size: 38px; margin-bottom: 6px; }
+.attachment-card :deep(.el-upload__text em) { color: #0879c9; font-style: normal; }
+.file-table { width: 100%; }
+.form-actions { display: flex; justify-content: flex-end; border: 1px solid #9aaabd; border-top: 0; padding: 12px 16px; background: #fff; }
 .state-line { margin: 0; border: 1px solid #d8dee8; border-radius: 6px; padding: 10px 12px; }
 .is-error { border-color: #fecdd3; background: #fff1f2; color: #be123c; }
 .is-success { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }
+@media (max-width: 640px) { .attachment-card-heading { align-items: flex-start; flex-direction: column; } .workflow-tabs :deep(.el-tabs__content) { padding: 16px 12px; } }
 </style>

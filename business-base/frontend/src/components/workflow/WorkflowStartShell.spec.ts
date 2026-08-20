@@ -52,7 +52,7 @@ describe("WorkflowStartShell", () => {
     expect(fetchWorkflowStartContext).toHaveBeenCalledWith("travel_expense");
     expect(wrapper.get("[data-test='business-form']").text()).toBe("form");
 
-    await wrapper.get("button").trigger("click");
+    await wrapper.get("[data-test='submit-button']").trigger("click");
     await flushPromises();
 
     expect(startWorkflowProcess).toHaveBeenCalledTimes(1);
@@ -77,8 +77,8 @@ describe("WorkflowStartShell", () => {
     });
     await flushPromises();
     expect(wrapper.text()).toContain("无发起权限");
-    expect(wrapper.get("button").attributes("disabled")).toBeDefined();
-    await wrapper.get("button").trigger("click");
+    expect(wrapper.get("[data-test='submit-button']").attributes("disabled")).toBeDefined();
+    await wrapper.get("[data-test='submit-button']").trigger("click");
     expect(startWorkflowProcess).not.toHaveBeenCalled();
   });
 
@@ -114,7 +114,7 @@ describe("WorkflowStartShell", () => {
       props: { processCode: "travel_expense", businessForm: InvalidBusinessForm },
     });
     await flushPromises();
-    await wrapper.get("button").trigger("click");
+    await wrapper.get("[data-test='submit-button']").trigger("click");
     await flushPromises();
     expect(startWorkflowProcess).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("请修正表单字段后再提交");
@@ -134,7 +134,7 @@ describe("WorkflowStartShell", () => {
       props: { processCode: "travel_expense", businessForm: BusinessForm },
     });
     await flushPromises();
-    await wrapper.get("button").trigger("click");
+    await wrapper.get("[data-test='submit-button']").trigger("click");
     await flushPromises();
     expect(startWorkflowProcess).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("报销凭证需上传 1-2 个文件");
@@ -156,9 +156,9 @@ describe("WorkflowStartShell", () => {
     });
     await flushPromises();
 
-    expect(wrapper.text()).toContain("发起附件");
+    expect(wrapper.text()).toContain("影像资料上传");
     expect(wrapper.text()).toContain("报销凭证");
-    expect(wrapper.find('input[type="file"]').exists()).toBe(true);
+    expect(wrapper.find("el-upload").exists()).toBe(true);
   });
 
   it("suppresses duplicate submits while the first request is in flight", async () => {
@@ -171,9 +171,9 @@ describe("WorkflowStartShell", () => {
     });
     await flushPromises();
 
-    const firstClick = wrapper.get("button").trigger("click");
+    const firstClick = wrapper.get("[data-test='submit-button']").trigger("click");
     await nextTick();
-    await wrapper.get("button").trigger("click");
+    await wrapper.get("[data-test='submit-button']").trigger("click");
     expect(startWorkflowProcess).toHaveBeenCalledTimes(1);
 
     resolveSubmit({ instanceId: "instance-1", createdTasks: [] });
