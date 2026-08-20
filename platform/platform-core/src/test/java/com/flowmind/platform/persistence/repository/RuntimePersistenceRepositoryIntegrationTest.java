@@ -122,6 +122,48 @@ class RuntimePersistenceRepositoryIntegrationTest {
                         LocalDateTime.of(2026, 7, 22, 9, 2))));
     }
 
+    @Test
+    void visibleHistoryKeepsRawGroupedRejectCleanupForInternalQueries() {
+        ProcessHistoryTaskEntity rejected = historyTask("history-reject", "operation-reject", "task-reject",
+                LocalDateTime.of(2026, 8, 20, 15, 7));
+        rejected.setActionType("REJECT");
+        ProcessHistoryTaskEntity cleanup = historyTask("history-cleanup", "operation-reject", "task-sibling",
+                LocalDateTime.of(2026, 8, 20, 15, 7));
+        cleanup.setActionType("CANCEL");
+        cleanup.setExtraJson("{\"groupRejectTaskId\":\"task-reject\"}");
+        historyTaskRepository.insert(rejected);
+        historyTaskRepository.insert(cleanup);
+
+        assertEquals(2, historyTaskRepository.findByInstanceId("instance-running").size());
+        List<ProcessHistoryTaskEntity> visible =
+                historyTaskRepository.findVisibleByInstanceId("instance-running");
+        assertEquals(1, visible.size());
+        assertEquals("history-reject", visible.get(0).getId());
+    }
+
+    @Test
+    void visibleHistoryHidesExistingOrSignApproveCleanupWithoutMetadata() {
+        ProcessTaskGroupEntity group = taskGroup("group-or", "COMPLETED");
+        group.setNodeCode("review");
+        group.setGroupType("OR_SIGN");
+        taskGroupRepository.insert(group);
+        ProcessHistoryTaskEntity approved = historyTask("history-or-approve", "operation-or-approve",
+                "task-or-winner", LocalDateTime.of(2026, 8, 20, 15, 7));
+        approved.setTaskGroupId("group-or");
+        ProcessHistoryTaskEntity cleanup = historyTask("history-or-cleanup", "operation-or-approve",
+                "task-or-sibling", LocalDateTime.of(2026, 8, 20, 15, 7));
+        cleanup.setTaskGroupId("group-or");
+        cleanup.setActionType("CANCEL");
+        historyTaskRepository.insert(approved);
+        historyTaskRepository.insert(cleanup);
+
+        assertEquals(2, historyTaskRepository.findByInstanceId("instance-running").size());
+        List<ProcessHistoryTaskEntity> visible =
+                historyTaskRepository.findVisibleByInstanceId("instance-running");
+        assertEquals(1, visible.size());
+        assertEquals("history-or-approve", visible.get(0).getId());
+    }
+
     private void insertDefinition(String id, String definitionStatus, String activationStatus, String grayStatus) {
         jdbcTemplate.update("INSERT INTO process_definition "
                         + "(id, process_code, process_name, system_code, version, definition_status, "

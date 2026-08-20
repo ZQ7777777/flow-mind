@@ -1,5 +1,6 @@
 package com.flowmind.platform.core.query;
 
+import com.flowmind.platform.api.dto.AdminHistoryTaskQuery;
 import com.flowmind.platform.api.dto.CompletedTaskQuery;
 import com.flowmind.platform.api.dto.HistoryTaskDTO;
 import com.flowmind.platform.api.dto.PageResult;
@@ -39,6 +40,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultTaskQueryServiceTest {
 
@@ -262,6 +264,86 @@ class DefaultTaskQueryServiceTest {
     }
 
     @Test
+    void visibleHistoryQueriesHideOnlyGroupedRejectCleanupRecords() {
+        insertHistory("history-reject", "REJECT", null, 1);
+        insertHistory("history-group-cleanup", "CANCEL",
+                "{\"groupRejectTaskId\":\"task-reject\"}", 2);
+        insertHistory("history-normal-cancel", "CANCEL", null, 3);
+        insertHistory("history-parallel-cleanup", "CANCEL",
+                "{\"rejectTaskId\":\"task-reject\"}", 4);
+        insertHistory("history-empty-extra", "CANCEL", "{}", 5);
+        insertHistory("history-approve", "APPROVE", null, 6);
+
+        List<ProcessHistoryTaskEntity> rawHistory = historyTaskRepository.findByInstanceId("instance-1");
+        List<HistoryTaskDTO> visibleHistory = taskQueryService.queryHistoryTasks("instance-1");
+        List<ProcessCommentDTO> visibleComments = taskQueryService.queryComments("instance-1");
+        PageResult<HistoryTaskDTO> completed = taskQueryService.queryCompletedTasks(new CompletedTaskQuery());
+        AdminHistoryTaskQuery adminQuery = new AdminHistoryTaskQuery();
+
+        assertEquals(6, rawHistory.size());
+        assertEquals(5, visibleHistory.size());
+        assertEquals(5, visibleComments.size());
+        assertEquals(Long.valueOf(5L), completed.getTotal());
+        assertEquals(5, completed.getRecords().size());
+        assertEquals(5L, historyTaskRepository.countCompletedTasks(new CompletedTaskQuery()));
+        assertEquals(5, historyTaskRepository.queryCompletedTasks(new CompletedTaskQuery()).size());
+        assertEquals(5L, historyTaskRepository.countAdminHistoryTasks(adminQuery));
+        assertEquals(5, historyTaskRepository.queryAdminHistoryTasks(adminQuery).size());
+        assertTrue(visibleHistory.stream()
+                .noneMatch(history -> "history-group-cleanup".equals(history.getHistoryTaskId())));
+        assertTrue(visibleHistory.stream()
+                .anyMatch(history -> "history-normal-cancel".equals(history.getHistoryTaskId())));
+        assertTrue(visibleHistory.stream()
+                .anyMatch(history -> "history-parallel-cleanup".equals(history.getHistoryTaskId())));
+        assertTrue(visibleHistory.stream()
+                .anyMatch(history -> "history-reject".equals(history.getHistoryTaskId())));
+    }
+
+    @Test
+    void visibleHistoryQueriesHideOrSignCleanupButKeepOtherGroupedActions() {
+        insertTaskGroup("group-or-history", "OR_SIGN", 4, 1, "{}", 0L);
+        insertTaskGroup("group-counter-history", "COUNTERSIGN", 2, 1, "{}", 0L);
+        insertHistory("history-or-approve", "APPROVE", null, 1,
+                "operation-or-approve", "task-or-winner", "group-or-history");
+        insertHistory("history-or-cleanup", "CANCEL", null, 2,
+                "operation-or-approve", "task-or-sibling", "group-or-history");
+        insertHistory("history-or-orphan-cancel", "CANCEL", null, 3,
+                "operation-or-orphan", "task-or-orphan", "group-or-history");
+        insertHistory("history-counter-approve", "APPROVE", null, 4,
+                "operation-counter", "task-counter-main", "group-counter-history");
+        insertHistory("history-counter-cancel", "CANCEL", null, 5,
+                "operation-counter", "task-counter-sibling", "group-counter-history");
+        insertHistory("history-or-transfer", "TRANSFER", null, 6,
+                "operation-transfer", "task-or-transfer", "group-or-history");
+        insertHistory("history-or-delegate", "TRANSFER", "{\"delegateAction\":true}", 7,
+                "operation-delegate", "task-or-delegate", "group-or-history");
+
+        List<ProcessHistoryTaskEntity> rawHistory = historyTaskRepository.findByInstanceId("instance-1");
+        List<HistoryTaskDTO> visibleHistory = taskQueryService.queryHistoryTasks("instance-1");
+        List<ProcessCommentDTO> visibleComments = taskQueryService.queryComments("instance-1");
+        PageResult<HistoryTaskDTO> completed = taskQueryService.queryCompletedTasks(new CompletedTaskQuery());
+        AdminHistoryTaskQuery adminQuery = new AdminHistoryTaskQuery();
+
+        assertEquals(7, rawHistory.size());
+        assertEquals(6, visibleHistory.size());
+        assertEquals(6, visibleComments.size());
+        assertEquals(Long.valueOf(4L), completed.getTotal());
+        assertEquals(4, completed.getRecords().size());
+        assertEquals(6L, historyTaskRepository.countAdminHistoryTasks(adminQuery));
+        assertEquals(6, historyTaskRepository.queryAdminHistoryTasks(adminQuery).size());
+        assertTrue(visibleHistory.stream()
+                .noneMatch(history -> "history-or-cleanup".equals(history.getHistoryTaskId())));
+        assertTrue(visibleHistory.stream()
+                .anyMatch(history -> "history-or-orphan-cancel".equals(history.getHistoryTaskId())));
+        assertTrue(visibleHistory.stream()
+                .anyMatch(history -> "history-counter-cancel".equals(history.getHistoryTaskId())));
+        assertTrue(visibleHistory.stream()
+                .anyMatch(history -> "history-or-transfer".equals(history.getHistoryTaskId())));
+        assertTrue(visibleHistory.stream()
+                .anyMatch(history -> "history-or-delegate".equals(history.getHistoryTaskId())));
+    }
+
+    @Test
     void readRecordQueryAlwaysUsesTrustedCurrentUser() {
         readRecordManager.markRead("instance-1");
         new ProcessReadRecordRepository(jdbcTemplate).upsert(
@@ -303,6 +385,32 @@ class DefaultTaskQueryServiceTest {
         command.setVariablesSnapshot(variables);
         command.setCompletedAt(completedAt);
         return command;
+    }
+
+    private void insertHistory(String id, String actionType, String extraJson, int minute) {
+        insertHistory(id, actionType, extraJson, minute,
+                "operation-" + id, "task-" + id, null);
+    }
+
+    private void insertHistory(String id, String actionType, String extraJson, int minute,
+                               String operationId, String activeTaskId, String taskGroupId) {
+        ProcessHistoryTaskEntity entity = new ProcessHistoryTaskEntity();
+        entity.setId(id);
+        entity.setInstanceId("instance-1");
+        entity.setOperationId(operationId);
+        entity.setActiveTaskId(activeTaskId);
+        entity.setNodeCode("review");
+        entity.setTaskGroupId(taskGroupId);
+        entity.setAssigneeUserId("operator-001");
+        entity.setAssigneeUserName("Operator");
+        entity.setHandleType("NORMAL");
+        entity.setActionType(actionType);
+        entity.setCommentText("comment-" + id);
+        entity.setVariablesSnapshot("{}");
+        entity.setStartedAt(LocalDateTime.of(2026, 8, 20, 15, minute));
+        entity.setCompletedAt(LocalDateTime.of(2026, 8, 20, 15, minute));
+        entity.setExtraJson(extraJson);
+        historyTaskRepository.insert(entity);
     }
 
     private void insertDefinitionAndInstance() {

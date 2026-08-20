@@ -92,6 +92,7 @@ function initialVerifyStages(): VerifyStageEntry[] {
 
 export const useWorkflowStore = defineStore("workflow", () => {
   const defaultTargetRoot = ref("");
+  const businessFrontendBaseUrl = ref("");
   const currentUser = ref<AgentAuthenticatedUser>();
   const snapshot = ref<WorkflowSnapshot>();
   const busy = ref(false);
@@ -121,6 +122,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     currentUser.value = authenticatedUser;
     const publicConfig = await apiRequest<AgentPublicConfig>("/api/agent/config");
     defaultTargetRoot.value = publicConfig.defaultTargetRoot;
+    businessFrontendBaseUrl.value = publicConfig.businessFrontendBaseUrl;
     const sessionId = localStorage.getItem(sessionStorageKey());
     if (sessionId) {
       try {
@@ -641,6 +643,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
 
   return {
     defaultTargetRoot,
+    businessFrontendBaseUrl,
     currentUser,
     snapshot,
     state,

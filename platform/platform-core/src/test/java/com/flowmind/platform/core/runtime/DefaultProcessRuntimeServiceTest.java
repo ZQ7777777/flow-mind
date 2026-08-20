@@ -615,7 +615,8 @@ class DefaultProcessRuntimeServiceTest {
         when(instanceRepository.findById("instance-1")).thenReturn(instance);
         when(definitionLoader.loadForInstance(instance)).thenReturn(definition);
         when(activeTaskRepository.findOpenByInstanceId("instance-1")).thenReturn(Collections.singletonList(active));
-        when(historyTaskRepository.findByInstanceId("instance-1")).thenReturn(Collections.singletonList(history));
+        when(historyTaskRepository.findVisibleByInstanceId("instance-1"))
+                .thenReturn(Collections.singletonList(history));
 
         ProcessInstanceDetailDTO detail = service.getInstance("instance-1");
 

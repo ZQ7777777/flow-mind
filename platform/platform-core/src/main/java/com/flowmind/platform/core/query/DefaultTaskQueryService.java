@@ -169,7 +169,7 @@ public class DefaultTaskQueryService implements TaskQueryService {
     public List<HistoryTaskDTO> queryHistoryTasks(String instanceId) {
         validateInstanceId(instanceId);
         List<HistoryTaskDTO> results = new ArrayList<HistoryTaskDTO>();
-        for (ProcessHistoryTaskEntity entity : historyTaskRepository.findByInstanceId(instanceId)) {
+        for (ProcessHistoryTaskEntity entity : historyTaskRepository.findVisibleByInstanceId(instanceId)) {
             results.add(traceAssembler.toHistoryTaskDTO(entity));
         }
         return results;
@@ -179,7 +179,7 @@ public class DefaultTaskQueryService implements TaskQueryService {
     public List<ProcessCommentDTO> queryComments(String instanceId) {
         validateInstanceId(instanceId);
         List<ProcessCommentDTO> results = new ArrayList<ProcessCommentDTO>();
-        for (ProcessHistoryTaskEntity entity : historyTaskRepository.findByInstanceId(instanceId)) {
+        for (ProcessHistoryTaskEntity entity : historyTaskRepository.findVisibleByInstanceId(instanceId)) {
             ProcessCommentDTO dto = traceAssembler.toCommentDTO(entity);
             if (dto != null) {
                 results.add(dto);

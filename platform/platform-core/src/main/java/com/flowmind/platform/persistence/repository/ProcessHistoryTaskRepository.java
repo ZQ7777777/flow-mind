@@ -119,6 +119,16 @@ public class ProcessHistoryTaskRepository {
                 ROW_MAPPER, instanceId);
     }
 
+    /**
+     * 查询面向用户展示的实例历史，隐藏或签驳回产生的组内清理记录。
+     */
+    public List<ProcessHistoryTaskEntity> findVisibleByInstanceId(String instanceId) {
+        return jdbcTemplate.query("SELECT h.* FROM process_history_task h WHERE h.instance_id = ? "
+                        + HistoryVisibilitySql.PREDICATE
+                        + "ORDER BY h.started_at ASC, h.completed_at ASC, h.id ASC",
+                ROW_MAPPER, instanceId);
+    }
+
     public List<ProcessHistoryTaskEntity> findByActiveTaskId(String activeTaskId) {
         return jdbcTemplate.query("SELECT * FROM process_history_task WHERE active_task_id = ? "
                         + "ORDER BY completed_at ASC, id ASC",
@@ -177,6 +187,7 @@ public class ProcessHistoryTaskRepository {
         List<Object> params = new ArrayList<Object>();
         StringBuilder sql = new StringBuilder("SELECT h.* FROM process_history_task h ");
         appendCompletedTaskWhere(sql, params, normalized);
+        appendVisibleHistoryPredicate(sql);
         sql.append(" AND h.action_type NOT IN ('TRANSFER', 'ADD_SIGN', 'CLAIM', 'UNCLAIM') ");
         sql.append(" ORDER BY h.completed_at DESC, h.id DESC LIMIT ? OFFSET ?");
         params.add(Integer.valueOf(pageSize));
@@ -189,6 +200,7 @@ public class ProcessHistoryTaskRepository {
         List<Object> params = new ArrayList<Object>();
         StringBuilder sql = new StringBuilder("SELECT COUNT(1) FROM process_history_task h ");
         appendCompletedTaskWhere(sql, params, normalized);
+        appendVisibleHistoryPredicate(sql);
         sql.append(" AND h.action_type NOT IN ('TRANSFER', 'ADD_SIGN', 'CLAIM', 'UNCLAIM') ");
         Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
         return count == null ? 0L : count.longValue();
@@ -209,6 +221,7 @@ public class ProcessHistoryTaskRepository {
                 + "JOIN process_instance i ON i.id = h.instance_id "
                 + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
         appendCompletedTaskRowWhere(sql, params, normalized);
+        appendVisibleHistoryPredicate(sql);
         sql.append(" AND h.action_type NOT IN ('TRANSFER', 'ADD_SIGN', 'CLAIM', 'UNCLAIM') ");
         sql.append(" ORDER BY h.completed_at DESC, h.id DESC LIMIT ? OFFSET ?");
         params.add(Integer.valueOf(pageSize));
@@ -224,6 +237,7 @@ public class ProcessHistoryTaskRepository {
                 + "JOIN process_instance i ON i.id = h.instance_id "
                 + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
         appendCompletedTaskRowWhere(sql, params, normalized);
+        appendVisibleHistoryPredicate(sql);
         sql.append(" AND h.action_type NOT IN ('TRANSFER', 'ADD_SIGN', 'CLAIM', 'UNCLAIM') ");
         Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
         return count == null ? 0L : count.longValue();
@@ -248,6 +262,7 @@ public class ProcessHistoryTaskRepository {
                 + "JOIN process_instance i ON i.id = h.instance_id "
                 + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
         appendAdminHistoryWhere(sql, params, normalized);
+        appendVisibleHistoryPredicate(sql);
         sql.append(" ORDER BY h.completed_at DESC, h.id DESC LIMIT ? OFFSET ?");
         params.add(Integer.valueOf(pageSize));
         params.add(Integer.valueOf((pageNo - 1) * pageSize));
@@ -262,6 +277,7 @@ public class ProcessHistoryTaskRepository {
                 + "JOIN process_instance i ON i.id = h.instance_id "
                 + "LEFT JOIN process_node n ON n.definition_id = i.definition_id AND n.node_code = h.node_code ");
         appendAdminHistoryWhere(sql, params, normalized);
+        appendVisibleHistoryPredicate(sql);
         Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, params.toArray());
         return count == null ? 0L : count.longValue();
     }
@@ -360,6 +376,10 @@ public class ProcessHistoryTaskRepository {
             sql.append("AND h.completed_at <= ? ");
             params.add(DefinitionRowMappers.toDbString(query.getCompletedTo()));
         }
+    }
+
+    private void appendVisibleHistoryPredicate(StringBuilder sql) {
+        sql.append(HistoryVisibilitySql.PREDICATE);
     }
 
     private String like(String value) {

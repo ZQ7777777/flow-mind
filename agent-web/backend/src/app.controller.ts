@@ -39,7 +39,11 @@ export class AppController {
 
   @Get("/api/agent/config")
   getPublicConfig() {
-    return { defaultTargetRoot: loadConfig().allowedTargetRoots[0] || "" };
+    const config = loadConfig();
+    return {
+      defaultTargetRoot: config.allowedTargetRoots[0] || "",
+      businessFrontendBaseUrl: config.businessFrontendBaseUrl,
+    };
   }
 
   @Post("/api/agent/test-fixtures/quality-gate")
