@@ -596,6 +596,128 @@ class EnhancedTaskActionCoordinatorTest {
     }
 
     @Test
+    void withdrawCancelsTopLevelOrSignGroupAndRecreatesPreviousHandlerNode() {
+        Fixture fixture = fixture(ActionTypeEnum.WITHDRAW);
+        fixture.task.setTaskGroupId("or-group-1");
+        WithdrawTaskRequest request = taskRequest(new WithdrawTaskRequest(), "op-withdraw-or-sign",
+                fixture.task, fixture.operator);
+        ProcessNodeDTO current = userNode("manager", null);
+        current.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("finance", null), current));
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("or-group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("OR_SIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(2));
+        ProcessActiveTaskEntity sibling = task();
+        sibling.setId("task-2");
+        sibling.setTaskGroupId("or-group-1");
+        sibling.setLockVersion(Long.valueOf(1));
+        ProcessHistoryTaskEntity previous = history("previous-or-sign", "user-a", "finance",
+                ActionTypeEnum.APPROVE.name(), null);
+        when(fixture.groups.findById("or-group-1")).thenReturn(group);
+        when(fixture.tasks.countOpenByInstanceId("instance-1")).thenReturn(2L);
+        when(fixture.tasks.findOpenByTaskGroupId("or-group-1"))
+                .thenReturn(java.util.Arrays.asList(fixture.task, sibling));
+        when(fixture.histories.findLatestByInstanceAndActions(eq("instance-1"), any(String.class), any(String.class),
+                any(String.class), any(String.class), any(String.class)))
+                .thenReturn(java.util.Collections.singletonList(previous));
+        when(fixture.tasks.cancel("task-1", 3L)).thenReturn(1);
+        when(fixture.groups.cancel("or-group-1", 2L)).thenReturn(1);
+        when(fixture.tasks.cancel("task-2", 1L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("withdraw-or-sign", "user-a", "manager", ActionTypeEnum.WITHDRAW.name(), "{}"),
+                history("cancel-or-sign", "user-a", "manager", ActionTypeEnum.CANCEL.name(), "{}"));
+        when(fixture.advancer.advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null))).thenReturn(new RuntimeAdvanceResult());
+
+        TaskActionResult result = fixture.coordinator.withdraw(request);
+
+        assertEquals(2, result.getArchivedTasks().size());
+        verify(fixture.groups).cancel("or-group-1", 2L);
+        verify(fixture.tasks).cancel("task-1", 3L);
+        verify(fixture.tasks).cancel("task-2", 1L);
+        verify(fixture.advancer).advanceToNode(eq(fixture.instance), eq(fixture.definition), eq("finance"),
+                eq(null), eq(null), eq(null));
+        org.mockito.ArgumentCaptor<HistoryArchiveCommand> archives =
+                org.mockito.ArgumentCaptor.forClass(HistoryArchiveCommand.class);
+        verify(fixture.historyWriter, org.mockito.Mockito.times(2)).archive(archives.capture());
+        assertEquals(ActionTypeEnum.WITHDRAW, archives.getAllValues().get(0).getActionType());
+        assertEquals(ActionTypeEnum.CANCEL, archives.getAllValues().get(1).getActionType());
+        assertEquals("task-2", archives.getAllValues().get(1).getTask().getId());
+        assertEquals(true, archives.getAllValues().get(1).getExtraJson().contains("or-group-1"));
+    }
+
+    @Test
+    void withdrawRejectsCountersignGroupBeforeTaskMutation() {
+        Fixture fixture = fixture(ActionTypeEnum.WITHDRAW);
+        fixture.task.setTaskGroupId("counter-group-1");
+        ProcessNodeDTO current = userNode("manager", null);
+        current.setMultiInstanceMode(MultiInstanceModeEnum.COUNTERSIGN);
+        fixture.definition.setNodes(java.util.Collections.singletonList(current));
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("counter-group-1");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("COUNTERSIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(1));
+        when(fixture.groups.findById("counter-group-1")).thenReturn(group);
+        WithdrawTaskRequest request = taskRequest(new WithdrawTaskRequest(), "op-withdraw-counter",
+                fixture.task, fixture.operator);
+
+        RuntimeValidationException error = assertThrows(RuntimeValidationException.class,
+                () -> fixture.coordinator.withdraw(request));
+
+        assertEquals(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED, error.getErrorCode());
+        verify(fixture.tasks, never()).cancel(any(String.class), any(Long.class));
+        verify(fixture.groups, never()).cancel(any(String.class), any(Long.class));
+    }
+
+    @Test
+    void withdrawStopsBeforeSiblingCancellationWhenOrSignGroupCasIsLost() {
+        Fixture fixture = fixture(ActionTypeEnum.WITHDRAW);
+        fixture.task.setTaskGroupId("or-group-conflict");
+        ProcessNodeDTO current = userNode("manager", null);
+        current.setMultiInstanceMode(MultiInstanceModeEnum.OR_SIGN);
+        fixture.definition.setNodes(java.util.Arrays.asList(userNode("finance", null), current));
+        ProcessTaskGroupEntity group = new ProcessTaskGroupEntity();
+        group.setId("or-group-conflict");
+        group.setInstanceId("instance-1");
+        group.setNodeCode("manager");
+        group.setGroupType("OR_SIGN");
+        group.setGroupStatus("ACTIVE");
+        group.setLockVersion(Long.valueOf(4));
+        ProcessActiveTaskEntity sibling = task();
+        sibling.setId("task-conflict-sibling");
+        sibling.setTaskGroupId("or-group-conflict");
+        sibling.setLockVersion(Long.valueOf(2));
+        when(fixture.groups.findById("or-group-conflict")).thenReturn(group);
+        when(fixture.tasks.findOpenByTaskGroupId("or-group-conflict"))
+                .thenReturn(java.util.Arrays.asList(fixture.task, sibling));
+        when(fixture.tasks.countOpenByInstanceId("instance-1")).thenReturn(2L);
+        when(fixture.histories.findLatestByInstanceAndActions(eq("instance-1"), any(String.class), any(String.class),
+                any(String.class), any(String.class), any(String.class))).thenReturn(java.util.Collections.singletonList(
+                history("previous-conflict", "user-a", "finance", ActionTypeEnum.APPROVE.name(), null)));
+        when(fixture.tasks.cancel("task-1", 3L)).thenReturn(1);
+        when(fixture.historyWriter.archive(any(HistoryArchiveCommand.class))).thenReturn(
+                history("withdraw-conflict", "user-a", "manager", ActionTypeEnum.WITHDRAW.name(), "{}"));
+        WithdrawTaskRequest request = taskRequest(new WithdrawTaskRequest(), "op-withdraw-group-conflict",
+                fixture.task, fixture.operator);
+
+        RuntimeStateException error = assertThrows(RuntimeStateException.class,
+                () -> fixture.coordinator.withdraw(request));
+
+        assertEquals(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED, error.getErrorCode());
+        verify(fixture.tasks, never()).cancel("task-conflict-sibling", 2L);
+        verify(fixture.advancer, never()).advanceToNode(any(ProcessInstanceEntity.class),
+                any(ProcessDefinitionDetailDTO.class), any(String.class), any(String.class), any(String.class),
+                any(RuntimeAdvancePreparation.class));
+    }
+
+    @Test
     void directSendFailsWhenNoVersionedRejectSourceContainsCurrentTask() {
         Fixture fixture = fixture(ActionTypeEnum.DIRECT_SEND);
         DirectSendRequest request = taskRequest(new DirectSendRequest(), "op-direct", fixture.task, fixture.operator);

@@ -3,7 +3,9 @@ package com.flowmind.business.integration;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flowmind.business.BusinessBaseApplication;
+import com.flowmind.business.workflow.WorkflowWithdrawContextResolver;
 import com.flowmind.platform.api.dto.ProcessDefinitionDTO;
+import com.flowmind.platform.api.dto.ProcessDefinitionDetailDTO;
 import com.flowmind.platform.api.dto.ProcessEdgeDTO;
 import com.flowmind.platform.api.dto.ProcessFormFieldDTO;
 import com.flowmind.platform.api.dto.ProcessInstanceDTO;
@@ -260,6 +262,114 @@ class WorkflowB2B3IntegrationTest {
         approve("delivery04", processCode, "pledge-review-" + suffix);
         bindSession(salesSession);
         assertThat(runtimeService.getInstance(pledge.getInstanceId()).getInstanceStatus().name()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void warehousePledgeOrSignNodesCanBeWithdrawnByPreviousHandler() throws Exception {
+        assertWarehouseOrSignWithdraw("delivery_confirm");
+        assertWarehouseOrSignWithdraw("settlement_confirm");
+        assertWarehouseOrSignWithdraw("delivery_operation");
+        assertWarehouseOrSignWithdraw("delivery_review");
+    }
+
+    private void assertWarehouseOrSignWithdraw(String currentNodeCode) throws Exception {
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        String processCode = "ww_" + currentNodeCode.substring(0, 4) + "_" + suffix.substring(0, 20);
+        createWarehouseDefinition(processCode, suffix);
+        MockHttpSession salesSession = login("sales01");
+        bindSession(salesSession);
+        boolean pledgeBranch = "delivery_confirm".equals(currentNodeCode)
+                || "settlement_confirm".equals(currentNodeCode);
+        ProcessInstanceDTO instance = startWarehouse(processCode, suffix,
+                pledgeBranch ? "国债质押" : "仓单解质押", pledgeBranch);
+
+        String previousUser;
+        String previousNode;
+        assertNode(approve("manager_sales", processCode, "withdraw-manager-" + suffix),
+                pledgeBranch ? "finance_operation" : "delivery_operation");
+        if (pledgeBranch) {
+            assertNode(approveClaimed("finance01", processCode, "withdraw-finance-" + suffix),
+                    "delivery_confirm");
+        }
+        if ("delivery_confirm".equals(currentNodeCode)) {
+            previousUser = "finance01";
+            previousNode = "finance_operation";
+        } else if ("settlement_confirm".equals(currentNodeCode)) {
+            assertNode(approve("delivery01", processCode, "withdraw-confirm-" + suffix),
+                    "operations_leader_approve");
+            assertNode(approve("manager_operations", processCode, "withdraw-leader-" + suffix),
+                    "settlement_confirm");
+            previousUser = "manager_operations";
+            previousNode = "operations_leader_approve";
+        } else if ("delivery_operation".equals(currentNodeCode)) {
+            previousUser = "manager_sales";
+            previousNode = "supervisor_approve";
+        } else {
+            assertNode(approve("delivery01", processCode, "withdraw-operation-" + suffix),
+                    "delivery_review");
+            previousUser = "delivery01";
+            previousNode = "delivery_operation";
+        }
+
+        MockHttpSession previousSession = login(previousUser);
+        com.flowmind.platform.api.dto.ProcessInstanceDetailDTO beforeWithdraw =
+                runtimeService.getInstance(instance.getInstanceId());
+        assertThat(beforeWithdraw.getActiveTasks()).isNotEmpty();
+        String activeGroupId = beforeWithdraw.getActiveTasks().get(0).getTaskGroupId();
+        assertThat(activeGroupId).isNotBlank();
+        assertThat(beforeWithdraw.getActiveTasks())
+                .allMatch(task -> activeGroupId.equals(task.getTaskGroupId()));
+        ProcessDefinitionDetailDTO beforeDefinition =
+                definitionService.getDefinition(beforeWithdraw.getDefinitionId());
+        assertThat(beforeWithdraw.getActiveTasks()).allMatch(task -> task.getTaskVersion() != null
+                && task.getTaskStatus() != null && task.getBranchKey() == null
+                && currentNodeCode.equals(task.getNodeCode()));
+        assertThat(beforeDefinition.getNodes()).filteredOn(node -> currentNodeCode.equals(node.getNodeCode()))
+                .extracting(ProcessNodeDTO::getMultiInstanceMode).containsExactly(MultiInstanceModeEnum.OR_SIGN);
+        String previousUserId = "finance01".equals(previousUser) ? "u_finance_01"
+                        : ("manager_sales".equals(previousUser) ? "u_dept_manager_01"
+                        : ("manager_operations".equals(previousUser) ? "u_operations_manager_01"
+                        : "u_delivery_01"));
+        assertThat(beforeWithdraw.getHistoryTasks()).anyMatch(history -> previousUserId.equals(history.getAssigneeUserId())
+                && previousNode.equals(history.getNodeCode()));
+        assertThat(new WorkflowWithdrawContextResolver().resolve(beforeWithdraw,
+                beforeDefinition, previousUserId)).isNotNull();
+        String completedBody = mockMvc.perform(get("/api/workflow/tasks/completed")
+                        .session(previousSession).param("processCode", processCode))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode context = null;
+        for (JsonNode record : objectMapper.readTree(completedBody).path("records")) {
+            if (!record.path("withdrawContext").isMissingNode()
+                    && !record.path("withdrawContext").isNull()) {
+                context = record.path("withdrawContext");
+                break;
+            }
+        }
+        assertThat(context).isNotNull();
+        assertThat(context.path("targetNodeCode").asText()).isEqualTo(previousNode);
+        String taskId = context.path("taskId").asText();
+        long taskVersion = context.path("expectedTaskVersion").asLong();
+
+        String withdrawBody = mockMvc.perform(post("/api/workflow/tasks/{taskId}/withdraw", taskId)
+                        .session(previousSession).header("Idempotency-Key", "withdraw-or-sign-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedTaskVersion\":" + taskVersion + ",\"comment\":\"撤回或签节点\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.createdTasks[0].nodeCode").value(previousNode))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode archived = objectMapper.readTree(withdrawBody).path("archivedTasks");
+        int withdrawCount = 0;
+        int cancelCount = 0;
+        for (JsonNode history : archived) {
+            if ("WITHDRAW".equals(history.path("actionType").asText())) withdrawCount++;
+            if ("CANCEL".equals(history.path("actionType").asText())) cancelCount++;
+        }
+        assertThat(withdrawCount).isEqualTo(1);
+        assertThat(cancelCount).isGreaterThanOrEqualTo(1);
+        bindSession(previousSession);
+        assertThat(runtimeService.getInstance(instance.getInstanceId()).getActiveTasks())
+                .isNotEmpty().allMatch(task -> previousNode.equals(task.getNodeCode()));
     }
 
     private TaskView approve(String username, String processCode, String idempotencyKey) throws Exception {

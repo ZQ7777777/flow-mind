@@ -123,7 +123,9 @@ public class WorkflowQueryService {
             if (!resolutions.containsKey(instanceId)) {
                 WorkflowWithdrawContextResolver.Resolution resolution = null;
                 try {
-                    resolution = withdrawContextResolver.resolve(platformFacade.getInstance(instanceId), userId);
+                    ProcessInstanceDetailDTO instance = platformFacade.getInstance(instanceId);
+                    ProcessDefinitionDetailDTO definition = platformFacade.getDefinition(instance.getDefinitionId());
+                    resolution = withdrawContextResolver.resolve(instance, definition, userId);
                 } catch (RuntimeException exception) {
                     LOGGER.warn("Could not resolve withdraw context for instanceId={}", instanceId);
                 }
