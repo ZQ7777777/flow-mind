@@ -50,6 +50,24 @@ class WorkflowFormValueValidatorTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("申请返工节点");
     }
 
+    @Test
+    void acceptsMultiSelectValuesAndRejectsEmptyRequiredCollections() {
+        ProcessDefinitionDetailDTO definition = definition();
+        ProcessFormFieldDTO products = field("productCodes", "select", true,
+                "{\"options\":[{\"label\":\"豆粕\",\"value\":\"m\"},{\"label\":\"白糖\",\"value\":\"sr\"}]}" );
+        definition.setFormFields(Arrays.asList(definition.getFormFields().get(0), products));
+
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("amount", 10.5);
+        values.put("productCodes", Arrays.asList("m", "sr"));
+        assertThat(validator.validateStart(definition, values).get("productCodes"))
+                .isEqualTo(Arrays.asList("m", "sr"));
+
+        values.put("productCodes", Arrays.<String>asList());
+        assertThatThrownBy(() -> validator.validateStart(definition, values))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("productCodes");
+    }
+
     private ProcessDefinitionDetailDTO definition() {
         ProcessDefinitionDetailDTO definition = new ProcessDefinitionDetailDTO();
         ProcessNodeDTO node = new ProcessNodeDTO(); node.setNodeCode("apply");

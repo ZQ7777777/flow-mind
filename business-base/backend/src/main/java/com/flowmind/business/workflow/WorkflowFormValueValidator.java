@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collections;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -105,13 +106,27 @@ public class WorkflowFormValueValidator {
     private void validateField(ProcessFormFieldDTO field, Object value) {
         String code = field.getFieldCode();
         if (Boolean.TRUE.equals(field.getRequired()) && (value == null
-                || value instanceof String && ((String) value).trim().isEmpty())) {
+                || value instanceof String && ((String) value).trim().isEmpty()
+                || value instanceof Collection && ((Collection<?>) value).isEmpty())) {
             throw new IllegalArgumentException("必填字段不能为空: " + code);
         }
         if (value == null) return;
         String type = normalize(field.getFieldType());
-        if (("string".equals(type) || "select".equals(type)) && !(value instanceof String)) {
+        if ("string".equals(type) && !(value instanceof String)) {
             throw new IllegalArgumentException("字段类型不匹配: " + code);
+        }
+        if ("select".equals(type)) {
+            if (value instanceof Collection) {
+                for (Object item : (Collection<?>) value) {
+                    if (!(item instanceof String)) throw new IllegalArgumentException("字段类型不匹配: " + code);
+                    validateRule(field, item);
+                }
+            } else if (value instanceof String) {
+                validateRule(field, value);
+            } else {
+                throw new IllegalArgumentException("字段类型不匹配: " + code);
+            }
+            return;
         }
         if ("number".equals(type) && !(value instanceof Number)) {
             throw new IllegalArgumentException("字段类型不匹配: " + code);

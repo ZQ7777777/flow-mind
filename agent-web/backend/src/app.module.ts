@@ -11,7 +11,6 @@ import { WorkflowService } from "./workflow/workflow.service.js";
 import { GenerationService } from "./generation/generation.service.js";
 import { StagingService } from "./generation/staging.service.js";
 import { TargetContractService } from "./generation/target-contract.service.js";
-import { GenerationSkillRegistry } from "./generation/generation-skill-registry.service.js";
 import { GenerationContextRegistry } from "./generation/generation-context-registry.service.js";
 import { StaticValidatorService } from "./validation/static-validator.service.js";
 import { VerificationWorkerService } from "./verification/verification-worker.service.js";
@@ -23,6 +22,7 @@ import { BusinessAuthClient } from "./auth/business-auth-client.service.js";
 import { PlatformSessionRegistry } from "./auth/platform-session-registry.service.js";
 import { AgentAdminGuard } from "./auth/agent-admin.guard.js";
 import { AgentAuthController } from "./auth/agent-auth.controller.js";
+import { GenerationSkillRegistry } from "./generation/generation-skill-registry.service.js";
 
 @Module({
   controllers: [AppController, HealthController, AgentAuthController],
@@ -44,6 +44,7 @@ import { AgentAuthController } from "./auth/agent-auth.controller.js";
     QualityPipelineService,
     ArtifactWriterService,
     RepairCoordinatorService,
+    GenerationSkillRegistry,
     BusinessAuthClient,
     PlatformSessionRegistry,
     AgentAdminGuard,

@@ -546,10 +546,7 @@ export class DatabaseService implements OnModuleDestroy {
     }
     if (!applied.has(10)) {
       this.transaction(() => {
-        const columns = this.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
-        if (!columns.some(({ name }) => name === "generation_context_snapshot_json")) {
-          this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN generation_context_snapshot_json TEXT NOT NULL DEFAULT '{}'");
-        }
+        this.ensureAgentCodeGenerationColumns();
         this.recordMigration(10);
       });
     }
@@ -574,6 +571,15 @@ export class DatabaseService implements OnModuleDestroy {
         }
         this.recordMigration(11);
       });
+    }
+    this.ensureAgentCodeGenerationColumns();
+  }
+
+  private ensureAgentCodeGenerationColumns(): void {
+    const columns = this.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>;
+    const names = new Set(columns.map(({ name }) => name));
+    if (!names.has("generation_context_snapshot_json")) {
+      this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN generation_context_snapshot_json TEXT NOT NULL DEFAULT '{}'");
     }
   }
 
