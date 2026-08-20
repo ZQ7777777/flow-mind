@@ -9,6 +9,7 @@ import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -50,6 +51,31 @@ class WorkflowFormValueValidatorTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("申请返工节点");
     }
 
+    @Test
+    void validatesMultipleSelectionsIntegersAndDecimalPlaces() {
+        ProcessDefinitionDetailDTO definition = definition();
+        definition.getFormFields().add(field("products", "select", true, "{\"multiple\":true}"));
+        definition.getFormFields().add(field("quantity", "number", true,
+                "{\"minimum\":1,\"integer\":true}"));
+        definition.getFormFields().add(field("price", "number", true,
+                "{\"minimum\":0.0001,\"maxDecimalPlaces\":4}"));
+        Map<String, Object> values = new LinkedHashMap<String, Object>();
+        values.put("amount", 10); values.put("currency", "CNY");
+        values.put("products", Arrays.asList("m", "i")); values.put("quantity", 2); values.put("price", 1.2345);
+
+        assertThat(validator.validate(definition, task(), values).get("products"))
+                .isEqualTo(Arrays.asList("m", "i"));
+
+        values.put("quantity", 1.5);
+        assertThatThrownBy(() -> validator.validate(definition, task(), values)).hasMessageContaining("quantity");
+        values.put("quantity", 2); values.put("price", 1.23456);
+        assertThatThrownBy(() -> validator.validate(definition, task(), values)).hasMessageContaining("price");
+        values.put("price", 1.2345); values.put("products", Arrays.asList("m", Integer.valueOf(1)));
+        assertThatThrownBy(() -> validator.validate(definition, task(), values)).hasMessageContaining("products");
+        values.put("products", "m");
+        assertThatThrownBy(() -> validator.validate(definition, task(), values)).hasMessageContaining("products");
+    }
+
     private ProcessDefinitionDetailDTO definition() {
         ProcessDefinitionDetailDTO definition = new ProcessDefinitionDetailDTO();
         ProcessNodeDTO node = new ProcessNodeDTO(); node.setNodeCode("apply");
@@ -57,7 +83,7 @@ class WorkflowFormValueValidatorTest {
         ProcessFormFieldDTO amount = field("amount", "number", true, "{\"minimum\":0.01}");
         ProcessFormFieldDTO currency = field("currency", "select", true,
                 "{\"options\":[{\"label\":\"人民币\",\"value\":\"CNY\"}]}");
-        definition.setFormFields(Arrays.asList(amount, currency));
+        definition.setFormFields(new ArrayList<ProcessFormFieldDTO>(Arrays.asList(amount, currency)));
         return definition;
     }
 

@@ -99,3 +99,13 @@ node .\scripts\sync-demo-reference-data.mjs --database .\data\my-demo.db
 - `/api/reference-data/futures-products`
 
 完整参数、响应字段和 Agent 级联调用约定见 `business-base/.flowmind/references/business-reference-data-v1.md`。演示行情不得当作生产或实时行情使用。
+
+## Sample 质押流程配置
+
+Business Base 后端启动后，可在仓库根目录幂等建立并激活 `sample/` 对应的完整质押流程，同时登记业务大厅入口：
+
+```powershell
+node .\scripts\provision-sample-workflow.mjs
+```
+
+脚本读取 `outputs/仓单国债解质押流程定义.json`，流程编码固定为 `warehouse_pledge`，入口固定为 `/generated/warehouse-pledge/apply`。已有同编码活动定义时只修复入口配置，不影响历史的 `warehouse_treasury_pledge_application` 定义。

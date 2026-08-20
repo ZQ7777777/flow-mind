@@ -9,7 +9,7 @@ import { useWorkflowStore } from "../stores/workflow";
 import type { WorkflowListRecord, WorkflowProcessEntryLink, WorkflowTaskResponse } from "../types/workflow";
 import { formatDateTime } from "../utils/format";
 
-type BusinessKey = "deposit" | "withdraw" | "reimburse" | "payment" | "loan";
+type BusinessKey = "deposit" | "withdraw" | "reimburse" | "payment" | "loan" | string;
 
 interface BusinessConfig {
   key: BusinessKey;
@@ -73,16 +73,31 @@ const userName = computed(() => auth.user?.realName || auth.user?.username || "�
 const visibleEntryLinks = computed(() => entryLinks.value.filter((item) => item.enabled !== false));
 const todoRows = computed(() => workflowStore.list.records.filter(isTask).slice(0, 5));
 
-const businessCards = computed<BusinessCard[]>(() =>
-  businessConfigs.map((config) => {
+const businessCards = computed<BusinessCard[]>(() => {
+  const fixed = businessConfigs.map((config) => {
     const link = visibleEntryLinks.value.find((item) => matchesBusiness(item, config));
     return {
       ...config,
       link,
       entryPageUrl: link?.entryPageUrl?.trim() || undefined,
     };
-  }),
-);
+  });
+  const matchedDefinitionIds = new Set(fixed.flatMap((card) => card.link?.definitionId ? [card.link.definitionId] : []));
+  const configured = visibleEntryLinks.value
+    .filter((link) => Boolean(link.entryPageUrl?.trim()) && !matchedDefinitionIds.has(link.definitionId))
+    .map((link): BusinessCard => ({
+      key: `configured-${link.definitionId}`,
+      name: link.entryDisplayName || link.processName || link.processCode || "未命名业务",
+      description: link.processName && link.processName !== link.entryDisplayName
+        ? link.processName
+        : "发起业务申请",
+      icon: markRaw(Memo),
+      matchers: [],
+      link,
+      entryPageUrl: link.entryPageUrl?.trim(),
+    }));
+  return [...fixed, ...configured];
+});
 
 onMounted(() => {
   void loadHomeData();
@@ -609,5 +624,4 @@ td strong {
   }
 }
 </style>
-
 

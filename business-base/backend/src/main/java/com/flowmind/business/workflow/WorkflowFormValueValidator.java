@@ -110,9 +110,14 @@ public class WorkflowFormValueValidator {
         }
         if (value == null) return;
         String type = normalize(field.getFieldType());
-        if (("string".equals(type) || "select".equals(type)) && !(value instanceof String)) {
+        JsonNode rule = readRule(field);
+        boolean multiple = "select".equals(type) && rule.path("multiple").asBoolean(false);
+        if ("string".equals(type) && !(value instanceof String)) {
             throw new IllegalArgumentException("字段类型不匹配: " + code);
         }
+        if ("select".equals(type) && (multiple ? !(value instanceof List) : !(value instanceof String)))
+            throw new IllegalArgumentException("字段类型不匹配: " + code);
+        if (multiple) validateMultiple(field, (List<?>) value, rule);
         if ("number".equals(type) && !(value instanceof Number)) {
             throw new IllegalArgumentException("字段类型不匹配: " + code);
         }
@@ -124,19 +129,28 @@ public class WorkflowFormValueValidator {
             try { LocalDate.parse((String) value); }
             catch (RuntimeException exception) { throw new IllegalArgumentException("日期格式不合法: " + code); }
         }
-        validateRule(field, value);
+        validateRule(field, value, rule);
     }
 
-    private void validateRule(ProcessFormFieldDTO field, Object value) {
-        if (!hasText(field.getValidationRule())) return;
+    private JsonNode readRule(ProcessFormFieldDTO field) {
+        if (!hasText(field.getValidationRule())) return objectMapper.createObjectNode();
         JsonNode rule;
         try { rule = objectMapper.readTree(field.getValidationRule()); }
         catch (Exception exception) { throw new IllegalArgumentException("字段校验规则无效: " + field.getFieldCode()); }
+        return rule;
+    }
+
+    private void validateRule(ProcessFormFieldDTO field, Object value, JsonNode rule) {
         if (value instanceof Number) {
             BigDecimal number = new BigDecimal(String.valueOf(value));
             if (rule.has("minimum") && number.compareTo(rule.get("minimum").decimalValue()) < 0)
                 throw invalid(field);
             if (rule.has("maximum") && number.compareTo(rule.get("maximum").decimalValue()) > 0)
+                throw invalid(field);
+            if (rule.path("integer").asBoolean(false) && number.stripTrailingZeros().scale() > 0)
+                throw invalid(field);
+            if (rule.has("maxDecimalPlaces")
+                    && Math.max(0, number.stripTrailingZeros().scale()) > rule.get("maxDecimalPlaces").asInt())
                 throw invalid(field);
         }
         if (value instanceof String) {
@@ -151,7 +165,18 @@ public class WorkflowFormValueValidator {
                 }
             }
         }
-        JsonNode options = rule.path("options");
+        if (!(value instanceof List)) validateOption(field, value, rule.path("options"));
+    }
+
+    private void validateMultiple(ProcessFormFieldDTO field, List<?> values, JsonNode rule) {
+        if (Boolean.TRUE.equals(field.getRequired()) && values.isEmpty()) throw invalid(field);
+        for (Object item : values) {
+            if (!(item instanceof String) || !hasText((String) item)) throw invalid(field);
+            validateOption(field, item, rule.path("options"));
+        }
+    }
+
+    private void validateOption(ProcessFormFieldDTO field, Object value, JsonNode options) {
         if (options.isArray() && options.size() > 0) {
             boolean matched = false;
             for (JsonNode option : options) {

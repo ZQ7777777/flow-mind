@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, shallowRef, watch, type Component } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ArrowDown, ArrowUp, Finished, Tickets } from "@element-plus/icons-vue";
 import AttachmentPanel from "../components/workflow/AttachmentPanel.vue";
@@ -23,6 +23,7 @@ import type {
 } from "../types/workflow";
 import { formatDateTime } from "../utils/format";
 import { createIdempotencyKey } from "../utils/idempotency";
+import { resolveGeneratedBusinessForm } from "../router/generated-routes";
 
 const props = defineProps<{
   mode: "task" | "instance";
@@ -59,7 +60,8 @@ const attachmentError = ref("");
 const attachmentStatus = ref("");
 const deletingAttachmentId = ref("");
 const formError = ref("");
-const variableFormRef = ref<InstanceType<typeof VariableFormReadonly> | null>(null);
+const variableFormRef = ref<{ validate?: () => Promise<boolean> | boolean } | null>(null);
+const registeredBusinessForm = shallowRef<Component>();
 const formVariables = ref<Record<string, unknown>>({});
 const timelineExpanded = ref(false);
 const pendingReplacements = ref<Record<string, {
@@ -83,6 +85,10 @@ const canEditBusinessFields = computed(() =>
 );
 const reminderSuccess = ref("");
 const currentTask = computed(() => detail.value?.currentTask ?? null);
+const currentNodeCode = computed(() => currentTask.value?.nodeCode
+  || detail.value?.instance.currentNodeCodes?.[0]
+  || "");
+const checkRefreshable = computed(() => currentNodeCode.value !== "delivery_review");
 const activeTask = computed(
   () => detail.value?.activeTasks?.[0] ?? null,
 );
@@ -159,12 +165,20 @@ async function loadDetail(): Promise<void> {
       return;
     }
     formVariables.value = definitionVariables();
+    await loadBusinessForm();
     return;
   }
   if (instanceId.value) {
     await store.loadInstanceDetail(instanceId.value);
     formVariables.value = definitionVariables();
+    await loadBusinessForm();
   }
+}
+
+async function loadBusinessForm(): Promise<void> {
+  registeredBusinessForm.value = await resolveGeneratedBusinessForm(
+    store.detail.data?.instance.processCode ?? store.detail.data?.definition?.processCode,
+  );
 }
 
 function definitionVariables(): Record<string, unknown> {
@@ -194,7 +208,7 @@ async function submitAction(payload: {
   }
   formError.value = "";
   if (shouldSubmitVariables(payload.action) && canEditBusinessFields.value) {
-    if (!variableFormRef.value?.validate()) {
+    if (!await variableFormRef.value?.validate?.()) {
       formError.value = "请修正表单字段后再提交";
       return;
     }
@@ -481,7 +495,20 @@ async function removeAttachment(item: WorkflowAttachmentView): Promise<void> {
           </div>
 
           <section class="content-card">
+            <component
+              :is="registeredBusinessForm"
+              v-if="registeredBusinessForm"
+              ref="variableFormRef"
+              v-model="formVariables"
+              :fields="detail.formFields"
+              :field-permissions="[]"
+              :mode="canEditBusinessFields ? 'edit' : 'readonly'"
+              :disabled="false"
+              :current-node-code="currentNodeCode"
+              :check-refreshable="checkRefreshable"
+            />
             <VariableFormReadonly
+              v-else
               ref="variableFormRef"
               :fields="detail.formFields"
               :variables="formVariables"

@@ -29,6 +29,14 @@ public class MockOrganizationRoleMapper {
         if ("风控经理".equals(position)) {
             roles.add("risk"); addManagerRoles(roles);
         }
+        if ("交割职工".equals(position)) roles.add("delivery");
+        if ("交割经理".equals(position)) {
+            roles.add("delivery"); addManagerRoles(roles);
+        }
+        if ("结算职工".equals(position)) roles.add("settlement");
+        if ("结算经理".equals(position)) {
+            roles.add("settlement"); addManagerRoles(roles);
+        }
         if ("ADMIN".equals(user.getUserType()) || "系统管理员".equals(position)) roles.add("admin");
         return Collections.unmodifiableList(roles);
     }

@@ -33,6 +33,10 @@ class MockOrganizationSchemaInitializerTest {
         assertThat(count(jdbc, "SELECT COUNT(*) FROM mock_department WHERE id = 'dept_sales' "
                 + "AND manager_id = 'u_dept_manager_01'"))
                 .isEqualTo(1);
+        assertThat(count(jdbc, "SELECT COUNT(*) FROM mock_user WHERE dept_id = 'dept_delivery' AND status = 1"))
+                .isEqualTo(6);
+        assertThat(count(jdbc, "SELECT COUNT(*) FROM mock_user WHERE dept_id = 'dept_settlement' AND status = 1"))
+                .isEqualTo(6);
         assertThat(count(jdbc, "SELECT COUNT(*) FROM mock_department d LEFT JOIN mock_user u "
                 + "ON u.id = d.manager_id WHERE d.manager_id IS NOT NULL AND u.id IS NULL"))
                 .isZero();

@@ -52,13 +52,21 @@ describe("warehouse pledge golden BusinessForm", () => {
       previousSettlementPrice: 3000, amount: 48000,
     }));
     expect(typeof (wrapper.props() as { modelValue: Record<string, unknown> }).modelValue.amount).toBe("number");
+    expect((wrapper.props() as { modelValue: Record<string, unknown> }).modelValue.largeAmount).toBe(false);
+    expect((wrapper.props() as { modelValue: Record<string, unknown> }).modelValue.businessCheckSnapshot).toContain("满足质押要求");
     expect(wrapper.text()).toContain("通过");
+
+    await wrapper.findAll('input[type="number"]')[1].setValue("3000");
+    await flushPromises();
+    expect((wrapper.props() as { modelValue: Record<string, unknown> }).modelValue.amount).toBe(14_400_000);
+    expect((wrapper.props() as { modelValue: Record<string, unknown> }).modelValue.largeAmount).toBe(true);
+    await wrapper.findAll('input[type="number"]')[1].setValue("10");
 
     await selects[2].setValue("");
     await flushPromises();
     expect((wrapper.props() as { modelValue: Record<string, unknown> }).modelValue).toEqual(expect.objectContaining({
       tradingCode: "", productCodes: [], contractMultiplier: undefined,
-      pledgeUnitQuantity: undefined, previousSettlementPrice: undefined, amount: 0,
+      pledgeUnitQuantity: undefined, previousSettlementPrice: undefined, amount: 0, largeAmount: false,
     }));
 
     await selects[2].setValue("DCE");
@@ -83,7 +91,7 @@ describe("warehouse pledge golden BusinessForm", () => {
     await flushPromises();
     expect(wrapper.text()).not.toContain("业务类型 *");
     expect(wrapper.find('input[type="number"]').attributes("disabled")).toBeDefined();
-    expect(wrapper.findAll('input[type="number"]').slice(1).every((input) => input.attributes("disabled") !== undefined)).toBe(true);
+    expect(wrapper.findAll('input[type="number"]')[1].attributes("disabled")).toBeUndefined();
     expect(await (wrapper.vm as unknown as { validate(): Promise<boolean> }).validate()).toBe(false);
     expect(wrapper.text()).toContain("请填写");
   });
@@ -96,5 +104,22 @@ describe("warehouse pledge golden BusinessForm", () => {
     await flushPromises();
 
     expect(wrapper.get('[role="alert"]').text()).toContain("资金服务暂不可用");
+  });
+
+  it("uses the saved check snapshot and disables refresh at delivery review", async () => {
+    const snapshot = JSON.stringify([{ name: "满足质押要求", description: "快照结果", status: "pass", text: "通过" }]);
+    const wrapper = mount(BusinessForm, {
+      props: {
+        modelValue: { businessCheckSnapshot: snapshot, futuresAccount: "80000188" },
+        fields,
+        fieldPermissions: [],
+        currentNodeCode: "delivery_review",
+        checkRefreshable: false,
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("快照结果");
+    expect(wrapper.get("button").attributes("disabled")).toBeDefined();
   });
 });

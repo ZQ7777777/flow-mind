@@ -53,6 +53,14 @@ describe("BusinessHallView", () => {
           entryPageUrl: "/hidden",
           enabled: false,
         },
+        {
+          definitionId: "definition-pledge",
+          processCode: "warehouse_pledge",
+          processName: "仓单、国债（解）质押申请",
+          entryDisplayName: "仓单、国债（解）质押申请",
+          entryPageUrl: "/generated/warehouse-pledge/apply",
+          enabled: true,
+        },
       ]))
       .mockResolvedValueOnce(jsonResponse({
         records: [
@@ -79,6 +87,7 @@ describe("BusinessHallView", () => {
       routes: [
         { path: "/business-hall", component: BusinessHallView },
         { path: "/generated/entry-application/apply", component: defineComponent({ template: "<div>entry</div>" }) },
+        { path: "/generated/warehouse-pledge/apply", component: defineComponent({ template: "<div>pledge</div>" }) },
         { path: "/workflow/todo", component: defineComponent({ template: "<div>todo</div>" }) },
         { path: "/workflow/tasks/:taskId", component: defineComponent({ template: "<div>task</div>" }) },
       ],
@@ -102,6 +111,7 @@ describe("BusinessHallView", () => {
     expect(wrapper.text()).toContain("付款申请");
     expect(wrapper.text()).toContain("借款申请");
     expect(wrapper.text()).not.toContain("隐藏流程");
+    expect(wrapper.text()).toContain("仓单、国债（解）质押申请");
     expect(wrapper.find('[data-test="business-card-deposit"] .business-icon svg').exists()).toBe(true);
     expect(wrapper.find(".welcome-visual svg").exists()).toBe(true);
     expect(wrapper.text()).toContain("待办事项");
@@ -113,6 +123,10 @@ describe("BusinessHallView", () => {
     await wrapper.get('[data-test="business-card-deposit"]').trigger("click");
     await flushPromises();
     expect(router.currentRoute.value.path).toBe("/generated/entry-application/apply");
+
+    await wrapper.get('[data-test="business-card-configured-definition-pledge"]').trigger("click");
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe("/generated/warehouse-pledge/apply");
   });
 
   it("keeps business cards without page urls disabled", async () => {
@@ -144,6 +158,5 @@ describe("BusinessHallView", () => {
     expect(wrapper.get('[data-test="business-card-deposit"]').attributes("title")).toBe("尚未配置入口页面地址");
   });
 });
-
 
 
