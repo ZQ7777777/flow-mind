@@ -131,7 +131,11 @@ export class PlatformClientService {
         fieldType: field.fieldType,
         controlType: field.controlType,
         required: field.required,
-        validationRule: stableJson({ ...field.validation, ...(field.options ? { options: field.options } : {}) }),
+        validationRule: stableJson({
+          ...field.validation,
+          ...(field.options ? { options: field.options } : {}),
+          ...(field.multiple ? { multiple: true } : {}),
+        }),
         defaultValue: field.defaultValue,
         sortOrder: field.sortOrder,
       })),

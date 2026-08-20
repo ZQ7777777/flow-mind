@@ -14,7 +14,9 @@ INSERT INTO mock_department (id, name, parent_id, manager_id) VALUES
 ('dept_sales', '业务一部', 'dept_company', NULL),
 ('dept_finance', '财务部', 'dept_company', NULL),
 ('dept_operations', '运营部', 'dept_company', NULL),
-('dept_risk', '风控部', 'dept_company', NULL)
+('dept_risk', '风控部', 'dept_company', NULL),
+('dept_delivery', '交割部', 'dept_company', NULL),
+('dept_settlement', '结算部', 'dept_company', NULL)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     parent_id = excluded.parent_id;

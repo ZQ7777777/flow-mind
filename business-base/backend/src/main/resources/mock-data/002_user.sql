@@ -52,7 +52,19 @@ INSERT INTO mock_user (id, username, password, real_name, dept_id, position, use
 ('u_risk_04', 'risk04', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '风控职工四', 'dept_risk', '风控职工', 'USER', 1),
 ('u_risk_05', 'risk05', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '风控职工五', 'dept_risk', '风控职工', 'USER', 1),
 ('u_risk_06', 'risk06', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '风控职工六', 'dept_risk', '风控职工', 'USER', 1),
-('u_risk_manager_01', 'manager_risk', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '风控经理', 'dept_risk', '风控经理', 'USER', 1)
+('u_risk_manager_01', 'manager_risk', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '风控经理', 'dept_risk', '风控经理', 'USER', 1),
+('u_delivery_01', 'delivery01', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '交割职工一', 'dept_delivery', '交割职工', 'USER', 1),
+('u_delivery_02', 'delivery02', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '交割职工二', 'dept_delivery', '交割职工', 'USER', 1),
+('u_delivery_03', 'delivery03', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '交割职工三', 'dept_delivery', '交割职工', 'USER', 1),
+('u_delivery_04', 'delivery04', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '交割职工四', 'dept_delivery', '交割职工', 'USER', 1),
+('u_delivery_05', 'delivery05', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '交割职工五', 'dept_delivery', '交割职工', 'USER', 1),
+('u_delivery_manager_01', 'manager_delivery', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '交割经理', 'dept_delivery', '交割经理', 'USER', 1),
+('u_settlement_01', 'settlement01', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '结算职工一', 'dept_settlement', '结算职工', 'USER', 1),
+('u_settlement_02', 'settlement02', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '结算职工二', 'dept_settlement', '结算职工', 'USER', 1),
+('u_settlement_03', 'settlement03', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '结算职工三', 'dept_settlement', '结算职工', 'USER', 1),
+('u_settlement_04', 'settlement04', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '结算职工四', 'dept_settlement', '结算职工', 'USER', 1),
+('u_settlement_05', 'settlement05', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '结算职工五', 'dept_settlement', '结算职工', 'USER', 1),
+('u_settlement_manager_01', 'manager_settlement', '$2b$10$qW04e8jifpX5WfdIPCOe6.Qa5H3r76tK0EbpSaIIRLLvXzCHlc.Iu', '结算经理', 'dept_settlement', '结算经理', 'USER', 1)
 ON CONFLICT(id) DO UPDATE SET
     username = excluded.username,
     password = excluded.password,
@@ -67,3 +79,5 @@ UPDATE mock_department SET manager_id = 'u_dept_manager_01' WHERE id = 'dept_sal
 UPDATE mock_department SET manager_id = 'u_dept_manager_02' WHERE id = 'dept_finance';
 UPDATE mock_department SET manager_id = 'u_operations_manager_01' WHERE id = 'dept_operations';
 UPDATE mock_department SET manager_id = 'u_risk_manager_01' WHERE id = 'dept_risk';
+UPDATE mock_department SET manager_id = 'u_delivery_manager_01' WHERE id = 'dept_delivery';
+UPDATE mock_department SET manager_id = 'u_settlement_manager_01' WHERE id = 'dept_settlement';

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { ENTRY_APPLICATION_REQUIREMENT, WAREHOUSE_PLEDGE_REQUIREMENT } from "@flowmind/agent-contracts";
 import { validateRequirement } from "../src/requirement/requirement-validator.js";
 
@@ -13,6 +14,22 @@ describe("validateRequirement", () => {
   it("accepts the 1.2 warehouse pledge page behavior gold requirement", () => {
     const result = validateRequirement(WAREHOUSE_PLEDGE_REQUIREMENT);
     expect(result).toEqual(expect.objectContaining({ structurallyValid: true, readyForReview: true }));
+  });
+
+  it("keeps the warehouse pledge shared requirement aligned with the checked-in definition", () => {
+    const path = new URL("../../../outputs/%E4%BB%93%E5%8D%95%E5%9B%BD%E5%80%BA%E8%A7%A3%E8%B4%A8%E6%8A%BC%E6%B5%81%E7%A8%8B%E5%AE%9A%E4%B9%89.json", import.meta.url);
+    const checkedIn = JSON.parse(readFileSync(path, "utf8")) as typeof WAREHOUSE_PLEDGE_REQUIREMENT;
+    expect(checkedIn.businessCode).toBe(WAREHOUSE_PLEDGE_REQUIREMENT.businessCode);
+    expect(checkedIn.formFields.map((field) => field.fieldCode))
+      .toEqual(WAREHOUSE_PLEDGE_REQUIREMENT.formFields.map((field) => field.fieldCode));
+    expect(checkedIn.attachments.map((attachment) => attachment.attachmentCode))
+      .toEqual(WAREHOUSE_PLEDGE_REQUIREMENT.attachments.map((attachment) => attachment.attachmentCode));
+    expect(checkedIn.nodes.map((node) => node.nodeCode))
+      .toEqual(WAREHOUSE_PLEDGE_REQUIREMENT.nodes.map((node) => node.nodeCode));
+    expect(checkedIn.edges.map((edge) => edge.edgeCode))
+      .toEqual(WAREHOUSE_PLEDGE_REQUIREMENT.edges.map((edge) => edge.edgeCode));
+    expect(checkedIn.edges.map((edge) => edge.conditionExpression ?? null))
+      .toEqual(WAREHOUSE_PLEDGE_REQUIREMENT.edges.map((edge) => edge.conditionExpression ?? null));
   });
 
   it.each([
