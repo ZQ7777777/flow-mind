@@ -735,7 +735,8 @@
                     task: {},
                     attachments: [],
                     currentNodeCodes: [],
-                    instanceDetail: null
+                    instanceDetail: null,
+                    definitionDetail: null
                 }
             };
         },
@@ -749,24 +750,78 @@
             canQuerySelectedInstanceReadRecords: function () {
                 return !!extractInstanceId(this.selectedInstanceDetail);
             },
-            selectedActiveTask: function () {
+            selectedWithdrawTasks: function () {
                 var detail = this.completedDialog.instanceDetail;
                 var activeTasks = normalizeList(detail && detail.activeTasks);
-                return activeTasks.length === 1 ? activeTasks[0] : null;
+                if (activeTasks.length === 1 && !hasText(activeTasks[0].taskGroupId)
+                        && !hasText(activeTasks[0].branchKey)) {
+                    return activeTasks;
+                }
+                if (activeTasks.length === 0) {
+                    return [];
+                }
+                var first = activeTasks[0] || {};
+                var definition = this.completedDialog.definitionDetail || {};
+                var node = normalizeList(definition.nodes).find(function (candidate) {
+                    return candidate && candidate.nodeCode === first.nodeCode;
+                });
+                var eligible = hasText(first.taskGroupId) && !hasText(first.branchKey)
+                    && node && node.multiInstanceMode === "OR_SIGN"
+                    && activeTasks.every(function (task) {
+                        return task && task.taskGroupId === first.taskGroupId
+                            && task.nodeCode === first.nodeCode && !hasText(task.branchKey);
+                    });
+                return eligible ? activeTasks : [];
+            },
+            selectedActiveTask: function () {
+                return this.selectedWithdrawTasks.length > 0 ? this.selectedWithdrawTasks[0] : null;
             },
             selectedPreviousHandlerTask: function () {
-                var currentTaskId = extractTaskId(this.selectedActiveTask);
                 var detail = this.completedDialog.instanceDetail;
                 var historyTasks = normalizeList(detail && detail.historyTasks);
+                var currentTaskIds = this.selectedWithdrawTasks.map(extractTaskId);
                 var withdrawSourceActions = ["SEND", "APPROVE", "REJECT", "RETURN", "DIRECT_SEND"];
-                var index;
-                for (index = historyTasks.length - 1; index >= 0; index -= 1) {
-                    var history = historyTasks[index] || {};
-                    if (withdrawSourceActions.indexOf(history.actionType) >= 0
-                            && history.activeTaskId !== currentTaskId) {
-                        return history;
-                    }
+                var definition = this.completedDialog.definitionDetail || {};
+                var nodes = normalizeList(definition.nodes);
+                var edges = normalizeList(definition.edges);
+                var currentNodeCode = this.selectedActiveTask && this.selectedActiveTask.nodeCode;
+                var previousNodeCodes = [];
+                var queue = currentNodeCode ? [currentNodeCode] : [];
+                var visited = {};
+                while (queue.length > 0) {
+                    var targetNodeCode = queue.shift();
+                    if (visited[targetNodeCode]) continue;
+                    visited[targetNodeCode] = true;
+                    edges.filter(function (edge) {
+                        return edge && edge.targetNodeCode === targetNodeCode;
+                    }).forEach(function (edge) {
+                        var source = nodes.find(function (node) {
+                            return node && node.nodeCode === edge.sourceNodeCode;
+                        });
+                        if (source && source.nodeType === "USER_TASK") {
+                            previousNodeCodes.push(source.nodeCode);
+                        } else if (edge.sourceNodeCode) {
+                            queue.push(edge.sourceNodeCode);
+                        }
+                    });
                 }
+                var candidates = historyTasks.filter(function (history) {
+                    return history && withdrawSourceActions.indexOf(history.actionType) >= 0
+                        && currentTaskIds.indexOf(history.activeTaskId) < 0;
+                });
+                candidates.sort(function (left, right) {
+                    var completed = String(right.completedAt || "").localeCompare(String(left.completedAt || ""));
+                    if (completed !== 0) return completed;
+                    var leftPrevious = previousNodeCodes.indexOf(left.nodeCode) >= 0;
+                    var rightPrevious = previousNodeCodes.indexOf(right.nodeCode) >= 0;
+                    if (leftPrevious !== rightPrevious) return leftPrevious ? -1 : 1;
+                    var started = String(right.startedAt || "").localeCompare(String(left.startedAt || ""));
+                    if (started !== 0) return started;
+                    return String(right.historyTaskId || "").localeCompare(String(left.historyTaskId || ""));
+                });
+                if (candidates.length > 0) {
+                    return candidates[0];
+                    }
                 return null;
             },
             canWithdrawSelectedInstance: function () {
@@ -777,13 +832,12 @@
                 var taskVersion = task && (task.taskVersion !== undefined && task.taskVersion !== null
                     ? task.taskVersion : task.expectedTaskVersion);
                 return detail.instanceStatus === "RUNNING"
-                    && activeTasks.length === 1
+                    && activeTasks.length > 0
+                    && this.selectedWithdrawTasks.length === activeTasks.length
                     && !!extractTaskId(task)
                     && taskVersion !== undefined
                     && taskVersion !== null
                     && (task.taskStatus === "ACTIVE" || task.taskStatus === "CLAIMED")
-                    && !hasText(task.taskGroupId)
-                    && !hasText(task.branchKey)
                     && !!previous
                     && previous.assigneeUserId === this.currentUserId;
             },
@@ -800,11 +854,8 @@
                 if (detail.instanceStatus !== "RUNNING") {
                     return "仅运行中的流程实例可以撤回";
                 }
-                if (activeTasks.length !== 1) {
-                    return "撤回要求流程恰好只有一个活动任务";
-                }
-                if (hasText(task.taskGroupId) || hasText(task.branchKey)) {
-                    return "会签、或签或并行任务不支持撤回";
+                if (activeTasks.length === 0 || this.selectedWithdrawTasks.length !== activeTasks.length) {
+                    return "仅支持串行任务或同一顶层或签任务组撤回";
                 }
                 if (task.taskStatus !== "ACTIVE" && task.taskStatus !== "CLAIMED") {
                     return "当前任务状态不允许撤回";
@@ -2360,7 +2411,8 @@
                     task: row,
                     attachments: [],
                     currentNodeCodes: [],
-                    instanceDetail: null
+                    instanceDetail: null,
+                    definitionDetail: null
                 };
                 var instanceId = row.instanceId;
                 if (!hasText(instanceId)) {
@@ -2373,6 +2425,16 @@
                     }
                     this.completedDialog.instanceDetail = payload;
                     this.completedDialog.currentNodeCodes = asArray(payload.currentNodeCodes);
+                    var definitionId = payload && payload.definitionId;
+                    if (hasText(definitionId)) {
+                        return this.sendRequest("查询已办流程定义", "GET",
+                            API_PATHS.definitionDetail(definitionId)).then(function (definition) {
+                            if (this.completedDialog.open
+                                    && this.completedDialog.task.instanceId === instanceId) {
+                                this.completedDialog.definitionDetail = definition;
+                            }
+                        }.bind(this));
+                    }
                 }.bind(this));
                 this.sendRequest("查询已办附件", "GET", this.attachmentQueryPath(instanceId)).then(function (payload) {
                     this.completedDialog.attachments = normalizeList(payload);
@@ -3727,5 +3789,3 @@
 
     app.mount("#app");
 }());
-
-

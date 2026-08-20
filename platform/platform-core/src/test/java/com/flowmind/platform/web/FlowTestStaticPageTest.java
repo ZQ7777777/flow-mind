@@ -265,14 +265,14 @@ class FlowTestStaticPageTest {
 
         assertThat(script)
                 .contains("taskWithdraw: \"/api/platform/runtime/tasks/withdraw\"")
+                .contains("selectedWithdrawTasks: function ()")
                 .contains("selectedActiveTask: function ()")
                 .contains("selectedPreviousHandlerTask: function ()")
                 .contains("[\"SEND\", \"APPROVE\", \"REJECT\", \"RETURN\", \"DIRECT_SEND\"]")
-                .contains("history.activeTaskId !== currentTaskId")
-                .contains("activeTasks.length === 1")
+                .contains("currentTaskIds.indexOf(history.activeTaskId) < 0")
+                .contains("node.multiInstanceMode === \"OR_SIGN\"")
+                .contains("this.selectedWithdrawTasks.length === activeTasks.length")
                 .contains("task.taskStatus === \"ACTIVE\" || task.taskStatus === \"CLAIMED\"")
-                .contains("!hasText(task.taskGroupId)")
-                .contains("!hasText(task.branchKey)")
                 .contains("previous.assigneeUserId === this.currentUserId")
                 .contains("this.completedDialog.instanceDetail = payload;")
                 .contains("withdrawSelectedInstance: function ()")
@@ -284,8 +284,7 @@ class FlowTestStaticPageTest {
                 .contains("this.sendRequest(\"撤回\", \"POST\", API_PATHS.taskWithdraw, body)")
                 .contains("this.refreshAfterWithdraw(instanceId)")
                 .contains("this.completedDialog.open = false")
-                .contains("撤回要求流程恰好只有一个活动任务")
-                .contains("会签、或签或并行任务不支持撤回")
+                .contains("仅支持串行任务或同一顶层或签任务组撤回")
                 .contains("找不到可恢复的上一办理节点")
                 .contains("仅运行中的流程实例可以撤回");
     }

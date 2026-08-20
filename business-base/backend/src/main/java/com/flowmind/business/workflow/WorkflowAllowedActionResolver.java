@@ -63,7 +63,7 @@ public class WorkflowAllowedActionResolver {
                 // Capability discovery is advisory; the action endpoint remains authoritative.
             }
         }
-        WorkflowWithdrawContextResolver.Resolution withdraw = withdrawContextResolver.resolve(instance, userId);
+        WorkflowWithdrawContextResolver.Resolution withdraw = withdrawContextResolver.resolve(instance, definition, userId);
         if (withdraw != null && withdraw.getActiveTask() != null
                 && task.getTaskId().equals(withdraw.getActiveTask().getTaskId())) actions.add("WITHDRAW");
         return actions;

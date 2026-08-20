@@ -353,11 +353,7 @@ public class EnhancedTaskActionCoordinator {
     public TaskActionResult withdraw(final WithdrawTaskRequest request) {
         return execute(request, ActionTypeEnum.WITHDRAW, new ActionWork() {
             @Override public TaskActionResult run(EnhancedActionContext context) {
-                requireSerial(context.task);
-                if (activeTaskRepository.countOpenByInstanceId(context.instance.getId()) != 1L) {
-                    throw state(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
-                            "withdraw requires exactly one open serial task");
-                }
+                WithdrawScope scope = resolveWithdrawScope(context);
                 ProcessHistoryTaskEntity previous = findPreviousNodeHistory(context);
                 if (!context.operator.getUserId().equals(previous.getAssigneeUserId())) {
                     throw validation(RuntimeErrorCodes.WITHDRAW_PERMISSION_DENIED,
@@ -369,13 +365,87 @@ public class EnhancedTaskActionCoordinator {
                 cancel(context.task, request);
                 Map<String, Object> metadata = metadata(context, previous.getNodeCode());
                 metadata.put("relatedHistoryTaskId", previous.getId());
+                if (scope.group != null) {
+                    metadata.put("groupId", scope.group.getId());
+                    metadata.put("groupType", scope.group.getGroupType());
+                }
                 ProcessHistoryTaskEntity archived = archive(context, ActionTypeEnum.WITHDRAW, request, metadata);
+                List<ProcessHistoryTaskEntity> archivedTasks = new ArrayList<ProcessHistoryTaskEntity>();
+                archivedTasks.add(archived);
+                if (scope.group != null) {
+                    if (taskGroupRepository.cancel(scope.group.getId(), scope.group.getLockVersion().longValue()) != 1) {
+                        throw state(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED,
+                                "or-sign task group was modified while withdrawing");
+                    }
+                    for (ProcessActiveTaskEntity sibling : scope.openTasks) {
+                        if (context.task.getId().equals(sibling.getId())) continue;
+                        if (activeTaskRepository.cancel(sibling.getId(), sibling.getLockVersion().longValue()) != 1) {
+                            throw state(RuntimeErrorCodes.TASK_CONCURRENT_MODIFIED,
+                                    "or-sign sibling task was modified while withdrawing");
+                        }
+                        EnhancedActionContext siblingContext = new EnhancedActionContext(context.instance, sibling,
+                                context.definition, context.operator);
+                        Map<String, Object> cancelMetadata = metadata(siblingContext, previous.getNodeCode());
+                        cancelMetadata.put("withdrawTaskId", context.task.getId());
+                        cancelMetadata.put("groupId", scope.group.getId());
+                        cancelMetadata.put("groupType", scope.group.getGroupType());
+                        cancelMetadata.put("cancelReason", "or-sign group canceled by withdraw");
+                        archivedTasks.add(archive(siblingContext, ActionTypeEnum.CANCEL, request, cancelMetadata));
+                    }
+                }
                 RuntimeAdvanceResult advance = nodeAdvancer.advanceToNode(context.instance, context.definition,
                         previous.getNodeCode(), null, null, preparation);
-                return result(context, request, ActionTypeEnum.WITHDRAW, Collections.singletonList(archived),
+                return result(context, request, ActionTypeEnum.WITHDRAW, archivedTasks,
                         advance.getCreatedTasks(), Collections.<TaskDTO>emptyList(), WorkflowEventTypeEnum.PROCESS_WITHDRAWN);
             }
         });
+    }
+
+    private WithdrawScope resolveWithdrawScope(EnhancedActionContext context) {
+        if (isBlank(context.task.getTaskGroupId())) {
+            requireSerial(context.task);
+            if (activeTaskRepository.countOpenByInstanceId(context.instance.getId()) != 1L) {
+                throw state(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                        "withdraw requires exactly one open serial task");
+            }
+            return new WithdrawScope(null, Collections.<ProcessActiveTaskEntity>singletonList(context.task));
+        }
+        if (!isBlank(context.task.getBranchKey())) {
+            throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                    "withdraw does not support a grouped task inside a parallel branch");
+        }
+        ProcessTaskGroupEntity group = taskGroupRepository.findById(context.task.getTaskGroupId());
+        ProcessNodeDTO node = requireUserTask(context.definition, context.task.getNodeCode());
+        if (group == null || !TaskGroupTypeEnum.OR_SIGN.name().equals(group.getGroupType())
+                || !MultiInstanceModeEnum.OR_SIGN.equals(node.getMultiInstanceMode())
+                || !context.instance.getId().equals(group.getInstanceId())
+                || !context.task.getNodeCode().equals(group.getNodeCode())
+                || !isBlank(group.getParentGroupId()) || !isBlank(group.getParentBranchKey())) {
+            throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                    "withdraw only supports a top-level or-sign task group");
+        }
+        if (!"ACTIVE".equals(group.getGroupStatus()) || group.getLockVersion() == null) {
+            throw state(RuntimeErrorCodes.TASK_GROUP_CONCURRENT_MODIFIED,
+                    "or-sign task group is no longer active");
+        }
+        List<ProcessActiveTaskEntity> openTasks = activeTaskRepository.findOpenByTaskGroupId(group.getId());
+        boolean containsCurrent = false;
+        for (ProcessActiveTaskEntity openTask : openTasks) {
+            if (openTask == null || !group.getId().equals(openTask.getTaskGroupId())
+                    || !context.instance.getId().equals(openTask.getInstanceId())
+                    || !context.task.getNodeCode().equals(openTask.getNodeCode())
+                    || !isBlank(openTask.getBranchKey()) || openTask.getLockVersion() == null) {
+                throw validation(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                        "or-sign withdraw task set is inconsistent");
+            }
+            if (context.task.getId().equals(openTask.getId())) containsCurrent = true;
+        }
+        if (!containsCurrent || openTasks.isEmpty()
+                || activeTaskRepository.countOpenByInstanceId(context.instance.getId()) != openTasks.size()) {
+            throw state(RuntimeErrorCodes.GROUPED_TASK_ACTION_NOT_SUPPORTED,
+                    "withdraw requires all open tasks to belong to one or-sign group");
+        }
+        return new WithdrawScope(group, openTasks);
     }
 
     public TaskActionResult directSend(final DirectSendRequest request) {
@@ -877,14 +947,51 @@ public class EnhancedTaskActionCoordinator {
     }
 
     private ProcessHistoryTaskEntity findPreviousNodeHistory(EnhancedActionContext context) {
-        for (ProcessHistoryTaskEntity history : historyRepository.findLatestByInstanceAndActions(context.instance.getId(),
-                ActionTypeEnum.SEND.name(), ActionTypeEnum.APPROVE.name(), ActionTypeEnum.REJECT.name(),
-                ActionTypeEnum.RETURN.name(), ActionTypeEnum.DIRECT_SEND.name())) {
-            if (!context.task.getId().equals(history.getActiveTaskId())) {
-                return history;
+        List<ProcessHistoryTaskEntity> histories = historyRepository.findLatestByInstanceAndActions(
+                context.instance.getId(), ActionTypeEnum.SEND.name(), ActionTypeEnum.APPROVE.name(),
+                ActionTypeEnum.REJECT.name(), ActionTypeEnum.RETURN.name(), ActionTypeEnum.DIRECT_SEND.name());
+        ProcessHistoryTaskEntity latest = null;
+        ProcessHistoryTaskEntity immediate = null;
+        Set<String> immediatePrevious = immediatePreviousUserNodeCodes(context.definition, context.task.getNodeCode());
+        for (ProcessHistoryTaskEntity history : histories) {
+            if (context.task.getId().equals(history.getActiveTaskId())) continue;
+            if (latest == null) latest = history;
+            if (latest.getCompletedAt() != null && history.getCompletedAt() != null
+                    && !latest.getCompletedAt().equals(history.getCompletedAt())) break;
+            if (immediatePrevious.contains(history.getNodeCode())
+                    && (immediate == null || isAfter(history.getStartedAt(), immediate.getStartedAt()))) {
+                immediate = history;
             }
         }
+        if (immediate != null) return immediate;
+        if (latest != null) return latest;
         throw state(RuntimeErrorCodes.WITHDRAW_HISTORY_NOT_FOUND, "previous completed node history was not found");
+    }
+
+    private Set<String> immediatePreviousUserNodeCodes(ProcessDefinitionDetailDTO definition, String currentNodeCode) {
+        DefinitionGraphIndex graph = DefinitionGraphIndex.from(definition);
+        Set<String> result = new LinkedHashSet<String>();
+        Set<String> visited = new LinkedHashSet<String>();
+        ArrayDeque<String> queue = new ArrayDeque<String>();
+        queue.add(currentNodeCode);
+        while (!queue.isEmpty()) {
+            String target = queue.removeFirst();
+            if (!visited.add(target)) continue;
+            for (ProcessEdgeDTO edge : graph.getEdges()) {
+                if (!target.equals(edge.getTargetNodeCode()) || isBlank(edge.getSourceNodeCode())) continue;
+                ProcessNodeDTO source = graph.getNodesByCode().get(edge.getSourceNodeCode());
+                if (source != null && NodeTypeEnum.USER_TASK.equals(source.getNodeType())) {
+                    result.add(source.getNodeCode());
+                } else {
+                    queue.add(edge.getSourceNodeCode());
+                }
+            }
+        }
+        return result;
+    }
+
+    private boolean isAfter(LocalDateTime candidate, LocalDateTime current) {
+        return candidate != null && (current == null || candidate.isAfter(current));
     }
 
     private ProcessHistoryTaskEntity findRejectSource(EnhancedActionContext context) {
@@ -1323,6 +1430,14 @@ public class EnhancedTaskActionCoordinator {
     private static RuntimeStateException state(String code, String message) { return new RuntimeStateException(code, message); }
 
     private interface ActionWork { TaskActionResult run(EnhancedActionContext context); }
+    private static final class WithdrawScope {
+        private final ProcessTaskGroupEntity group;
+        private final List<ProcessActiveTaskEntity> openTasks;
+        private WithdrawScope(ProcessTaskGroupEntity group, List<ProcessActiveTaskEntity> openTasks) {
+            this.group = group;
+            this.openTasks = openTasks;
+        }
+    }
     private static final class ParallelRejectContext {
         private final ProcessTaskGroupEntity parallelGroup;
         private final ProcessTaskGroupEntity innerGroup;

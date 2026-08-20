@@ -19,6 +19,7 @@ import com.flowmind.platform.api.enums.ActionTypeEnum;
 import com.flowmind.platform.api.enums.ApproverRuleTypeEnum;
 import com.flowmind.platform.api.enums.InstanceStatusEnum;
 import com.flowmind.platform.api.enums.NodeTypeEnum;
+import com.flowmind.platform.api.enums.MultiInstanceModeEnum;
 import com.flowmind.platform.api.enums.TaskStatusEnum;
 import org.junit.jupiter.api.Test;
 
@@ -89,10 +90,17 @@ class WorkflowQueryServiceTest {
         when(facade.completed(org.mockito.ArgumentMatchers.any(WorkflowListQuery.class))).thenReturn(page);
         ProcessInstanceDetailDTO instance = new ProcessInstanceDetailDTO();
         instance.setInstanceStatus(InstanceStatusEnum.RUNNING);
+        instance.setDefinitionId("definition-1");
         instance.setActiveTasks(Collections.singletonList(task("manager-task", null,
                 Collections.singletonList("manager01"))));
         instance.setHistoryTasks(Arrays.asList(old, source));
         when(facade.getInstance("instance-1")).thenReturn(instance);
+        ProcessNodeDTO activeNode = new ProcessNodeDTO();
+        activeNode.setNodeCode("finance-review");
+        activeNode.setMultiInstanceMode(MultiInstanceModeEnum.SINGLE);
+        ProcessDefinitionDetailDTO activeDefinition = new ProcessDefinitionDetailDTO();
+        activeDefinition.setNodes(Collections.singletonList(activeNode));
+        when(facade.getDefinition("definition-1")).thenReturn(activeDefinition);
 
         WorkflowPageResponse<com.flowmind.business.workflow.dto.WorkflowHistoryTaskResponse> result =
                 service.completed(new WorkflowListQuery());
