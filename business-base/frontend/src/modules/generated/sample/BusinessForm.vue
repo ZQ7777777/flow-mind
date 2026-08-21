@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { WorkflowFieldPermission, WorkflowFormField } from "../../../types/workflow";
 import {
   getAccountFunds,
@@ -34,6 +34,8 @@ const accountFunds = ref<AccountFund>();
 const fundDetailOpen = ref(false);
 const fundDetailButton = ref<HTMLButtonElement>();
 const fundDetailDialog = ref<HTMLElement>();
+const productMenu = ref<HTMLElement>();
+const productMenuOpen = ref(false);
 const loading = ref(false);
 const error = ref("");
 const initialized = ref(false);
@@ -45,6 +47,14 @@ const frozenChecks = computed(() => props.currentNodeCode === "delivery_review" 
 const selectedAccount = computed(() => accounts.value.find(({ accountNo }) => accountNo === value("futuresAccount", "")));
 const fundDetailReady = computed(() => Boolean(selectedAccount.value
   && accountFunds.value?.accountNo === selectedAccount.value.accountNo));
+const selectedProductLabel = computed(() => {
+  const codes = value<string[]>("productCodes", []);
+  if (!codes.length) return "请选择";
+  return codes.map((code) => {
+    const product = products.value.find((item) => item.productCode === code);
+    return product ? `${product.productCode} - ${product.productName}` : code;
+  }).join(", ");
+});
 
 function value<T>(fieldCode: string, fallback: T): T {
   return (draft.value[fieldCode] ?? fallback) as T;
@@ -112,6 +122,16 @@ onMounted(async () => {
   }
 });
 
+onMounted(() => {
+  document.addEventListener("click", closeProductMenuOnDocumentClick);
+  document.addEventListener("keydown", closeProductMenuOnEscape);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("click", closeProductMenuOnDocumentClick);
+  document.removeEventListener("keydown", closeProductMenuOnEscape);
+});
+
 watch(() => value("futuresAccount", ""), async (accountNo) => {
   if (!initialized.value) return;
   const requestId = ++accountRequestId;
@@ -137,6 +157,7 @@ watch(() => value("futuresAccount", ""), async (accountNo) => {
 watch(() => value("exchangeCode", ""), async (exchangeCode) => {
   if (!initialized.value) return;
   const requestId = ++exchangeRequestId;
+  closeProductMenu();
   updateMany({
     tradingCode: "",
     productCodes: [],
@@ -305,9 +326,32 @@ watch(checks, (results) => {
   if (value("businessCheckSnapshot", "") !== snapshot) update("businessCheckSnapshot", snapshot);
 }, { deep: true });
 
-function selectProducts(event: Event): void {
-  const selected = Array.from((event.target as HTMLSelectElement).selectedOptions).map(({ value }) => value);
-  update("productCodes", selected);
+function toggleProductMenu(): void {
+  if (readonly("productCodes") || !value("exchangeCode", "")) return;
+  productMenuOpen.value = !productMenuOpen.value;
+}
+
+function closeProductMenu(): void {
+  productMenuOpen.value = false;
+}
+
+function closeProductMenuOnDocumentClick(event: MouseEvent): void {
+  if (!productMenu.value?.contains(event.target as Node)) closeProductMenu();
+}
+
+function closeProductMenuOnEscape(event: KeyboardEvent): void {
+  if (event.key === "Escape") closeProductMenu();
+}
+
+function isProductSelected(productCode: string): boolean {
+  return value<string[]>("productCodes", []).includes(productCode);
+}
+
+function toggleProduct(productCode: string): void {
+  const selected = value<string[]>("productCodes", []);
+  update("productCodes", selected.includes(productCode)
+    ? selected.filter((code) => code !== productCode)
+    : [...selected, productCode]);
 }
 
 async function validate(): Promise<boolean> {
@@ -382,7 +426,48 @@ defineExpose({ validate });
         <label v-if="visible('businessType')"><span>业务类型 *</span><select :value="value('businessType', '')" :disabled="readonly('businessType')" @change="updateFromEvent('businessType', $event)"><option value="">请选择</option><option v-for="item in businessTypes" :key="item">{{ item }}</option></select></label>
         <label v-if="visible('exchangeCode')"><span>交易所 *</span><select :value="value('exchangeCode', '')" :disabled="readonly('exchangeCode')" @change="updateFromEvent('exchangeCode', $event)"><option value="">请选择</option><option v-for="item in exchanges" :key="item.exchangeCode" :value="item.exchangeCode">{{ item.exchangeName }}</option></select></label>
         <label v-if="visible('tradingCode')"><span>交易编码</span><input :value="value('tradingCode', '')" disabled></label>
-        <label v-if="visible('productCodes')" class="wide"><span>品种 *</span><select multiple :value="value('productCodes', [])" :disabled="readonly('productCodes') || !value('exchangeCode', '')" @change="selectProducts"><option v-for="item in products" :key="item.productCode" :value="item.productCode">{{ item.productCode }} - {{ item.productName }}</option></select></label>
+        <div v-if="visible('productCodes')" class="multi-select-field wide">
+          <span>品种 *</span>
+          <div ref="productMenu" class="multi-select">
+            <button
+              id="product-select-trigger"
+              class="multi-select-trigger"
+              type="button"
+              data-testid="product-select-trigger"
+              aria-haspopup="listbox"
+              aria-controls="product-select-menu"
+              :aria-expanded="productMenuOpen"
+              :disabled="readonly('productCodes') || !value('exchangeCode', '')"
+              @click.stop="toggleProductMenu"
+              @keydown.esc.stop.prevent="closeProductMenu"
+            >
+              <span class="multi-select-value">{{ selectedProductLabel }}</span>
+              <span class="multi-select-arrow" aria-hidden="true"></span>
+            </button>
+            <div
+              v-if="productMenuOpen"
+              id="product-select-menu"
+              class="multi-select-menu"
+              data-testid="product-select-menu"
+              role="listbox"
+              aria-multiselectable="true"
+              @click.stop
+            >
+              <label
+                v-for="item in products"
+                :key="item.productCode"
+                class="multi-select-option"
+                :data-testid="`product-option-${item.productCode}`"
+                role="option"
+                :aria-selected="isProductSelected(item.productCode)"
+              >
+                <input type="checkbox" :checked="isProductSelected(item.productCode)" @change="toggleProduct(item.productCode)">
+                <span>{{ item.productCode }} - {{ item.productName }}</span>
+              </label>
+              <p v-if="!products.length" class="multi-select-empty">暂无可选品种</p>
+            </div>
+          </div>
+        </div>
         <label v-if="visible('quantity')"><span>数量（张） *</span><input type="number" min="1" step="1" :value="value('quantity', '')" :disabled="readonly('quantity')" @input="updateFromEvent('quantity', $event, true)"></label>
         <label v-if="visible('contractMultiplier')"><span>合约乘数 *</span><input type="number" min="1" step="1" :value="value('contractMultiplier', '')" :disabled="readonly('contractMultiplier')" @input="updateFromEvent('contractMultiplier', $event, true)"></label>
         <label v-if="visible('pledgeUnitQuantity')"><span>质押品单位数量 *</span><input type="number" min="1" step="1" :value="value('pledgeUnitQuantity', '')" :disabled="readonly('pledgeUnitQuantity')" @input="updateFromEvent('pledgeUnitQuantity', $event, true)"></label>
@@ -445,7 +530,19 @@ label { display: grid; gap: 6px; }
 label span { color: #475569; font-size: 13px; font-weight: 650; }
 b, .state-error, .check-fail { color: #be123c; }
 input, select, button { min-height: 36px; border: 1px solid #b9c3d0; border-radius: 6px; padding: 7px 10px; background: #fff; color: inherit; }
-select[multiple] { min-height: 84px; }
+.multi-select-field { display: grid; gap: 6px; min-width: 0; }
+.multi-select-field > span { color: #475569; font-size: 13px; font-weight: 650; }
+.multi-select { position: relative; }
+.multi-select-trigger { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; cursor: pointer; }
+.multi-select-trigger:disabled { color: #94a3b8; cursor: not-allowed; }
+.multi-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multi-select-arrow { width: 8px; height: 8px; flex: 0 0 auto; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translateY(-2px); }
+.multi-select-menu { position: absolute; top: calc(100% + 4px); right: 0; left: 0; z-index: 20; max-height: 240px; overflow-y: auto; border: 1px solid #b9c3d0; border-radius: 6px; padding: 4px 0; background: #fff; box-shadow: 0 12px 24px rgb(15 23 42 / 16%); }
+.multi-select-option { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 7px 10px; cursor: pointer; }
+.multi-select-option:hover { background: #f1f5f9; }
+.multi-select-option input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; flex: 0 0 16px; margin: 0; padding: 0; accent-color: #1d4ed8; }
+.multi-select-option span { min-width: 0; overflow: hidden; color: #17202a; font-size: 13px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.multi-select-empty { margin: 0; padding: 8px 10px; color: #64748b; font-size: 13px; }
 .wide { grid-column: span 2; }
 .amount { color: #9f1239; font-weight: 750; text-align: right; }
 .section-row { display: flex; align-items: center; justify-content: space-between; }

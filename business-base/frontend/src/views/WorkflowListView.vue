@@ -327,7 +327,7 @@ function actionDataTest(row: WorkflowListRecord): string | undefined {
           </tr>
           <tr v-else-if="store.list.records.length === 0">
             <td :colspan="columns.length + 2" class="empty-cell">
-              {{ isTodoList ? "暂无代办" : "暂无记录" }}
+              {{ isTodoList ? "暂无待办" : "暂无记录" }}
             </td>
           </tr>
           <tr

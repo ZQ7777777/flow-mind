@@ -63,7 +63,9 @@ describe("fake generator reference-data support", () => {
     expect(api).toContain("/api/reference-data/futures-products?");
     expect(view).toContain("loadTradingCodes");
     expect(view).toContain("form.contractMultiplier = selected ? selected.contractMultiplier");
-    expect(view).toContain('multiple');
+    expect(view).toContain('role="listbox"');
+    expect(view).toContain('type="checkbox"');
+    expect(view).not.toMatch(/<select[^>]*\bmultiple\b/);
     expect(request).toContain("java.util.List<String> productCodes");
     expect(request).toContain("@NotEmpty");
   });

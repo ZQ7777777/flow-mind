@@ -43,10 +43,17 @@ describe("warehouse pledge golden BusinessForm", () => {
   it("loads cascaded reference data, emits numbers, calculates signed amount, and evaluates checks", async () => {
     const wrapper = await mounted({ quantity: 2 });
     const selects = wrapper.findAll("select");
+    expect(wrapper.find("select[multiple]").exists()).toBe(false);
     await selects[0].setValue("80000188");
     await selects[2].setValue("DCE");
     await flushPromises();
-    await wrapper.find("select[multiple]").setValue("m");
+    const productTrigger = wrapper.get('[data-testid="product-select-trigger"]');
+    expect(wrapper.find('[data-testid="product-select-menu"]').exists()).toBe(false);
+    await productTrigger.trigger("click");
+    expect(wrapper.find('[data-testid="product-select-menu"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="product-option-m"] input[type="checkbox"]').setValue(true);
+    await productTrigger.trigger("click");
+    expect(wrapper.find('[data-testid="product-select-menu"]').exists()).toBe(false);
     await flushPromises();
     await selects[1].setValue("仓单质押");
     await flushPromises();
@@ -54,6 +61,7 @@ describe("warehouse pledge golden BusinessForm", () => {
     expect(api.getAccountFunds).toHaveBeenCalledWith("80000188");
     expect(api.searchFuturesProducts).toHaveBeenCalledWith("DCE");
     expect((wrapper.props() as { modelValue: Record<string, unknown> }).modelValue).toEqual(expect.objectContaining({
+      productCodes: ["m"],
       tradingCode: "D-188", contractMultiplier: 10, pledgeUnitQuantity: 1,
       previousSettlementPrice: 3000, amount: 48000,
     }));
@@ -76,7 +84,8 @@ describe("warehouse pledge golden BusinessForm", () => {
     }));
 
     await selects[2].setValue("DCE");
-    await wrapper.find("select[multiple]").setValue("m");
+    await productTrigger.trigger("click");
+    await wrapper.get('[data-testid="product-option-m"] input[type="checkbox"]').setValue(true);
     await flushPromises();
 
     await selects[1].setValue("仓单解质押");

@@ -87,7 +87,7 @@ describe("WorkflowListView", () => {
       },
     });
     await flushPromises();
-    expect(todo.find(".empty-cell").text()).toBe("暂无代办");
+    expect(todo.find(".empty-cell").text()).toBe("暂无待办");
 
     const completed = mount(WorkflowListView, {
       props: { type: "completed", title: "我的已办" },

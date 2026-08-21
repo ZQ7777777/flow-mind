@@ -26,6 +26,10 @@ describe("GenerationSkillRegistry", () => {
     });
     expect(snapshots[0].sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(registry.read(snapshots, snapshots[0].name, "SKILL.md")).toContain("BusinessForm.vue");
+    expect(registry.read(snapshots, snapshots[0].name, "references/generated-form-contract.md"))
+      .toContain("compact, single-line collapsed selector");
+    expect(registry.read(snapshots, snapshots[0].name, "references/generated-form-contract.md"))
+      .toContain("square checkbox");
     expect(registry.read(snapshots, snapshots[0].name, "references/backend-api-contract.md"))
       .toContain("Generated code never creates a business-specific submit API");
   });

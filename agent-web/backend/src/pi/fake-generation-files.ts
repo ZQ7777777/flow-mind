@@ -342,6 +342,14 @@ function viewSource(spec: GenerationSpec, fields: FormFieldRequirement[], formTy
   const referenceImports = referenceFunctions.length ? `, ${referenceFunctions.join(", ")}` : "";
   const optionDeclarations = dynamicFields.filter((field) => field.controlType === "select")
     .map((field) => `const ${field.fieldCode}Options = ref<any[]>([]);`).join("\n");
+  const staticMultiSelectDeclarations = fields
+    .filter((field) => field.controlType === "select" && field.multiple && !field.referenceDataSource)
+    .map((field) => `const ${field.fieldCode}Options = ${JSON.stringify(field.options || [])};`)
+    .join("\n");
+  const multiSelectState = fields
+    .filter((field) => field.controlType === "select" && field.multiple)
+    .map(multiSelectStateSource)
+    .join("\n");
   const referenceSetup = dynamicReferenceSetup(dynamicFields);
   return `<script setup lang="ts">
 import { onMounted, reactive, ref, watch } from "vue";
@@ -351,6 +359,8 @@ const success = ref("");
 const referenceLoading = ref(false);
 const referenceError = ref("");
 ${optionDeclarations}
+${staticMultiSelectDeclarations}
+${multiSelectState}
 ${referenceSetup}
 async function submit() {
   if (${requiredChecks.length ? requiredChecks.join(" || ") : "false"}) throw new Error("请完整填写必填项");
@@ -361,6 +371,15 @@ async function submit() {
 <template><form @submit.prevent="submit"><h1>${escapeHtml(spec.businessName)}</h1><p v-if="referenceError" role="alert">{{ referenceError }}</p>
     ${controls}
     <button type="submit">提交申请</button><p v-if="success">{{ success }}</p></form></template>
+<style>
+.multi-select { position: relative; width: 100%; }
+.multi-select-trigger { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; }
+.multi-select-trigger span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multi-select-arrow { width: 8px; height: 8px; flex: 0 0 auto; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translateY(-2px); }
+.multi-select-menu { position: absolute; top: calc(100% + 4px); right: 0; left: 0; z-index: 10; max-height: 240px; overflow-y: auto; padding: 4px 0; border: 1px solid #b9c3d0; border-radius: 6px; background: #fff; box-shadow: 0 12px 24px rgb(15 23 42 / 16%); }
+.multi-select-option { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 7px 10px; cursor: pointer; }
+.multi-select-option input[type="checkbox"] { width: 16px; height: 16px; margin: 0; }
+</style>
 `;
 }
 
@@ -575,11 +594,12 @@ function extensionValidation(name: string, extensions: string[]): string {
 function vueControl(field: FormFieldRequirement): string {
   if (field.controlType === "checkbox") return `<input v-model="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" type="checkbox" />`;
   if (field.controlType === "select") {
+    if (field.multiple) return vueMultiSelectControl(field);
     const source = field.referenceDataSource;
     const options = source
       ? `<option v-for="option in ${field.fieldCode}Options" :key="option.${referenceValueProperty(source.resource)}" :value="option.${referenceValueProperty(source.resource)}">{{ ${referenceLabelExpression(source.resource)} }}</option>`
       : (field.options || []).map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("");
-    return `<select v-model="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" ${field.required ? "required" : ""} ${field.multiple ? "multiple" : ""} :disabled="referenceLoading">${options}</select>`;
+    return `<select v-model="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" ${field.required ? "required" : ""} :disabled="referenceLoading">${options}</select>`;
   }
   if (field.controlType === "textarea") return `<textarea v-model="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" ${field.required ? "required" : ""}></textarea>`;
   const type = field.controlType === "number" ? "number" : field.controlType === "datePicker" ? "date" : "text";
@@ -592,6 +612,29 @@ function vueControl(field: FormFieldRequirement): string {
     typeof field.validation.pattern === "string" && field.validation.pattern ? `pattern="${escapeHtml(field.validation.pattern)}"` : "",
   ].filter(Boolean).join(" ");
   return `<input ${model}="form.${field.fieldCode}" aria-label="${escapeHtml(field.fieldName)}" type="${type}" ${field.required ? "required" : ""} ${field.readOnly ? "readonly" : ""} ${validation} />`;
+}
+
+function vueMultiSelectControl(field: FormFieldRequirement): string {
+  const source = field.referenceDataSource;
+  const optionValue = source ? `option.${referenceValueProperty(source.resource)}` : "option.value";
+  const optionLabel = source ? referenceLabelExpression(source.resource) : "option.label";
+  const menuState = `${field.fieldCode}MenuOpen`;
+  const name = getter(field.fieldCode).replace(/^get/, "");
+  return `<div class="multi-select" data-field-code="${escapeHtml(field.fieldCode)}">
+      <button type="button" class="multi-select-trigger" aria-label="${escapeHtml(field.fieldName)}" aria-haspopup="listbox" aria-controls="${escapeHtml(field.fieldCode)}-options" :aria-expanded="${menuState}" :disabled="referenceLoading" @click="toggle${name}Menu" @keydown.esc.stop.prevent="close${name}Menu"><span>{{ form.${field.fieldCode}.length ? form.${field.fieldCode}.join(", ") : "请选择" }}</span><span class="multi-select-arrow" aria-hidden="true"></span></button>
+      <div v-if="${menuState}" id="${escapeHtml(field.fieldCode)}-options" class="multi-select-menu" role="listbox" aria-multiselectable="true" @click.stop>
+        <label v-for="option in ${field.fieldCode}Options" :key="${optionValue}" class="multi-select-option" role="option" :aria-selected="form.${field.fieldCode}.includes(${optionValue})"><input type="checkbox" :checked="form.${field.fieldCode}.includes(${optionValue})" @change="toggle${name}Option(${optionValue})" /><span>{{ ${optionLabel} }}</span></label>
+      </div>
+    </div>`;
+}
+
+function multiSelectStateSource(field: FormFieldRequirement): string {
+  const name = getter(field.fieldCode).replace(/^get/, "");
+  const menuState = `${field.fieldCode}MenuOpen`;
+  return `const ${menuState} = ref(false);
+function toggle${name}Menu() { ${menuState}.value = !${menuState}.value; }
+function close${name}Menu() { ${menuState}.value = false; }
+function toggle${name}Option(optionValue: string) { const selected = form.${field.fieldCode}; form.${field.fieldCode} = selected.includes(optionValue) ? selected.filter((value) => value !== optionValue) : [...selected, optionValue]; }`;
 }
 
 function referenceFunction(resource: NonNullable<FormFieldRequirement["referenceDataSource"]>["resource"]): string {
