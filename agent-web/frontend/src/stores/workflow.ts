@@ -105,7 +105,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const connected = ref(false);
   const generatedFile = ref<GeneratedFileContent>();
   const generatedDiff = ref<GeneratedFileDiff>();
-  const generatedPreviewFile = ref<GeneratedFileContent>();
   const lastCompaction = ref<CompactionNotice>();
   const generationLog = ref<GenerationLogEntry[]>([]);
   const verifyStages = ref<VerifyStageEntry[]>(initialVerifyStages());
@@ -293,25 +292,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     }, false);
   }
 
-  async function loadGeneratedPreviewFile(relativePath: string): Promise<GeneratedFileContent | undefined> {
-    const generation = snapshot.value?.activeGeneration;
-    const sessionId = snapshot.value?.sessionId;
-    const user = currentUser.value;
-    if (!sessionId || !user || !generation) return;
-    generatedPreviewFile.value = undefined;
-    const file = await apiRequest<GeneratedFileContent>(
-      `/api/agent/sessions/${sessionId}/code-generations/${generation.generationId}/files/${encodePath(relativePath)}`,
-    );
-    const currentGeneration = snapshot.value?.activeGeneration;
-    if (
-      currentGeneration?.generationId === file.generationId &&
-      currentGeneration.generationRevision === file.generationRevision
-    ) {
-      generatedPreviewFile.value = file;
-    }
-    return file;
-  }
-
   async function saveGeneratedFile(relativePath: string, content: string): Promise<ArtifactManifest | undefined> {
     const generation = snapshot.value?.activeGeneration;
     if (!snapshot.value || !currentUser.value || !generation) return;
@@ -344,7 +324,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
       });
       generatedFile.value = undefined;
       generatedDiff.value = undefined;
-      generatedPreviewFile.value = undefined;
       await refresh();
     });
   }
@@ -565,9 +544,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
   }
 
   function applySnapshot(nextSnapshot: WorkflowSnapshot): void {
-    if (generatedPreviewFile.value?.generationId !== nextSnapshot.activeGeneration?.generationId) {
-      generatedPreviewFile.value = undefined;
-    }
     snapshot.value = nextSnapshot;
     qualityReport.value = nextSnapshot.activeGeneration?.quality;
     error.value = nextSnapshot.lastError?.message || "";
@@ -605,7 +581,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     reasoningText.value = "";
     generatedFile.value = undefined;
     generatedDiff.value = undefined;
-    generatedPreviewFile.value = undefined;
     qualityReport.value = undefined;
     lastCompaction.value = undefined;
     generationLog.value = [];
@@ -654,7 +629,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     connected,
     generatedFile,
     generatedDiff,
-    generatedPreviewFile,
     qualityReport,
     managedSessions,
     managedDefinitions,
@@ -680,7 +654,6 @@ export const useWorkflowStore = defineStore("workflow", () => {
     reopenRequirementFromProcessFailure,
     startGeneration,
     loadGeneratedFile,
-    loadGeneratedPreviewFile,
     saveGeneratedFile,
     cancelGeneration,
     regenerate,

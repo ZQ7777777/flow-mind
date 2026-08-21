@@ -93,16 +93,8 @@ describe("CodeGenerationPanel", () => {
     expect(changeTypeTag.text()).toBe(changeType);
   });
 
-  it("shows the generated Vue page as a sandboxed static preview by default", async () => {
+  it("does not render interface preview controls even when generated Vue files exist", () => {
     setActivePinia(createPinia());
-    const store = useWorkflowStore();
-    const loadPreview = vi.spyOn(store, "loadGeneratedPreviewFile").mockResolvedValue({
-      generationId: "acg_1",
-      generationRevision: 1,
-      relativePath: "frontend/src/modules/generated/entry/BusinessForm.vue",
-      content: '<template><section><h1>入金申请</h1><el-input placeholder="申请单号" /></section></template>',
-      sha256: "vue",
-    });
     const wrapper = shallowMount(CodeGenerationPanel, {
       props: { generation: generationWithPreview() },
       global: { stubs: {
@@ -113,28 +105,19 @@ describe("CodeGenerationPanel", () => {
         ElButton: { template: "<button><slot /></button>" },
       } },
     });
-    await flushPromises();
 
-    expect(loadPreview).toHaveBeenCalledWith("frontend/src/modules/generated/entry/BusinessForm.vue");
-    expect(wrapper.text()).toContain("静态预览");
-    expect(wrapper.text()).toContain("仅展示界面，不执行脚本或提交请求");
-    const frame = wrapper.find('iframe[title="Agent 生成前端界面静态预览"]');
-    expect(frame.exists()).toBe(true);
-    expect(frame.attributes("sandbox")).toBe("allow-scripts");
-    expect(frame.attributes("sandbox")).not.toContain("allow-same-origin");
-    expect(frame.attributes("sandbox")).not.toContain("allow-forms");
-    expect(frame.attributes("srcdoc")).toContain("入金申请");
-    expect(frame.attributes("srcdoc")).toContain("default-src 'none'");
+    expect(wrapper.text()).not.toContain("界面预览");
+    expect(wrapper.text()).not.toContain("静态预览");
+    expect(wrapper.text()).not.toContain("仅展示界面");
+    expect(wrapper.text()).toContain("编辑");
+    expect(wrapper.text()).toContain("Diff");
+    expect(wrapper.find("iframe").exists()).toBe(false);
+    expect(wrapper.find(".editor-empty").text()).toBe("从左侧代码树选择一个文件查看内容和差异。");
   });
 
-  it("switches from interface preview to code editing when a tree file is selected", async () => {
+  it("opens code editing when a tree file is selected", async () => {
     setActivePinia(createPinia());
     const store = useWorkflowStore();
-    vi.spyOn(store, "loadGeneratedPreviewFile").mockResolvedValue({
-      generationId: "acg_1", generationRevision: 1,
-      relativePath: "frontend/src/modules/generated/entry/BusinessForm.vue",
-      content: "<template><form /></template>", sha256: "vue",
-    });
     vi.spyOn(store, "loadGeneratedFile").mockResolvedValue();
     const wrapper = shallowMount(CodeGenerationPanel, {
       props: { generation: generationWithPreview() },
@@ -155,29 +138,5 @@ describe("CodeGenerationPanel", () => {
 
     expect(wrapper.find("iframe").exists()).toBe(false);
     expect(wrapper.find(".editor-file-path").text()).toBe("frontend/src/router/generated-routes.ts");
-  });
-
-  it("keeps code browsing available when static preview parsing fails", async () => {
-    setActivePinia(createPinia());
-    const store = useWorkflowStore();
-    vi.spyOn(store, "loadGeneratedPreviewFile").mockResolvedValue({
-      generationId: "acg_1", generationRevision: 1,
-      relativePath: "frontend/src/modules/generated/entry/BusinessForm.vue",
-      content: "<script setup>const invalid = true</script>", sha256: "vue",
-    });
-    const wrapper = shallowMount(CodeGenerationPanel, {
-      props: { generation: generationWithPreview() },
-      global: { stubs: {
-        ElTree: { name: "ElTree", props: ["data"], template: "<div />" },
-        ElTag: { template: "<span><slot /></span>" },
-        ElRadioGroup: { template: "<span><slot /></span>" },
-        ElRadioButton: { template: "<button><slot /></button>" },
-        ElButton: { template: "<button><slot /></button>" },
-      } },
-    });
-    await flushPromises();
-
-    expect(wrapper.find("[role='alert']").text()).toContain("缺少 template");
-    expect(wrapper.findComponent({ name: "ElTree" }).exists()).toBe(true);
   });
 });

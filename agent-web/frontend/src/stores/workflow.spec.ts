@@ -247,7 +247,6 @@ describe("workflow SSE lifecycle", () => {
       if (path.endsWith("/code-generations")) { expect(JSON.parse(options!.body!)).toEqual({ targetRoot: "E:\\workspace\\business-base" }); current = review; return { accepted: true }; }
       if (path.endsWith("/files/frontend/src/router/generated-routes.ts")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/router/generated-routes.ts", content: "route", sha256: "abc" };
       if (path.endsWith("/diff/frontend/src/router/generated-routes.ts")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/router/generated-routes.ts", changeType: "MODIFY", stagedSha256: "abc", stale: false, originalContent: "", stagedContent: "route", unifiedDiff: "+route" };
-      if (path.endsWith("/files/frontend/src/modules/generated/entry/EntryApply.vue")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/modules/generated/entry/EntryApply.vue", content: "<template><form /></template>", sha256: "def" };
       return current;
     });
     const store = useWorkflowStore();
@@ -257,12 +256,6 @@ describe("workflow SSE lifecycle", () => {
     await store.loadGeneratedFile("frontend/src/router/generated-routes.ts");
     expect(store.generatedFile?.content).toBe("route");
     expect(store.generatedDiff?.unifiedDiff).toBe("+route");
-    await store.loadGeneratedPreviewFile("frontend/src/modules/generated/entry/EntryApply.vue");
-    expect(store.generatedPreviewFile?.relativePath).toBe("frontend/src/modules/generated/entry/EntryApply.vue");
-    expect(mocks.apiRequest).not.toHaveBeenCalledWith(
-      expect.stringContaining("/diff/frontend/src/modules/generated/entry/EntryApply.vue"),
-      expect.anything(),
-    );
   });
 
   it("reverifies the current generation revision after an edited failure", async () => {

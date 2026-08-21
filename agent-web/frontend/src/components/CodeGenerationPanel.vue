@@ -4,7 +4,6 @@ import type { ArtifactFile, CodeGenerationSummary } from "@flowmind/agent-contra
 import { ElMessage } from "element-plus";
 import "monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css";
 import { useWorkflowStore } from "../stores/workflow";
-import { buildGeneratedPreviewDocument } from "../generated-preview";
 import { useResizableCodePanels, type CodePanelSide } from "../composables/useResizableCodePanels";
 import QualityPanel from "./QualityPanel.vue";
 import QualityProgress from "./QualityProgress.vue";
@@ -14,21 +13,11 @@ interface TreeNode { label: string; path?: string; children?: TreeNode[] }
 const props = defineProps<{ generation: CodeGenerationSummary }>();
 const store = useWorkflowStore();
 const pipelineActive = computed(() => ["CODE_VERIFYING", "CODE_REVIEWING", "CODE_REPAIRING"].includes(store.state || ""));
-const previewPath = computed(() => {
-  const candidates = (props.generation.manifest?.files || [])
-    .map((file) => file.relativePath)
-    .filter((path) => path.endsWith(".vue") && !path.includes("/__tests__/") && !/\.spec\.vue$/i.test(path))
-    .sort();
-  return candidates.find((path) => path.endsWith("/BusinessForm.vue")) || candidates[0] || "";
-});
 const selectedPath = ref("");
-const mode = ref<"preview" | "edit" | "diff">(previewPath.value ? "preview" : "edit");
+const mode = ref<"edit" | "diff">("edit");
 const editorHost = ref<HTMLElement>();
 const diffHost = ref<HTMLElement>();
 const dirty = ref(false);
-const previewDocument = ref("");
-const previewStatus = ref<"unavailable" | "loading" | "ready" | "error">(previewPath.value ? "loading" : "unavailable");
-const previewError = ref("");
 const {
   panel,
   resizingSide,
@@ -40,7 +29,6 @@ const {
 let editor: any;
 let diffEditor: any;
 let monaco: any;
-let previewRequest = 0;
 
 const treeData = computed(() => buildTree(props.generation.manifest?.files || []));
 const selectedMeta = computed(() => props.generation.manifest?.files.find((file) => file.relativePath === selectedPath.value));
@@ -98,40 +86,13 @@ async function save(): Promise<void> {
   if (!selectedPath.value || !editor) return;
   await store.saveGeneratedFile(selectedPath.value, editor.getValue());
   updateModels();
-  if (selectedPath.value === previewPath.value) await loadPreview();
   ElMessage.success("暂存文件已保存，生成版本已更新");
-}
-
-async function loadPreview(): Promise<void> {
-  const request = ++previewRequest;
-  const path = previewPath.value;
-  previewDocument.value = "";
-  previewError.value = "";
-  if (!path) {
-    previewStatus.value = "unavailable";
-    if (mode.value === "preview") mode.value = "edit";
-    return;
-  }
-  previewStatus.value = "loading";
-  try {
-    const file = await store.loadGeneratedPreviewFile(path);
-    if (request !== previewRequest) return;
-    if (!file) throw new Error("当前会话无法读取暂存的 Vue 页面");
-    if (file.generationRevision !== props.generation.generationRevision) return;
-    previewDocument.value = buildGeneratedPreviewDocument(file.content).srcdoc;
-    previewStatus.value = "ready";
-  } catch (cause) {
-    if (request !== previewRequest) return;
-    previewStatus.value = "error";
-    previewError.value = cause instanceof Error ? cause.message : String(cause);
-  }
 }
 
 watch(mode, () => nextTick(() => {
   if (mode.value === "edit") editor?.layout();
   else if (mode.value === "diff") diffEditor?.layout();
 }));
-watch([previewPath, () => props.generation.generationRevision], () => { void loadPreview(); }, { immediate: true });
 watch(() => props.generation.generationRevision, () => {
   if (selectedPath.value && !dirty.value) void store.loadGeneratedFile(selectedPath.value).then(updateModels);
 });
@@ -250,37 +211,17 @@ function resizeWithKeyboard(side: CodePanelSide, event: KeyboardEvent): void {
     <section class="code-editor">
       <div class="editor-toolbar">
         <div class="editor-toolbar-main">
-          <el-tag v-if="mode === 'preview'" class="preview-kind" size="small" type="info">静态预览</el-tag>
-          <el-tag v-else-if="selectedMeta" class="file-change-type" size="small" :type="selectedMeta.changeType === 'ADD' ? 'success' : 'warning'">{{ selectedMeta.changeType }}</el-tag>
+          <el-tag v-if="selectedMeta" class="file-change-type" size="small" :type="selectedMeta.changeType === 'ADD' ? 'success' : 'warning'">{{ selectedMeta.changeType }}</el-tag>
           <el-radio-group v-model="mode" class="editor-mode-switch" size="small">
-            <el-radio-button value="preview" :disabled="!previewPath">界面预览</el-radio-button>
             <el-radio-button value="edit" :disabled="!selectedPath">编辑</el-radio-button>
             <el-radio-button value="diff" :disabled="!selectedPath">Diff</el-radio-button>
           </el-radio-group>
-          <code v-if="mode === 'preview' ? previewPath : selectedPath" class="editor-file-path">{{ mode === "preview" ? previewPath : selectedPath }}</code>
-          <el-tag v-if="mode !== 'preview' && store.generatedDiff?.stale" size="small" type="danger">基线已变化</el-tag>
+          <code v-if="selectedPath" class="editor-file-path">{{ selectedPath }}</code>
+          <el-tag v-if="store.generatedDiff?.stale" size="small" type="danger">基线已变化</el-tag>
         </div>
-        <span v-if="mode === 'preview'" class="preview-note">仅展示界面，不执行脚本或提交请求</span>
         <el-button v-if="mode === 'edit' && selectedPath" class="editor-save" type="primary" size="small" :disabled="!dirty || store.busy" @click="save">保存</el-button>
       </div>
-      <div v-if="mode === 'preview'" class="generated-interface-preview">
-        <div v-if="previewStatus === 'loading'" class="preview-state">正在加载暂存的 Vue 页面…</div>
-        <div v-else-if="previewStatus === 'error'" class="preview-state preview-error" role="alert">
-          <strong>界面预览生成失败</strong><span>{{ previewError }}</span>
-        </div>
-        <div v-else-if="previewStatus === 'unavailable'" class="preview-state">当前生成结果中没有可预览的 Vue 页面。</div>
-        <iframe
-          v-else
-          class="preview-frame"
-          :srcdoc="previewDocument"
-          sandbox="allow-scripts"
-          referrerpolicy="no-referrer"
-          title="Agent 生成前端界面静态预览"
-        ></iframe>
-      </div>
-      <div v-else-if="!selectedPath" class="editor-empty">
-        {{ previewPath ? "从左侧代码树选择一个文件查看内容和差异。" : "当前生成结果中没有 Vue 页面；可从左侧代码树查看生成代码。" }}
-      </div>
+      <div v-if="!selectedPath" class="editor-empty">从左侧代码树选择一个文件查看内容和差异。</div>
       <div v-show="selectedPath && mode === 'edit'" ref="editorHost" class="monaco-host"></div>
       <div v-show="selectedPath && mode === 'diff'" ref="diffHost" class="monaco-host"></div>
     </section>
@@ -318,11 +259,6 @@ function resizeWithKeyboard(side: CodePanelSide, event: KeyboardEvent): void {
 .editor-toolbar code { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .monaco-host { min-height: 0; flex: 1; }
 .editor-empty { min-height: 0; flex: 1; display: grid; place-items: center; color: #7b8794; }
-.preview-note { flex-shrink: 0; color: #64748b; font-size: 12px; }
-.generated-interface-preview { min-height: 0; flex: 1; display: flex; padding: 12px; background: #eef2f7; }
-.preview-frame { width: 100%; min-height: 0; border: 1px solid #d8dee8; border-radius: 8px; background: white; }
-.preview-state { flex: 1; display: grid; place-content: center; gap: 8px; color: #64748b; text-align: center; }
-.preview-error { color: #be123c; }
 :deep(.quality-panel) { min-height: 0; height: 100%; overflow: hidden; border-left: 0; }
 .code-panel-divider { position: relative; cursor: col-resize; touch-action: none; outline: none; background: #f8fafc; }
 .code-panel-divider::before { content: ""; position: absolute; inset: 0 4px; background: #dfe5ed; transition: background .15s ease, box-shadow .15s ease; }
