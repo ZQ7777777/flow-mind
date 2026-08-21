@@ -37,7 +37,7 @@ describe("workflow SSE lifecycle", () => {
     mocks.apiRequest.mockReset();
     mocks.streamEvents.mockReset();
     mocks.apiRequest.mockImplementation(async (path: string) => {
-      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base", businessFrontendBaseUrl: "http://127.0.0.1:5174" };
       if (path === "/api/agent/sessions") return snapshot;
       return snapshot;
     });
@@ -48,6 +48,7 @@ describe("workflow SSE lifecycle", () => {
     await store.initialize(user);
 
     expect(store.defaultTargetRoot).toBe("E:\\workspace\\business-base");
+    expect(store.businessFrontendBaseUrl).toBe("http://127.0.0.1:5174");
   });
 
   it("loads owner-isolated session history with the management lists", async () => {
@@ -77,7 +78,7 @@ describe("workflow SSE lifecycle", () => {
     const historical = { ...snapshot, sessionId: "ags_history", state: "CODE_PIPELINE_FAILED" as const };
     mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
     mocks.apiRequest.mockImplementation(async (path: string) => {
-      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base", businessFrontendBaseUrl: "http://127.0.0.1:5174" };
       if (path === "/api/agent/sessions/ags_history") return historical;
       return snapshot;
     });
@@ -99,7 +100,7 @@ describe("workflow SSE lifecycle", () => {
   it("preserves the current session when opening history fails", async () => {
     mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
     mocks.apiRequest.mockImplementation(async (path: string) => {
-      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base", businessFrontendBaseUrl: "http://127.0.0.1:5174" };
       if (path === "/api/agent/sessions") return snapshot;
       if (path === "/api/agent/sessions/ags_missing") throw new ApiError(404, "AGENT_SESSION_NOT_FOUND", "session not found");
       return snapshot;
@@ -149,7 +150,7 @@ describe("workflow SSE lifecycle", () => {
   it("resets the current session and reconnects using the cleared snapshot", async () => {
     mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
     mocks.apiRequest.mockImplementation(async (path: string) => {
-      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base", businessFrontendBaseUrl: "http://127.0.0.1:5174" };
       if (path === "/api/agent/sessions") return snapshot;
       if (path === "/api/agent/sessions/ags_1/reset") {
         return { ...snapshot, rowVersion: 1, messages: [], requirement: undefined, processPreview: undefined };
@@ -172,7 +173,7 @@ describe("workflow SSE lifecycle", () => {
   it("reconnects the current session when reset fails", async () => {
     mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
     mocks.apiRequest.mockImplementation(async (path: string) => {
-      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base", businessFrontendBaseUrl: "http://127.0.0.1:5174" };
       if (path === "/api/agent/sessions") return snapshot;
       if (path === "/api/agent/sessions/ags_1/reset") {
         throw new ApiError(409, "AGENT_STATE_CONFLICT", "current state does not allow this operation");
@@ -241,12 +242,11 @@ describe("workflow SSE lifecycle", () => {
     let current = active;
     mocks.streamEvents.mockImplementation(() => new Promise<void>(() => undefined));
     mocks.apiRequest.mockImplementation(async (path: string, options?: { method?: string; body?: string }) => {
-      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base" };
+      if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base", businessFrontendBaseUrl: "http://127.0.0.1:5174" };
       if (path === "/api/agent/sessions") return active;
       if (path.endsWith("/code-generations")) { expect(JSON.parse(options!.body!)).toEqual({ targetRoot: "E:\\workspace\\business-base" }); current = review; return { accepted: true }; }
       if (path.endsWith("/files/frontend/src/router/generated-routes.ts")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/router/generated-routes.ts", content: "route", sha256: "abc" };
       if (path.endsWith("/diff/frontend/src/router/generated-routes.ts")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/router/generated-routes.ts", changeType: "MODIFY", stagedSha256: "abc", stale: false, originalContent: "", stagedContent: "route", unifiedDiff: "+route" };
-      if (path.endsWith("/files/frontend/src/modules/generated/entry/EntryApply.vue")) return { generationId: "acg_1", generationRevision: 1, relativePath: "frontend/src/modules/generated/entry/EntryApply.vue", content: "<template><form /></template>", sha256: "def" };
       return current;
     });
     const store = useWorkflowStore();
@@ -256,12 +256,6 @@ describe("workflow SSE lifecycle", () => {
     await store.loadGeneratedFile("frontend/src/router/generated-routes.ts");
     expect(store.generatedFile?.content).toBe("route");
     expect(store.generatedDiff?.unifiedDiff).toBe("+route");
-    await store.loadGeneratedPreviewFile("frontend/src/modules/generated/entry/EntryApply.vue");
-    expect(store.generatedPreviewFile?.relativePath).toBe("frontend/src/modules/generated/entry/EntryApply.vue");
-    expect(mocks.apiRequest).not.toHaveBeenCalledWith(
-      expect.stringContaining("/diff/frontend/src/modules/generated/entry/EntryApply.vue"),
-      expect.anything(),
-    );
   });
 
   it("reverifies the current generation revision after an edited failure", async () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { shallowMount } from "@vue/test-utils";
+import { flushPromises, shallowMount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import type { CodeGenerationSummary, GenerationQualityReport, WorkflowSnapshot } from "@flowmind/agent-contracts";
 import { useWorkflowStore } from "../stores/workflow";
@@ -69,6 +69,20 @@ function generation(status: CodeGenerationSummary["status"]): CodeGenerationSumm
     backendRestartRequired: false,
     targetRoot: "D:\\business-base",
     contractVersion: "1.0",
+    manifest: {
+      generationId: "acg-quality",
+      targetRoot: "D:\\business-base",
+      contractVersion: "1.0",
+      revision: 2,
+      files: [{
+        relativePath: "frontend/src/modules/generated/entry-application/Apply.vue",
+        changeType: "ADD",
+        stagedSha256: "a".repeat(64),
+        sizeBytes: 128,
+        validationStatus: "VALID",
+        editedByUser: false,
+      }],
+    },
     quality,
     createdAt: "2026-08-05T00:00:00.000Z",
     updatedAt: "2026-08-05T00:00:01.000Z",
@@ -77,8 +91,12 @@ function generation(status: CodeGenerationSummary["status"]): CodeGenerationSumm
 
 const stubs = {
   ElTag: { template: "<span><slot /></span>" },
-  ElButton: { name: "ElButton", props: ["disabled"], template: "<button :disabled=\"disabled\"><slot /></button>" },
-  ElPopconfirm: { template: "<div><slot name=\"reference\" /></div>" },
+  ElButton: {
+    name: "ElButton",
+    props: ["disabled", "tag"],
+    template: "<component :is=\"tag || 'button'\" :disabled=\"disabled\"><slot /></component>",
+  },
+  ElPopconfirm: { emits: ["confirm"], template: "<div @click=\"$emit('confirm')\"><slot name=\"reference\" /></div>" },
   ElCheckboxGroup: true,
   ElCheckbox: true,
   ElInput: true,
@@ -149,6 +167,56 @@ describe("QualityPanel", () => {
 
     const write = wrapper.findAll("button").find((button) => button.text().includes("写入工程"));
     expect(write?.attributes("disabled")).toBeUndefined();
+  });
+
+  it("shows a full business page link after confirmed write succeeds", async () => {
+    const store = useWorkflowStore();
+    store.qualityReport = quality;
+    store.businessFrontendBaseUrl = "http://127.0.0.1:5174";
+    vi.spyOn(store, "confirmGenerationWrite").mockResolvedValue();
+    const wrapper = shallowMount(QualityPanel, {
+      props: { generation: generation("REVIEW") },
+      global: { stubs },
+    });
+
+    await wrapper.findAll("button").find((button) => button.text().includes("写入工程"))!.trigger("click");
+    await flushPromises();
+
+    const link = wrapper.find(".full-page-preview-link");
+    expect(link.exists()).toBe(true);
+    expect(link.attributes("href")).toBe("http://127.0.0.1:5174/generated/entry-application/apply");
+    expect(link.attributes("target")).toBe("_blank");
+    expect(link.attributes("rel")).toBe("noopener noreferrer");
+  });
+
+  it("does not show a full business page link when the manifest has no generated Apply page", async () => {
+    const store = useWorkflowStore();
+    store.qualityReport = quality;
+    store.businessFrontendBaseUrl = "http://127.0.0.1:5174";
+    vi.spyOn(store, "confirmGenerationWrite").mockResolvedValue();
+    const invalidGeneration = {
+      ...generation("REVIEW"),
+      manifest: {
+        ...generation("REVIEW").manifest!,
+        files: [{
+          relativePath: "frontend/src/modules/generated/entry-application/BusinessForm.vue",
+          changeType: "ADD" as const,
+          stagedSha256: "b".repeat(64),
+          sizeBytes: 128,
+          validationStatus: "VALID" as const,
+          editedByUser: false,
+        }],
+      },
+    };
+    const wrapper = shallowMount(QualityPanel, {
+      props: { generation: invalidGeneration },
+      global: { stubs },
+    });
+
+    await wrapper.findAll("button").find((button) => button.text().includes("写入工程"))!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".full-page-preview-link").exists()).toBe(false);
   });
 
   it("allows reverify after a failed revision is edited and its stale quality report is cleared", async () => {

@@ -52,7 +52,7 @@
     },
     {
       "path": "frontend/src/components/workflow/WorkflowStartShell.vue",
-      "sha256": "ae7aaf6a480b1a69cd41f7ebf98f7c8749c6d88badabfb483435caad2ea9e083"
+      "sha256": "d4b1b8e707e0bae808a3261c8527684405d49487e8888b8b86b7df6c3f19b1e6"
     },
     {
       "path": "frontend/src/types/workflow.ts",

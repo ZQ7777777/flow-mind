@@ -16,6 +16,7 @@ const emit = defineEmits<{ selectDiagnostic: [path: string] }>();
 const store = useWorkflowStore();
 const scopes = ref<OverrideScope[]>([]);
 const reason = ref("");
+const writeCompleted = ref(false);
 
 const quality = computed<GenerationQualityReport | undefined>(
   () => store.qualityReport || props.generation.quality,
@@ -43,10 +44,20 @@ const canConfirmWrite = computed(() =>
   Boolean(quality.value?.canWrite)
   && ["REVIEW", "WRITE_FAILED", "ENTRY_CONFIG_FAILED"].includes(props.generation.status),
 );
+const fullPagePreviewUrl = computed(() => {
+  if (!writeCompleted.value && props.generation.status !== "COMPLETED") return "";
+  const applyPath = props.generation.manifest?.files
+    .map((file) => file.relativePath.replace(/\\/g, "/"))
+    .find((path) => /^frontend\/src\/modules\/generated\/[^/]+\/Apply\.vue$/.test(path));
+  const kebabCode = applyPath?.match(/^frontend\/src\/modules\/generated\/([^/]+)\/Apply\.vue$/)?.[1];
+  const baseUrl = store.businessFrontendBaseUrl.replace(/\/$/, "");
+  return kebabCode && baseUrl ? `${baseUrl}/generated/${kebabCode}/apply` : "";
+});
 
 watch(() => props.generation.generationRevision, () => {
   scopes.value = [];
   reason.value = "";
+  writeCompleted.value = false;
 });
 onMounted(() => {
   if (!quality.value) void store.loadGenerationQuality();
@@ -69,6 +80,7 @@ async function applyOverride(): Promise<void> {
 
 async function confirmWrite(): Promise<void> {
   await store.confirmGenerationWrite();
+  writeCompleted.value = true;
   ElMessage.success("候选代码已安全写入目标工程并登记到业务大厅");
 }
 
@@ -244,6 +256,15 @@ function hasDiagnosticDetails(item: QualityDiagnostic): boolean {
           <el-button type="primary" :disabled="!canConfirmWrite || store.busy">写入工程</el-button>
         </template>
       </el-popconfirm>
+      <el-button
+        v-if="fullPagePreviewUrl"
+        class="full-page-preview-link"
+        tag="a"
+        type="success"
+        :href="fullPagePreviewUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+      >打开完整业务页面</el-button>
     </div>
   </aside>
 </template>
@@ -284,5 +305,6 @@ button.diagnostic:disabled { cursor: default; }
 .override-form :deep(.el-checkbox-group) { display: grid; }
 .quality-actions { gap: 8px; padding: 10px 12px; border-top: 1px solid #dfe5ed; }
 .quality-actions .el-button { flex: 1; margin: 0; }
+.quality-actions .full-page-preview-link { flex-basis: 100%; }
 .quality-empty { flex: 1; display: grid; place-items: center; color: #64748b; font-size: 12px; }
 </style>

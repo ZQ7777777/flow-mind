@@ -12,13 +12,19 @@ export const generatedRoutes: RouteRecordRaw[] = [
     path: "/generated/entry-application/apply",
     name: "generated-entry-application-apply",
     meta: { title: "入金申请", standalone: true },
-    component: () => import("../modules/generated/entry-application/EntryApplicationApply.vue"),
+    component: () => import("../modules/generated/entry-application/Apply.vue"),
   },
   {
     path: "/generated/warehouse-pledge/apply",
     name: "generated-warehouse-pledge-apply",
     meta: { title: "仓单、国债（解）质押申请", standalone: true },
     component: () => import("../modules/generated/sample/Apply.vue"),
+  },
+  {
+    path: "/generated/warehouse-treasury-pledge-application/apply",
+    name: "generated-warehouse-treasury-pledge-application-apply",
+    meta: { title: "发起仓单、国债（解）质押申请", standalone: true },
+    component: () => import("../modules/generated/warehouse-treasury-pledge-application/Apply.vue"),
   },
 ];
 

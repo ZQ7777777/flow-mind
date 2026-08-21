@@ -178,6 +178,7 @@ describe("WorkflowListView", () => {
 
     expect(wrapper.find("thead").text()).not.toContain("任务来源");
     expect(wrapper.find(".table-wrap").text()).not.toContain("自己的任务");
+    expect(wrapper.find("td.table-actions > .table-actions-inner").exists()).toBe(true);
     expect(wrapper.get("a").attributes("href")).toBe("/workflow/tasks/task-1");
   });
 

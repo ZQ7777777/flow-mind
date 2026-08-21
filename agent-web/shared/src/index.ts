@@ -46,6 +46,7 @@ export interface AgentLoginCredentials {
 
 export interface AgentPublicConfig {
   defaultTargetRoot: string;
+  businessFrontendBaseUrl: string;
 }
 
 export interface Participant {

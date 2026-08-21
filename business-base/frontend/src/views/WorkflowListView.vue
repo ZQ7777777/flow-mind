@@ -366,17 +366,19 @@ function actionDataTest(row: WorkflowListRecord): string | undefined {
               <template v-else>{{ columnValue(row, column) }}</template>
             </td>
             <td class="table-actions">
-              <RouterLink class="detail-link" :to="detailPath(row)">详情</RouterLink>
-              <button
-                v-if="isHistoryTask(row) && row.withdrawContext"
-                type="button"
-                class="withdraw-button text-action"
-                data-test="withdraw-completed-task"
-                :disabled="Boolean(withdrawingHistoryId)"
-                @click="withdraw(row)"
-              >
-                {{ withdrawingHistoryId === row.historyTaskId ? "撤回中..." : "撤回" }}
-              </button>
+              <div class="table-actions-inner">
+                <RouterLink class="detail-link" :to="detailPath(row)">详情</RouterLink>
+                <button
+                  v-if="isHistoryTask(row) && row.withdrawContext"
+                  type="button"
+                  class="withdraw-button text-action"
+                  data-test="withdraw-completed-task"
+                  :disabled="Boolean(withdrawingHistoryId)"
+                  @click="withdraw(row)"
+                >
+                  {{ withdrawingHistoryId === row.historyTaskId ? "撤回中..." : "撤回" }}
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -600,7 +602,7 @@ td span {
   background: #f8fafc;
 }
 
-.table-actions {
+.table-actions-inner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;

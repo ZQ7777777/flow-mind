@@ -38,7 +38,12 @@ describe("App administrator access", () => {
   it("initializes the workflow with the authenticated administrator", async () => {
     mocks.apiRequest.mockImplementation(async (path: string) => {
       if (path === "/api/agent/auth/me") return admin;
-      if (path === "/api/agent/config") return { defaultTargetRoot: "D:\\flow-platform\\flow-mind\\business-base" };
+      if (path === "/api/agent/config") {
+        return {
+          defaultTargetRoot: "D:\\flow-platform\\flow-mind\\business-base",
+          businessFrontendBaseUrl: "http://127.0.0.1:5174",
+        };
+      }
       throw new Error(`unexpected request: ${path}`);
     });
     const wrapper = shallowMount(App, { global: { plugins: [createPinia(), ElementPlus] } });

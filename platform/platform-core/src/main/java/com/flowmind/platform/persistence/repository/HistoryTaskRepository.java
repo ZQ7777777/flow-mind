@@ -46,4 +46,12 @@ public class HistoryTaskRepository {
         return jdbcTemplate.query("SELECT * FROM process_history_task WHERE instance_id = ? "
                         + "ORDER BY completed_at ASC, id ASC", RuntimeRowMappers.HISTORY_TASK, instanceId);
     }
+
+    /** 按完成时间和 ID 稳定读取面向用户展示的实例历史任务。 */
+    public List<ProcessHistoryTaskEntity> findVisibleByInstanceId(String instanceId) {
+        return jdbcTemplate.query("SELECT h.* FROM process_history_task h WHERE h.instance_id = ? "
+                        + HistoryVisibilitySql.PREDICATE
+                        + "ORDER BY h.completed_at ASC, h.id ASC",
+                RuntimeRowMappers.HISTORY_TASK, instanceId);
+    }
 }

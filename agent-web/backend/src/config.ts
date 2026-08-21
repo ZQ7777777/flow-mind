@@ -6,6 +6,7 @@ export interface AgentConfig {
   port: number;
   dataDir: string;
   platformBaseUrl: string;
+  businessFrontendBaseUrl: string;
   platformAuthMode: "session" | "trusted-header";
   piModel: string;
   thinkingLevel: string;
@@ -24,6 +25,7 @@ export function loadConfig(): AgentConfig {
     port: Number(process.env.AGENT_PORT || 3100),
     dataDir,
     platformBaseUrl: (process.env.FLOW_PLATFORM_BASE_URL || "http://127.0.0.1:8080").replace(/\/$/, ""),
+    businessFrontendBaseUrl: (process.env.BUSINESS_BASE_FRONTEND_URL || "http://127.0.0.1:5174").replace(/\/$/, ""),
     platformAuthMode,
     piModel: process.env.PI_MODEL || "",
     thinkingLevel: process.env.PI_THINKING_LEVEL || "medium",

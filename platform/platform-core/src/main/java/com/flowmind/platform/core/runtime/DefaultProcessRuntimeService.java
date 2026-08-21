@@ -448,7 +448,7 @@ public class DefaultProcessRuntimeService implements ProcessRuntimeService {
         detail.setActiveTasks(toActiveTaskDtos(activeTaskRepository.findOpenByInstanceId(instanceId), graph));
 
         List<HistoryTaskDTO> historyTasks = new ArrayList<HistoryTaskDTO>();
-        for (ProcessHistoryTaskEntity history : historyTaskRepository.findByInstanceId(instanceId)) {
+        for (ProcessHistoryTaskEntity history : historyTaskRepository.findVisibleByInstanceId(instanceId)) {
             historyTasks.add(RuntimeModelMapper.toDto(history));
         }
         detail.setHistoryTasks(historyTasks);

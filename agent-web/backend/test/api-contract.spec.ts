@@ -32,13 +32,17 @@ describe("Agent API contract", () => {
     delete process.env.AGENT_DB_PATH;
     delete process.env.AGENT_DATA_DIR;
     delete process.env.AGENT_ALLOWED_TARGET_ROOTS;
+    delete process.env.BUSINESS_BASE_FRONTEND_URL;
   });
 
   it("enforces owner isolation, row versions and absence of a session list", async () => {
     await request(app.getHttpServer())
       .get("/api/agent/config")
       .expect(200)
-      .expect({ defaultTargetRoot: root });
+      .expect({
+        defaultTargetRoot: root,
+        businessFrontendBaseUrl: "http://127.0.0.1:5174",
+      });
 
     const created = await request(app.getHttpServer())
       .post("/api/agent/sessions")
