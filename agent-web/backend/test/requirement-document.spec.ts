@@ -36,5 +36,12 @@ describe("BusinessRequirement 1.2", () => {
     expect(first).toContain("# 入金申请需求文档");
     expect(first).toContain("## 节点字段权限");
     expect(first).toContain("POST /api/workflow/processes/entry_application/start-submit");
+    expect(first).toContain("apply");
+    expect(first).toContain("approverRule");
+    expect(first).toContain("roleCode");
+    expect(first).toContain("multiInstanceMode");
+    expect(first.indexOf("apply")).toBeLessThan(first.indexOf("manager_approve"));
+    expect(first.indexOf("## 页面行为")).toBeLessThan(first.indexOf("- 分区"));
+    expect(first.indexOf("- 分区")).toBeLessThan(first.indexOf("## 流程节点与审批规则"));
   });
 });

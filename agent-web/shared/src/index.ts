@@ -835,6 +835,17 @@ export function renderBusinessRequirementMarkdown(input: BusinessRequirement): s
       ),
     "",
     "## 页面行为",
+    "",
+    "## 流程节点与审批规则",
+    ...requirement.nodes
+      .filter((node) => node.nodeType === "USER_TASK" || node.nodeType === "NOTICE")
+      .slice()
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.nodeCode.localeCompare(right.nodeCode))
+      .map((node) => {
+        const rule = node.approverRule;
+        return `- ${node.nodeCode} / ${node.nodeName} (${node.nodeType})：approverRule.type=${rule?.type || "UNCONFIGURED"}，approverRule.config=${JSON.stringify(rule?.config ?? {})}，multiInstanceMode=${node.multiInstanceMode || "SINGLE"}`;
+      }),
+    "",
     ...requirement.frontendBehavior!.sections.slice().sort((a, b) => a.sortOrder - b.sortOrder)
       .map((section) => `- 分区 ${section.sectionCode}：${section.title}（${section.fieldCodes.join("、")}）`),
     ...requirement.frontendBehavior!.dataQueries.map((query) => `- 查询 ${query.queryCode}：${query.resource}`),

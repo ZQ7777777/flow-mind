@@ -34,6 +34,7 @@ export interface PiCallbacks {
   onEvent(type: string, data: unknown): void;
   onError(code: string, message: string): void;
   listRegisteredRoles(): Promise<RegisteredRole[]>;
+  listOrganizationDirectory(): Promise<OrganizationDirectory>;
   onRequirement(
     requirement: BusinessRequirement,
     missingItems: string[],
@@ -46,6 +47,22 @@ export interface RegisteredRole {
   roleName: string;
 }
 
+export interface OrganizationDirectory {
+  users: Array<{
+    userId: string;
+    userName: string;
+    departmentId?: string;
+    departmentName?: string;
+    roleCodes: string[];
+  }>;
+  departments: Array<{
+    departmentId: string;
+    departmentName: string;
+    parentDepartmentId?: string;
+  }>;
+  roles: RegisteredRole[];
+}
+
 export type RequirementSubmissionResult =
   | { accepted: true }
   | {
@@ -54,8 +71,6 @@ export type RequirementSubmissionResult =
     missingItems: string[];
     ambiguities: string[];
     schemaErrors?: unknown[];
-    availableRoles?: RegisteredRole[];
-    roleLookupError?: { code: string; message: string };
   };
 
 export interface RequirementSubmissionParams {
@@ -345,6 +360,24 @@ export class PiAdapterService implements OnModuleDestroy {
         };
       },
     });
+    const directoryTool = pi.defineTool({
+      name: "list_organization_directory",
+      label: "List organization directory",
+      description: "Read active users, departments, and roles from the organization directory. Use returned IDs and codes exactly; do not infer them from names.",
+      parameters: Type.Object({
+        keyword: Type.Optional(Type.String()),
+        departmentId: Type.Optional(Type.String()),
+        roleCode: Type.Optional(Type.String()),
+      }),
+      execute: async (_callId: string, params: any) => {
+        const directory = await callbacks.listOrganizationDirectory();
+        const filtered = filterOrganizationDirectory(directory, params || {});
+        return {
+          content: [{ type: "text", text: JSON.stringify(filtered) }],
+          details: filtered,
+        };
+      },
+    });
     const submitTool = pi.defineTool({
       name: "submit_requirement_snapshot",
       label: "Submit requirement snapshot",
@@ -373,7 +406,7 @@ export class PiAdapterService implements OnModuleDestroy {
       settingsManager,
       resourceLoader: loader,
       noTools: "builtin",
-      customTools: [roleTool, submitTool],
+      customTools: [roleTool, directoryTool, submitTool],
     });
     const session = created.session;
     session.subscribe((event: any) => {
@@ -754,6 +787,30 @@ export class PiAdapterService implements OnModuleDestroy {
     if (!pathFromSessionDir || pathFromSessionDir.startsWith("..") || isAbsolute(pathFromSessionDir)) return;
     if (existsSync(candidate)) rmSync(candidate, { force: true });
   }
+}
+
+function filterOrganizationDirectory(
+  directory: OrganizationDirectory,
+  filters: { keyword?: string; departmentId?: string; roleCode?: string },
+): OrganizationDirectory {
+  const keyword = typeof filters.keyword === "string" ? filters.keyword.trim().toLocaleLowerCase() : "";
+  const departmentId = typeof filters.departmentId === "string" ? filters.departmentId.trim() : "";
+  const roleCode = typeof filters.roleCode === "string" ? filters.roleCode.trim() : "";
+  const contains = (...values: Array<string | undefined>) =>
+    !keyword || values.some((value) => value?.toLocaleLowerCase().includes(keyword));
+
+  return {
+    users: directory.users.filter((user) =>
+      contains(user.userId, user.userName, user.departmentId, user.departmentName, ...user.roleCodes)
+      && (!departmentId || user.departmentId === departmentId)
+      && (!roleCode || user.roleCodes.includes(roleCode))),
+    departments: directory.departments.filter((department) =>
+      contains(department.departmentId, department.departmentName)
+      && (!departmentId || department.departmentId === departmentId)),
+    roles: directory.roles.filter((role) =>
+      contains(role.roleCode, role.roleName)
+      && (!roleCode || role.roleCode === roleCode)),
+  };
 }
 
 function mapPiEvent(event: any, callbacks: PiEventSink, purpose: "GENERATOR" | "REPAIR" | "REVIEWER" = "GENERATOR"): void {

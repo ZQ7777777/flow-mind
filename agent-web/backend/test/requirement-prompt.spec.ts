@@ -10,6 +10,12 @@ describe("requirement prompt", () => {
 
   it("requires exact registered role codes and asks after submission rejection", () => {
     expect(REQUIREMENT_SYSTEM_PROMPT).toContain("list_registered_roles");
+    expect(REQUIREMENT_SYSTEM_PROMPT).toContain("list_organization_directory");
+    expect(REQUIREMENT_SYSTEM_PROMPT).not.toContain("again before submission");
+    expect(REQUIREMENT_SYSTEM_PROMPT).not.toContain("prepare_approver_rule_review");
+    expect(REQUIREMENT_SYSTEM_PROMPT).not.toContain("confirm_approver_rule");
+    expect(REQUIREMENT_SYSTEM_PROMPT).not.toContain("Never confirm a later node in the same turn");
+    expect(REQUIREMENT_SYSTEM_PROMPT).not.toContain("review status is COMPLETED");
     expect(REQUIREMENT_SYSTEM_PROMPT).toContain("exact roleCode");
     expect(REQUIREMENT_SYSTEM_PROMPT).toContain("do not guess");
     expect(REQUIREMENT_SYSTEM_PROMPT).toContain("ASK_USER");

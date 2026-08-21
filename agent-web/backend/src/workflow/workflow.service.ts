@@ -15,6 +15,7 @@ import { AgentError } from "../common/agent-error.js";
 import { DatabaseService, type ProcessRow, type SessionRow } from "../persistence/database.service.js";
 import {
   PiAdapterService,
+  type OrganizationDirectory,
   type PiCallbacks,
   type RegisteredRole,
   type RequirementSubmissionResult,
@@ -507,28 +508,12 @@ export class WorkflowService {
     }
     const mergedMissing = [...new Set([...missingItems, ...validation.missingItems])];
     const mergedAmbiguities = [...new Set([...ambiguities, ...validation.ambiguities])];
-    let availableRoles: RegisteredRole[];
-    try {
-      availableRoles = await this.listRegisteredRoles(sessionId);
-    } catch (error) {
-      const roleLookupError = toErrorDescriptor(error);
-      return {
-        accepted: false,
-        action: "ASK_USER",
-        missingItems: mergedMissing,
-        ambiguities: [...mergedAmbiguities, `无法读取角色中心：${roleLookupError.message}`],
-        roleLookupError,
-      };
-    }
-    const roleIssues = validateRequirementRoles(normalizedRequirement as BusinessRequirement, availableRoles);
-    mergedMissing.push(...roleIssues);
     if (!validation.readyForReview || mergedMissing.length || mergedAmbiguities.length) {
       return {
         accepted: false,
         action: "ASK_USER",
         missingItems: [...new Set(mergedMissing)],
         ambiguities: mergedAmbiguities,
-        availableRoles,
       };
     }
     const now = new Date().toISOString();
@@ -545,7 +530,7 @@ export class WorkflowService {
     return { accepted: true };
   }
 
-  private async listRegisteredRoles(sessionId: string): Promise<RegisteredRole[]> {
+  private async listOrganizationDirectory(sessionId: string): Promise<OrganizationDirectory> {
     const session = this.database.getSession(sessionId);
     if (!session) throw new AgentError(HttpStatus.NOT_FOUND, "AGENT_SESSION_NOT_FOUND", "session not found", sessionId);
     const options = await this.platform.getOrganizationOptions({
@@ -554,16 +539,43 @@ export class WorkflowService {
       departmentId: session.owner_dept_id || undefined,
       departmentName: session.owner_dept_name || undefined,
     });
-    const roles = Array.isArray(options?.roles) ? options.roles : [];
-    const unique = new Map<string, RegisteredRole>();
-    for (const role of roles) {
+    const users = Array.isArray(options?.users)
+      ? options.users
+        .filter((user) => user && typeof user.userId === "string" && user.userId)
+        .map((user) => ({
+          userId: user.userId,
+          userName: typeof user.userName === "string" && user.userName ? user.userName : user.userId,
+          departmentId: typeof user.departmentId === "string" && user.departmentId ? user.departmentId : undefined,
+          departmentName: typeof user.departmentName === "string" && user.departmentName ? user.departmentName : undefined,
+          roleCodes: Array.isArray(user.roleCodes) ? user.roleCodes.filter((code): code is string => typeof code === "string" && Boolean(code)) : [],
+        }))
+      : [];
+    const departments = Array.isArray(options?.departments)
+      ? options.departments
+        .filter((department) => department && typeof department.departmentId === "string" && department.departmentId)
+        .map((department) => ({
+          departmentId: department.departmentId,
+          departmentName: typeof department.departmentName === "string" && department.departmentName
+            ? department.departmentName
+            : department.departmentId,
+          parentDepartmentId: typeof department.parentDepartmentId === "string" && department.parentDepartmentId
+            ? department.parentDepartmentId
+            : undefined,
+        }))
+      : [];
+    const roles = new Map<string, RegisteredRole>();
+    for (const role of Array.isArray(options?.roles) ? options.roles : []) {
       if (!role || typeof role.roleCode !== "string" || !role.roleCode) continue;
-      unique.set(role.roleCode, {
+      roles.set(role.roleCode, {
         roleCode: role.roleCode,
         roleName: typeof role.roleName === "string" && role.roleName ? role.roleName : role.roleCode,
       });
     }
-    return [...unique.values()];
+    return { users, departments, roles: [...roles.values()] };
+  }
+
+  private async listRegisteredRoles(sessionId: string): Promise<RegisteredRole[]> {
+    return (await this.listOrganizationDirectory(sessionId)).roles;
   }
 
   private async provision(sessionId: string, user: MockUser): Promise<void> {
@@ -695,6 +707,7 @@ export class WorkflowService {
         this.events.publish(sessionId, { type: "error", data: { code, message } });
       },
       listRegisteredRoles: () => this.listRegisteredRoles(sessionId),
+      listOrganizationDirectory: () => this.listOrganizationDirectory(sessionId),
       onRequirement: (requirement, missingItems, ambiguities) =>
         this.saveAgentRequirement(sessionId, requirement, missingItems, ambiguities),
     };
@@ -757,47 +770,6 @@ function formatSchemaErrors(errors: Array<{ instancePath?: string; message?: str
     const path = `${error.instancePath || "requirement"}${missingProperty}`;
     return `${path}: ${error.message || "schema validation failed"}`;
   }).join("; ") || "schema validation failed";
-}
-
-function validateRequirementRoles(
-  requirement: BusinessRequirement,
-  availableRoles: RegisteredRole[],
-): string[] {
-  const participantCodes = new Set(requirement.participants.map(({ roleCode }) => roleCode));
-  const registeredCodes = new Set(availableRoles.map(({ roleCode }) => roleCode));
-  const approverRoleCodes = new Set<string>();
-  const issues: string[] = [];
-  for (const node of requirement.nodes) {
-    if (node.approverRule?.type !== "ROLE" && node.approverRule?.type !== "ROLE_IN_DEPARTMENT") continue;
-    const roleCode = node.approverRule.config?.roleCode;
-    if (typeof roleCode !== "string" || !roleCode) continue;
-    approverRoleCodes.add(roleCode);
-    if (!participantCodes.has(roleCode)) {
-      issues.push(`审批角色 ${roleCode} 未在参与角色列表中`);
-    }
-  }
-  const unregistered = [...approverRoleCodes].filter((roleCode) => !registeredCodes.has(roleCode));
-  if (unregistered.length) {
-    issues.push(`以下角色编码需在角色中心预先注册后方可提交：${unregistered.join("、")}`);
-  }
-  return issues;
-}
-
-function toErrorDescriptor(error: unknown): { code: string; message: string } {
-  if (error instanceof AgentError) {
-    const response = error.getResponse();
-    if (response && typeof response === "object") {
-      const body = response as { code?: unknown; message?: unknown };
-      return {
-        code: typeof body.code === "string" ? body.code : "FLOW_PLATFORM_ERROR",
-        message: typeof body.message === "string" ? body.message : error.message,
-      };
-    }
-  }
-  return {
-    code: "FLOW_PLATFORM_ERROR",
-    message: error instanceof Error ? error.message : String(error),
-  };
 }
 
 function normalizeOptionalTarget(targetRoot?: string): string | undefined {

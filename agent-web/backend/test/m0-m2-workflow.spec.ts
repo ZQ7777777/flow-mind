@@ -67,8 +67,14 @@ describe("M0-M2 workflow", () => {
           });
         }
         payload = {
-          users: [],
-          departments: [],
+          users: [
+            { userId: "u_delivery_01", userName: "delivery-one", departmentId: "dept_delivery", departmentName: "Delivery", roleCodes: ["delivery_worker"] },
+            { userId: "u_operations_manager_01", userName: "operations-manager", departmentId: "dept_operations", departmentName: "Operations", roleCodes: ["department_manager"] },
+          ],
+          departments: [
+            { departmentId: "dept_delivery", departmentName: "Delivery" },
+            { departmentId: "dept_operations", departmentName: "Operations" },
+          ],
           roles: registeredRoles,
         };
       } else if (url.pathname === "/api/platform/definitions" && method === "POST") {
@@ -368,66 +374,42 @@ describe("M0-M2 workflow", () => {
       missingItems: ["交割复核角色 DELIVERY_REVIEWER 未在参与人列表中"],
       ambiguities: ["交割操作部门审批配置待确认"],
     });
-    expect(result.availableRoles).toContainEqual({ roleCode: "finance", roleName: "财务" });
     expect(database.getSession(created.sessionId)?.state).toBe("COLLECTING");
     expect(database.getSession(created.sessionId)?.requirement_json).toBeNull();
   });
 
-  it("rejects approver roles missing from participants or the role center with exact codes", async () => {
+  it("accepts a valid snapshot without an approval-rule review", async () => {
     const created = await workflow.createSession(user);
-    const missingParticipant = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
-    missingParticipant.nodes.find((node) => node.nodeCode === "finance_confirm")!.approverRule = {
-      type: "ROLE",
-      config: { roleCode: "delivery_reviewer" },
-    };
-
-    const first = await (workflow as any).saveAgentRequirement(created.sessionId, missingParticipant, [], []);
-    expect(first.accepted).toBe(false);
-    expect(first.missingItems.join(" ")).toContain("delivery_reviewer");
-    expect(first.missingItems.join(" ")).toContain("参与角色");
-
-    const unregistered = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
-    unregistered.participants.find((participant) => participant.roleCode === "finance")!.roleCode = "FINANCE";
-    unregistered.nodes.find((node) => node.nodeCode === "finance_confirm")!.approverRule = {
-      type: "ROLE",
-      config: { roleCode: "FINANCE" },
-    };
-
-    const second = await (workflow as any).saveAgentRequirement(created.sessionId, unregistered, [], []);
-    expect(second.accepted).toBe(false);
-    expect(second.missingItems.join(" ")).toContain("FINANCE");
-    expect(second.missingItems.join(" ")).toContain("角色中心");
-    expect(second.missingItems.join(" ")).not.toContain("finance 未在角色中心");
+    const accepted = await (workflow as any).saveAgentRequirement(created.sessionId, ENTRY_APPLICATION_REQUIREMENT, [], []);
+    expect(accepted).toEqual({ accepted: true });
   });
 
-  it("does not bypass role validation when the role center is empty or unavailable", async () => {
-    const emptySession = await workflow.createSession(user);
+  it("does not query the role directory when submitting a valid requirement", async () => {
+    const created = await workflow.createSession(user);
     registeredRoles = [];
-    const empty = await (workflow as any).saveAgentRequirement(
-      emptySession.sessionId,
-      ENTRY_APPLICATION_REQUIREMENT,
-      [],
-      [],
-    );
-    expect(empty.accepted).toBe(false);
-    expect(empty.missingItems.join(" ")).toContain("department_manager");
-    expect(empty.missingItems.join(" ")).toContain("finance");
-
-    const unavailableSession = await workflow.createSession(user);
     organizationStatus = 503;
-    const unavailable = await (workflow as any).saveAgentRequirement(
-      unavailableSession.sessionId,
-      ENTRY_APPLICATION_REQUIREMENT,
-      [],
-      [],
-    );
-    expect(unavailable).toMatchObject({
-      accepted: false,
-      action: "ASK_USER",
-      roleLookupError: { code: "FLOW_PLATFORM_ERROR", message: "角色中心暂不可用" },
-    });
-    expect(unavailable.ambiguities.join(" ")).toContain("角色中心暂不可用");
-    expect(database.getSession(unavailableSession.sessionId)?.state).toBe("COLLECTING");
+    const before = calls.filter((call) => call.path === "/api/admin/process-definition-options").length;
+
+    const accepted = await (workflow as any).saveAgentRequirement(created.sessionId, ENTRY_APPLICATION_REQUIREMENT, [], []);
+
+    const after = calls.filter((call) => call.path === "/api/admin/process-definition-options").length;
+    expect(accepted).toEqual({ accepted: true });
+    expect(after).toBe(before);
+  });
+
+  it("exposes the complete generic organization directory", async () => {
+    const created = await workflow.createSession(user);
+    const directory = await (workflow as any).listOrganizationDirectory(created.sessionId);
+
+    expect(directory.users.map((entry: any) => entry.userId)).toEqual([
+      "u_delivery_01",
+      "u_operations_manager_01",
+    ]);
+    expect(directory.departments.map((entry: any) => entry.departmentId)).toEqual([
+      "dept_delivery",
+      "dept_operations",
+    ]);
+    expect(directory.roles).toEqual(registeredRoles);
   });
 
   it("resets an active workflow into a fresh Pi conversation", async () => {
