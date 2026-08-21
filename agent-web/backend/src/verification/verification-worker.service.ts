@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -24,12 +25,14 @@ import { qualityDiagnostic, sanitizeDiagnosticEvidence } from "./quality-diagnos
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+const DEPENDENCY_CACHE_MARKER = ".flowmind-dependency-cache.json";
 const HARD_STAGES = new Set<QualityStageName>([
   "BACKEND_COMPILE",
   "FRONTEND_TYPECHECK",
   "FRONTEND_BUILD",
 ]);
 const activeGenerations = new Set<string>();
+const activeFrontendDependencyInstalls = new Map<string, Promise<void>>();
 
 export type VerificationCommandStage = Exclude<QualityStageName, "STATIC_VALIDATION">;
 
@@ -74,6 +77,9 @@ export interface VerificationWorkerInput {
   stages?: VerificationCommandStage[];
   /** Per-stage progress sink so the orchestrator can stream stage status to the UI. */
   onStage?: (stage: VerificationCommandStage, status: QualityStageResult["status"], hardGate: boolean) => void;
+  /** Internal retry state used to isolate a rebuilt verification environment. */
+  forceEnvironmentRebuild?: boolean;
+  environmentRetryCacheKey?: string;
 }
 
 export interface VerificationWorkerResult {
@@ -95,20 +101,34 @@ export class VerificationWorkerService {
       );
     }
     activeGenerations.add(input.generationId);
+    try {
+      return await this.runAttempt(input, true);
+    } finally {
+      activeGenerations.delete(input.generationId);
+    }
+  }
+
+  private async runAttempt(
+    input: VerificationWorkerInput,
+    allowEnvironmentRetry: boolean,
+  ): Promise<VerificationWorkerResult> {
     const runId = `verify_${randomUUID()}`;
     const workspaceRoot = join(input.dataDir, "verification-workspaces", input.generationId, runId);
     const logDir = join(input.dataDir, "verification-logs", input.generationId, runId);
+    const cacheNamespace = input.forceEnvironmentRebuild
+      ? input.environmentRetryCacheKey || `retry-${randomUUID()}`
+      : undefined;
     mkdirSync(logDir, { recursive: true });
 
     try {
       copyDirectory(input.targetRoot, workspaceRoot);
       overlayManifest(input, workspaceRoot);
       writeGeneratedFrontendTsconfig(input, workspaceRoot);
-      const commands = fixedCommands(input, workspaceRoot);
+      const commands = fixedCommands(input, workspaceRoot, cacheNamespace);
       const frontendOnly = input.contract.generationMode === "FRONTEND_ONLY";
       const stages: QualityStageResult[] = frontendOnly ? [notApplicableStage("BACKEND_COMPILE")] : [];
       const execute = input.execute || executeVerificationCommand;
-      await installFrontendDependencies(input, workspaceRoot, execute, runId, logDir);
+      await installFrontendDependencies(input, workspaceRoot, execute, runId, logDir, cacheNamespace);
       for (const command of commands) {
         const hardGate = HARD_STAGES.has(command.stage);
         const blockers = commandBlockers(command.stage, stages);
@@ -137,7 +157,14 @@ export class VerificationWorkerService {
         const stage = stageResult(command, result, logPath, truncated.truncated, input.manifest);
         stages.push(stage);
         input.onStage?.(command.stage, stage.status, hardGate);
-        if (result.infrastructureError || result.timedOut || result.cancelled) break;
+        if (stage.status === "INFRASTRUCTURE_FAILED" && !result.cancelled && allowEnvironmentRetry && !input.signal?.aborted) {
+          return await this.runAttempt({
+            ...input,
+            forceEnvironmentRebuild: true,
+            environmentRetryCacheKey: `retry-${randomUUID()}`,
+          }, false);
+        }
+        if (result.infrastructureError || result.timedOut || result.cancelled || stage.status === "INFRASTRUCTURE_FAILED") break;
       }
       if (frontendOnly) stages.push(notApplicableStage("BACKEND_TESTS"));
       linkDerivedFrontendDiagnostics(stages);
@@ -148,9 +175,17 @@ export class VerificationWorkerService {
         stages,
         infrastructureFailed: stages.some(({ status }) => status === "INFRASTRUCTURE_FAILED" || status === "CANCELLED"),
       };
+    } catch (error) {
+      if (allowEnvironmentRetry && !input.signal?.aborted && isRetryableEnvironmentError(error)) {
+        return await this.runAttempt({
+          ...input,
+          forceEnvironmentRebuild: true,
+          environmentRetryCacheKey: `retry-${randomUUID()}`,
+        }, false);
+      }
+      throw error;
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
-      activeGenerations.delete(input.generationId);
     }
   }
 }
@@ -247,7 +282,7 @@ export async function executeVerificationCommand(
   });
 }
 
-function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string): VerificationCommand[] {
+function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string, cacheNamespace?: string): VerificationCommand[] {
   const timeoutMs = input.timeoutMs || DEFAULT_TIMEOUT_MS;
   const maxOutputBytes = input.maxOutputBytes || DEFAULT_MAX_OUTPUT_BYTES;
   const common = {
@@ -259,7 +294,7 @@ function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string): V
       ...fixedEnvironment(),
       // The desktop process may not have access to the interactive user's npm
       // cache. Keep the verification cache under the agent data directory.
-      NPM_CONFIG_CACHE: join(input.dataDir, "npm-cache"),
+      NPM_CONFIG_CACHE: namespacedCachePath(input.dataDir, "npm-cache", cacheNamespace),
     },
     signal: input.signal,
   };
@@ -273,7 +308,7 @@ function fixedCommands(input: VerificationWorkerInput, workspaceRoot: string): V
       args: ["/d", "/s", "/c", `${executable}.cmd ${args.map(windowsCommandArg).join(" ")}`],
     };
   };
-  const mavenRepoArgs = configuredMavenRepoArgs();
+  const mavenRepoArgs = configuredMavenRepoArgs(input.dataDir, cacheNamespace);
   const frontendOnly = input.contract.generationMode === "FRONTEND_ONLY";
   const backend = input.contract.backend ? resolve(workspaceRoot, input.contract.backend.rootDir) : "";
   const frontend = resolve(workspaceRoot, input.contract.frontend.rootDir);
@@ -298,9 +333,14 @@ function notApplicableStage(stage: "BACKEND_COMPILE" | "BACKEND_TESTS"): Quality
   };
 }
 
-function configuredMavenRepoArgs(): string[] {
+function configuredMavenRepoArgs(dataDir: string, cacheNamespace?: string): string[] {
+  if (cacheNamespace) return [`-Dmaven.repo.local=${namespacedCachePath(dataDir, "maven-cache", cacheNamespace)}`];
   const repoLocal = process.env.AGENT_MAVEN_REPO_LOCAL?.trim();
   return repoLocal ? [`-Dmaven.repo.local=${resolve(repoLocal)}`] : [];
+}
+
+function namespacedCachePath(dataDir: string, cacheName: string, cacheNamespace?: string): string {
+  return cacheNamespace ? join(dataDir, cacheName, cacheNamespace) : join(dataDir, cacheName);
 }
 
 function windowsCommandArg(arg: string): string {
@@ -377,26 +417,95 @@ async function installFrontendDependencies(
   execute: VerificationCommandExecutor,
   runId: string,
   logDir: string,
+  cacheNamespace?: string,
 ): Promise<void> {
-  const frontend = resolve(workspaceRoot, input.contract.frontend.rootDir);
-  if (!existsSync(join(frontend, "package-lock.json"))) return;
+  const workspaceFrontend = resolve(workspaceRoot, input.contract.frontend.rootDir);
+  const lockfile = join(workspaceFrontend, "package-lock.json");
+  if (!existsSync(lockfile)) return;
 
-  const command = dependencyInstallCommand(frontend, workspaceRoot, input);
-  const result = await execute(command);
-  writeFileSync(join(logDir, "frontend_dependency_install.log"), `[stdout]\n${result.stdout}\n[stderr]\n${result.stderr}`, "utf8");
+  const lockSha256 = sha256(readFileSync(lockfile));
+  const cacheRoot = join(input.dataDir, "dependency-cache", "frontend-dependencies", lockSha256);
+  const cacheFrontend = join(cacheRoot, "frontend");
+  await ensureFrontendDependencyCache({
+    workspaceFrontend,
+    cacheRoot,
+    cacheFrontend,
+    lockSha256,
+    workspaceRoot,
+    input,
+    execute,
+    runId,
+    logDir,
+    forceRebuild: Boolean(input.forceEnvironmentRebuild),
+    cacheNamespace,
+  });
+  linkCachedNodeModules(cacheFrontend, workspaceFrontend);
+}
+
+async function ensureFrontendDependencyCache(options: {
+  workspaceFrontend: string;
+  cacheRoot: string;
+  cacheFrontend: string;
+  lockSha256: string;
+  workspaceRoot: string;
+  input: VerificationWorkerInput;
+  execute: VerificationCommandExecutor;
+  runId: string;
+  logDir: string;
+  forceRebuild?: boolean;
+  cacheNamespace?: string;
+}): Promise<void> {
+  const existing = activeFrontendDependencyInstalls.get(options.cacheFrontend);
+  if (existing) {
+    await existing;
+    return;
+  }
+  if (!options.forceRebuild && frontendDependencyCacheReady(options.cacheFrontend, options.lockSha256)) return;
+  const install = populateFrontendDependencyCache(options)
+    .finally(() => activeFrontendDependencyInstalls.delete(options.cacheFrontend));
+  activeFrontendDependencyInstalls.set(options.cacheFrontend, install);
+  await install;
+}
+
+async function populateFrontendDependencyCache(options: {
+  workspaceFrontend: string;
+  cacheRoot: string;
+  cacheFrontend: string;
+  lockSha256: string;
+  workspaceRoot: string;
+  input: VerificationWorkerInput;
+  execute: VerificationCommandExecutor;
+  runId: string;
+  logDir: string;
+  cacheNamespace?: string;
+}): Promise<void> {
+  rmSync(options.cacheRoot, { recursive: true, force: true });
+  mkdirSync(options.cacheFrontend, { recursive: true });
+  copyDependencyFile(options.workspaceFrontend, options.cacheFrontend, "package.json");
+  copyDependencyFile(options.workspaceFrontend, options.cacheFrontend, "package-lock.json");
+
+  const command = dependencyInstallCommand(options.cacheFrontend, options.workspaceRoot, options.input, options.cacheNamespace);
+  const result = await options.execute(command);
+  writeFileSync(join(options.logDir, "frontend_dependency_install.log"), `[stdout]\n${result.stdout}\n[stderr]\n${result.stderr}`, "utf8");
   if (result.exitCode !== 0 || result.infrastructureError || result.timedOut || result.cancelled) {
     throw new AgentError(
       HttpStatus.SERVICE_UNAVAILABLE,
       "AGENT_FRONTEND_DEPENDENCY_INSTALL_FAILED",
-      `Unable to restore frontend dependencies for ${runId}; see frontend_dependency_install.log.`,
+      `Unable to restore frontend dependencies for ${options.runId}; see frontend_dependency_install.log.`,
     );
   }
+  writeFileSync(
+    join(options.cacheFrontend, DEPENDENCY_CACHE_MARKER),
+    `${JSON.stringify({ lockSha256: options.lockSha256, createdAt: new Date().toISOString() }, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 function dependencyInstallCommand(
   frontend: string,
   workspaceRoot: string,
   input: VerificationWorkerInput,
+  cacheNamespace?: string,
 ): VerificationCommand {
   const command = process.platform === "win32"
     ? {
@@ -414,10 +523,55 @@ function dependencyInstallCommand(
     maxOutputBytes: input.maxOutputBytes || DEFAULT_MAX_OUTPUT_BYTES,
     env: {
       ...fixedEnvironment(),
-      NPM_CONFIG_CACHE: join(input.dataDir, "npm-cache"),
+      NPM_CONFIG_CACHE: namespacedCachePath(input.dataDir, "npm-cache", cacheNamespace),
     },
     signal: input.signal,
   };
+}
+
+function copyDependencyFile(sourceFrontend: string, cacheFrontend: string, fileName: "package.json" | "package-lock.json"): void {
+  const source = join(sourceFrontend, fileName);
+  if (!existsSync(source)) return;
+  writeFileSync(join(cacheFrontend, fileName), readFileSync(source));
+}
+
+function frontendDependencyCacheReady(cacheFrontend: string, lockSha256: string): boolean {
+  const markerPath = join(cacheFrontend, DEPENDENCY_CACHE_MARKER);
+  if (!existsSync(markerPath)) return false;
+  try {
+    const marker = JSON.parse(readFileSync(markerPath, "utf8")) as { lockSha256?: string };
+    if (marker.lockSha256 !== lockSha256) return false;
+  } catch {
+    return false;
+  }
+  return existsSync(join(cacheFrontend, "node_modules")) || process.env.NODE_ENV === "test";
+}
+
+function linkCachedNodeModules(cacheFrontend: string, workspaceFrontend: string): void {
+  const source = join(cacheFrontend, "node_modules");
+  if (!existsSync(source)) return;
+  const destination = join(workspaceFrontend, "node_modules");
+  rmSync(destination, { recursive: true, force: true });
+  try {
+    symlinkSync(source, destination, process.platform === "win32" ? "junction" : "dir");
+  } catch {
+    copyDirectoryUnfiltered(source, destination);
+  }
+}
+
+function copyDirectoryUnfiltered(source: string, destination: string): void {
+  const stat = lstatSync(source);
+  if (stat.isDirectory()) {
+    mkdirSync(destination, { recursive: true });
+    for (const entry of readdirSync(source, { withFileTypes: true })) {
+      copyDirectoryUnfiltered(join(source, entry.name), join(destination, entry.name));
+    }
+    return;
+  }
+  if (stat.isFile()) {
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, readFileSync(source));
+  }
 }
 
 function stageResult(
@@ -435,6 +589,25 @@ function stageResult(
   else status = result.exitCode === 0 ? "PASSED" : "FAILED";
   const fallbackEvidence = diagnosticExcerpt(`${result.stdout}\n${result.stderr}`);
   let parsedDiagnostics = status === "PASSED" ? [] : parseCommandDiagnostics(command, result, hardGate, manifest);
+  const environmentReason = status === "FAILED"
+    ? environmentFailureReason(result, parsedDiagnostics)
+    : undefined;
+  if (environmentReason) {
+    status = "INFRASTRUCTURE_FAILED";
+    const firstDiagnostic = parsedDiagnostics[0];
+    parsedDiagnostics = [qualityDiagnostic(command.stage, {
+      code: "VERIFICATION_ENVIRONMENT_FAILED",
+      message: environmentReason,
+      hardGate,
+      relativePath: firstDiagnostic?.relativePath,
+      evidence: fallbackEvidence || environmentReason,
+      command: formatVerificationCommand(command),
+      exitCode: result.exitCode === null ? undefined : result.exitCode,
+      expected: "The verification environment and dependency caches must be available.",
+      repairHint: "Rebuild the verification workspace and dependency caches; do not modify generated Manifest sources for this failure.",
+      repairability: "INFRASTRUCTURE",
+    })];
+  }
   if (status === "FAILED" && !parsedDiagnostics.length) {
     parsedDiagnostics = [qualityDiagnostic(command.stage, {
       code: "VERIFICATION_COMMAND_FAILED",
@@ -484,6 +657,51 @@ function stageResult(
     logPath,
     outputTruncated,
   };
+}
+
+function environmentFailureReason(
+  result: VerificationCommandResult,
+  diagnostics: QualityDiagnostic[],
+): string | undefined {
+  if (result.infrastructureError) return `Verification tool or filesystem error: ${result.infrastructureError}`;
+  if (result.timedOut) return "Verification tool timed out while preparing or executing the environment.";
+  if (result.cancelled) return undefined;
+
+  const output = `${result.stdout}\n${result.stderr}`;
+  const hasEnvironmentDiagnostic = diagnostics.some(({ relativePath }) =>
+    Boolean(relativePath && isEnvironmentPath(relativePath)));
+  const hasNonEnvironmentPath = diagnostics.some(({ relativePath }) =>
+    Boolean(relativePath && !isEnvironmentPath(relativePath)));
+  if (hasNonEnvironmentPath) return undefined;
+  if (hasEnvironmentDiagnostic || isEnvironmentOutput(output)) {
+    return "Verification failed in node_modules, a dependency cache, a build tool, or the filesystem.";
+  }
+  return undefined;
+}
+
+function isEnvironmentPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  return normalized.split("/").some((segment) => [
+    "node_modules",
+    ".m2",
+    "maven-cache",
+    "npm-cache",
+    "dependency-cache",
+    "verification-workspaces",
+    "verification-logs",
+  ].includes(segment)) || normalized.includes("/cache/");
+}
+
+function isEnvironmentOutput(output: string): boolean {
+  return /(?:\bEACCES\b|\bEPERM\b|\bEBUSY\b|\bENOSPC\b|\bEMFILE\b|\bENOENT\b|\bEAI_AGAIN\b|\bECONNRESET\b|\bETIMEDOUT\b|\bENETUNREACH\b|permission denied|access is denied|file is locked|another process|spawn .*?(?:not found|enoent)|(?:is not recognized|command not found)|could not transfer artifact|failed to read artifact descriptor|non-resolvable parent pom|plugin .*? could not be resolved)/i.test(output);
+}
+
+function isRetryableEnvironmentError(error: unknown): boolean {
+  const parts = [
+    error instanceof Error ? error.message : String(error),
+    error instanceof AgentError ? JSON.stringify(error.getResponse()) : "",
+  ];
+  return /Unable to restore frontend dependencies|EACCES|EPERM|EBUSY|ENOSPC|EMFILE|ENOENT|EAI_AGAIN|ECONNRESET|ETIMEDOUT|ENETUNREACH|permission denied|access is denied|file is locked|is not recognized|command not found/i.test(parts.join("\n"));
 }
 
 function commandBlockers(stage: QualityStageName, stages: QualityStageResult[]): QualityStageName[] {
@@ -927,4 +1145,8 @@ function assertInside(root: string, candidate: string): void {
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_GENERATION_PATH_FORBIDDEN", "Path escapes verification workspace.");
   }
+}
+
+function sha256(content: Buffer | string): string {
+  return createHash("sha256").update(content).digest("hex");
 }

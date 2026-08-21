@@ -19,23 +19,49 @@ const props = withDefaults(defineProps<{
   fieldPermissions: WorkflowFieldPermission[];
   mode?: "edit" | "readonly";
   disabled?: boolean;
-}>(), { mode: "edit", disabled: false });
+  currentNodeCode?: string;
+  checkRefreshable?: boolean;
+}>(), { mode: "edit", disabled: false, currentNodeCode: "", checkRefreshable: true });
 
 const emit = defineEmits<{ "update:modelValue": [value: Record<string, unknown>] }>();
+const draft = ref<Record<string, unknown>>({ ...props.modelValue });
+const emittedModels = new Map<string, number>();
+let latestEmissionSequence = 0;
 const accounts = ref<FuturesAccount[]>([]);
 const exchanges = ref<Exchange[]>([]);
 const products = ref<FuturesProduct[]>([]);
 const accountFunds = ref<AccountFund>();
 const loading = ref(false);
 const error = ref("");
+const initialized = ref(false);
+let accountRequestId = 0;
+let exchangeRequestId = 0;
+let tradingCodeRequestId = 0;
+const businessTypes = ["仓单质押", "仓单解质押", "国债质押", "国债解质押"];
+const frozenChecks = computed(() => props.currentNodeCode === "delivery_review" || !props.checkRefreshable);
 
 function value<T>(fieldCode: string, fallback: T): T {
-  return (props.modelValue[fieldCode] ?? fallback) as T;
+  return (draft.value[fieldCode] ?? fallback) as T;
 }
 
 function update(fieldCode: string, nextValue: unknown): void {
-  emit("update:modelValue", { ...props.modelValue, [fieldCode]: nextValue });
+  updateMany({ [fieldCode]: nextValue });
 }
+
+function updateMany(nextValues: Record<string, unknown>): void {
+  draft.value = { ...draft.value, ...nextValues };
+  const emitted = { ...draft.value };
+  latestEmissionSequence += 1;
+  emittedModels.set(JSON.stringify(emitted), latestEmissionSequence);
+  emit("update:modelValue", emitted);
+}
+
+watch(() => props.modelValue, (next) => {
+  const sequence = emittedModels.get(JSON.stringify(next));
+  if (sequence !== undefined && sequence < latestEmissionSequence) return;
+  draft.value = { ...next };
+  if (sequence === latestEmissionSequence) emittedModels.clear();
+}, { deep: true });
 
 function updateFromEvent(fieldCode: string, event: Event, numeric = false): void {
   const raw = (event.target as HTMLInputElement | HTMLSelectElement).value;
@@ -46,11 +72,8 @@ function permission(fieldCode: string): WorkflowFieldPermission | undefined {
   return props.fieldPermissions.find((item) => item.fieldCode === fieldCode);
 }
 
-function fieldLabel(fieldCode: string): string {
-  return props.fields.find((item) => item.fieldCode === fieldCode)?.fieldName ?? fieldCode;
-}
-
 function visible(fieldCode: string): boolean {
+  if (["largeAmount"].includes(fieldCode)) return false;
   const runtime = permission(fieldCode);
   const field = props.fields.find((item) => item.fieldCode === fieldCode);
   return runtime?.visible ?? field?.visible ?? true;
@@ -67,47 +90,47 @@ function required(fieldCode: string): boolean {
   return permission(fieldCode)?.required ?? props.fields.find((item) => item.fieldCode === fieldCode)?.required ?? false;
 }
 
-const businessTypeOptions = computed(() => {
-  const field = props.fields.find((item) => item.fieldCode === "businessType");
-  if (field?.options?.length) return field.options;
-  return [
-    { label: "仓单质押", value: "仓单质押" },
-    { label: "仓单解质押", value: "仓单解质押" },
-    { label: "国债质押", value: "国债质押" },
-    { label: "国债解质押", value: "国债解质押" },
-  ];
-});
-
 onMounted(async () => {
   loading.value = true;
   try {
     [accounts.value, exchanges.value] = await Promise.all([searchFuturesAccounts(), getExchanges()]);
+    const exchangeCode = value("exchangeCode", "");
+    const accountNo = value("futuresAccount", "");
+    if (exchangeCode) products.value = await searchFuturesProducts(exchangeCode);
+    if (accountNo && !frozenChecks.value) accountFunds.value = await getAccountFunds(accountNo);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "参考数据加载失败";
   } finally {
+    initialized.value = true;
     loading.value = false;
   }
 });
 
 watch(() => value("futuresAccount", ""), async (accountNo) => {
+  if (!initialized.value) return;
+  const requestId = ++accountRequestId;
   accountFunds.value = undefined;
   if (!accountNo) {
-    emit("update:modelValue", { ...props.modelValue, customerName: "", tradingCode: "" });
+    updateMany({ customerName: "", tradingCode: "" });
     return;
   }
   const account = accounts.value.find((item) => item.accountNo === accountNo);
-  if (account) update("customerName", account.customerName);
+  if (account) updateMany({ customerName: account.customerName, tradingCode: "" });
   try {
-    accountFunds.value = await getAccountFunds(accountNo);
+    const funds = await getAccountFunds(accountNo);
+    if (requestId !== accountRequestId || accountNo !== value("futuresAccount", "")) return;
+    accountFunds.value = funds;
     await loadTradingCode();
   } catch (reason) {
+    if (requestId !== accountRequestId) return;
     error.value = reason instanceof Error ? reason.message : "客户资金加载失败";
   }
 });
 
 watch(() => value("exchangeCode", ""), async (exchangeCode) => {
-  emit("update:modelValue", {
-    ...props.modelValue,
+  if (!initialized.value) return;
+  const requestId = ++exchangeRequestId;
+  updateMany({
     tradingCode: "",
     productCodes: [],
     contractMultiplier: undefined,
@@ -119,28 +142,30 @@ watch(() => value("exchangeCode", ""), async (exchangeCode) => {
   products.value = [];
   if (!exchangeCode) return;
   try {
-    products.value = await searchFuturesProducts(exchangeCode);
+    const loaded = await searchFuturesProducts(exchangeCode);
+    if (requestId !== exchangeRequestId || exchangeCode !== value("exchangeCode", "")) return;
+    products.value = loaded;
     await loadTradingCode();
   } catch (reason) {
+    if (requestId !== exchangeRequestId) return;
     error.value = reason instanceof Error ? reason.message : "交易所关联数据加载失败";
   }
 });
 
 watch(() => value<string[]>("productCodes", []).join("\u0000"), (codesKey) => {
   const codes = codesKey ? codesKey.split("\u0000") : [];
-  if (!codes.length) {
-    emit("update:modelValue", {
-      ...props.modelValue,
-      contractMultiplier: undefined,
-      pledgeUnitQuantity: undefined,
-      previousSettlementPrice: undefined,
-    });
+  const selected = products.value.find((item) => item.productCode === codes.at(-1));
+  if (!selected) {
+    if (codes.length === 0) {
+      updateMany({
+        contractMultiplier: undefined,
+        pledgeUnitQuantity: undefined,
+        previousSettlementPrice: undefined,
+      });
+    }
     return;
   }
-  const selected = products.value.find((item) => item.productCode === codes[codes.length - 1]);
-  if (!selected) return;
-  emit("update:modelValue", {
-    ...props.modelValue,
+  updateMany({
     contractMultiplier: selected.contractMultiplier,
     pledgeUnitQuantity: selected.pledgeUnitQuantity,
     previousSettlementPrice: selected.previousSettlementPrice,
@@ -155,28 +180,31 @@ watch(() => [
   const quantity = Number(value("quantity", 0));
   const unit = Number(value("pledgeUnitQuantity", 0));
   const multiplier = Number(value("contractMultiplier", 0));
-  const businessType = value("businessType", "");
-  const hasAll = [price, quantity, unit, multiplier].every((item) => Number.isFinite(item) && item > 0);
-  const pledge = ["仓单质押", "国债质押"].includes(businessType);
-  const release = ["仓单解质押", "国债解质押"].includes(businessType);
-  const sign = pledge ? 1 : release ? -1 : 0;
-  const amount = hasAll && sign !== 0 ? Number((price * quantity * unit * multiplier * 0.8 * sign).toFixed(4)) : 0;
-  const large = hasAll && sign !== 0 && Math.abs(amount) >= 10000000;
-  const changes: Record<string, unknown> = {};
-  if (value("amount", 0) !== amount) changes.amount = amount;
-  if (value("largeAmount", false) !== large) changes.largeAmount = large;
-  if (Object.keys(changes).length) emit("update:modelValue", { ...props.modelValue, ...changes });
+  if (![price, quantity, unit, multiplier].every((item) => Number.isFinite(item) && item > 0)) {
+    if (value("amount", 0) !== 0 || value("largeAmount", false)) updateMany({ amount: 0, largeAmount: false });
+    return;
+  }
+  const release = ["仓单解质押", "国债解质押"].includes(value("businessType", ""));
+  const amount = Number((price * quantity * unit * multiplier * 0.8 * (release ? -1 : 1)).toFixed(4));
+  const largeAmount = Math.abs(amount) >= 10_000_000;
+  if (value("amount", 0) !== amount || value("largeAmount", false) !== largeAmount) {
+    updateMany({ amount, largeAmount });
+  }
 }, { immediate: true });
 
 async function loadTradingCode(): Promise<void> {
   const accountNo = value("futuresAccount", "");
   const exchangeCode = value("exchangeCode", "");
   if (!accountNo || !exchangeCode) return;
+  const requestId = ++tradingCodeRequestId;
   const codes = await getTradingCodes(accountNo, exchangeCode);
-  update("tradingCode", codes[0]?.tradingCode || "");
+  if (requestId !== tradingCodeRequestId || accountNo !== value("futuresAccount", "")
+    || exchangeCode !== value("exchangeCode", "")) return;
+  update("tradingCode", codes.find(({ tradingStatus }) => ["NORMAL", "DORMANT"].includes(tradingStatus))?.tradingCode || "");
 }
 
 async function refreshChecks(): Promise<void> {
+  if (frozenChecks.value) return;
   const accountNo = value("futuresAccount", "");
   if (!accountNo) {
     error.value = "请先选择期货账号";
@@ -191,10 +219,11 @@ async function refreshChecks(): Promise<void> {
 }
 
 type CheckStatus = "pass" | "fail" | "skip" | "missing";
+interface CheckResult { name: string; description: string; status: CheckStatus; text: string }
 const checkText: Record<CheckStatus, string> = { pass: "通过", fail: "不通过", skip: "不需核查", missing: "缺少数据，无法核查" };
 function check(status: CheckStatus) { return { status, text: checkText[status] }; }
 
-const checks = computed(() => {
+function liveChecks(): CheckResult[] {
   const businessType = value<string>("businessType", "");
   const exchangeCode = value<string>("exchangeCode", "");
   const amount = Number(value("amount", 0));
@@ -208,12 +237,14 @@ const checks = computed(() => {
     return check(predicate() ? "pass" : "fail");
   };
   return [
-    { name: "满足质押要求", description: "当前权益加本次金额满足质押比例，或实有货币资金满足比例。", ...evaluate(pledge, () => funds!.currentEquity + amount >= 1.25 * (funds!.pledgeAmount + amount) || funds!.actualCash >= 0.25 * (funds!.pledgeAmount + amount)) },
-    { name: "满足解质押要求", description: "可用资金加本次解质押金额大于等于零。", ...evaluate(release, () => funds!.availableFunds + amount >= 0) },
-    { name: "满足大商所特定要求", description: "大商所质押金额加本次金额不超过持仓保证金。", ...evaluate(pledge && exchangeCode === "DCE", () => (exchangeFund("DCE")?.pledgeAmount ?? Infinity) + amount <= (exchangeFund("DCE")?.positionMargin ?? -Infinity)) },
-    { name: "满足郑商所特定要求", description: "郑商所质押金额加本次金额不超过1.2倍持仓保证金。", ...evaluate(pledge && exchangeCode === "CZCE", () => (exchangeFund("CZCE")?.pledgeAmount ?? Infinity) + amount <= 1.2 * (exchangeFund("CZCE")?.positionMargin ?? -Infinity)) },
+    { name: "满足质押要求", description: "当前权益或实有货币资金满足质押比例", ...evaluate(pledge, () => funds!.currentEquity + amount >= 1.25 * (funds!.pledgeAmount + amount) || funds!.actualCash >= 0.25 * (funds!.pledgeAmount + amount)) },
+    { name: "满足解质押要求", description: "可用资金 + 本次金额 ≥ 0", ...evaluate(release, () => funds!.availableFunds + amount >= 0) },
+    { name: "满足大商所特定要求", description: "质押金额 + 本次金额 ≤ 持仓保证金", ...evaluate(pledge && exchangeCode === "DCE", () => (exchangeFund("DCE")?.pledgeAmount ?? Infinity) + amount <= (exchangeFund("DCE")?.positionMargin ?? -Infinity)) },
+    { name: "满足郑商所特定要求", description: "质押金额 + 本次金额 ≤ 1.2 × 持仓保证金", ...evaluate(pledge && exchangeCode === "CZCE", () => (exchangeFund("CZCE")?.pledgeAmount ?? Infinity) + amount <= 1.2 * (exchangeFund("CZCE")?.positionMargin ?? -Infinity)) },
   ];
-});
+}
+
+const checks = computed<CheckResult[]>(() => liveChecks());
 
 function selectProducts(event: Event): void {
   const selected = Array.from((event.target as HTMLSelectElement).selectedOptions).map(({ value }) => value);
@@ -224,13 +255,36 @@ async function validate(): Promise<boolean> {
   error.value = "";
   for (const field of props.fields) {
     if (!visible(field.fieldCode) || !required(field.fieldCode)) continue;
-    const current = props.modelValue[field.fieldCode];
+    const current = draft.value[field.fieldCode];
     if (current === undefined || current === null || current === "" || Array.isArray(current) && current.length === 0) {
       error.value = `请填写${field.fieldName}`;
       return false;
     }
   }
+  const productCodes = value<unknown[]>("productCodes", []);
+  if (!Array.isArray(productCodes) || productCodes.some((item) => typeof item !== "string" || !item)) {
+    error.value = "期货品种选项无效";
+    return false;
+  }
+  for (const code of ["quantity", "contractMultiplier", "pledgeUnitQuantity"]) {
+    const current = Number(value(code, 0));
+    if (!Number.isInteger(current) || current < 1) {
+      error.value = `${props.fields.find((field) => field.fieldCode === code)?.fieldName ?? code}必须是正整数`;
+      return false;
+    }
+  }
+  const price = Number(value("previousSettlementPrice", 0));
+  if (!Number.isFinite(price) || price < 0.0001 || decimalPlaces(price) > 4) {
+    error.value = "昨结算价必须是最多四位小数的正数";
+    return false;
+  }
   return true;
+}
+
+function decimalPlaces(value: number): number {
+  const text = String(value);
+  if (/e-/i.test(text)) return Number(text.split(/e-/i)[1]);
+  return text.includes(".") ? text.length - text.indexOf(".") - 1 : 0;
 }
 
 defineExpose({ validate });
@@ -245,124 +299,58 @@ defineExpose({ validate });
       <h2>客户信息</h2>
       <div class="form-grid">
         <label v-if="visible('futuresAccount')">
-          <span>{{ fieldLabel('futuresAccount') }}<b v-if="required('futuresAccount')"> *</b></span>
+          <span>期货账号<b v-if="required('futuresAccount')"> *</b></span>
           <select :value="value('futuresAccount', '')" :disabled="readonly('futuresAccount')" @change="updateFromEvent('futuresAccount', $event)">
             <option value="">请选择</option>
             <option v-for="account in accounts" :key="account.accountNo" :value="account.accountNo">{{ account.accountNo }} - {{ account.customerName }}</option>
           </select>
         </label>
-        <label v-if="visible('customerName')">
-          <span>{{ fieldLabel('customerName') }}<b v-if="required('customerName')"> *</b></span>
-          <input :value="value('customerName', '')" disabled>
-        </label>
+        <label v-if="visible('customerName')"><span>客户名称</span><input :value="value('customerName', '')" disabled></label>
       </div>
     </section>
 
     <section class="form-section">
       <h2>业务信息</h2>
       <div class="form-grid">
-        <label v-if="visible('businessType')">
-          <span>{{ fieldLabel('businessType') }}<b v-if="required('businessType')"> *</b></span>
-          <select :value="value('businessType', '')" :disabled="readonly('businessType')" @change="updateFromEvent('businessType', $event)">
-            <option value="">请选择</option>
-            <option v-for="option in businessTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-        </label>
-        <label v-if="visible('exchangeCode')">
-          <span>{{ fieldLabel('exchangeCode') }}<b v-if="required('exchangeCode')"> *</b></span>
-          <select :value="value('exchangeCode', '')" :disabled="readonly('exchangeCode')" @change="updateFromEvent('exchangeCode', $event)">
-            <option value="">请选择</option>
-            <option v-for="item in exchanges" :key="item.exchangeCode" :value="item.exchangeCode">{{ item.exchangeName }}</option>
-          </select>
-        </label>
-        <label v-if="visible('tradingCode')">
-          <span>{{ fieldLabel('tradingCode') }}<b v-if="required('tradingCode')"> *</b></span>
-          <input :value="value('tradingCode', '')" disabled>
-        </label>
-        <label v-if="visible('productCodes')" class="wide">
-          <span>{{ fieldLabel('productCodes') }}<b v-if="required('productCodes')"> *</b></span>
-          <select multiple :disabled="readonly('productCodes') || !value('exchangeCode', '')" @change="selectProducts">
-            <option v-for="item in products" :key="item.productCode" :value="item.productCode">{{ item.productCode }} - {{ item.productName }}</option>
-          </select>
-        </label>
-        <label v-if="visible('quantity')">
-          <span>{{ fieldLabel('quantity') }}<b v-if="required('quantity')"> *</b></span>
-          <input type="number" min="1" step="1" :value="value('quantity', '')" :disabled="readonly('quantity')" @input="updateFromEvent('quantity', $event, true)">
-        </label>
-        <label v-if="visible('contractMultiplier')">
-          <span>{{ fieldLabel('contractMultiplier') }}<b v-if="required('contractMultiplier')"> *</b></span>
-          <input type="number" min="1" step="1" :value="value('contractMultiplier', '')" :disabled="readonly('contractMultiplier')" @input="updateFromEvent('contractMultiplier', $event, true)">
-        </label>
-        <label v-if="visible('pledgeUnitQuantity')">
-          <span>{{ fieldLabel('pledgeUnitQuantity') }}<b v-if="required('pledgeUnitQuantity')"> *</b></span>
-          <input type="number" min="1" step="1" :value="value('pledgeUnitQuantity', '')" :disabled="readonly('pledgeUnitQuantity')" @input="updateFromEvent('pledgeUnitQuantity', $event, true)">
-        </label>
-        <label v-if="visible('previousSettlementPrice')">
-          <span>{{ fieldLabel('previousSettlementPrice') }}<b v-if="required('previousSettlementPrice')"> *</b></span>
-          <input type="number" min="0.0001" step="0.0001" :value="value('previousSettlementPrice', '')" :disabled="readonly('previousSettlementPrice')" @input="updateFromEvent('previousSettlementPrice', $event, true)">
-        </label>
-        <label v-if="visible('amount')">
-          <span>{{ fieldLabel('amount') }}<b v-if="required('amount')"> *</b></span>
-          <input class="amount" :value="Number(value('amount', 0)).toFixed(4)" disabled>
-        </label>
-        <label v-if="visible('largeAmount')" class="checkbox-field">
-          <input type="checkbox" :checked="Boolean(value('largeAmount', false))" disabled>
-          <span>{{ fieldLabel('largeAmount') }}</span>
-        </label>
+        <label v-if="visible('businessType')"><span>业务类型 *</span><select :value="value('businessType', '')" :disabled="readonly('businessType')" @change="updateFromEvent('businessType', $event)"><option value="">请选择</option><option v-for="item in businessTypes" :key="item">{{ item }}</option></select></label>
+        <label v-if="visible('exchangeCode')"><span>交易所 *</span><select :value="value('exchangeCode', '')" :disabled="readonly('exchangeCode')" @change="updateFromEvent('exchangeCode', $event)"><option value="">请选择</option><option v-for="item in exchanges" :key="item.exchangeCode" :value="item.exchangeCode">{{ item.exchangeName }}</option></select></label>
+        <label v-if="visible('tradingCode')"><span>交易编码</span><input :value="value('tradingCode', '')" disabled></label>
+        <label v-if="visible('productCodes')" class="wide"><span>期货品种 *</span><select multiple :value="value('productCodes', [])" :disabled="readonly('productCodes') || !value('exchangeCode', '')" @change="selectProducts"><option v-for="item in products" :key="item.productCode" :value="item.productCode">{{ item.productCode }} - {{ item.productName }}</option></select></label>
+        <label v-if="visible('quantity')"><span>数量（张） *</span><input type="number" min="1" step="1" :value="value('quantity', '')" :disabled="readonly('quantity')" @input="updateFromEvent('quantity', $event, true)"></label>
+        <label v-if="visible('contractMultiplier')"><span>合约乘数 *</span><input type="number" min="1" step="1" :value="value('contractMultiplier', '')" :disabled="readonly('contractMultiplier')" @input="updateFromEvent('contractMultiplier', $event, true)"></label>
+        <label v-if="visible('pledgeUnitQuantity')"><span>质押品单位数量 *</span><input type="number" min="1" step="1" :value="value('pledgeUnitQuantity', '')" :disabled="readonly('pledgeUnitQuantity')" @input="updateFromEvent('pledgeUnitQuantity', $event, true)"></label>
+        <label v-if="visible('previousSettlementPrice')"><span>昨结算价 *</span><input type="number" min="0.0001" step="0.0001" :value="value('previousSettlementPrice', '')" :disabled="readonly('previousSettlementPrice')" @input="updateFromEvent('previousSettlementPrice', $event, true)"></label>
+        <label v-if="visible('amount')"><span>金额</span><input class="amount" :value="Number(value('amount', 0)).toFixed(4)" disabled></label>
       </div>
     </section>
 
     <section class="form-section">
-      <header class="section-row">
-        <h2>业务核查</h2>
-        <button type="button" :disabled="disabled || mode === 'readonly'" @click="refreshChecks">刷新</button>
-      </header>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>核查项</th><th>核查内容</th><th>核查结果</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in checks" :key="item.name">
-              <td>{{ item.name }}</td>
-              <td>{{ item.description }}</td>
-              <td :class="`check-${item.status}`">{{ item.text }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <header class="section-row"><h2>业务核查</h2><button type="button" :disabled="disabled || frozenChecks" @click="refreshChecks">刷新</button></header>
+      <div class="table-wrap"><table><thead><tr><th>核查项</th><th>核查内容</th><th>核查结果</th></tr></thead><tbody><tr v-for="item in checks" :key="item.name"><td>{{ item.name }}</td><td>{{ item.description }}</td><td :class="`check-${item.status}`">{{ item.text }}</td></tr></tbody></table></div>
     </section>
   </section>
 </template>
 
 <style scoped>
-.pledge-form { display: grid; gap: 18px; color: #17202a; }
+.pledge-form { display: grid; gap: 18px; color: #1a2744; }
 .form-section { display: grid; gap: 12px; padding-top: 4px; }
-.form-section + .form-section { border-top: 1px solid #d8dee8; padding-top: 16px; }
-h2 { margin: 0; font-size: 17px; }
+.form-section + .form-section { border-top: 1px solid #d0d8e8; padding-top: 16px; }
+h2 { margin: 0; font-size: 17px; color: #0d3b66; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 18px; }
 label { display: grid; gap: 6px; }
-label span { color: #475569; font-size: 13px; font-weight: 650; }
+label span { color: #4a5a78; font-size: 13px; font-weight: 650; }
 b, .state-error, .check-fail { color: #be123c; }
-input, select, button { min-height: 36px; border: 1px solid #b9c3d0; border-radius: 6px; padding: 7px 10px; background: #fff; color: inherit; }
+input, select, button { min-height: 36px; border: 1px solid #a8b6cc; border-radius: 6px; padding: 7px 10px; background: #fff; color: inherit; }
 select[multiple] { min-height: 84px; }
 .wide { grid-column: span 2; }
-.amount { color: #9f1239; font-weight: 750; text-align: right; }
-.checkbox-field { display: flex; align-items: center; gap: 8px; }
-.checkbox-field input { min-height: auto; width: 18px; height: 18px; }
-.checkbox-field span { color: #475569; font-size: 13px; font-weight: 650; }
+.amount { color: #8b1538; font-weight: 750; text-align: right; }
 .section-row { display: flex; align-items: center; justify-content: space-between; }
-.section-row button { color: #1d4ed8; cursor: pointer; }
+.section-row button { color: #0d4ed8; cursor: pointer; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; min-width: 680px; border-collapse: collapse; }
-th, td { border: 1px solid #d8dee8; padding: 9px 10px; text-align: left; }
-th { background: #f8fafc; }
-.check-pass { color: #15803d; }
-.check-skip { color: #64748b; }
-.check-missing { color: #17202a; }
+th, td { border: 1px solid #d0d8e8; padding: 9px 10px; text-align: left; }
+th { background: #f0f4fa; }
+.check-pass { color: #15803d; }.check-skip { color: #64748b; }.check-missing { color: #1a2744; }
 .state-error { margin: 0; border: 1px solid #fecdd3; border-radius: 6px; padding: 10px; background: #fff1f2; }
-@media (max-width: 640px) {
-  .form-grid { grid-template-columns: 1fr; }
-  .wide { grid-column: auto; }
-}
+@media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; }.wide { grid-column: auto; } }
 </style>

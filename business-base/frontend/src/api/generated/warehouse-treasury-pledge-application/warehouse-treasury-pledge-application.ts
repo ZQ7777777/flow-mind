@@ -12,13 +12,15 @@ export interface Exchange {
 
 export interface ExchangeFund {
   exchangeCode: string;
+  exchangeName: string;
   pledgeAmount: number;
   positionMargin: number;
 }
 
 export interface AccountFund {
-  accountNo?: string;
-  currency?: string;
+  accountNo: string;
+  customerName: string;
+  currency: string;
   currentEquity: number;
   availableFunds: number;
   pledgeAmount: number;

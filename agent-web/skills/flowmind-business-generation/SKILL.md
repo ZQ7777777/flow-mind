@@ -9,6 +9,7 @@ Read the confirmed requirement, generation specification, target contract, and i
 
 - Generate exactly the files in the specification: five baseline frontend files and, only when requested by the specification, a read-only business API module plus its test.
 - Keep `BusinessForm.vue` responsible for business fields, runtime field permissions, value normalization, confirmed read-only queries, calculations, checks, and `validate()`.
+- `BusinessForm.vue` must only read or write form model keys declared in the confirmed requirement `formFields`; do not introduce hidden snapshot/cache/status fields from examples.
 - Keep `Apply.vue` responsible only for standalone layout and composing the fixed process code, `BusinessForm`, and the shared `WorkflowStartShell`.
 - Preserve unrelated generated routes and form-registry entries. Generated apply routes use authenticated `meta.standalone: true`, never anonymous `meta.public`.
 - Treat sample code as guidance for decomposition, interaction quality, and tests. Never copy its business identity, fields, values, or fallback data into another business.

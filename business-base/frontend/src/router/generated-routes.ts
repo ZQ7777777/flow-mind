@@ -9,16 +9,16 @@ type GeneratedBusinessFormLoader = () => Promise<{ default: Component }>;
  */
 export const generatedRoutes: RouteRecordRaw[] = [
   {
-    path: "/generated/entry-application/apply",
-    name: "generated-entry-application-apply",
-    meta: { title: "入金申请", standalone: true },
-    component: () => import("../modules/generated/entry-application/Apply.vue"),
-  },
-  {
     path: "/generated/warehouse-pledge/apply",
     name: "generated-warehouse-pledge-apply",
     meta: { title: "仓单、国债（解）质押申请", standalone: true },
-    component: () => import("../modules/generated/sample/Apply.vue"),
+    component: () => import("../modules/generated/warehouse-pledge/Apply.vue"),
+  },
+  {
+    path: "/generated/pledge-application/apply",
+    name: "generated-pledge-application-apply",
+    meta: { title: "仓单/国债（解）质押申请", standalone: true },
+    component: () => import("../modules/generated/pledge-application/Apply.vue"),
   },
   {
     path: "/generated/warehouse-treasury-pledge-application/apply",
@@ -29,8 +29,9 @@ export const generatedRoutes: RouteRecordRaw[] = [
 ];
 
 export const generatedBusinessFormRegistry: Record<string, GeneratedBusinessFormLoader> = {
-  entry_application: () => import("../modules/generated/entry-application/BusinessForm.vue"),
-  warehouse_pledge: () => import("../modules/generated/sample/BusinessForm.vue"),
+  warehouse_pledge: () => import("../modules/generated/warehouse-pledge/BusinessForm.vue"),
+  pledge_application: () => import("../modules/generated/pledge-application/BusinessForm.vue"),
+  warehouse_treasury_pledge_application: () => import("../modules/generated/warehouse-treasury-pledge-application/BusinessForm.vue"),
 };
 
 export async function resolveGeneratedBusinessForm(processCode?: string): Promise<Component | undefined> {

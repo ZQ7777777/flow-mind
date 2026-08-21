@@ -48,6 +48,25 @@ describe("frontend-only static generated-code validation", () => {
     }));
   });
 
+  it("blocks generated forms that read or write undeclared model fields", () => {
+    const input = validInput();
+    input.requirement.formFields = input.requirement.formFields
+      .filter(({ fieldCode }) => fieldCode !== "businessCheckSnapshot");
+    input.files.set(input.spec.paths.businessForm, input.files.get(input.spec.paths.businessForm)!
+      .replace("</script>", `
+function syncSnapshot() {
+  const snapshot = value("businessCheckSnapshot", "");
+  updateMany({ customerName: "", businessCheckSnapshot: snapshot });
+  update("businessCheckSnapshot", snapshot);
+}
+</script>`));
+
+    expect(validator.validate(input).diagnostics).toContainEqual(expect.objectContaining({
+      code: "GENERATED_UNDECLARED_FORM_FIELD",
+      actual: expect.stringContaining("businessCheckSnapshot"),
+    }));
+  });
+
   it("fails empty and malformed frontend sources with locations", () => {
     const empty = validInput();
     empty.files.set(empty.spec.paths.businessForm, "  \n");

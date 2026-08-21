@@ -100,6 +100,7 @@ export class StaticValidatorService {
         }));
       }
       if (relativePath === input.spec.paths.businessForm) {
+        this.validateDeclaredFormFieldUsage(input, relativePath, content, diagnostics);
         const requiredTokens = [
           ...input.requirement.formFields.map(({ fieldCode }) => fieldCode),
           ...(input.requirement.frontendBehavior?.dataQueries.map(({ queryCode }) => queryCode) || []),
@@ -168,6 +169,75 @@ export class StaticValidatorService {
         }
       }
     }
+  }
+
+  private validateDeclaredFormFieldUsage(
+    input: StaticValidationInput,
+    relativePath: string,
+    content: string,
+    diagnostics: QualityDiagnostic[],
+  ): void {
+    const allowed = new Set(input.requirement.formFields.map(({ fieldCode }) => fieldCode));
+    const references = new Map<string, Set<string>>();
+    const addReference = (fieldCode: string, source: string) => {
+      if (!fieldCode || allowed.has(fieldCode)) return;
+      const sources = references.get(fieldCode) || new Set<string>();
+      sources.add(source);
+      references.set(fieldCode, sources);
+    };
+
+    let blocks: SFCScriptBlock[];
+    try {
+      const parsed = parseVueSfc(content, { filename: relativePath });
+      blocks = vueScriptBlocks(parsed.descriptor.script, parsed.descriptor.scriptSetup);
+    } catch {
+      return;
+    }
+
+    for (const block of blocks) {
+      const source = ts.createSourceFile(relativePath, block.content, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+      const visit = (node: ts.Node) => {
+        if (ts.isCallExpression(node)) {
+          const name = callName(node.expression);
+          const first = node.arguments[0];
+          if (name && ["value", "update", "updateFromEvent", "visible", "readonly", "required"].includes(name)) {
+            const fieldCode = stringLiteralText(first);
+            if (fieldCode) addReference(fieldCode, `${name}(...)`);
+          }
+          if (name === "updateMany" && first && ts.isObjectLiteralExpression(first)) {
+            for (const property of first.properties) {
+              if (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) {
+                const fieldCode = propertyNameText(property.name);
+                if (fieldCode) addReference(fieldCode, "updateMany(...)");
+              }
+            }
+          }
+        }
+        if (ts.isPropertyAccessExpression(node) && isModelContainer(node.expression)) {
+          addReference(node.name.text, `${node.expression.getText(source)}.${node.name.text}`);
+        }
+        if (ts.isElementAccessExpression(node) && isModelContainer(node.expression)) {
+          const fieldCode = stringLiteralText(node.argumentExpression);
+          if (fieldCode) addReference(fieldCode, `${node.expression.getText(source)}[...]`);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+
+    if (!references.size) return;
+    const actual = [...references.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([fieldCode, sources]) => `${fieldCode} (${[...sources].sort().join(", ")})`)
+      .join(", ");
+    diagnostics.push(diagnostic({
+      code: "GENERATED_UNDECLARED_FORM_FIELD",
+      message: "Generated BusinessForm.vue reads or writes form model fields that were not declared by the confirmed requirement.",
+      relativePath,
+      actual: `Undeclared form model fields: ${actual}`,
+      expected: `Allowed form field codes: ${[...allowed].sort().join(", ") || "none"}`,
+      repairHint: "Remove undeclared modelValue keys or add the field to the confirmed requirement before regenerating.",
+    }));
   }
 
   private parseJava(relativePath: string, content: string, diagnostics: QualityDiagnostic[]): void {
@@ -332,6 +402,31 @@ function vueScriptBlocks(
   scriptSetup: SFCScriptBlock | null,
 ): SFCScriptBlock[] {
   return [script, scriptSetup].filter((block): block is SFCScriptBlock => block !== null);
+}
+
+function callName(expression: ts.Expression): string | undefined {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  return undefined;
+}
+
+function stringLiteralText(node: ts.Node | undefined): string | undefined {
+  return node && ts.isStringLiteralLike(node) ? node.text : undefined;
+}
+
+function propertyNameText(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) return name.text;
+  return undefined;
+}
+
+function isModelContainer(expression: ts.Expression): boolean {
+  if (ts.isIdentifier(expression)) return ["modelValue", "form"].includes(expression.text);
+  if (!ts.isPropertyAccessExpression(expression)) return false;
+  if (expression.name.text === "modelValue" && ts.isIdentifier(expression.expression)
+    && expression.expression.text === "props") return true;
+  if (expression.name.text === "value" && ts.isIdentifier(expression.expression)
+    && ["draft", "variables", "form"].includes(expression.expression.text)) return true;
+  return false;
 }
 
 function rawErrorMessage(error: unknown): string {

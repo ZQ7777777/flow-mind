@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { reactive, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import {
+  renderBusinessRequirementMarkdown,
   type BusinessRequirement,
   type ReferenceDataSource,
   type RequirementRevision,
@@ -10,6 +11,8 @@ import ProcessGraphDesigner from "./ProcessGraphDesigner.vue";
 const props = defineProps<{ revision: RequirementRevision; disabled?: boolean }>();
 const emit = defineEmits<{ save: [requirement: BusinessRequirement] }>();
 const draft = reactive<BusinessRequirement>(withFrontendBehavior(clone(props.revision.requirement)));
+const documentVisible = ref(false);
+const requirementDocument = computed(() => renderBusinessRequirementMarkdown(clone(draft)));
 
 watch(
   () => props.revision,
@@ -146,7 +149,10 @@ function uniqueValues(values: string[]): string[] {
           {{ revision.readyForReview ? "可确认" : "待补充" }}
         </el-tag>
       </div>
-      <el-button type="primary" plain :disabled="disabled" @click="save">保存修改</el-button>
+      <div class="editor-actions">
+        <el-button plain @click="documentVisible = true">查看需求文档</el-button>
+        <el-button type="primary" plain :disabled="disabled" @click="save">保存修改</el-button>
+      </div>
     </div>
 
     <el-alert
@@ -283,5 +289,32 @@ function uniqueValues(values: string[]): string[] {
         @change="updateFrontendBehavior($event)"
       />
     </section>
+
+    <el-dialog v-model="documentVisible" title="需求文档" width="min(860px, 92vw)">
+      <pre class="requirement-document-text">{{ requirementDocument }}</pre>
+    </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.requirement-document-text {
+  max-height: 64vh;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8f9fc;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  line-height: 1.65;
+}
+</style>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onMounted, ref } from "vue";
 import type { Component } from "vue";
-import { Check, Coin, Download, Finished, Memo, Tickets, Upload, Wallet } from "@element-plus/icons-vue";
+import { Check, Finished, Memo } from "@element-plus/icons-vue";
 import { useRouter } from "vue-router";
 import { fetchProcessEntryLinks } from "../api/workflow";
 import { useAuthStore } from "../stores/auth";
@@ -9,17 +9,11 @@ import { useWorkflowStore } from "../stores/workflow";
 import type { WorkflowListRecord, WorkflowProcessEntryLink, WorkflowTaskResponse } from "../types/workflow";
 import { formatDateTime } from "../utils/format";
 
-type BusinessKey = "deposit" | "withdraw" | "reimburse" | "payment" | "loan" | string;
-
-interface BusinessConfig {
-  key: BusinessKey;
+interface BusinessCard {
+  key: string;
   name: string;
   description: string;
   icon: Component;
-  matchers: string[];
-}
-
-interface BusinessCard extends BusinessConfig {
   link?: WorkflowProcessEntryLink;
   entryPageUrl?: string;
 }
@@ -31,60 +25,13 @@ const loadingEntries = ref(false);
 const entryError = ref("");
 const entryLinks = ref<WorkflowProcessEntryLink[]>([]);
 
-const businessConfigs: BusinessConfig[] = [
-  {
-    key: "deposit",
-    name: "入金申请",
-    description: "发起资金入账申请",
-    icon: markRaw(Download),
-    matchers: ["入金", "客户入金", "entry_application", "deposit"],
-  },
-  {
-    key: "withdraw",
-    name: "出金申请",
-    description: "发起资金出账申请",
-    icon: markRaw(Upload),
-    matchers: ["出金", "withdraw", "withdrawal"],
-  },
-  {
-    key: "reimburse",
-    name: "报销申请",
-    description: "发起费用报销申请",
-    icon: markRaw(Tickets),
-    matchers: ["报销", "reimburse", "expense"],
-  },
-  {
-    key: "payment",
-    name: "付款申请",
-    description: "发起对外付款申请",
-    icon: markRaw(Wallet),
-    matchers: ["付款", "payment", "pay"],
-  },
-  {
-    key: "loan",
-    name: "借款申请",
-    description: "发起借款申请",
-    icon: markRaw(Coin),
-    matchers: ["借款", "loan", "borrow"],
-  },
-];
-
 const userName = computed(() => auth.user?.realName || auth.user?.username || "用户");
 const visibleEntryLinks = computed(() => entryLinks.value.filter((item) => item.enabled !== false));
 const todoRows = computed(() => workflowStore.list.records.filter(isTask).slice(0, 5));
 
 const businessCards = computed<BusinessCard[]>(() => {
-  const fixed = businessConfigs.map((config) => {
-    const link = visibleEntryLinks.value.find((item) => matchesBusiness(item, config));
-    return {
-      ...config,
-      link,
-      entryPageUrl: link?.entryPageUrl?.trim() || undefined,
-    };
-  });
-  const matchedDefinitionIds = new Set(fixed.flatMap((card) => card.link?.definitionId ? [card.link.definitionId] : []));
-  const configured = visibleEntryLinks.value
-    .filter((link) => Boolean(link.entryPageUrl?.trim()) && !matchedDefinitionIds.has(link.definitionId))
+  return visibleEntryLinks.value
+    .filter((link) => Boolean(link.entryPageUrl?.trim()))
     .map((link): BusinessCard => ({
       key: `configured-${link.definitionId}`,
       name: link.entryDisplayName || link.processName || link.processCode || "未命名业务",
@@ -92,11 +39,9 @@ const businessCards = computed<BusinessCard[]>(() => {
         ? link.processName
         : "发起业务申请",
       icon: markRaw(Memo),
-      matchers: [],
       link,
       entryPageUrl: link.entryPageUrl?.trim(),
     }));
-  return [...fixed, ...configured];
 });
 
 onMounted(() => {
@@ -125,17 +70,6 @@ async function loadTodos(): Promise<void> {
     pageSize: 5,
     source: "OWN",
   });
-}
-
-function matchesBusiness(item: WorkflowProcessEntryLink, config: BusinessConfig): boolean {
-  const identity = [
-    item.entryDisplayName,
-    item.processName,
-    item.processCode,
-    item.entrySource,
-    item.definitionId,
-  ].filter(Boolean).join("|").toLowerCase();
-  return config.matchers.some((matcher) => identity.includes(matcher.toLowerCase()));
 }
 
 function canOpen(card: BusinessCard): boolean {

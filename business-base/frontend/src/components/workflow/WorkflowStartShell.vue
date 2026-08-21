@@ -15,6 +15,12 @@ interface LocalAttachmentRow {
   extension: string;
 }
 
+interface AttachmentTemplateRow {
+  index: number;
+  rule: WorkflowStartAttachmentRule;
+  files: LocalAttachmentRow[];
+}
+
 const props = defineProps<{
   processCode: string;
   businessForm: Component;
@@ -58,6 +64,13 @@ const attachmentRows = computed<LocalAttachmentRow[]>(() => {
   }
   return rows;
 });
+const attachmentTemplateRows = computed<AttachmentTemplateRow[]>(() =>
+  orderedAttachments.value.map((rule, index) => ({
+    index: index + 1,
+    rule,
+    files: attachmentRows.value.filter((row) => row.rule.attachmentCode === rule.attachmentCode),
+  })),
+);
 const selectedAttachment = computed(() =>
   attachmentRows.value.find((row) => row.id === selectedAttachmentId.value) ?? null,
 );
@@ -143,6 +156,14 @@ function selectAttachment(row: LocalAttachmentRow): void {
   selectedAttachmentId.value = row.id;
 }
 
+function selectTemplateAttachment(row: AttachmentTemplateRow): void {
+  if (row.files[0]) selectAttachment(row.files[0]);
+}
+
+function isTemplateRowSelected(row: AttachmentTemplateRow): boolean {
+  return row.files.some((file) => file.id === selectedAttachmentId.value);
+}
+
 function attachmentRowId(rule: WorkflowStartAttachmentRule, file: File, fileIndex: number): string {
   return [
     rule.attachmentCode,
@@ -159,6 +180,23 @@ function fileExtension(fileName: string): string {
 
 function displayExtension(row: LocalAttachmentRow): string {
   return row.extension ? row.extension.toUpperCase() : "--";
+}
+
+function displayAttachmentFormats(rule: WorkflowStartAttachmentRule): string {
+  const formats = [...new Set((rule.allowedExtensions ?? [])
+    .map((value) => value.replace(/^\./, "").trim().toUpperCase())
+    .filter(Boolean))];
+  return formats.length ? formats.join("、") : "不限制";
+}
+
+function attachmentMaxSizeBytes(rule: WorkflowStartAttachmentRule): number | undefined {
+  return rule.maxSizeBytes
+    ?? (rule.maxSizeMb == null ? undefined : rule.maxSizeMb * 1024 * 1024);
+}
+
+function displayAttachmentSize(rule: WorkflowStartAttachmentRule): string {
+  const value = attachmentMaxSizeBytes(rule);
+  return value == null ? "不限制" : formatFileSize(value);
 }
 
 function objectUrlFor(row: LocalAttachmentRow): string {
@@ -300,36 +338,42 @@ async function submit(): Promise<void> {
                       <thead>
                         <tr>
                           <th>序号</th>
-                          <th>档案类型</th>
-                          <th>文件名称</th>
-                          <th>文件格式</th>
-                          <th>下载链接</th>
+                          <th>档案（附件）名称</th>
+                          <th>档案（附件）格式</th>
+                          <th>大小限制</th>
+                          <th>是否必填</th>
+                          <th>下载</th>
+                          <th>是否上传</th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr
-                          v-for="row in attachmentRows"
-                          :key="row.id"
-                          :class="{ selected: row.id === selectedAttachmentId }"
-                          @click="selectAttachment(row)"
+                          v-for="row in attachmentTemplateRows"
+                          :key="row.rule.attachmentCode"
+                          :class="{ selected: isTemplateRowSelected(row) }"
+                          @click="selectTemplateAttachment(row)"
                         >
                           <td class="number-cell">{{ row.index }}</td>
                           <td>{{ row.rule.attachmentName }}</td>
-                          <td class="file-name-cell" :title="row.file.name">{{ row.file.name }}</td>
-                          <td class="number-cell">{{ displayExtension(row) }}</td>
-                          <td class="number-cell">
-                            <a
-                              class="download-link"
-                              :href="objectUrlFor(row)"
-                              :download="row.file.name"
-                              @click.stop
-                            >
-                              下载
-                            </a>
+                          <td>{{ displayAttachmentFormats(row.rule) }}</td>
+                          <td>{{ displayAttachmentSize(row.rule) }}</td>
+                          <td class="number-cell">{{ row.rule.required ? "是" : "否" }}</td>
+                          <td class="download-cell">
+                            <div v-if="row.files.length" class="download-items">
+                              <a
+                                v-for="file in row.files"
+                                :key="file.id"
+                                class="download-link"
+                                :href="objectUrlFor(file)"
+                                :download="file.file.name"
+                                @click.stop
+                              >
+                                {{ file.file.name }}
+                              </a>
+                            </div>
+                            <span v-else class="muted-cell">暂无下载</span>
                           </td>
-                        </tr>
-                        <tr v-if="!attachmentRows.length">
-                          <td class="empty-cell" colspan="5">暂无已上传附件</td>
+                          <td class="number-cell">{{ row.files.length ? "已上传" : "未上传" }}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -453,7 +497,7 @@ async function submit(): Promise<void> {
 .panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; margin-bottom: 10px; }
 .panel-title-row h3 { margin: 0; border-left: 4px solid #0879c9; padding-left: 8px; color: #18324d; font-size: 15px; font-weight: 700; }
 .archive-table-scroll { overflow: auto; border: 1px solid #d8dee8; }
-.archive-table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 13px; }
+.archive-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
 .archive-table th,
 .archive-table td { border: 1px solid #d8dee8; padding: 8px 10px; text-align: left; vertical-align: middle; }
 .archive-table th { background: #e7f2fb; color: #18324d; font-weight: 700; text-align: center; white-space: nowrap; }
@@ -463,6 +507,9 @@ async function submit(): Promise<void> {
 .archive-table .number-cell { text-align: center; white-space: nowrap; }
 .archive-table .file-name-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .archive-table .empty-cell { height: 86px; color: #8a96a6; text-align: center; cursor: default; }
+.download-cell { min-width: 150px; }
+.download-items { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.muted-cell { color: #8a96a6; }
 .download-link { color: #0879c9; font-weight: 700; text-decoration: none; }
 .download-link:hover { text-decoration: underline; }
 .attachment-list { display: grid; gap: 18px; }

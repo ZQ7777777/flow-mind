@@ -124,6 +124,8 @@ export interface ReviewPiCallbacks extends PiEventSink {
   readQuality(): string;
   listGenerationContext?(): Array<{ key: string; sha256: string; required: boolean }>;
   readGenerationContext?(key: string): string;
+  listGenerationExamples?(): Array<{ key: string; sha256: string }>;
+  readGenerationExample?(key: string): string;
   submit(report: {
     verdict: "APPROVE" | "CHANGES_REQUESTED";
     summary: string;
@@ -541,9 +543,11 @@ export class PiAdapterService implements OnModuleDestroy {
     ];
     const created = await pi.createAgentSession({
       cwd, agentDir, model, modelRuntime: runtime, thinkingLevel: this.config.thinkingLevel,
-      sessionManager: existingSessionFile
-        ? pi.SessionManager.open(existingSessionFile, sessionDir)
-        : pi.SessionManager.create(cwd, sessionDir), settingsManager, resourceLoader: loader,
+      sessionManager: repairOnly
+        ? pi.SessionManager.inMemory(cwd)
+        : existingSessionFile
+          ? pi.SessionManager.open(existingSessionFile, sessionDir)
+          : pi.SessionManager.create(cwd, sessionDir), settingsManager, resourceLoader: loader,
       noTools: "builtin", customTools: tools,
     });
     const session = created.session;
@@ -664,8 +668,10 @@ export class PiAdapterService implements OnModuleDestroy {
       ])),
     });
     const tools = [
-      pi.defineTool({ name: "list_generation_context", label: "List immutable generation context", description: "List the snapshotted skill and golden references used by this generation.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listGenerationContext?.() || [])) }),
-      pi.defineTool({ name: "read_generation_context", label: "Read immutable generation context", description: "Read one snapshotted skill or golden reference by key.", parameters: Type.Object({ key: Type.String({ minLength: 1 }) }), execute: async (_id: string, params: any) => textResult(callbacks.readGenerationContext?.(params.key) || "context unavailable") }),
+      pi.defineTool({ name: "list_generation_context", label: "List default review context", description: "List the small set of immutable policy files exposed by default for this review.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listGenerationContext?.() || [])) }),
+      pi.defineTool({ name: "read_generation_context", label: "Read default review context", description: "Read one default immutable review policy file by key.", parameters: Type.Object({ key: Type.String({ minLength: 1 }) }), execute: async (_id: string, params: any) => textResult(callbacks.readGenerationContext?.(params.key) || "context unavailable") }),
+      pi.defineTool({ name: "list_generation_examples", label: "List target examples", description: "List target sample references only after identifying a concrete structural compatibility question.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listGenerationExamples?.() || [])) }),
+      pi.defineTool({ name: "read_generation_example", label: "Read target example", description: "Read one target sample reference for a concrete structural compatibility question.", parameters: Type.Object({ key: Type.String({ minLength: 1 }) }), execute: async (_id: string, params: any) => textResult(callbacks.readGenerationExample?.(params.key) || "example unavailable") }),
       pi.defineTool({ name: "read_staged_file", label: "Read staged file", description: "Read one Manifest-managed staged file.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readStaged(params.path)) }),
       pi.defineTool({ name: "read_staged_diff", label: "Read staged diff", description: "Read one Manifest-managed staged diff.", parameters: pathParameters, execute: async (_id: string, params: any) => textResult(callbacks.readDiff(params.path)) }),
       pi.defineTool({ name: "read_quality_report", label: "Read quality report", description: "Read normalized static and command verification results.", parameters: Type.Object({}), execute: async () => textResult(callbacks.readQuality()) }),

@@ -6,25 +6,25 @@ const BusinessForm = defineAsyncComponent(() => import("./BusinessForm.vue"));
 </script>
 
 <template>
-  <main class="pledge-application-page">
+  <main class="warehouse-treasury-pledge-page">
     <WorkflowStartShell process-code="warehouse_treasury_pledge_application" :business-form="BusinessForm" />
   </main>
 </template>
 
 <style scoped>
-.pledge-application-page {
+.warehouse-treasury-pledge-page {
   min-height: 100vh;
   box-sizing: border-box;
   padding: 20px;
   background: #f5f7fb;
 }
-.pledge-application-page :deep(.workflow-start-shell) {
+.warehouse-treasury-pledge-page :deep(.workflow-start-shell) {
   max-width: 1480px;
   margin: 0 auto;
-  border: 1px solid #d8dee8;
+  border: 1px solid #d0d8e8;
   border-radius: 8px;
   padding: 18px;
   background: #fff;
 }
-@media (max-width: 640px) { .pledge-application-page { padding: 10px; } }
+@media (max-width: 640px) { .warehouse-treasury-pledge-page { padding: 10px; } }
 </style>

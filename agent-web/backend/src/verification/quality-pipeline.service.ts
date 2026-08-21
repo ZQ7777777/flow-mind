@@ -5,6 +5,7 @@ import type {
   CodeReviewReport,
   GenerationQualityReport,
   QualityOverrideSummary,
+  QualityDiagnostic,
   QualityStageName,
   QualityStageResult,
 } from "@flowmind/agent-contracts";
@@ -31,6 +32,59 @@ interface QualityActionRequest {
   expectedRowVersion: number;
 }
 
+type QualityTrigger = "GENERATION" | "REVERIFY" | "REPAIR" | "REPAIR_LIGHT" | "REPAIR_FULL";
+
+export function hasManifestRepairableDiagnostic(
+  stages: QualityStageResult[],
+  manifestPaths: string[],
+): boolean {
+  const normalizedManifestPaths = manifestPaths.map(normalizeQualityPath);
+  return stages.some((stage) => stage.status === "FAILED" && stage.diagnostics.some((diagnostic) => {
+    if (!isRepairableManifestDiagnostic(diagnostic)) return false;
+    if (diagnostic.relativePath && isEnvironmentPath(diagnostic.relativePath)
+      && !matchesManifestPath(diagnostic.relativePath, normalizedManifestPaths)) return false;
+    if (diagnostic.scope === "CURRENT_GENERATION") return true;
+    if (diagnostic.relativePath && matchesManifestPath(diagnostic.relativePath, normalizedManifestPaths)) return true;
+    // Older persisted stage data may omit scope; treat an unscoped non-environment
+    // path as current-generation evidence until the worker can reclassify it.
+    if (!diagnostic.scope && diagnostic.relativePath && !isEnvironmentPath(diagnostic.relativePath)) return true;
+    return stage.stage === "STATIC_VALIDATION" && !diagnostic.relativePath;
+  }));
+}
+
+function isRepairableManifestDiagnostic(diagnostic: QualityDiagnostic): boolean {
+  return diagnostic.classification !== "BLOCKED"
+    && diagnostic.scope !== "PRE_EXISTING"
+    && diagnostic.scope !== "INTEGRATION_IMPACT"
+    && diagnostic.repairability !== "INFRASTRUCTURE"
+    && diagnostic.repairability !== "PROTECTED_FILE";
+}
+
+function matchesManifestPath(path: string, manifestPaths: string[]): boolean {
+  const normalized = normalizeQualityPath(path);
+  if (manifestPaths.includes(normalized)) return true;
+  const suffixMatches = manifestPaths.filter((candidate) =>
+    candidate.endsWith(`/${normalized}`) || normalized.endsWith(`/${candidate}`));
+  return suffixMatches.length === 1;
+}
+
+function normalizeQualityPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
+}
+
+function isEnvironmentPath(path: string): boolean {
+  const normalized = normalizeQualityPath(path).toLowerCase();
+  return normalized.split("/").some((segment) => [
+    "node_modules",
+    ".m2",
+    "maven-cache",
+    "npm-cache",
+    "dependency-cache",
+    "verification-workspaces",
+    "verification-logs",
+  ].includes(segment)) || normalized.includes("/cache/");
+}
+
 @Injectable()
 export class QualityPipelineService {
   private readonly activeRuns = new Map<string, AbortController>();
@@ -46,7 +100,7 @@ export class QualityPipelineService {
     @Optional() @Inject(RepairCoordinatorService) private readonly repair?: RepairCoordinatorService,
   ) {}
 
-  start(generationId: string, trigger: "GENERATION" | "REVERIFY" | "REPAIR" = "GENERATION"): void {
+  start(generationId: string, trigger: QualityTrigger = "GENERATION"): void {
     const active = this.activeRuns.get(generationId);
     if (active && !active.signal.aborted) return;
     const controller = new AbortController();
@@ -259,7 +313,7 @@ export class QualityPipelineService {
 
   async run(
     generationId: string,
-    trigger: "GENERATION" | "REVERIFY" | "REPAIR" = "GENERATION",
+    trigger: QualityTrigger = "GENERATION",
     controller = new AbortController(),
   ): Promise<void> {
     const signal = controller.signal;
@@ -275,7 +329,7 @@ export class QualityPipelineService {
     `).all(generationId) as Array<{ stage_results_json: string }>).map(({ stage_results_json }) =>
       JSON.parse(stage_results_json) as QualityStageResult[]);
     const previousStages = previousStageRuns.at(-1);
-    const reverifyStages = trigger === "REPAIR"
+    const reverifyStages = trigger === "REPAIR_LIGHT" || trigger === "REPAIR"
       ? selectRepairVerificationStages(previousStages || [], this.repair?.history(generationId).at(-1)?.changedFiles || [])
       : undefined;
     const runId = `verification_${randomUUID()}`;
@@ -353,7 +407,9 @@ export class QualityPipelineService {
           onStage: (stage, status, hardGate) => this.publishVerifyStage(sessionId, generationId, runId, stage, status, hardGate),
         });
         if (signal.aborted) return;
-        stages = mergeVerificationStages(staticResult, workerResult.stages, previousStages, reverifyStages);
+        stages = trigger === "REPAIR_LIGHT"
+          ? [staticResult, ...workerResult.stages]
+          : mergeVerificationStages(staticResult, workerResult.stages, previousStages, reverifyStages);
       } else {
         const skipped = skippedCommandStages();
         for (const stage of skipped) {
@@ -370,11 +426,16 @@ export class QualityPipelineService {
       let infrastructureFailure = stages.some(({ status }) =>
         status === "INFRASTRUCTURE_FAILED" || status === "CANCELLED",
       );
+      if (trigger === "REPAIR_LIGHT" && !infrastructureFailure && repairLightStagesPassed(stages, reverifyStages || [])) {
+        this.completeIntermediateRepairRun(runId, stages);
+        setImmediate(() => this.start(generationId, "REPAIR_FULL"));
+        return;
+      }
       const hardFailure = stages.some(({ hardGate, status }) => hardGate && status !== "PASSED");
       const hasIntegrationImpact = stages.some(({ diagnostics }) =>
         diagnostics.some(({ scope }) => scope === "INTEGRATION_IMPACT"));
       let review: CodeReviewReport | undefined;
-      if (!hardFailure && !infrastructureFailure && (!generation.skip_ai_review || hasIntegrationImpact)) {
+      if (trigger !== "REPAIR_LIGHT" && !hardFailure && !infrastructureFailure && (!generation.skip_ai_review || hasIntegrationImpact)) {
         this.transition(generation.id, generation.session_id, "REVIEWING", "CODE_REVIEWING", runId);
         generation = this.database.getGeneration(generationId)!;
         review = await this.reviewer.review(generation, runId, stages, signal);
@@ -386,9 +447,11 @@ export class QualityPipelineService {
       infrastructureFailure = infrastructureFailure || reviewerInfrastructureFailure;
       const needsRepair = !decision.hardGatePassed || decision.softFailures.length > 0;
       const firstUnblockedFailure = hasFirstUnblockedFailure(stages, previousStageRuns);
+      const manifestPaths = parseManifest(generation).files.map(({ relativePath }) => relativePath);
+      const repairableManifestFailure = hasManifestRepairableDiagnostic(stages, manifestPaths);
       const repairDecision = nextRepairDecision(
         generation.repair_round,
-        needsRepair,
+        needsRepair && repairableManifestFailure,
         infrastructureFailure,
         firstUnblockedFailure,
       );
@@ -412,7 +475,7 @@ export class QualityPipelineService {
             repairedAt,
             runId,
           );
-          setImmediate(() => this.start(generationId, "REPAIR"));
+          setImmediate(() => this.start(generationId, "REPAIR_LIGHT"));
           return;
         }
         repairFailureCode = repairResult.failureCode;
@@ -543,6 +606,13 @@ export class QualityPipelineService {
     });
   }
 
+  private completeIntermediateRepairRun(runId: string, stages: QualityStageResult[]): void {
+    this.database.db.prepare(`
+      UPDATE agent_verification_run SET status = 'PASSED', hard_gate_passed = 1,
+        soft_gate_passed = 1, stage_results_json = ?, completed_at = ? WHERE id = ?
+    `).run(JSON.stringify(stages), new Date().toISOString(), runId);
+  }
+
   private failRun(generation: NonNullable<ReturnType<DatabaseService["getGeneration"]>>, runId: string, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     const now = new Date().toISOString();
@@ -599,6 +669,12 @@ const HARD_COMMAND_STAGES = new Set<VerificationCommandStage>([
   "FRONTEND_BUILD",
 ]);
 const SOFT_COMMAND_STAGES = new Set<VerificationCommandStage>(["BACKEND_TESTS", "FRONTEND_TESTS"]);
+const LIGHTWEIGHT_REPAIR_STAGES = new Set<VerificationCommandStage>([
+  "BACKEND_COMPILE",
+  "FRONTEND_TYPECHECK",
+  "BACKEND_TESTS",
+  "FRONTEND_TESTS",
+]);
 
 // Mirrors the worker's command stages so skipped command stages carry the same
 // hard-gate flags as when they actually run.
@@ -613,19 +689,19 @@ export function selectRepairVerificationStages(
   const previousByStage = new Map(previousStages.map((stage) => [stage.stage, stage]));
   const impact = classifyRepairImpact(changedFiles);
   if (impact.fullHard) {
-    for (const stage of HARD_COMMAND_STAGES) selected.add(stage);
+    for (const stage of LIGHTWEIGHT_REPAIR_STAGES) selected.add(stage);
   } else {
     if (impact.backend) selected.add("BACKEND_COMPILE");
     if (impact.frontend) {
       selected.add("FRONTEND_TYPECHECK");
-      selected.add("FRONTEND_BUILD");
     }
   }
 
-  for (const stage of HARD_COMMAND_STAGES) {
-    if (previousByStage.get(stage)?.status !== "PASSED") selected.add(stage);
-  }
   for (const stage of SOFT_COMMAND_STAGES) {
+    const relevant = impact.fullHard
+      || (stage === "BACKEND_TESTS" && impact.backend)
+      || (stage === "FRONTEND_TESTS" && impact.frontend);
+    if (!relevant) continue;
     const previous = previousByStage.get(stage);
     const wasUnverified = !previous || (previous.status !== "PASSED" && Boolean(previous.blockedBy?.length));
     const failedDirectly = previous?.status === "FAILED" || previous?.status === "CANCELLED" || previous?.status === "INFRASTRUCTURE_FAILED";
@@ -633,9 +709,9 @@ export function selectRepairVerificationStages(
   }
 
   if (!selected.size) {
-    for (const stage of HARD_COMMAND_STAGES) selected.add(stage);
+    selected.add("FRONTEND_TYPECHECK");
   }
-  return COMMAND_STAGE_ORDER.filter((stage) => selected.has(stage));
+  return COMMAND_STAGE_ORDER.filter((stage) => selected.has(stage) && LIGHTWEIGHT_REPAIR_STAGES.has(stage));
 }
 
 function classifyRepairImpact(changedFiles: string[]): { backend: boolean; frontend: boolean; fullHard: boolean } {
@@ -678,6 +754,15 @@ function mergeVerificationStages(
       return notReverifiedStage(stage, selectedStages);
     }),
   ];
+}
+
+function repairLightStagesPassed(
+  stages: QualityStageResult[],
+  requestedStages: VerificationCommandStage[],
+): boolean {
+  const requiredStages = new Set<QualityStageName>(["STATIC_VALIDATION", ...requestedStages]);
+  return [...requiredStages].every((requiredStage) =>
+    stages.some(({ stage, status }) => stage === requiredStage && status === "PASSED"));
 }
 
 function notReverifiedStage(stage: VerificationCommandStage, selectedStages: VerificationCommandStage[]): QualityStageResult {

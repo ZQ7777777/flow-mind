@@ -196,10 +196,80 @@ describe("WorkflowStartShell", () => {
     expect(wrapper.get("[data-test='attachment-workbench']").text()).toContain("档案列表");
     expect(wrapper.text()).toContain("档案上传");
     expect(wrapper.text()).toContain("序号");
-    expect(wrapper.text()).toContain("档案类型");
-    expect(wrapper.text()).toContain("文件名称");
-    expect(wrapper.text()).toContain("文件格式");
-    expect(wrapper.text()).toContain("下载链接");
+    expect(wrapper.text()).toContain("档案（附件）名称");
+    expect(wrapper.text()).toContain("档案（附件）格式");
+    expect(wrapper.text()).toContain("大小限制");
+    expect(wrapper.text()).toContain("是否必填");
+    expect(wrapper.text()).toContain("下载");
+    expect(wrapper.text()).toContain("是否上传");
+  });
+
+  it("renders one archive row per attachment template before upload", async () => {
+    vi.mocked(fetchWorkflowStartContext).mockResolvedValueOnce({
+      definitionId: "definition-1", definitionVersion: 5, processCode: "travel_expense",
+      processName: "差旅报销", startable: true,
+      formFields: [], fieldPermissions: [], defaultVariables: {},
+      attachmentTemplates: [
+        {
+          attachmentCode: "receipt", attachmentName: "报销凭证", required: true,
+          minCount: 1, maxCount: 2, maxSizeBytes: 5242880,
+          allowedExtensions: ["pdf", "txt"], sortOrder: 1,
+        },
+        {
+          attachmentCode: "note", attachmentName: "补充说明", required: false,
+          minCount: 0, maxCount: 1, allowedExtensions: [], sortOrder: 2,
+        },
+      ],
+    });
+    const wrapper = mount(WorkflowStartShell, {
+      props: { processCode: "travel_expense", businessForm: BusinessForm },
+      global: { stubs: { "el-upload": UploadStub } },
+    });
+    await flushPromises();
+
+    const rows = wrapper.findAll(".archive-table tbody tr");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].text()).toContain("报销凭证");
+    expect(rows[0].text()).toContain("PDF、TXT");
+    expect(rows[0].text()).toContain("5.0 MB");
+    expect(rows[0].text()).toContain("是");
+    expect(rows[0].text()).toContain("暂无下载");
+    expect(rows[0].text()).toContain("未上传");
+    expect(rows[1].text()).toContain("补充说明");
+    expect(rows[1].text()).toContain("不限制");
+    expect(rows[1].text()).toContain("否");
+    expect(wrapper.findAll(".archive-table a.download-link")).toHaveLength(0);
+  });
+
+  it("keeps multiple uploaded files in one template row with multiple downloads", async () => {
+    vi.mocked(fetchWorkflowStartContext).mockResolvedValueOnce({
+      definitionId: "definition-1", definitionVersion: 5, processCode: "travel_expense",
+      processName: "差旅报销", startable: true,
+      formFields: [], fieldPermissions: [], defaultVariables: {},
+      attachmentTemplates: [{
+        attachmentCode: "receipt", attachmentName: "报销凭证", required: false,
+        minCount: 0, maxCount: 2, allowedExtensions: ["txt"],
+      }],
+    });
+    const wrapper = mount(WorkflowStartShell, {
+      props: { processCode: "travel_expense", businessForm: BusinessForm },
+      global: { stubs: { "el-upload": UploadStub } },
+    });
+    await flushPromises();
+
+    const first = new File(["one"], "one.txt", { type: "text/plain" });
+    const second = new File(["two"], "two.txt", { type: "text/plain" });
+    wrapper.findComponent({ name: "ElUpload" }).vm.$emit("change", { raw: first }, [
+      { name: first.name, uid: 1, status: "ready", size: first.size, raw: first },
+      { name: second.name, uid: 2, status: "ready", size: second.size, raw: second },
+    ]);
+    await flushPromises();
+
+    expect(wrapper.findAll(".archive-table tbody tr")).toHaveLength(1);
+    expect(wrapper.findAll(".archive-table a.download-link")).toHaveLength(2);
+    expect(wrapper.text()).toContain("one.txt");
+    expect(wrapper.text()).toContain("two.txt");
+    expect(wrapper.text()).toContain("已上传");
   });
 
   it("lists selected files and previews text content", async () => {
@@ -275,7 +345,10 @@ describe("WorkflowStartShell", () => {
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("receipt.txt");
-    expect(wrapper.text()).toContain("暂无已上传附件");
+    expect(wrapper.findAll(".archive-table tbody tr")).toHaveLength(1);
+    expect(wrapper.findAll(".archive-table a.download-link")).toHaveLength(0);
+    expect(wrapper.text()).toContain("暂无下载");
+    expect(wrapper.text()).toContain("未上传");
     expect(wrapper.text()).toContain("请选择或上传附件后查看内容");
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:receipt.txt");
   });

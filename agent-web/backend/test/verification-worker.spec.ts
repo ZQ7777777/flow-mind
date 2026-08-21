@@ -234,6 +234,101 @@ describe("verification worker", () => {
     expect(readFileSync(tests.logPath!, "utf8").length).toBeLessThan(256);
     expect(readFileSync(tests.logPath!, "utf8")).toContain("FINAL_FAILURE_MARKER");
   });
+
+  it("rebuilds the frontend dependency cache once before surfacing an environment failure", async () => {
+    write(target, "frontend/package-lock.json", "{\"lockfileVersion\":3}\n");
+    let installAttempts = 0;
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-cache-retry",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        if (command.args.join(" ").includes(" ci ")) {
+          installAttempts += 1;
+          return installAttempts === 1
+            ? { exitCode: 1, stdout: "", stderr: "npm ERR! code EACCES", timedOut: false, cancelled: false }
+            : { exitCode: 0, stdout: "installed", stderr: "", timedOut: false, cancelled: false };
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    expect(installAttempts).toBe(2);
+    expect(result.infrastructureFailed).toBe(false);
+    expect(result.stages.every(({ status }) => status === "PASSED" || status === "SKIPPED")).toBe(true);
+  });
+
+  it("retries a failure reported only from node_modules without treating it as Manifest code", async () => {
+    let typecheckAttempts = 0;
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-node-modules-retry",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        if (command.stage === "FRONTEND_TYPECHECK") {
+          typecheckAttempts += 1;
+          return typecheckAttempts === 1
+            ? {
+              exitCode: 2,
+              stdout: "",
+              stderr: "src/node_modules/broken-package/index.d.ts(1,1): error TS2305: Module has no exported member.",
+              timedOut: false,
+              cancelled: false,
+            }
+            : { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    expect(typecheckAttempts).toBe(2);
+    expect(result.infrastructureFailed).toBe(false);
+  });
+
+  it("does not retry a current Manifest source failure as an environment failure", async () => {
+    let typecheckAttempts = 0;
+    const worker = new VerificationWorkerService();
+    const result = await worker.run({
+      generationId: "generation-manifest-failure",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir: join(root, "data"),
+      execute: async (command) => {
+        if (command.stage === "FRONTEND_TYPECHECK") {
+          typecheckAttempts += 1;
+          return {
+            exitCode: 2,
+            stdout: "",
+            stderr: "src/modules/generated/example.ts(7,9): error TS2345: Argument is invalid.",
+            timedOut: false,
+            cancelled: false,
+          };
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+      },
+    });
+
+    expect(typecheckAttempts).toBe(1);
+    expect(result.infrastructureFailed).toBe(false);
+    expect(result.stages.find(({ stage }) => stage === "FRONTEND_TYPECHECK")).toEqual(expect.objectContaining({
+      status: "FAILED",
+      diagnostics: [expect.objectContaining({ repairability: "CODE_ACTIONABLE" })],
+    }));
+  });
+
   it("normalizes TypeScript compiler output into source diagnostics", async () => {
     const worker = new VerificationWorkerService();
     const result = await worker.run({
@@ -514,6 +609,77 @@ describe("verification worker", () => {
       cwd: expect.stringContaining("frontend"),
     }));
     expect(commands[0].args.join(" ")).toContain("ci");
+  });
+
+  it("reuses cached frontend dependencies when the package lockfile is unchanged", async () => {
+    write(target, "frontend/package-lock.json", "{\"lockfileVersion\":3,\"packages\":{}}\n");
+    const dataDir = join(root, "data");
+    const installCommands: VerificationCommand[] = [];
+    const worker = new VerificationWorkerService();
+    const execute = async (command: VerificationCommand): Promise<VerificationCommandResult> => {
+      if (command.args.join(" ").includes("ci")) installCommands.push(command);
+      return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+    };
+
+    await worker.run({
+      generationId: "generation-cache-first",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir,
+      execute,
+    });
+    await worker.run({
+      generationId: "generation-cache-second",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir,
+      execute,
+    });
+
+    expect(installCommands).toHaveLength(1);
+    expect(installCommands[0].cwd).toContain("frontend-dependencies");
+  });
+
+  it("restores frontend dependencies again when the package lockfile changes", async () => {
+    const dataDir = join(root, "data");
+    const installCommands: VerificationCommand[] = [];
+    const worker = new VerificationWorkerService();
+    const execute = async (command: VerificationCommand): Promise<VerificationCommandResult> => {
+      if (command.args.join(" ").includes("ci")) installCommands.push(command);
+      return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, cancelled: false };
+    };
+
+    write(target, "frontend/package-lock.json", "{\"lockfileVersion\":3,\"packages\":{\"a\":{}}}\n");
+    await worker.run({
+      generationId: "generation-cache-v1",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir,
+      execute,
+    });
+    write(target, "frontend/package-lock.json", "{\"lockfileVersion\":3,\"packages\":{\"b\":{}}}\n");
+    await worker.run({
+      generationId: "generation-cache-v2",
+      revision: 1,
+      targetRoot: target,
+      stagingDir: staging,
+      contract,
+      manifest,
+      dataDir,
+      execute,
+    });
+
+    expect(installCommands).toHaveLength(2);
+    expect(new Set(installCommands.map(({ cwd }) => cwd)).size).toBe(2);
   });
 
   it("parses Mockito unnecessary stubbing failures at their generated test lines", async () => {

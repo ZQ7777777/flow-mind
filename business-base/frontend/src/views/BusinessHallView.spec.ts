@@ -106,13 +106,10 @@ describe("BusinessHallView", () => {
     expect(wrapper.text()).toContain("业务申请");
     expect(wrapper.text()).toContain("全部业务");
     expect(wrapper.text()).toContain("入金申请");
-    expect(wrapper.text()).toContain("出金申请");
-    expect(wrapper.text()).toContain("报销申请");
-    expect(wrapper.text()).toContain("付款申请");
-    expect(wrapper.text()).toContain("借款申请");
     expect(wrapper.text()).not.toContain("隐藏流程");
     expect(wrapper.text()).toContain("仓单、国债（解）质押申请");
-    expect(wrapper.find('[data-test="business-card-deposit"] .business-icon svg').exists()).toBe(true);
+    expect(wrapper.findAll(".business-card")).toHaveLength(2);
+    expect(wrapper.find('[data-test="business-card-configured-definition-entry"] .business-icon svg').exists()).toBe(true);
     expect(wrapper.find(".welcome-visual svg").exists()).toBe(true);
     expect(wrapper.text()).toContain("待办事项");
     expect(wrapper.text()).toContain("8");
@@ -120,7 +117,7 @@ describe("BusinessHallView", () => {
     expect(wrapper.text()).toContain("李四");
     expect(wrapper.text()).toContain("财务审核");
 
-    await wrapper.get('[data-test="business-card-deposit"]').trigger("click");
+    await wrapper.get('[data-test="business-card-configured-definition-entry"]').trigger("click");
     await flushPromises();
     expect(router.currentRoute.value.path).toBe("/generated/entry-application/apply");
 
@@ -129,7 +126,7 @@ describe("BusinessHallView", () => {
     expect(router.currentRoute.value.path).toBe("/generated/warehouse-pledge/apply");
   });
 
-  it("keeps business cards without page urls disabled", async () => {
+  it("does not render fallback cards when no configured entry has a page url", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(jsonResponse([
         { definitionId: "definition-empty", processCode: "manual_process", processName: "手工流程", enabled: true },
@@ -154,8 +151,9 @@ describe("BusinessHallView", () => {
     const wrapper = mount(BusinessHallView, { global: { plugins: [router] } });
     await flushPromises();
 
-    expect(wrapper.get('[data-test="business-card-deposit"]').attributes("disabled")).toBeDefined();
-    expect(wrapper.get('[data-test="business-card-deposit"]').attributes("title")).toBe("尚未配置入口页面地址");
+    expect(wrapper.findAll(".business-card")).toHaveLength(0);
+    expect(wrapper.text()).not.toContain("入金申请");
+    expect(wrapper.text()).not.toContain("手工流程");
   });
 });
 

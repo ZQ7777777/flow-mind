@@ -11,11 +11,12 @@ import type {
   RepairAttemptSummary,
   RepairResolution,
   GenerationContextSnapshot,
+  GenerationTargetContract,
 } from "@flowmind/agent-contracts";
 import { DatabaseService, type GenerationRow } from "../persistence/database.service.js";
 import { EventBusService } from "../workflow/event-bus.service.js";
 import { PiAdapterService, type GenerationPiCallbacks } from "../pi/pi-adapter.service.js";
-import { deriveGenerationSpec } from "../generation/generation-spec.js";
+import { deriveGenerationSpec, type GenerationSpec } from "../generation/generation-spec.js";
 import { generationContract, StagingService } from "../generation/staging.service.js";
 import { sha256, TargetContractService } from "../generation/target-contract.service.js";
 import type { GenerationApiReferences } from "../pi/generation-prompt.js";
@@ -48,6 +49,13 @@ interface PreviousRepairAttempt {
 interface RelatedSourceFile {
   relativePath: string;
   content: string;
+}
+
+interface RepairGenerationContext {
+  requirement: BusinessRequirement;
+  contract: GenerationTargetContract;
+  spec?: GenerationSpec;
+  manifestPaths: string[];
 }
 
 @Injectable()
@@ -87,13 +95,11 @@ export class RepairCoordinatorService {
     const spec = deriveGenerationSpec(requirement, contract);
     const target = { targetRoot: generation.target_root, contract };
     const contextSnapshot = parseRepairContext(generation.generation_context_snapshot_json);
+    const manifestPaths = this.staging.list(generation);
     const apiReferences: GenerationApiReferences = {
-      businessReferenceData: contract.frontend.apiReferences?.businessReferenceData
-        ? this.targets.readReference(target, contract.frontend.apiReferences.businessReferenceData, generation.session_id)
-        : undefined,
+      businessReferencePath: contract.frontend.apiReferences?.businessReferenceData,
       contextSummary: this.contexts ? JSON.stringify(this.contexts.summary(contextSnapshot)) : undefined,
     };
-    const manifestPaths = this.staging.list(generation);
     const currentStages = attachVerificationContext(stages, verificationRunId, manifestPaths);
     const currentDiagnostics = currentStages.flatMap(({ diagnostics }) => diagnostics);
     const currentReview = review ? { ...review, issues: normalizeReviewIssues(review.issues, manifestPaths) } : undefined;
@@ -154,7 +160,12 @@ export class RepairCoordinatorService {
           generationId: generation.id,
           generationRevision: generation.generation_revision,
           verificationRunId,
-        }, previousAttempt, relatedSource),
+        }, previousAttempt, relatedSource, {
+          requirement,
+          contract,
+          spec,
+          manifestPaths,
+        }),
         callbacks,
       );
       if (signal?.aborted) throw new Error("quality gate cancelled");
@@ -335,6 +346,7 @@ export function buildRepairPrompt(
   },
   previousAttempt?: PreviousRepairAttempt,
   sourceContext: RelatedSourceFile[] = [],
+  repairContext?: RepairGenerationContext,
 ): string {
   const failedStages = stages.filter(({ status }) => status !== "PASSED");
   const diagnostics = boundRepairDiagnostics(failedStages.flatMap(({ diagnostics }) => diagnostics));
@@ -359,12 +371,12 @@ export function buildRepairPrompt(
       diagnosticIds: stageDiagnostics.map(({ diagnosticId }) => diagnosticId).filter(Boolean),
     })),
     actionableDiagnostics,
-    derivedDiagnostics: diagnostics.filter(({ derivedFrom }) => Boolean(derivedFrom?.length)),
+    derivedDiagnostics: diagnostics.filter(({ derivedFrom }) => Boolean(derivedFrom?.length)).map(compactRepairDiagnostic),
     blockedDiagnostics: diagnostics.filter((diagnostic) =>
       diagnostic.classification === "BLOCKED"
       || diagnostic.repairability === "INFRASTRUCTURE"
       || diagnostic.repairability === "PROTECTED_FILE"
-      || !isCurrentGenerationRepairDiagnostic(diagnostic)),
+      || !isCurrentGenerationRepairDiagnostic(diagnostic)).map(compactRepairDiagnostic),
     reviewIssues: review?.issues.filter(({ repairability }) =>
       repairability !== "INFRASTRUCTURE" && repairability !== "PROTECTED_FILE") || [],
     blockedReviewIssues: review?.issues.filter(({ repairability }) =>
@@ -375,39 +387,51 @@ export function buildRepairPrompt(
     ineffectiveRepairSignals,
     repeatedDiagnostics: previousAttempt
       ? diagnostics.filter(({ diagnosticId }) => diagnosticId && previousAttempt.unresolvedDiagnosticIds.includes(diagnosticId))
-        .map(({ diagnosticId, stage, code, relativePath, line, column, actual, expected, evidence, command, exitCode, repairHint, acceptedForms }) => ({
+        .map(({ diagnosticId, stage, code, relativePath, line, column }) => ({
           diagnosticId,
           stage,
           code,
           relativePath,
           line,
           column,
-          command,
-          exitCode,
-          actual,
-          expected,
-          evidence,
-          repairHint,
-          acceptedForms,
         }))
       : [],
+    repairSourceOfTruth: repairContext ? compactRepairContext(repairContext) : undefined,
   };
   return [
-    round <= 3 ? `Repair round ${round} of 3.` : "Unblock extension repair round 4 (the only permitted extension).",
-    "This Repair Brief is the only authoritative diagnostic state for the current verification run; it supersedes historical errors in the session.",
-    "Modify only existing Manifest-managed staged files. Do not add or delete files.",
-    "Resolve all failed hard and soft quality stages and every reviewer issue, preserve the confirmed requirement, then call report_repair_complete.",
-    "BACKEND_TESTS and FRONTEND_TESTS are actionable failures even though they are soft gates; do not stop after compilation, typecheck, or build passes.",
-    "For each actionable diagnostic, first read the relatedSourceFiles entry or the referenced staged file, then inspect any directly related types, DTOs, interfaces, tests, or callers before editing.",
-    "If a diagnostic reports method not found, constructor mismatch, cannot find symbol, incompatible types, property missing, or argument mismatch, re-check the actual API, DTO, imports, dependencies, and language constraints before editing; do not guess signatures.",
-    "Use command, exitCode, file, line, column, code, expected, actual, and evidence as the repair checklist for each diagnostic.",
-    "Do not delete business logic, validation, or exception handling; do not comment out code, skip tests, disable rules, change commands, or weaken quality gates.",
-    "Follow expected, repairHint, and acceptedForms exactly. Make the smallest relevant changes and never weaken tests.",
-    "If repeatedDiagnostics or ineffectiveRepairSignals.requiresRootCauseRecheck is non-empty, compare previousAttempt.changedFiles with the explicitly remaining subchecks, then stop continuing the same edit pattern: re-confirm the root cause from authoritative source, API/type definitions, imports, Maven/npm dependencies, and Java/TypeScript version limits.",
-    "Report one RESOLVED resolution for every actionable diagnostic and actionable reviewer diagnostic. This is a repair claim only; the next verification run decides whether the diagnostic is actually RESOLVED. Do not claim blocked infrastructure, protected-file, or derived findings are resolved.",
-    "Before editing, read the immutable project skill and golden references. Keep the frontend-only boundary: no backend files, workflow submission, attachment ownership, or mutation APIs in generated business code.",
-    `Authoritative read-only business API reference:\n${apiReferences?.businessReferenceData || "No generated business API is required."}`,
-    `Immutable generation context summary:\n${apiReferences?.contextSummary || "Unavailable in legacy prompt test."}`,
+    round <= 3
+        ? `Repair round ${round} of 3.`
+        : "Unblock extension repair round 4 (the only permitted extension).",
+
+    "The current Repair Brief is authoritative.",
+    "Ignore historical diagnostics not present in it.",
+
+    "Modify only existing Manifest-managed staged files.",
+    "Do not add or delete files.",
+    "Fix all actionable diagnostics and reviewer issues while preserving the confirmed requirement, then call report_repair_complete.",
+
+    "Use the diagnostic fields already provided in the Repair Brief first.",
+    "Do not read additional context by default.",
+
+    "Read additional data only when it is necessary to determine the correct fix:",
+    "- Use read_verification_diagnostic only when the brief does not contain enough error detail.",
+    "- Use read_staged only for the file you are about to inspect or edit.",
+    "- Read related DTOs, types, interfaces, tests, or callers only when the current error indicates a signature, type, symbol, import, dependency, or API mismatch.",
+    "- Read generation context or target references only when the fix depends on project-specific requirements or APIs.",
+
+    "Do not proactively list or read generation context.",
+    "Do not re-read files already provided in the Repair Brief unless required.",
+    "Do not inspect unrelated files.",
+
+    "Make the smallest valid change.",
+    "Do not weaken tests, validation, business logic, exception handling, commands, or quality gates.",
+    "Do not guess API signatures.",
+
+    "If the same diagnostic persists from the previous repair, do not repeat the same edit pattern; inspect only the authoritative definition needed to re-check the root cause.",
+
+    "Report one RESOLVED resolution for every actionable diagnostic you addressed.",
+    "Verification determines whether it is actually resolved.",
+
     `Current Repair Brief:\n${JSON.stringify(brief)}`,
   ].join("\n");
 }
@@ -427,12 +451,11 @@ function repairContextAccess(
 ): Pick<GenerationPiCallbacks, "listGenerationContext" | "readGenerationContext" | "requiredGenerationContextKeys"> {
   const items = [
     ...snapshot.skills.flatMap((skill) => skill.files.map((file) => ({
-      key: `skill:${skill.name}:${file.relativePath}`, sha256: file.sha256,
-      required: file.relativePath === "SKILL.md" || file.relativePath === "references/golden-example.md",
+      key: `skill:${skill.name}:${file.relativePath}`, sha256: file.sha256, required: false,
       read: () => registry?.readSkill(snapshot, skill.name, file.relativePath, sessionId) || file.content,
     }))),
     ...snapshot.references.map((reference) => ({
-      key: `reference:${reference.source}:${reference.relativePath}`, sha256: reference.sha256, required: reference.source === "REPOSITORY",
+      key: `reference:${reference.source}:${reference.relativePath}`, sha256: reference.sha256, required: false,
       read: () => registry?.readReference(snapshot, reference.source, reference.relativePath, sessionId) || reference.content,
     })),
   ];
@@ -597,25 +620,149 @@ function repairIneffectiveSignals(
 }
 
 function boundRelatedSourceFiles(files: RelatedSourceFile[]): RelatedSourceFile[] {
-  return files.map(({ relativePath, content }) => ({
-    relativePath,
-    content: content.length > 8_000 ? `[earlier content omitted]\n${content.slice(-8_000)}` : content,
-  }));
+  let remaining = 8_000;
+  const omissionMarker = "[earlier content omitted]\n";
+  return files.flatMap(({ relativePath, content }) => {
+    if (remaining <= 0) return [];
+    const limit = Math.min(2_000, remaining);
+    const bounded = content.length > limit
+      ? `${omissionMarker}${content.slice(-(limit - omissionMarker.length))}`
+      : content;
+    remaining -= bounded.length;
+    return [{ relativePath, content: bounded }];
+  });
 }
 
+function compactRepairDiagnostic(diagnostic: QualityDiagnostic): Record<string, unknown> {
+  return {
+    diagnosticId: diagnostic.diagnosticId,
+    stage: diagnostic.stage,
+    code: diagnostic.code,
+    relativePath: diagnostic.relativePath,
+    line: diagnostic.line,
+    column: diagnostic.column,
+    classification: diagnostic.classification,
+    repairability: diagnostic.repairability,
+  };
+}
+
+function compactRepairContext(context: RepairGenerationContext): Record<string, unknown> {
+  const { requirement, contract, spec } = context;
+  return {
+    requirement: {
+      businessCode: requirement.businessCode,
+      businessName: requirement.businessName,
+      systemCode: requirement.systemCode,
+      goal: boundText(requirement.goal, 400),
+      participants: (requirement.participants || []).map(({ roleCode, roleName }) => ({ roleCode, roleName })),
+      formFields: (requirement.formFields || []).map(({ fieldCode, fieldType, controlType, required, readOnly, multiple, referenceDataSource }) => ({
+        fieldCode,
+        fieldType,
+        controlType,
+        required,
+        readOnly,
+        multiple,
+        referenceDataSource: referenceDataSource
+          ? { resource: referenceDataSource.resource, parameterBindings: referenceDataSource.parameterBindings }
+          : undefined,
+      })),
+      attachments: (requirement.attachments || []).map(({ attachmentCode, required, applicableNodeCodes }) => ({
+        attachmentCode,
+        required,
+        applicableNodeCodes,
+      })),
+      nodes: (requirement.nodes || []).map(({ nodeCode, nodeType, approverRule, multiInstanceMode }) => ({
+        nodeCode,
+        nodeType,
+        approverRule,
+        multiInstanceMode,
+      })),
+      edges: (requirement.edges || []).map(({ edgeCode, sourceNodeCode, targetNodeCode, conditionExpression, defaultEdge }) => ({
+        edgeCode,
+        sourceNodeCode,
+        targetNodeCode,
+        conditionExpression: boundText(conditionExpression, 300),
+        defaultEdge,
+      })),
+      businessRules: (requirement.businessRules || []).map(({ ruleCode, description, expression }) => ({
+        ruleCode,
+        description: boundText(description, 300),
+        expression: boundText(expression, 300),
+      })),
+      frontendBehavior: requirement.frontendBehavior
+        ? {
+          sections: requirement.frontendBehavior.sections.map(({ sectionCode, title, fieldCodes }) => ({ sectionCode, title, fieldCodes })),
+          dataQueries: requirement.frontendBehavior.dataQueries.map(({ queryCode, resource, loadMode, refreshable }) => ({ queryCode, resource, loadMode, refreshable })),
+          calculations: requirement.frontendBehavior.calculations.map(({ calculationCode, targetFieldCode, dependencyFieldCodes, expression }) => ({
+            calculationCode,
+            targetFieldCode,
+            dependencyFieldCodes,
+            expression: boundText(expression, 300),
+          })),
+          checks: requirement.frontendBehavior.checks.map(({ checkCode, checkName, dependencyFieldCodes, dataQueryCodes, passWhen }) => ({
+            checkCode,
+            checkName,
+            dependencyFieldCodes,
+            dataQueryCodes,
+            passWhen: boundText(passWhen, 300),
+          })),
+        }
+        : undefined,
+    },
+    contract: {
+      contractVersion: contract.contractVersion,
+      generationMode: contract.generationMode,
+      projectId: contract.projectId,
+      backend: contract.backend && {
+        rootDir: contract.backend.rootDir,
+        javaVersion: contract.backend.javaVersion,
+        springBootVersion: contract.backend.springBootVersion,
+        basePackage: contract.backend.basePackage,
+        generatedSourceDir: contract.backend.generatedSourceDir,
+        generatedTestDir: contract.backend.generatedTestDir,
+        allowedApi: contract.backend.starter?.allowedApi,
+        trustedUserContext: contract.backend.trustedUserContext,
+      },
+      frontend: {
+        rootDir: contract.frontend.rootDir,
+        framework: contract.frontend.framework,
+        generatedModuleDir: contract.frontend.generatedModuleDir,
+        generatedViewDir: contract.frontend.generatedViewDir,
+        generatedApiDir: contract.frontend.generatedApiDir,
+        generatedTestDir: contract.frontend.generatedTestDir,
+        routeRegistry: contract.frontend.routeRegistry,
+        businessReferencePath: contract.frontend.apiReferences?.businessReferenceData,
+      },
+    },
+    spec: spec && {
+      processCode: spec.processCode,
+      kebabCode: spec.kebabCode,
+      apiPath: spec.apiPath,
+      routePath: spec.routePath,
+      hasBusinessApi: spec.hasBusinessApi,
+      paths: spec.paths,
+    },
+    manifestPaths: context.manifestPaths,
+  };
+}
+
+function boundText(value: string | undefined, limit: number): string | undefined {
+  if (!value) return value;
+  return value.length > limit ? `${value.slice(0, limit)}...` : value;
+}
 
 function boundRepairDiagnostics(diagnostics: QualityDiagnostic[]): QualityDiagnostic[] {
-  const evidenceLimit = Math.max(300, Math.floor(24_000 / Math.max(1, diagnostics.length)));
+  const evidenceLimit = Math.max(200, Math.floor(8_000 / Math.max(1, diagnostics.length)));
   const tail = (value: string | undefined, limit: number) => value && value.length > limit
     ? `[earlier content omitted]\n${value.slice(-limit)}`
     : value;
   return diagnostics.map((item) => ({
     ...item,
-    message: tail(item.message, 1_000) || item.message,
-    actual: tail(item.actual, 1_000),
-    expected: tail(item.expected, 1_000),
+    message: tail(item.message, 600) || item.message,
+    actual: tail(item.actual, 600),
+    expected: tail(item.expected, 600),
     evidence: tail(item.evidence, evidenceLimit),
-    repairHint: tail(item.repairHint, 1_000),
+    repairHint: tail(item.repairHint, 600),
   }));
 }
 

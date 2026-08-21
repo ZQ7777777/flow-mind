@@ -7,6 +7,33 @@ import { StagingService } from "../generation/staging.service.js";
 import { EventBusService } from "../workflow/event-bus.service.js";
 import { GenerationContextRegistry } from "../generation/generation-context-registry.service.js";
 
+export interface ReviewContextItem {
+  key: string;
+  sha256: string;
+  required: boolean;
+  read(): string;
+}
+
+const DEFAULT_REVIEW_CONTEXT_PATHS = new Set([
+  "SKILL.md",
+  "references/generated-form-contract.md",
+  "references/quality-and-boundaries.md",
+  "references/backend-api-contract.md",
+  "references/golden-example.md",
+]);
+const SKILL_CONTEXT_PREFIX = "skill:flowmind-business-generation:";
+
+export function splitReviewContextItems(items: ReviewContextItem[]): {
+  defaultItems: ReviewContextItem[];
+  exampleItems: ReviewContextItem[];
+} {
+  return {
+    defaultItems: items.filter((item) => item.key.startsWith(SKILL_CONTEXT_PREFIX)
+      && DEFAULT_REVIEW_CONTEXT_PATHS.has(item.key.slice(SKILL_CONTEXT_PREFIX.length))),
+    exampleItems: items.filter((item) => item.key.startsWith("reference:TARGET:")),
+  };
+}
+
 @Injectable()
 export class ReviewerService {
   private readonly activeReviews = new Map<string, string>();
@@ -43,7 +70,7 @@ export class ReviewerService {
       if (signal?.aborted) throw new Error("quality gate cancelled");
       if (this.pi && this.staging) {
         const context = JSON.parse(generation.generation_context_snapshot_json || "{}") as GenerationContextSnapshot;
-        const contextItems = context.version === "1.0" ? [
+        const contextItems: ReviewContextItem[] = context.version === "1.0" ? [
           ...context.skills.flatMap((skill) => skill.files.map((file) => ({
             key: `skill:${skill.name}:${file.relativePath}`, sha256: file.sha256,
             required: file.relativePath === "SKILL.md" || file.relativePath === "references/golden-example.md",
@@ -54,15 +81,18 @@ export class ReviewerService {
             read: () => this.contexts?.readReference(context, reference.source, reference.relativePath, generation.session_id) || reference.content,
           })),
         ] : [];
+        const { defaultItems, exampleItems } = splitReviewContextItems(contextItems);
         session = await this.pi.runReview(
           reviewId,
-          "Review the current staged Manifest against the confirmed requirement and quality results. Only investigate diagnostics scoped CURRENT_GENERATION. Do not investigate, report, or request changes for PRE_EXISTING diagnostics or files outside the Manifest. For every issue include concrete evidence, an actionable repairHint, and repairability. Submit exactly one code review.",
+          "Review the current staged Manifest against the confirmed requirement and quality results. Read the default review context first. Target examples are intentionally hidden from the default context; only list and read them after identifying a concrete structural compatibility question, not for general comparison. Only investigate diagnostics scoped CURRENT_GENERATION. Do not investigate, report, or request changes for PRE_EXISTING diagnostics or files outside the Manifest. For every issue include concrete evidence, an actionable repairHint, and repairability. Submit exactly one code review.",
           {
             readStaged: (path) => this.staging!.read(generation, path).content,
             readDiff: (path) => this.staging!.diff(generation, path).unifiedDiff,
             readQuality: () => JSON.stringify(stages),
-            listGenerationContext: () => contextItems.map(({ key, sha256, required }) => ({ key, sha256, required })),
-            readGenerationContext: (key) => contextItems.find((item) => item.key === key)?.read() || "context unavailable",
+            listGenerationContext: () => defaultItems.map(({ key, sha256, required }) => ({ key, sha256, required })),
+            readGenerationContext: (key) => defaultItems.find((item) => item.key === key)?.read() || "context unavailable",
+            listGenerationExamples: () => exampleItems.map(({ key, sha256 }) => ({ key, sha256 })),
+            readGenerationExample: (key) => exampleItems.find((item) => item.key === key)?.read() || "example unavailable",
             submit: (report) => { submitted = report; },
             onEvent: (type, data) => this.events?.publish(generation.session_id, { type, data }),
             onError: (_code, message) => this.events?.publish(generation.session_id, { type: "error", data: { message } }),

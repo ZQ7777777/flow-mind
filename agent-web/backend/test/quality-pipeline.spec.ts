@@ -14,6 +14,7 @@ import { ReviewerService } from "../src/review/reviewer.service.js";
 import {
   classifyDiagnostics,
   collectResolvedDiagnostics,
+  hasManifestRepairableDiagnostic,
   hasFirstUnblockedFailure,
   QualityPipelineService,
   selectRepairVerificationStages,
@@ -31,6 +32,55 @@ describe("M4 quality pipeline integration", () => {
   let pi: PiAdapterService;
   let events: EventBusService;
   const user = { userId: "user_sales", userName: "Sales User" };
+
+  it("routes repair only when a current actionable diagnostic points to the Manifest", () => {
+    const manifestPaths = ["frontend/src/modules/generated/example.ts"];
+    expect(hasManifestRepairableDiagnostic([{
+      stage: "FRONTEND_TYPECHECK",
+      status: "FAILED",
+      hardGate: true,
+      summary: "generated source failed",
+      diagnostics: [{
+        diagnosticId: "diag-manifest",
+        relativePath: manifestPaths[0],
+        scope: "CURRENT_GENERATION",
+        repairability: "CODE_ACTIONABLE",
+      }],
+    } as any], manifestPaths)).toBe(true);
+    expect(hasManifestRepairableDiagnostic([{
+      stage: "FRONTEND_TYPECHECK",
+      status: "FAILED",
+      hardGate: true,
+      summary: "dependency failed",
+      diagnostics: [{
+        diagnosticId: "diag-environment",
+        relativePath: "frontend/node_modules/broken-package/index.d.ts",
+        repairability: "INFRASTRUCTURE",
+      }],
+    } as any], manifestPaths)).toBe(false);
+    expect(hasManifestRepairableDiagnostic([{
+      stage: "STATIC_VALIDATION",
+      status: "FAILED",
+      hardGate: true,
+      summary: "manifest mismatch",
+      diagnostics: [{
+        diagnosticId: "diag-manifest-set",
+        repairability: "CODE_ACTIONABLE",
+      }],
+    } as any], manifestPaths)).toBe(true);
+    expect(hasManifestRepairableDiagnostic([{
+      stage: "FRONTEND_TYPECHECK",
+      status: "FAILED",
+      hardGate: true,
+      summary: "external failure",
+      diagnostics: [{
+        diagnosticId: "diag-external",
+        relativePath: "frontend/src/views/LegacyView.vue",
+        scope: "PRE_EXISTING",
+        repairability: "CODE_ACTIONABLE",
+      }],
+    } as any], manifestPaths)).toBe(false);
+  });
 
   it("classifies persistent, resolved, and first-unblocked diagnostics from verified runs", () => {
     const previous = [{
@@ -116,7 +166,6 @@ describe("M4 quality pipeline integration", () => {
       { stage: "FRONTEND_TESTS" as const, status: "FAILED" as const, hardGate: false, summary: "failed", diagnostics: [] },
     ], ["frontend/src/modules/generated/EntryApplicationApply.vue"])).toEqual([
       "FRONTEND_TYPECHECK",
-      "FRONTEND_BUILD",
       "FRONTEND_TESTS",
     ]);
 
@@ -137,10 +186,7 @@ describe("M4 quality pipeline integration", () => {
       { stage: "FRONTEND_TESTS" as const, status: "SKIPPED" as const, hardGate: false, summary: "blocked", diagnostics: [], blockedBy: ["BACKEND_COMPILE" as const] },
     ], ["backend/src/main/java/com/flowmind/business/generated/EntryApplicationService.java"])).toEqual([
       "BACKEND_COMPILE",
-      "FRONTEND_TYPECHECK",
-      "FRONTEND_BUILD",
       "BACKEND_TESTS",
-      "FRONTEND_TESTS",
     ]);
   });
 
@@ -369,6 +415,7 @@ describe("M4 quality pipeline integration", () => {
       prompt,
       callbacks,
     ) => {
+      expect(callbacks.requiredGenerationContextKeys).toEqual([]);
       const brief = JSON.parse(prompt.split("Current Repair Brief:\n")[1]) as {
         actionableDiagnostics: Array<{ diagnosticId: string }>;
       };
@@ -401,8 +448,12 @@ describe("M4 quality pipeline integration", () => {
           expect.stringContaining("Repair round 1"),
           expect.any(Object),
         );
-        expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_verification_run WHERE generation_id = ?")
-          .get(started.generationId)).toEqual({ count: 2 });
+        expect(database.db.prepare("SELECT trigger FROM agent_verification_run WHERE generation_id = ? ORDER BY created_at")
+          .all(started.generationId)).toEqual([
+          { trigger: "REVERIFY" },
+          { trigger: "REPAIR_LIGHT" },
+          { trigger: "REPAIR_FULL" },
+        ]);
         return;
       }
       if (summary.status === "FAILED") {
@@ -537,7 +588,7 @@ describe("M4 quality pipeline integration", () => {
           })],
         }));
         expect(summary.quality.repairAttempts![0].failureCode).toBeUndefined();
-        expect(worker.run).toHaveBeenCalledTimes(2);
+        expect(worker.run).toHaveBeenCalledTimes(3);
         expect(staging.read(database.getGeneration(started.generationId)!, summary.quality.repairAttempts![0].changedFiles[0]).content)
           .toContain("valid change with invalid report");
         return;

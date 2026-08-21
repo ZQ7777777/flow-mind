@@ -63,7 +63,7 @@ describe("repair prompt", () => {
       unresolvedDiagnosticIds: ["diagnostic-current"],
     });
     expect(prompt).toContain("REVIEW_BOUNDARY");
-    expect(prompt).toContain("frontend-only boundary");
+    expect(prompt).not.toContain("Keep the frontend-only boundary");
     expect(prompt).toContain("No generated business API is required");
     expect(prompt).not.toContain("ProcessRuntimeService");
     expect(prompt).toContain("all failed hard and soft quality stages");
@@ -190,6 +190,55 @@ describe("repair prompt", () => {
     expect(brief.blockedDiagnostics.map(({ diagnosticId }: { diagnosticId: string }) => diagnosticId))
       .toEqual(["diag-pre-existing", "diag-integration-impact"]);
   });
+
+  it("keeps the repair prompt bounded and carries a compact source-of-truth context", () => {
+    const buildRepairPrompt = (repairModule as Record<string, unknown>).buildRepairPrompt as any;
+    const prompt = buildRepairPrompt(
+      1,
+      [{
+        stage: "FRONTEND_TYPECHECK",
+        status: "FAILED",
+        hardGate: true,
+        summary: "failed",
+        diagnostics: [{
+          diagnosticId: "diag-current",
+          stage: "FRONTEND_TYPECHECK",
+          code: "TS2345",
+          message: "Argument is invalid.",
+          severity: "ERROR",
+          hardGate: true,
+          relativePath: "frontend/src/modules/generated/example.ts",
+          repairability: "CODE_ACTIONABLE",
+        }],
+      }],
+      undefined,
+      { businessReferencePath: "frontend/src/api/generated/reference.ts" },
+      {
+        generationId: "generation-1",
+        generationRevision: 2,
+        verificationRunId: "verification-1",
+      },
+      undefined,
+      [{ relativePath: "frontend/src/modules/generated/example.ts", content: "x".repeat(9_000) }],
+      {
+        requirement: {
+          businessCode: "entry_application",
+          businessName: "Entry application",
+          formFields: [{ fieldCode: "amount", fieldType: "number" }],
+          nodes: [{ nodeCode: "apply", nodeType: "USER_TASK" }],
+        },
+        contract: { contractVersion: "2.1", projectId: "fixture", frontend: { rootDir: "frontend", framework: "vue3" } },
+        manifestPaths: ["frontend/src/modules/generated/example.ts"],
+      },
+    );
+    const brief = JSON.parse(prompt.split("Current Repair Brief:\n")[1]);
+
+    expect(prompt).toContain("entry_application");
+    expect(prompt).toContain("read_generation_contract_file");
+    expect(brief.relatedSourceFiles[0].content.length).toBeLessThanOrEqual(2_000);
+    expect(prompt.length).toBeLessThan(20_000);
+  });
+
   it("reads only bounded logs inside the current generation", () => {
     const root = mkdtempSync(join(tmpdir(), "flowmind-repair-log-"));
     try {
