@@ -836,6 +836,14 @@ export function renderBusinessRequirementMarkdown(input: BusinessRequirement): s
     "",
     "## 页面行为",
     "",
+    ...requirement.frontendBehavior!.sections.slice().sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((section) => `- 分区 ${section.sectionCode}：${section.title}（${section.fieldCodes.join("、")}）`),
+    ...requirement.frontendBehavior!.dataQueries.map((query) => `- 查询 ${query.queryCode}：${query.resource}`),
+    ...requirement.frontendBehavior!.calculations.slice().sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((calculation) => `- 计算 ${calculation.calculationCode} → ${calculation.targetFieldCode}：${calculation.expression}`),
+    ...requirement.frontendBehavior!.checks.slice().sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((check) => `- 核查 ${check.checkCode}：${check.checkName}；通过条件=${check.passWhen}`),
+    "",
     "## 流程节点与审批规则",
     ...requirement.nodes
       .filter((node) => node.nodeType === "USER_TASK" || node.nodeType === "NOTICE")
@@ -845,14 +853,6 @@ export function renderBusinessRequirementMarkdown(input: BusinessRequirement): s
         const rule = node.approverRule;
         return `- ${node.nodeCode} / ${node.nodeName} (${node.nodeType})：approverRule.type=${rule?.type || "UNCONFIGURED"}，approverRule.config=${JSON.stringify(rule?.config ?? {})}，multiInstanceMode=${node.multiInstanceMode || "SINGLE"}`;
       }),
-    "",
-    ...requirement.frontendBehavior!.sections.slice().sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((section) => `- 分区 ${section.sectionCode}：${section.title}（${section.fieldCodes.join("、")}）`),
-    ...requirement.frontendBehavior!.dataQueries.map((query) => `- 查询 ${query.queryCode}：${query.resource}`),
-    ...requirement.frontendBehavior!.calculations.slice().sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((calculation) => `- 计算 ${calculation.calculationCode} → ${calculation.targetFieldCode}：${calculation.expression}`),
-    ...requirement.frontendBehavior!.checks.slice().sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((check) => `- 核查 ${check.checkCode}：${check.checkName}；通过条件=${check.passWhen}`),
   ];
   return `${lines.join("\n")}\n`;
 }
