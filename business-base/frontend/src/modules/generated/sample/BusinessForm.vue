@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import type { WorkflowFieldPermission, WorkflowFormField } from "../../../types/workflow";
 import {
   getAccountFunds,
@@ -31,6 +31,9 @@ const accounts = ref<FuturesAccount[]>([]);
 const exchanges = ref<Exchange[]>([]);
 const products = ref<FuturesProduct[]>([]);
 const accountFunds = ref<AccountFund>();
+const fundDetailOpen = ref(false);
+const fundDetailButton = ref<HTMLButtonElement>();
+const fundDetailDialog = ref<HTMLElement>();
 const loading = ref(false);
 const error = ref("");
 const initialized = ref(false);
@@ -39,6 +42,9 @@ let exchangeRequestId = 0;
 let tradingCodeRequestId = 0;
 const businessTypes = ["仓单质押", "仓单解质押", "国债质押", "国债解质押"];
 const frozenChecks = computed(() => props.currentNodeCode === "delivery_review" || !props.checkRefreshable);
+const selectedAccount = computed(() => accounts.value.find(({ accountNo }) => accountNo === value("futuresAccount", "")));
+const fundDetailReady = computed(() => Boolean(selectedAccount.value
+  && accountFunds.value?.accountNo === selectedAccount.value.accountNo));
 
 function value<T>(fieldCode: string, fallback: T): T {
   return (draft.value[fieldCode] ?? fallback) as T;
@@ -109,6 +115,7 @@ onMounted(async () => {
 watch(() => value("futuresAccount", ""), async (accountNo) => {
   if (!initialized.value) return;
   const requestId = ++accountRequestId;
+  closeFundDetails(false);
   accountFunds.value = undefined;
   if (!accountNo) {
     updateMany({ customerName: "", tradingCode: "", businessCheckSnapshot: "" });
@@ -209,6 +216,48 @@ async function refreshChecks(): Promise<void> {
   }
 }
 
+async function openFundDetails(): Promise<void> {
+  if (!fundDetailReady.value) return;
+  fundDetailOpen.value = true;
+  await nextTick();
+  fundDetailDialog.value?.focus();
+}
+
+function closeFundDetails(restoreFocus = true): void {
+  if (!fundDetailOpen.value) return;
+  fundDetailOpen.value = false;
+  if (restoreFocus) void nextTick(() => fundDetailButton.value?.focus());
+}
+
+function formatMoney(amount: number | undefined): string {
+  if (amount === undefined || !Number.isFinite(amount)) return "—";
+  const currency = accountFunds.value?.currency || "CNY";
+  try {
+    return new Intl.NumberFormat("zh-CN", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+  }
+}
+
+function currencyName(currency: string | undefined): string {
+  return currency === "CNY" ? "人民币" : currency || "—";
+}
+
+function accountStatusName(status: string | undefined): string {
+  if (status === "NORMAL") return "正常";
+  if (status === "DORMANT") return "休眠";
+  return status || "—";
+}
+
+function exchangeFund(exchangeCode: string): AccountFund["exchangeFunds"][number] | undefined {
+  return accountFunds.value?.exchangeFunds.find((item) => item.exchangeCode === exchangeCode);
+}
+
 type CheckStatus = "pass" | "fail" | "skip" | "missing";
 interface CheckResult { name: string; description: string; status: CheckStatus; text: string }
 const checkText: Record<CheckStatus, string> = { pass: "通过", fail: "不通过", skip: "不需核查", missing: "缺少数据，无法核查" };
@@ -307,7 +356,7 @@ defineExpose({ validate });
 
     <section class="form-section">
       <h2>客户信息</h2>
-      <div class="form-grid">
+      <div class="account-row">
         <label v-if="visible('futuresAccount')">
           <span>期货账号<b v-if="required('futuresAccount')"> *</b></span>
           <select :value="value('futuresAccount', '')" :disabled="readonly('futuresAccount')" @change="updateFromEvent('futuresAccount', $event)">
@@ -315,7 +364,15 @@ defineExpose({ validate });
             <option v-for="account in accounts" :key="account.accountNo" :value="account.accountNo">{{ account.accountNo }} - {{ account.customerName }}</option>
           </select>
         </label>
-        <label v-if="visible('customerName')"><span>客户名称</span><input :value="value('customerName', '')" disabled></label>
+        <button
+          v-if="visible('futuresAccount')"
+          ref="fundDetailButton"
+          class="detail-link"
+          type="button"
+          aria-haspopup="dialog"
+          :disabled="!fundDetailReady"
+          @click="openFundDetails"
+        >查看资金详情</button>
       </div>
     </section>
 
@@ -338,6 +395,41 @@ defineExpose({ validate });
       <header class="section-row"><h2>业务核查</h2><button type="button" :disabled="disabled || frozenChecks" @click="refreshChecks">刷新</button></header>
       <div class="table-wrap"><table><thead><tr><th>核查项</th><th>核查内容</th><th>核查结果</th></tr></thead><tbody><tr v-for="item in checks" :key="item.name"><td>{{ item.name }}</td><td>{{ item.description }}</td><td :class="`check-${item.status}`">{{ item.text }}</td></tr></tbody></table></div>
     </section>
+
+    <div v-if="fundDetailOpen" class="dialog-backdrop" @click.self="closeFundDetails()">
+      <section
+        ref="fundDetailDialog"
+        class="fund-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="fund-detail-title"
+        tabindex="-1"
+        @keydown.esc.stop.prevent="closeFundDetails()"
+      >
+        <header class="dialog-head">
+          <h2 id="fund-detail-title">客户资金详情</h2>
+          <button type="button" class="dialog-close" aria-label="关闭资金详情" @click="closeFundDetails()">×</button>
+        </header>
+        <div class="dialog-body">
+          <dl class="detail-summary">
+            <div><dt>期货账号</dt><dd>{{ accountFunds?.accountNo || '—' }}</dd></div>
+            <div><dt>客户名称</dt><dd>{{ accountFunds?.customerName || selectedAccount?.customerName || '—' }}</dd></div>
+            <div><dt>币种</dt><dd>{{ currencyName(accountFunds?.currency) }}</dd></div>
+            <div><dt>账户状态</dt><dd class="account-status">{{ accountStatusName(selectedAccount?.accountStatus) }}</dd></div>
+          </dl>
+          <div class="table-wrap">
+            <table class="fund-table">
+              <tbody>
+                <tr><th>当前权益</th><td>{{ formatMoney(accountFunds?.currentEquity) }}</td><th>可用资金</th><td>{{ formatMoney(accountFunds?.availableFunds) }}</td></tr>
+                <tr><th>质押金额</th><td>{{ formatMoney(accountFunds?.pledgeAmount) }}</td><th>实有货币资金</th><td>{{ formatMoney(accountFunds?.actualCash) }}</td></tr>
+                <tr><th>大商所质押金额</th><td>{{ formatMoney(exchangeFund('DCE')?.pledgeAmount) }}</td><th>大商所持仓保证金</th><td>{{ formatMoney(exchangeFund('DCE')?.positionMargin) }}</td></tr>
+                <tr><th>郑商所质押金额</th><td>{{ formatMoney(exchangeFund('CZCE')?.pledgeAmount) }}</td><th>郑商所持仓保证金</th><td>{{ formatMoney(exchangeFund('CZCE')?.positionMargin) }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -347,6 +439,8 @@ defineExpose({ validate });
 .form-section + .form-section { border-top: 1px solid #d8dee8; padding-top: 16px; }
 h2 { margin: 0; font-size: 17px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 18px; }
+.account-row { display: flex; align-items: end; gap: 14px; }
+.account-row label { flex: 1 1 360px; max-width: 560px; }
 label { display: grid; gap: 6px; }
 label span { color: #475569; font-size: 13px; font-weight: 650; }
 b, .state-error, .check-fail { color: #be123c; }
@@ -356,11 +450,27 @@ select[multiple] { min-height: 84px; }
 .amount { color: #9f1239; font-weight: 750; text-align: right; }
 .section-row { display: flex; align-items: center; justify-content: space-between; }
 .section-row button { color: #1d4ed8; cursor: pointer; }
+.detail-link { border: 0; padding-inline: 2px; color: #1d4ed8; background: transparent; cursor: pointer; white-space: nowrap; }
+.detail-link:disabled { color: #94a3b8; cursor: not-allowed; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; min-width: 680px; border-collapse: collapse; }
 th, td { border: 1px solid #d8dee8; padding: 9px 10px; text-align: left; }
 th { background: #f8fafc; }
 .check-pass { color: #15803d; }.check-skip { color: #64748b; }.check-missing { color: #17202a; }
 .state-error { margin: 0; border: 1px solid #fecdd3; border-radius: 6px; padding: 10px; background: #fff1f2; }
-@media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; }.wide { grid-column: auto; } }
+.dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 52%); }
+.fund-dialog { width: min(760px, 100%); max-height: calc(100vh - 40px); overflow: auto; border-radius: 10px; background: #fff; box-shadow: 0 24px 70px rgb(15 23 42 / 32%); outline: none; }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 8px 12px 8px 18px; color: #fff; background: #1d4ed8; }
+.dialog-head h2 { font-size: 16px; }
+.dialog-close { width: 36px; min-height: 36px; border: 0; padding: 0; color: #fff; background: transparent; font-size: 24px; cursor: pointer; }
+.dialog-body { display: grid; gap: 18px; padding: 20px; }
+.detail-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; margin: 0; }
+.detail-summary div { display: grid; grid-template-columns: 88px 1fr; gap: 8px; }
+.detail-summary dt { color: #64748b; }
+.detail-summary dd { margin: 0; font-weight: 700; }
+.account-status { color: #15803d; }
+.fund-table { min-width: 640px; }
+.fund-table th { width: 22%; color: #475569; font-weight: 650; }
+.fund-table td { width: 28%; text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; }.wide { grid-column: auto; }.account-row { align-items: stretch; flex-direction: column; }.account-row label { flex: none; width: 100%; max-width: none; }.detail-link { align-self: start; }.detail-summary { grid-template-columns: 1fr; } }
 </style>
