@@ -1,0 +1,20 @@
+画布：16:9，1280 × 720。
+色板：paper #FAFAF8；ink #0A0A0A；grey1 #F0F0EE；grey2 #D4D4D2；grey3 #737373；accent IKB #002FA7；accent-on #FFFFFF。
+字体：Microsoft YaHei UI / Arial；大字轻量感通过 normal 字重、留白与字号体现；小字使用较高字重保证投屏可读。
+边距：左右 64px，顶部 42px，底部 40px；页眉/页码使用 14–15px（约 10.5–11pt），正文最低 20px（15pt），主标题 46–72px，封面 82px。
+视觉：纯色直角块、1px hairline、短蓝线、数字编号；不使用渐变、圆角、阴影或 emoji。
+
+页序 / 归藏版式映射 / 时间：
+01 S01 Cover：实习成果汇报 / 0.5 min
+02 S03 Split Statement：自我介绍 + 角色定位 / 0.7 min
+03 S19 Four Cards：工作版图与 70/30 叙事 / 0.8 min
+04 S11 Horizontal Timeline：Agent Web 端到端闭环 / 1.2 min
+05 S14 Loop Form：质量闭环与三轮 repair / 1.3 min
+06 S08 Duo Compare：从“能生成”到“可交付” / 1.0 min
+07 S13 Three Forces：Platform / Business Base 支撑 / 1.1 min
+08 S05 Three Layers：能力成长、价值输出、贡献总结 / 0.8 min
+09 S16 Multi-card Brief：心得、思考与优化建议 / 0.8 min
+10 S10 Split Closing：发展方向与加入意愿 / 0.5 min
+总计划 8.7 min，保留 1.3 min 给停顿、现场切换与问答。
+
+标题节奏：accent → paper → grey → paper → dark → paper → grey → paper → grey → split accent/paper。

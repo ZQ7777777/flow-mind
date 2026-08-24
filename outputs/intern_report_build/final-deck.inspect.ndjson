@@ -1,0 +1,262 @@
+{"kind":"deck","id":"pr/a3p5sz","name":"Deck"}
+{"kind":"layout","layoutId":"e9090870-81f6-4baa-a92d-f7e03b6f9f58","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"6372099d-fcc2-425f-adb4-3b019461abc8","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/dqbpea","slide":1,"title":"INTERNSHIP REVIEW · SUZHOU BRANCH","textShapes":7}
+{"kind":"textbox","id":"sh/7y1ob6pk","slide":1,"name":"chrome-1","text":"INTERNSHIP REVIEW · SUZHOU BRANCH","textPreview":"INTERNSHIP REVIEW · SUZHOU BRANCH","textChars":33,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/8zapkb65","slide":1,"name":"page-1","text":"01 / 10","textPreview":"01 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"textbox","id":"sh/tk36dg7q","slide":1,"name":"cover-title","text":"实习成果汇报","textPreview":"实习成果汇报","textChars":6,"textLines":1,"bbox":[64,154,1040,100]}
+{"kind":"textbox","id":"sh/yts7e183","slide":1,"name":"cover-subtitle","text":"把 Agent 能力变成可交付的工程闭环","textPreview":"把 Agent 能力变成可交付的工程闭环","textChars":20,"textLines":1,"bbox":[64,286,1120,78]}
+{"kind":"shape","id":"sh/ju1o76po","slide":1,"bbox":[64,536,1152,0]}
+{"kind":"textbox","id":"sh/kvapgr69","slide":1,"text":"张琦  /  实习生 B","textPreview":"张琦  /  实习生 B","textChars":12,"textLines":1,"bbox":[64,562,430,34]}
+{"kind":"textbox","id":"sh/lwj69w7e","slide":1,"text":"苏州大学 · 计算机科学与技术 · 24岁","textPreview":"苏州大学 · 计算机科学与技术 · 24岁","textChars":21,"textLines":1,"bbox":[64,606,620,32]}
+{"kind":"textbox","id":"sh/2pc7qlo7","slide":1,"text":"2026.08","textPreview":"2026.08","textChars":7,"textLines":1,"bbox":[1030,604,186,30]}
+{"kind":"notes","id":"nt/dqbpea","slide":1,"text":"【本页目的】以工程化闭环定调，不从功能清单开场。\n【建议时长】0.5 分钟\n【讲述要点】\n- 大家好，我是张琦，本次汇报聚焦实习期间做成的工程闭环。\n- 主线是 Agent Web，Platform 与 Business Base 作为运行时和业务落地支撑。\n- 我会重点讲结果、关键判断，以及下一步可以继续优化的方向。\n【转场】先用一页说明我的背景和这段实习中的角色定位。\n\n[Sources]\n- User-provided profile; repository scope in agent-web/AGENTS.md and platform/AGENTS.md."}
+{"kind":"slide","id":"sl/dwctp3","slide":2,"title":"PROFILE · ROLE","textShapes":15}
+{"kind":"textbox","id":"sh/nal47i10","slide":2,"name":"chrome-2","text":"PROFILE · ROLE","textPreview":"PROFILE · ROLE","textChars":14,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/8bu5gn2l","slide":2,"name":"page-2","text":"02 / 10","textPreview":"02 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"shape","id":"sh/9c3m9sj6","slide":2,"name":"profile-left","bbox":[0,0,474,720]}
+{"kind":"textbox","id":"sh/ylsnadkj","slide":2,"text":"张琦","textPreview":"张琦","textChars":2,"textLines":1,"bbox":[64,132,340,84]}
+{"kind":"textbox","id":"sh/zml43i1o","slide":2,"text":"24","textPreview":"24","textChars":2,"textLines":1,"bbox":[64,250,280,145]}
+{"kind":"textbox","id":"sh/07u5cn29","slide":2,"text":"岁 / AGE","textPreview":"岁 / AGE","textChars":7,"textLines":1,"bbox":[276,324,120,32]}
+{"kind":"shape","id":"sh/l83m5sju","slide":2,"bbox":[64,492,346,0]}
+{"kind":"textbox","id":"sh/ihwn6xkn","slide":2,"text":"苏州大学","textPreview":"苏州大学","textChars":4,"textLines":1,"bbox":[64,518,300,36]}
+{"kind":"textbox","id":"sh/ji5of218","slide":2,"text":"计算机科学与技术","textPreview":"计算机科学与技术","textChars":8,"textLines":1,"bbox":[64,566,340,34]}
+{"kind":"textbox","id":"sh/r298b2po","slide":2,"text":"实习角色不是“写一个模块”","textPreview":"实习角色不是“写一个模块”","textChars":13,"textLines":1,"bbox":[538,120,640,62]}
+{"kind":"textbox","id":"sh/q10r2h83","slide":2,"text":"而是把模型能力、平台能力和业务落地串成一条可验证的路径。","textPreview":"而是把模型能力、平台能力和业务落地串成一条可验证的路径。","textChars":28,"textLines":1,"bbox":[538,202,620,92]}
+{"kind":"shape","id":"sh/dobadc7u","slide":2,"bbox":[538,350,646,0]}
+{"kind":"textbox","id":"sh/s32947q9","slide":2,"text":"主责","textPreview":"主责","textChars":2,"textLines":1,"bbox":[538,382,108,30]}
+{"kind":"textbox","id":"sh/fqtsfmp0","slide":2,"text":"Agent Web：需求 → 流程 → 生成 → 验证 → 写入","textPreview":"Agent Web：需求 → 流程 → 生成 → 验证 → 写入","textChars":32,"textLines":1,"bbox":[660,378,520,38]}
+{"kind":"textbox","id":"sh/epkr6h8f","slide":2,"text":"协同","textPreview":"协同","textChars":2,"textLines":1,"bbox":[538,442,108,30]}
+{"kind":"textbox","id":"sh/1sbahw7q","slide":2,"text":"Platform 运行时 + Business Base 业务底座","textPreview":"Platform 运行时 + Business Base 业务底座","textChars":33,"textLines":1,"bbox":[660,438,520,38]}
+{"kind":"textbox","id":"sh/0r298rq5","slide":2,"text":"方法","textPreview":"方法","textChars":2,"textLines":1,"bbox":[538,502,108,30]}
+{"kind":"textbox","id":"sh/nutsjmpw","slide":2,"text":"契约先行、测试兜底、失败可恢复","textPreview":"契约先行、测试兜底、失败可恢复","textChars":15,"textLines":1,"bbox":[660,498,520,38]}
+{"kind":"notes","id":"nt/dwctp3","slide":2,"text":"【本页目的】完成自我介绍，并把个人角色定义为跨层工程闭环建设者。\n【建议时长】0.7 分钟\n【讲述要点】\n- 我来自苏州大学计算机科学与技术专业，今年24岁。\n- 实习中主责 Agent Web，同时参与 Platform 与 Business Base 的接口、运行时和业务落地。\n- 这段经历让我从单模块开发转向跨前后端、跨系统的交付视角。\n【转场】下面用一张工作版图说明汇报重点和各条线之间的关系。\n\n[Sources]\n- User-provided profile; agent-web/AGENTS.md; platform/AGENTS.md."}
+{"kind":"slide","id":"sl/gd463m","slide":3,"title":"SCOPE · CONTRIBUTION MAP","textShapes":17}
+{"kind":"textbox","id":"sh/1onex4vm","slide":3,"name":"chrome-3","text":"SCOPE · CONTRIBUTION MAP","textPreview":"SCOPE · CONTRIBUTION MAP","textChars":24,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/elcf2pcv","slide":3,"name":"page-3","text":"03 / 10","textPreview":"03 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"textbox","id":"sh/zmlwvudg","slide":3,"text":"WORK MAP","textPreview":"WORK MAP","textChars":8,"textLines":1,"bbox":[64,82,520,24]}
+{"kind":"textbox","id":"sh/cjux0zu5","slide":3,"text":"一条主线，三类支撑","textPreview":"一条主线，三类支撑","textChars":9,"textLines":1,"bbox":[64,118,1080,120]}
+{"kind":"shape","id":"sh/dk3etkva","slide":3,"bbox":[64,233,82,4]}
+{"kind":"textbox","id":"sh/qxcfypcz","slide":3,"text":"70%","textPreview":"70%","textChars":3,"textLines":1,"bbox":[82,282,240,70]}
+{"kind":"textbox","id":"sh/rilwrudk","slide":3,"text":"Agent Web","textPreview":"Agent Web","textChars":9,"textLines":1,"bbox":[82,376,242,44]}
+{"kind":"textbox","id":"sh/wfyxcju9","slide":3,"text":"自然语言需求、流程定义、代码生成与质量闭环","textPreview":"自然语言需求、流程定义、代码生成与质量闭环","textChars":21,"textLines":1,"bbox":[82,450,242,108]}
+{"kind":"shape","id":"sh/xg7y5ovu","slide":3,"bbox":[352,286,0,346]}
+{"kind":"textbox","id":"sh/1c3ml0vu","slide":3,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[370,282,240,70]}
+{"kind":"textbox","id":"sh/gbulsvep","slide":3,"text":"Platform","textPreview":"Platform","textChars":8,"textLines":1,"bbox":[370,376,242,44]}
+{"kind":"textbox","id":"sh/fa1kjqd4","slide":3,"text":"运行时契约、幂等事务、任务与实例能力","textPreview":"运行时契约、幂等事务、任务与实例能力","textChars":18,"textLines":1,"bbox":[370,450,242,108]}
+{"kind":"shape","id":"sh/e9s3q5wj","slide":3,"bbox":[640,286,0,346]}
+{"kind":"textbox","id":"sh/t8j2h0vy","slide":3,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[658,282,240,70]}
+{"kind":"textbox","id":"sh/s7aloved","slide":3,"text":"Business Base","textPreview":"Business Base","textChars":13,"textLines":1,"bbox":[658,376,242,44]}
+{"kind":"textbox","id":"sh/r61kfqds","slide":3,"text":"业务大厅、通用发起、管理端与参考数据","textPreview":"业务大厅、通用发起、管理端与参考数据","textChars":18,"textLines":1,"bbox":[658,450,242,108]}
+{"kind":"shape","id":"sh/65s3mlw7","slide":3,"bbox":[928,286,0,346]}
+{"kind":"textbox","id":"sh/d4nmtkv2","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[946,282,240,70]}
+{"kind":"textbox","id":"sh/c3el0feh","slide":3,"text":"Integration","textPreview":"Integration","textChars":11,"textLines":1,"bbox":[946,376,242,44]}
+{"kind":"textbox","id":"sh/wj6xcnq5","slide":3,"text":"跨层契约对齐、失败回退与端到端验收","textPreview":"跨层契约对齐、失败回退与端到端验收","textChars":17,"textLines":1,"bbox":[946,450,242,108]}
+{"kind":"textbox","id":"sh/xkfels7q","slide":3,"text":"注：70% / 30% 为本次汇报篇幅分配，非代码量统计。","textPreview":"注：70% / 30% 为本次汇报篇幅分配，非代码量统计。","textChars":29,"textLines":1,"bbox":[64,648,720,26]}
+{"kind":"notes","id":"nt/gd463m","slide":3,"text":"【本页目的】明确70/30叙事结构，并展示工作并非三个孤立模块。\n【建议时长】0.8 分钟\n【讲述要点】\n- 本次汇报约70%放在 Agent Web，因为它是我的主要工作主线。\n- Platform 提供流程运行时，Business Base 提供业务使用面，Integration 负责把跨层问题真正收口。\n- 我不把提交数量直接当成果，后面会用可交付能力和关键设计判断说明价值。\n【转场】先进入主线：Agent Web 如何从自然语言走到可验证产物。\n\n[Sources]\n- Git log author=zhangqi@test.com; agent-web/README.md; business-base/.flowmind/generation-target.json."}
+{"kind":"slide","id":"sl/kufc86","slide":4,"title":"AGENT WEB · END-TO-END","textShapes":23}
+{"kind":"textbox","id":"sh/xg3m5cjm","slide":4,"name":"chrome-4","text":"AGENT WEB · END-TO-END","textPreview":"AGENT WEB · END-TO-END","textChars":22,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/adsnux0v","slide":4,"name":"page-4","text":"04 / 10","textPreview":"04 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"textbox","id":"sh/be14321g","slide":4,"text":"CORE RESULT 01","textPreview":"CORE RESULT 01","textChars":14,"textLines":1,"bbox":[64,82,520,24]}
+{"kind":"textbox","id":"sh/ora5s7i5","slide":4,"text":"把自然语言需求推进到可交付代码","textPreview":"把自然语言需求推进到可交付代码","textChars":15,"textLines":1,"bbox":[64,118,1080,120]}
+{"kind":"shape","id":"sh/9cjm1cjq","slide":4,"bbox":[108,408,1064,0]}
+{"kind":"shape","id":"sh/mps3qx0z","slide":4,"name":"timeline-node-0","bbox":[104,402,12,12]}
+{"kind":"textbox","id":"sh/nq14z21k","slide":4,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[66,310,88,22]}
+{"kind":"textbox","id":"sh/0nqlonit","slide":4,"text":"需求对话","textPreview":"需求对话","textChars":4,"textLines":1,"bbox":[28,338,164,34]}
+{"kind":"textbox","id":"sh/1ojmxsje","slide":4,"text":"结构化需求","textPreview":"结构化需求","textChars":5,"textLines":1,"bbox":[18,371,184,30]}
+{"kind":"shape","id":"sh/h8vipgb2","slide":4,"name":"timeline-node-1","bbox":[316,402,12,12]}
+{"kind":"textbox","id":"sh/g7m1gbuh","slide":4,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[278,441,88,22]}
+{"kind":"textbox","id":"sh/v6d0n6tw","slide":4,"text":"人工门禁","textPreview":"人工门禁","textChars":4,"textLines":1,"bbox":[240,470,164,34]}
+{"kind":"textbox","id":"sh/u5kje1cb","slide":4,"text":"确认 revision","textPreview":"确认 revision","textChars":11,"textLines":1,"bbox":[230,507,184,30]}
+{"kind":"shape","id":"sh/t4bilwbq","slide":4,"name":"timeline-node-2","bbox":[528,402,12,12]}
+{"kind":"textbox","id":"sh/8321cru5","slide":4,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[490,310,88,22]}
+{"kind":"textbox","id":"sh/7it0jmt0","slide":4,"text":"流程预览","textPreview":"流程预览","textChars":4,"textLines":1,"bbox":[452,338,164,34]}
+{"kind":"textbox","id":"sh/6hkza1cf","slide":4,"text":"创建/校验","textPreview":"创建/校验","textChars":5,"textLines":1,"bbox":[442,371,184,30]}
+{"kind":"shape","id":"sh/lgbihwbu","slide":4,"name":"timeline-node-3","bbox":[740,402,12,12]}
+{"kind":"textbox","id":"sh/kf2h8ru9","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[702,441,88,22]}
+{"kind":"textbox","id":"sh/cjm14r25","slide":4,"text":"发布激活","textPreview":"发布激活","textChars":4,"textLines":1,"bbox":[664,470,164,34]}
+{"kind":"textbox","id":"sh/xkfixwjq","slide":4,"text":"失败可回退","textPreview":"失败可回退","textChars":5,"textLines":1,"bbox":[654,507,184,30]}
+{"kind":"shape","id":"sh/ax4j2hkz","slide":4,"name":"timeline-node-4","bbox":[952,402,12,12]}
+{"kind":"textbox","id":"sh/byd0vm1k","slide":4,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[914,310,88,22]}
+{"kind":"textbox","id":"sh/ovm10r2t","slide":4,"text":"前端生成","textPreview":"前端生成","textChars":4,"textLines":1,"bbox":[876,338,164,34]}
+{"kind":"textbox","id":"sh/pwvitcje","slide":4,"text":"固定 5 / 7 文件","textPreview":"固定 5 / 7 文件","textChars":11,"textLines":1,"bbox":[866,371,184,30]}
+{"kind":"shape","id":"sh/2t4jyhk3","slide":4,"name":"timeline-node-5","bbox":[1164,402,12,12]}
+{"kind":"textbox","id":"sh/nud0rm1o","slide":4,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1126,441,88,22]}
+{"kind":"textbox","id":"sh/8rq1cb2d","slide":4,"text":"质量确认","textPreview":"质量确认","textChars":4,"textLines":1,"bbox":[1088,470,164,34]}
+{"kind":"textbox","id":"sh/9sz25gjy","slide":4,"text":"diff 后安全写入","textPreview":"diff 后安全写入","textChars":10,"textLines":1,"bbox":[1078,507,184,30]}
+{"kind":"shape","id":"sh/3ylcrepc","slide":4,"bbox":[64,593,1152,58]}
+{"kind":"textbox","id":"sh/ixcvi98r","slide":4,"text":"结果：模型不直接改平台、不越过人工门禁、不直接写真实工程。","textPreview":"结果：模型不直接改平台、不越过人工门禁、不直接写真实工程。","textChars":29,"textLines":1,"bbox":[88,607,1104,32]}
+{"kind":"notes","id":"nt/kufc86","slide":4,"text":"【本页目的】说明 Agent Web 已形成可运行的端到端开发期闭环。\n【建议时长】1.2 分钟\n【讲述要点】\n- 我首先完成并迭代了 M0-M2：需求会话、结构化预览、流程创建与发布激活。\n- 之后把链路延伸到前端代码生成、质量验证、人工 diff 与安全写入。\n- 每个关键动作都由确定性状态机和人工门禁控制，模型只在受限范围内推理和生成。\n- 发布、激活或门禁失败时可以回退到需求预览，避免会话卡死或错误状态继续传播。\n【转场】链路走通只是第一步，真正难点是让生成结果可以被验证和修复。\n\n[Sources]\n- agent-web/README.md; doc/agent-web-tech-design.md; commits ad33fb5, f745a6d, 0650293, ff2d7e3."}
+{"kind":"slide","id":"sl/5cdkkt","slide":5,"title":"AGENT WEB · QUALITY LOOP","textShapes":25}
+{"kind":"textbox","id":"sh/cbuxgzqp","slide":5,"name":"chrome-5","text":"AGENT WEB · QUALITY LOOP","textPreview":"AGENT WEB · QUALITY LOOP","textChars":24,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/balwnu94","slide":5,"name":"page-5","text":"05 / 10","textPreview":"05 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"textbox","id":"sh/qpcvep8j","slide":5,"text":"质量不是最后一关","textPreview":"质量不是最后一关","textChars":8,"textLines":1,"bbox":[64,112,560,66]}
+{"kind":"textbox","id":"sh/lgnet4r6","slide":5,"text":"而是一条可观测、可诊断、限次修复的闭环。","textPreview":"而是一条可观测、可诊断、限次修复的闭环。","textChars":20,"textLines":1,"bbox":[64,190,565,60]}
+{"kind":"textbox","id":"sh/0fuxkjql","slide":5,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[64,322,56,24]}
+{"kind":"textbox","id":"sh/zelwre9g","slide":5,"text":"静态边界","textPreview":"静态边界","textChars":4,"textLines":1,"bbox":[130,319,168,30]}
+{"kind":"textbox","id":"sh/ydcfi98v","slide":5,"text":"路径、文件集合、契约与安全规则","textPreview":"路径、文件集合、契约与安全规则","textChars":15,"textLines":1,"bbox":[316,321,300,34]}
+{"kind":"shape","id":"sh/1kjehkr2","slide":5,"bbox":[64,367,550,0]}
+{"kind":"textbox","id":"sh/gjad8fqh","slide":5,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[64,398,56,24]}
+{"kind":"textbox","id":"sh/e5c76dkz","slide":5,"text":"工程验证","textPreview":"工程验证","textChars":4,"textLines":1,"bbox":[130,395,168,30]}
+{"kind":"textbox","id":"sh/f6l8zi1k","slide":5,"text":"typecheck / test / build","textPreview":"typecheck / test / build","textChars":24,"textLines":1,"bbox":[316,397,300,34]}
+{"kind":"shape","id":"sh/07up8325","slide":5,"bbox":[64,443,550,0]}
+{"kind":"textbox","id":"sh/183q18ja","slide":5,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[64,474,56,24]}
+{"kind":"textbox","id":"sh/29w7ad0v","slide":5,"text":"独立审核","textPreview":"独立审核","textChars":4,"textLines":1,"bbox":[130,471,168,30]}
+{"kind":"textbox","id":"sh/na583i1g","slide":5,"text":"Reviewer 输出证据与修复建议","textPreview":"Reviewer 输出证据与修复建议","textChars":18,"textLines":1,"bbox":[316,473,300,34]}
+{"kind":"shape","id":"sh/obepcni1","slide":5,"bbox":[64,519,550,0]}
+{"kind":"textbox","id":"sh/pcnq5sjm","slide":5,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[64,550,56,24]}
+{"kind":"textbox","id":"sh/adw7ex07","slide":5,"text":"限次修复","textPreview":"限次修复","textChars":4,"textLines":1,"bbox":[130,547,168,30]}
+{"kind":"textbox","id":"sh/be58721s","slide":5,"text":"最多三轮，每轮全量重验","textPreview":"最多三轮，每轮全量重验","textChars":11,"textLines":1,"bbox":[316,549,300,34]}
+{"kind":"shape","id":"sh/72pov2hk","slide":5,"bbox":[64,595,550,0]}
+{"kind":"shape","id":"sh/mhg7mxgz","slide":5,"name":"ghost-0","bbox":[800,228,210,74]}
+{"kind":"shape","id":"sh/9476xczq","slide":5,"name":"ghost-1","bbox":[984,362,210,74]}
+{"kind":"shape","id":"sh/83ypo7y5","slide":5,"name":"ghost-2","bbox":[800,506,210,74]}
+{"kind":"shape","id":"sh/ze5oriho","slide":5,"name":"ghost-3","bbox":[626,362,210,74]}
+{"kind":"shape","id":"sh/ydw7idg3","slide":5,"name":"loop-link-0","bbox":[905,302,184,60]}
+{"kind":"shape","id":"sh/lgn6tszu","slide":5,"name":"loop-link-1","bbox":[960,399,74,144]}
+{"kind":"shape","id":"sh/kfepkny9","slide":5,"name":"loop-link-2","bbox":[731,436,174,70]}
+{"kind":"shape","id":"sh/ba5onihc","slide":5,"name":"loop-link-3","bbox":[776,265,84,134]}
+{"kind":"shape","id":"sh/a9wnedg7","slide":5,"name":"loop-node-0","bbox":[800,228,210,74]}
+{"kind":"textbox","id":"sh/0falojep","slide":5,"text":"STATIC","textPreview":"STATIC","textChars":6,"textLines":1,"bbox":[818,242,174,20]}
+{"kind":"textbox","id":"sh/1gjmxofa","slide":5,"text":"规则先行","textPreview":"规则先行","textChars":4,"textLines":1,"bbox":[814,265,182,28]}
+{"kind":"shape","id":"sh/eds3m9wz","slide":5,"name":"loop-node-1","bbox":[984,362,210,74]}
+{"kind":"textbox","id":"sh/fe14vex4","slide":5,"text":"RUN","textPreview":"RUN","textChars":3,"textLines":1,"bbox":[1002,376,174,20]}
+{"kind":"textbox","id":"sh/ojulsje1","slide":5,"text":"工程验证","textPreview":"工程验证","textChars":4,"textLines":1,"bbox":[998,399,182,28]}
+{"kind":"shape","id":"sh/pk3m1ofm","slide":5,"name":"loop-node-2","bbox":[800,506,210,74]}
+{"kind":"textbox","id":"sh/2hc3q9wv","slide":5,"text":"REVIEW","textPreview":"REVIEW","textChars":6,"textLines":1,"bbox":[818,520,174,20]}
+{"kind":"textbox","id":"sh/nil4zexg","slide":5,"text":"独立审核","textPreview":"独立审核","textChars":4,"textLines":1,"bbox":[814,543,182,28]}
+{"kind":"shape","id":"sh/4nqlgzeh","slide":5,"name":"loop-node-3","bbox":[626,362,210,74]}
+{"kind":"textbox","id":"sh/5oz2p4f2","slide":5,"text":"REPAIR","textPreview":"REPAIR","textChars":6,"textLines":1,"bbox":[644,376,174,20]}
+{"kind":"textbox","id":"sh/x4bep4fm","slide":5,"text":"≤ 3 轮","textPreview":"≤ 3 轮","textChars":5,"textLines":1,"bbox":[640,399,182,28]}
+{"kind":"textbox","id":"sh/wj2dwze1","slide":5,"text":"LOOP","textPreview":"LOOP","textChars":4,"textLines":1,"bbox":[842,372,136,48]}
+{"kind":"notes","id":"nt/5cdkkt","slide":5,"text":"【本页目的】突出技术含量最高的质量闭环：规则、工程验证、Reviewer 与 repair。\n【建议时长】1.3 分钟\n【讲述要点】\n- 我把质量拆成静态边界、工程验证和独立审核三层，而不是只看测试是否变绿。\n- static-validator 处理文件范围、生成契约和常见越界问题；Worker 执行前端 typecheck、test、build。\n- Reviewer 输出带证据的诊断，再由 repair coordinator 组织最多三轮修复。\n- 每轮修复后重新走完整验证，基础设施失败不消耗修复轮次，避免无效循环。\n【转场】这套闭环最终改变了交付标准：不再满足于‘能生成’，而是要求‘可交付’。\n\n[Sources]\n- agent-web/backend/src/verification/quality-gates.ts; quality-pipeline.service.ts; repair-coordinator.service.ts; commits ee69a44, 540f684, 7c998cf, f2d4e8f."}
+{"kind":"slide","id":"sl/tvzw9d","slide":6,"title":"AGENT WEB · DELIVERY STANDARD","textShapes":15}
+{"kind":"textbox","id":"sh/el4beh0n","slide":6,"name":"chrome-6","text":"AGENT WEB · DELIVERY STANDARD","textPreview":"AGENT WEB · DELIVERY STANDARD","textChars":29,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/1ova9cje","slide":6,"name":"page-6","text":"06 / 10","textPreview":"06 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"textbox","id":"sh/0nmtg7it","slide":6,"text":"CORE RESULT 03","textPreview":"CORE RESULT 03","textChars":14,"textLines":1,"bbox":[64,82,520,24]}
+{"kind":"textbox","id":"sh/rits321c","slide":6,"text":"从“能生成”到“可交付”","textPreview":"从“能生成”到“可交付”","textChars":12,"textLines":1,"bbox":[64,118,1080,120]}
+{"kind":"shape","id":"sh/qhkrax0r","slide":6,"bbox":[640,266,0,382]}
+{"kind":"textbox","id":"sh/dkba5cji","slide":6,"text":"BEFORE","textPreview":"BEFORE","textChars":6,"textLines":1,"bbox":[76,276,190,24]}
+{"kind":"textbox","id":"sh/sj2tc7ix","slide":6,"text":"能生成","textPreview":"能生成","textChars":3,"textLines":1,"bbox":[76,316,480,62]}
+{"kind":"shape","id":"sh/bexsf61g","slide":6,"name":"before-sq-0","bbox":[76,428,9,9]}
+{"kind":"textbox","id":"sh/adobm10v","slide":6,"name":"before-0","text":"输出范围容易漂移","textPreview":"输出范围容易漂移","textChars":8,"textLines":1,"bbox":[98,418,478,53]}
+{"kind":"shape","id":"sh/sbypozmd","slide":6,"name":"before-sq-1","bbox":[76,484,9,9]}
+{"kind":"textbox","id":"sh/dcr6hk3y","slide":6,"name":"before-1","text":"参考上下文会随时间变化","textPreview":"参考上下文会随时间变化","textChars":11,"textLines":1,"bbox":[98,474,478,53]}
+{"kind":"shape","id":"sh/qpg7mp47","slide":6,"name":"before-sq-2","bbox":[76,540,9,9]}
+{"kind":"textbox","id":"sh/rqpofuls","slide":6,"name":"before-2","text":"失败后难以定位和恢复","textPreview":"失败后难以定位和恢复","textChars":10,"textLines":1,"bbox":[98,530,478,53]}
+{"kind":"textbox","id":"sh/4nypkfm1","slide":6,"text":"AFTER","textPreview":"AFTER","textChars":5,"textLines":1,"bbox":[704,276,190,24]}
+{"kind":"textbox","id":"sh/5o76dk3m","slide":6,"text":"可交付","textPreview":"可交付","textChars":3,"textLines":1,"bbox":[704,316,480,62]}
+{"kind":"shape","id":"sh/ilgni54b","slide":6,"name":"after-sq-0","bbox":[704,428,9,9]}
+{"kind":"textbox","id":"sh/3mpobalw","slide":6,"name":"after-0","text":"2.1 前端专用契约：固定 5 / 7 文件","textPreview":"2.1 前端专用契约：固定 5 / 7 文件","textChars":22,"textLines":1,"bbox":[726,418,478,53]}
+{"kind":"shape","id":"sh/gje5gfm5","slide":6,"name":"after-sq-1","bbox":[704,484,9,9]}
+{"kind":"textbox","id":"sh/hkn6903q","slide":6,"name":"after-1","text":"冻结 Skill、金标源码与 SHA-256","textPreview":"冻结 Skill、金标源码与 SHA-256","textChars":22,"textLines":1,"bbox":[726,474,478,53]}
+{"kind":"shape","id":"sh/xgfmdwfe","slide":6,"name":"after-sq-2","bbox":[704,540,9,9]}
+{"kind":"textbox","id":"sh/wf6l4ret","slide":6,"name":"after-2","text":"暂存 + diff + 门禁确认 + 安全写入","textPreview":"暂存 + diff + 门禁确认 + 安全写入","textChars":23,"textLines":1,"bbox":[726,530,478,53]}
+{"kind":"shape","id":"sh/vex4bmx8","slide":6,"bbox":[704,601,478,47]}
+{"kind":"textbox","id":"sh/ado321w3","slide":6,"text":"受保护文件不变，允许输出范围可审计。","textPreview":"受保护文件不变，允许输出范围可审计。","textChars":18,"textLines":1,"bbox":[720,612,446,25]}
+{"kind":"notes","id":"nt/tvzw9d","slide":6,"text":"【本页目的】把生成契约、安全边界和上下文冻结转译为清晰的交付标准升级。\n【建议时长】1.0 分钟\n【讲述要点】\n- GenerationTargetContract 2.1 把生成范围收敛到前端：常规五个文件，存在动态数据源时七个文件。\n- 生成前冻结 Skill、流程文档和金标源码哈希，保证 repair 与 Reviewer 使用同一上下文。\n- 产物先进入 staging，用户看代码树和 diff；只有门禁通过后才写目标工程。\n- 写入成功后还能自动登记并启用业务入口，让生成结果真正出现在业务使用面。\n【转场】Agent Web 能闭环，离不开 Platform 和 Business Base 提供稳定的运行时与业务承载。\n\n[Sources]\n- agent-web/README.md; business-base/.flowmind/generation-target.json; commits 12d7ae2, 573aae2, ef3f0d0."}
+{"kind":"slide","id":"sl/333bcm","slide":7,"title":"PLATFORM + BUSINESS BASE · 30%","textShapes":14}
+{"kind":"textbox","id":"sh/3ax8fmhk","slide":7,"name":"chrome-7","text":"PLATFORM + BUSINESS BASE · 30%","textPreview":"PLATFORM + BUSINESS BASE · 30%","textChars":30,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/ob6pory5","slide":7,"name":"page-7","text":"07 / 10","textPreview":"07 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"shape","id":"sh/pcfqhwzq","slide":7,"bbox":[0,0,410,720]}
+{"kind":"textbox","id":"sh/el47ih03","slide":7,"text":"运行时与\n业务底座","textPreview":"运行时与 | 业务底座","textChars":9,"textLines":2,"bbox":[64,150,300,170]}
+{"kind":"textbox","id":"sh/f6x8bmho","slide":7,"text":"30% 的工作支撑了\n70% 的 Agent Web 主线","textPreview":"30% 的工作支撑了 | 70% 的 Agent Web 主线","textChars":29,"textLines":2,"bbox":[64,386,286,88]}
+{"kind":"textbox","id":"sh/g76pkri9","slide":7,"text":"PLATFORM / BUSINESS / INTEGRATION","textPreview":"PLATFORM / BUSINESS / INTEGRATION","textChars":33,"textLines":1,"bbox":[64,618,302,30]}
+{"kind":"textbox","id":"sh/18fqdczu","slide":7,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[470,105,88,60]}
+{"kind":"textbox","id":"sh/6h47ex07","slide":7,"text":"Platform 运行时","textPreview":"Platform 运行时","textChars":12,"textLines":1,"bbox":[582,109,590,42]}
+{"kind":"textbox","id":"sh/rid872hc","slide":7,"text":"从 DTO 契约、定义校验与缓存，推进到持久化/幂等、事务与 outbox、实例管理、附件、增强任务动作和会签。","textPreview":"从 DTO 契约、定义校验与缓存，推进到持久化/幂等、事务与 outbox、实例管理、附件、增强任务动作和会签。","textChars":56,"textLines":1,"bbox":[582,163,590,90]}
+{"kind":"shape","id":"sh/jipkv6do","slide":7,"bbox":[470,267,702,0]}
+{"kind":"textbox","id":"sh/yhgj21wj","slide":7,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[470,289,88,60]}
+{"kind":"textbox","id":"sh/lkr2xwvu","slide":7,"text":"Business Base","textPreview":"Business Base","textChars":13,"textLines":1,"bbox":[582,293,590,42]}
+{"kind":"textbox","id":"sh/kjy14be9","slide":7,"text":"完善通用发起、附件与幂等；补齐业务大厅、管理端、参考数据、知会与示例流程的落地链路。","textPreview":"完善通用发起、附件与幂等；补齐业务大厅、管理端、参考数据、知会与示例流程的落地链路。","textChars":42,"textLines":1,"bbox":[582,347,590,90]}
+{"kind":"shape","id":"sh/769kz6d0","slide":7,"bbox":[470,451,702,0]}
+{"kind":"textbox","id":"sh/650j61wf","slide":7,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[470,473,88,60]}
+{"kind":"textbox","id":"sh/t8r21gv6","slide":7,"text":"跨层收口","textPreview":"跨层收口","textChars":4,"textLines":1,"bbox":[582,477,590,42]}
+{"kind":"textbox","id":"sh/87i18bel","slide":7,"text":"修复 instanceTitle、路由、状态显示、附件配置主键等联调问题，把契约差异前移到自动化测试。","textPreview":"修复 instanceTitle、路由、状态显示、附件配置主键等联调问题，把契约差异前移到自动化测试。","textChars":51,"textLines":1,"bbox":[582,531,590,90]}
+{"kind":"notes","id":"nt/333bcm","slide":7,"text":"【本页目的】概括 Platform 与 Business Base 的关键支撑成果，保持篇幅约30%。\n【建议时长】1.1 分钟\n【讲述要点】\n- Platform 侧参与了从契约到运行时的多阶段建设，包括幂等、事务、outbox、实例和任务动作。\n- Business Base 侧把能力放到真实业务入口：通用发起、业务大厅、管理端、参考数据与示例流程。\n- 更重要的是跨层联调：很多问题不是单个模块能发现，必须通过端到端验收暴露并收口。\n- 这些支撑让 Agent Web 生成的结果有稳定目标工程和可运行场景。\n【转场】这些工作也推动了我的能力结构从技术栈学习走向工程方法和价值交付。\n\n[Sources]\n- Git commits by zhangqi@test.com across platform and business-base, including c471a1b, 9c256cc, a05d69a, 9415704, ef3f0d0, e7b1e9a."}
+{"kind":"slide","id":"sl/z7r0j7","slide":8,"title":"GROWTH · VALUE · CONTRIBUTION","textShapes":19}
+{"kind":"textbox","id":"sh/k3etk3e9","slide":8,"name":"chrome-8","text":"GROWTH · VALUE · CONTRIBUTION","textPreview":"GROWTH · VALUE · CONTRIBUTION","textChars":29,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/j25sbyxo","slide":8,"name":"page-8","text":"08 / 10","textPreview":"08 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"textbox","id":"sh/i1wbitw3","slide":8,"text":"GROWTH","textPreview":"GROWTH","textChars":6,"textLines":1,"bbox":[64,82,520,24]}
+{"kind":"textbox","id":"sh/x0na9ofi","slide":8,"text":"成长不只体现在技术栈","textPreview":"成长不只体现在技术栈","textChars":10,"textLines":1,"bbox":[64,118,1080,120]}
+{"kind":"shape","id":"sh/wzetgjex","slide":8,"bbox":[64,278,352,344]}
+{"kind":"textbox","id":"sh/vyls7yxc","slide":8,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[88,300,92,44]}
+{"kind":"textbox","id":"sh/axcbetw7","slide":8,"text":"技术能力","textPreview":"技术能力","textChars":4,"textLines":1,"bbox":[88,365,292,42]}
+{"kind":"shape","id":"sh/9w3a5ofm","slide":8,"bbox":[88,447,16,0]}
+{"kind":"textbox","id":"sh/8vu9cje1","slide":8,"text":"NestJS / Vue / Pinia","textPreview":"NestJS / Vue / Pinia","textChars":20,"textLines":1,"bbox":[118,435,270,37]}
+{"kind":"shape","id":"sh/m58765s7","slide":8,"bbox":[88,499,16,0]}
+{"kind":"textbox","id":"sh/n6h8fats","slide":8,"text":"Java / Spring / SQLite","textPreview":"Java / Spring / SQLite","textChars":22,"textLines":1,"bbox":[118,487,270,37]}
+{"kind":"shape","id":"sh/87qp8fad","slide":8,"bbox":[88,551,16,0]}
+{"kind":"textbox","id":"sh/98zqhkby","slide":8,"text":"Agent 状态机与上下文压缩","textPreview":"Agent 状态机与上下文压缩","textChars":15,"textLines":1,"bbox":[118,539,270,37]}
+{"kind":"shape","id":"sh/eho72lsb","slide":8,"bbox":[448,278,352,344]}
+{"kind":"textbox","id":"sh/zihobqtw","slide":8,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[472,300,92,44]}
+{"kind":"textbox","id":"sh/03qp4vah","slide":8,"text":"工程方法","textPreview":"工程方法","textChars":4,"textLines":1,"bbox":[472,365,292,42]}
+{"kind":"shape","id":"sh/14zqd0bm","slide":8,"bbox":[472,447,16,0]}
+{"kind":"textbox","id":"sh/qdo7ylsz","slide":8,"text":"契约与边界先行","textPreview":"契约与边界先行","textChars":7,"textLines":1,"bbox":[502,435,270,37]}
+{"kind":"shape","id":"sh/rexo7qtk","slide":8,"bbox":[472,499,16,0]}
+{"kind":"textbox","id":"sh/fit4zm9c","slide":8,"text":"测试驱动联调","textPreview":"测试驱动联调","textChars":6,"textLines":1,"bbox":[502,487,270,37]}
+{"kind":"shape","id":"sh/uhkn6h8r","slide":8,"bbox":[472,551,16,0]}
+{"kind":"textbox","id":"sh/hkvm1wri","slide":8,"text":"诊断、回退、幂等与安全写入","textPreview":"诊断、回退、幂等与安全写入","textChars":13,"textLines":1,"bbox":[502,539,270,37]}
+{"kind":"shape","id":"sh/gjm58rqx","slide":8,"bbox":[832,278,352,344]}
+{"kind":"textbox","id":"sh/3md43m9o","slide":8,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[856,300,92,44]}
+{"kind":"textbox","id":"sh/2l4nah83","slide":8,"text":"价值输出","textPreview":"价值输出","textChars":4,"textLines":1,"bbox":[856,365,292,42]}
+{"kind":"shape","id":"sh/povm5wre","slide":8,"bbox":[856,447,16,0]}
+{"kind":"textbox","id":"sh/4nm5crq9","slide":8,"text":"打通端到端链路","textPreview":"打通端到端链路","textChars":7,"textLines":1,"bbox":[886,435,270,37]}
+{"kind":"shape","id":"sh/jq94r294","slide":8,"bbox":[856,499,16,0]}
+{"kind":"textbox","id":"sh/ip03yxsj","slide":8,"text":"把失败变成可定位状态","textPreview":"把失败变成可定位状态","textChars":10,"textLines":1,"bbox":[886,487,270,37]}
+{"kind":"shape","id":"sh/8vy1836h","slide":8,"bbox":[856,551,16,0]}
+{"kind":"textbox","id":"sh/9w721872","slide":8,"text":"沉淀可复用契约与金标参考","textPreview":"沉淀可复用契约与金标参考","textChars":12,"textLines":1,"bbox":[886,539,270,37]}
+{"kind":"notes","id":"nt/z7r0j7","slide":8,"text":"【本页目的】把成长、价值和贡献总结为三层，不重复前面的功能成果。\n【建议时长】0.8 分钟\n【讲述要点】\n- 技术上从前后端开发扩展到 Agent 编排、质量验证与 Java 流程运行时。\n- 方法上最大的变化是先定义契约和失败边界，再实现功能。\n- 价值输出不止是交付代码，还包括让失败可诊断、流程可回退、生成上下文可复现。\n【转场】基于这些实践，我也形成了几条对后续迭代的具体建议。\n\n[Sources]\n- Repository source and Git history under agent-web, platform, business-base."}
+{"kind":"slide","id":"sl/gdjo6q","slide":9,"title":"REFLECTION · SUGGESTIONS","textShapes":23}
+{"kind":"textbox","id":"sh/h4vyhs7i","slide":9,"name":"chrome-9","text":"REFLECTION · SUGGESTIONS","textPreview":"REFLECTION · SUGGESTIONS","textChars":24,"textLines":1,"bbox":[64,35,520,22]}
+{"kind":"textbox","id":"sh/u14f6dor","slide":9,"name":"page-9","text":"09 / 10","textPreview":"09 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"textbox","id":"sh/v2dgfipc","slide":9,"text":"REFLECTION","textPreview":"REFLECTION","textChars":10,"textLines":1,"bbox":[64,82,520,24]}
+{"kind":"textbox","id":"sh/476xcn6t","slide":9,"text":"下一步，把工程闭环变成可持续指标","textPreview":"下一步，把工程闭环变成可持续指标","textChars":16,"textLines":1,"bbox":[64,118,1080,120]}
+{"kind":"shape","id":"sh/58fyls7e","slide":9,"bbox":[64,286,352,144]}
+{"kind":"textbox","id":"sh/i54faxo3","slide":9,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[82,302,54,25]}
+{"kind":"textbox","id":"sh/36dgj2p8","slide":9,"text":"建立金标场景集","textPreview":"建立金标场景集","textChars":7,"textLines":1,"bbox":[82,337,308,34]}
+{"kind":"textbox","id":"sh/kb2x036p","slide":9,"text":"按典型流程沉淀可重复的端到端验收","textPreview":"按典型流程沉淀可重复的端到端验收","textChars":16,"textLines":1,"bbox":[82,377,308,42]}
+{"kind":"shape","id":"sh/lcbe987a","slide":9,"bbox":[448,286,352,144]}
+{"kind":"textbox","id":"sh/58bqlsrm","slide":9,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[466,302,54,25]}
+{"kind":"textbox","id":"sh/472psnq1","slide":9,"text":"量化质量闭环","textPreview":"量化质量闭环","textChars":6,"textLines":1,"bbox":[466,337,308,34]}
+{"kind":"textbox","id":"sh/j6toji9g","slide":9,"text":"跟踪首轮通过率、修复轮次、验证耗时","textPreview":"跟踪首轮通过率、修复轮次、验证耗时","textChars":17,"textLines":1,"bbox":[466,377,308,42]}
+{"kind":"shape","id":"sh/i5k7qd8v","slide":9,"bbox":[832,286,352,144]}
+{"kind":"textbox","id":"sh/dwvqpsry","slide":9,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[850,302,54,25]}
+{"kind":"textbox","id":"sh/sv2pwnqd","slide":9,"text":"统一契约版本","textPreview":"统一契约版本","textChars":6,"textLines":1,"bbox":[850,337,308,34]}
+{"kind":"textbox","id":"sh/rut8n29s","slide":9,"text":"明确兼容矩阵与升级错误，减少跨层漂移","textPreview":"明确兼容矩阵与升级错误，减少跨层漂移","textChars":18,"textLines":1,"bbox":[850,377,308,42]}
+{"kind":"shape","id":"sh/q9k7ux87","slide":9,"bbox":[64,454,352,144]}
+{"kind":"textbox","id":"sh/10vqtcru","slide":9,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[82,470,54,25]}
+{"kind":"textbox","id":"sh/0zmp07q9","slide":9,"text":"一键环境诊断","textPreview":"一键环境诊断","textChars":6,"textLines":1,"bbox":[82,505,308,34]}
+{"kind":"textbox","id":"sh/kfe1cf2x","slide":9,"text":"启动前检查端口、凭据、数据库与目标契约","textPreview":"启动前检查端口、凭据、数据库与目标契约","textChars":19,"textLines":1,"bbox":[82,545,308,42]}
+{"kind":"shape","id":"sh/lgnilkj2","slide":9,"bbox":[448,454,352,144]}
+{"kind":"textbox","id":"sh/ydwja5kr","slide":9,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[466,470,54,25]}
+{"kind":"textbox","id":"sh/ze50ja1c","slide":9,"text":"缩短反馈周期","textPreview":"缩短反馈周期","textChars":6,"textLines":1,"bbox":[466,505,308,34]}
+{"kind":"textbox","id":"sh/8je1gf2t","slide":9,"text":"用小 PR + 周期性 Demo 提前暴露方向偏差","textPreview":"用小 PR + 周期性 Demo 提前暴露方向偏差","textChars":25,"textLines":1,"bbox":[466,545,308,42]}
+{"kind":"shape","id":"sh/9k7ipkje","slide":9,"bbox":[832,454,352,144]}
+{"kind":"textbox","id":"sh/mhwjepkn","slide":9,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[850,470,54,25]}
+{"kind":"textbox","id":"sh/7i50na18","slide":9,"text":"沉淀业务反馈","textPreview":"沉淀业务反馈","textChars":6,"textLines":1,"bbox":[850,505,308,34]}
+{"kind":"textbox","id":"sh/onuh4v2p","slide":9,"text":"将真实使用问题回流到 prompt、规则与测试","textPreview":"将真实使用问题回流到 prompt、规则与测试","textChars":23,"textLines":1,"bbox":[850,545,308,42]}
+{"kind":"textbox","id":"sh/po3id03a","slide":9,"text":"体会：Prompt 决定上限，契约、测试和反馈闭环决定稳定下限。","textPreview":"体会：Prompt 决定上限，契约、测试和反馈闭环决定稳定下限。","textChars":32,"textLines":1,"bbox":[64,636,1152,32]}
+{"kind":"notes","id":"nt/gdjo6q","slide":9,"text":"【本页目的】给出心得和可执行优化建议，体现思考而非只汇报完成项。\n【建议时长】0.8 分钟\n【讲述要点】\n- 我最大的体会是 Prompt 只能提高上限，稳定下限必须靠契约、测试和反馈闭环。\n- 建议先建立金标场景集，再量化首轮通过率、修复轮次和验证耗时。\n- 跨层协作上可以维护契约兼容矩阵，并把启动、凭据、数据库和目标契约做成一键诊断。\n- 流程上用更小的 PR 和更频繁的 Demo，能更早发现方向偏差。\n【转场】最后，用一页说明我希望继续发展的方向和对机会的态度。\n\n[Sources]\n- Inferences from repository implementation patterns; agent-web/AGENTS.md testing and safety requirements."}
+{"kind":"slide","id":"sl/23si7w","slide":10,"title":"继续做深","textShapes":16}
+{"kind":"shape","id":"sh/hkjaxwju","slide":10,"bbox":[0,0,566,720]}
+{"kind":"textbox","id":"sh/uhsrm1k3","slide":10,"text":"继续做深","textPreview":"继续做深","textChars":4,"textLines":1,"bbox":[64,126,430,64]}
+{"kind":"textbox","id":"sh/vi1sv61o","slide":10,"text":"Agent / AI\n全栈开发","textPreview":"Agent / AI | 全栈开发","textChars":15,"textLines":2,"bbox":[64,222,430,176]}
+{"kind":"textbox","id":"sh/4nu9sbil","slide":10,"text":"把模型能力落到真实业务、工程约束与用户体验里。","textPreview":"把模型能力落到真实业务、工程约束与用户体验里。","textChars":23,"textLines":1,"bbox":[64,478,420,82]}
+{"kind":"textbox","id":"sh/5o3a1gjq","slide":10,"text":"张琦 · 2026.08","textPreview":"张琦 · 2026.08","textChars":12,"textLines":1,"bbox":[64,640,280,26]}
+{"kind":"textbox","id":"sh/ilsrq10f","slide":10,"text":"CLOSING · NEXT STEP","textPreview":"CLOSING · NEXT STEP","textChars":19,"textLines":1,"bbox":[64,35,430,22]}
+{"kind":"textbox","id":"sh/3m1sz610","slide":10,"text":"10 / 10","textPreview":"10 / 10","textChars":7,"textLines":1,"bbox":[1060,35,156,22]}
+{"kind":"textbox","id":"sh/sbutwbih","slide":10,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[628,156,70,36]}
+{"kind":"textbox","id":"sh/dc3a5gj2","slide":10,"text":"秋招意向","textPreview":"秋招意向","textChars":4,"textLines":1,"bbox":[724,158,200,34]}
+{"kind":"textbox","id":"sh/l43i14jm","slide":10,"text":"Agent 工程 / AI 应用 / 全栈开发","textPreview":"Agent 工程 / AI 应用 / 全栈开发","textChars":23,"textLines":1,"bbox":[724,204,490,64]}
+{"kind":"shape","id":"sh/k3uh8zih","slide":10,"bbox":[628,282,562,0]}
+{"kind":"textbox","id":"sh/z2l0zu1w","slide":10,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[628,310,70,36]}
+{"kind":"textbox","id":"sh/y1cz6p0b","slide":10,"text":"选择标准","textPreview":"选择标准","textChars":4,"textLines":1,"bbox":[724,312,200,34]}
+{"kind":"textbox","id":"sh/983i5ojy","slide":10,"text":"真实业务场景、工程深度与持续成长空间","textPreview":"真实业务场景、工程深度与持续成长空间","textChars":18,"textLines":1,"bbox":[724,358,490,64]}
+{"kind":"shape","id":"sh/87uhcjid","slide":10,"bbox":[628,436,562,0]}
+{"kind":"textbox","id":"sh/76l03e1s","slide":10,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[628,464,70,36]}
+{"kind":"textbox","id":"sh/m5cza907","slide":10,"text":"加入意愿","textPreview":"加入意愿","textChars":4,"textLines":1,"bbox":[724,466,200,34]}
+{"kind":"textbox","id":"sh/pcjytkje","slide":10,"text":"对匹配的团队与岗位保持开放，期待结合具体职责继续沟通","textPreview":"对匹配的团队与岗位保持开放，期待结合具体职责继续沟通","textChars":26,"textLines":1,"bbox":[724,512,490,64]}
+{"kind":"shape","id":"sh/obah0f29","slide":10,"bbox":[628,620,562,48]}
+{"kind":"textbox","id":"sh/gvehgfa5","slide":10,"text":"谢谢 · 欢迎交流","textPreview":"谢谢 · 欢迎交流","textChars":9,"textLines":1,"bbox":[648,631,522,26]}
+{"kind":"notes","id":"nt/23si7w","slide":10,"text":"【本页目的】清晰表达方向，同时对加入机会保持开放和克制。\n【建议时长】0.5 分钟\n【讲述要点】\n- 后续我希望继续往 Agent / AI 全栈方向发展，重点是工程化落地而不是只做模型调用。\n- 秋招会关注真实业务场景、工程深度和成长空间。\n- 对于团队机会，我保持开放，希望结合具体岗位职责和双方匹配度继续沟通。\n- 谢谢大家，欢迎提问。\n【转场】结束汇报，进入交流。\n\n[Sources]\n- User-provided career preference."}

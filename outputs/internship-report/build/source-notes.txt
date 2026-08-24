@@ -1,0 +1,39 @@
+Internship report source ledger
+
+Identity and Git scope
+- Author identity: zhangqi <zhangqi@test.com>; one commit appears as Zhang Qi with the same email.
+- 171 authored commits in all history; 142 non-merge commits; 29 active commit days.
+- Date range reviewed: 2026-07-09 to 2026-08-21.
+
+Agent Web representative evidence
+- ad33fb5: initial agent-web M0-M2 implementation.
+- f745a6d: requirement-to-definition activation closure.
+- 7c998cf: three-round repair workflow.
+- ee69a44 / 540f684 / d813164: static validator, verification worker, quality pipeline and UI hardening.
+- 12d7ae2: GenerationTargetContract 2.1 / FRONTEND_ONLY; exact 5/7 generated files and frozen context.
+- 573aae2: automatic business-entry registration after safe write.
+- ef3f0d0: dynamic reference-data contract and implementation.
+- 0650293 / ff2d7e3: rollback to requirement preview after gate failures where safe.
+- e7b1e9a: warehouse/treasury pledge sample implementation and verification.
+
+Platform representative evidence
+- 6302bb7: definition and idempotency framework.
+- c471a1b: transaction and outbox coordination.
+- 9c256cc: attachment runtime.
+- 5b53c75: enhanced task actions.
+- a05d69a: countersign workflow.
+
+Business Base representative evidence
+- 02fe89f: business-base B0-B1 skeleton and integration.
+- b7fb91b: administrator process-definition and instance components.
+- 9415704: business entry configuration, business hall and generic start submission.
+- ef3f0d0: reference-data service.
+- 573aae2 / e7b1e9a: Agent registration and complex sample closure.
+
+Attribution guardrails
+- Use:重点负责、主要承担、持续完善、形成可运行/可验证/可演示闭环.
+- Avoid:独立完成整个模块、生产上线、具体效率提升百分比、线上稳定性结论.
+
+Generated assets
+- 05-end-to-end.png: generated with OpenAI ImageGen; label-free Swiss workflow base.
+- 05-quality-loop.png: generated with OpenAI ImageGen; label-free Swiss quality-loop base.

@@ -52,5 +52,5 @@ business-base/frontend/src/router/generated-routes.ts
 # #  范例流程
 # doc/example_process/
 
-outputs/*
-!outputs/仓单国债解质押流程定义.json
+# outputs/*
+# !outputs/仓单国债解质押流程定义.json

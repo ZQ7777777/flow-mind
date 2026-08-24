@@ -1,0 +1,33 @@
+项目：张琦实习成果汇报（10分钟）
+生成日期：2026-08-23
+
+沟通任务：让苏分导师/评审在10分钟内看到，张琦已经把 Agent 能力从“能对话”推进为“有边界、有验证、有回退、可落地”的工程闭环，并明确下一阶段希望继续深耕 Agent / AI 全栈。
+
+内容来源（内部仓库，不是外部研究）：
+- Git 作者过滤：zhangqi@test.com；作者名 Zhang Qi / zhangqi。
+- Git 日志范围：2026-07-09 至 2026-08-21，共 171 条作者匹配记录（含合并提交）。
+- 非合并、按路径触达：agent-web 33 次提交、112 个唯一文件、37 个测试文件；platform 57 次提交、215 个唯一文件、52 个测试文件；business-base 21 次提交、141 个唯一文件、46 个测试文件。路径计数允许同一提交跨模块重叠，仅用于核对覆盖面，不作为绩效比例。
+- 汇报篇幅按用户要求：约 70% Agent Web，约 30% Platform + Business Base。
+
+核心证据：
+- agent-web/README.md：自然语言需求采集 → 流程定义发布激活 → 受限暂存区前端代码/测试生成 → 人工预览；GenerationTargetContract 2.1 / FRONTEND_ONLY；固定 5 文件，动态数据需求时 7 文件；冻结 Skill/参考文档/金标源码 SHA-256；暂存、diff、质量验证，不直接写真实工程。
+- doc/agent-web-tech-design.md：三阶段人工门禁；静态检查、typecheck/test/build、独立 Reviewer、最多三轮修复；安全写入与失败恢复；自定义上下文压缩。
+- agent-web/backend/src/verification/quality-gates.ts：硬门禁、软失败覆盖、最多三轮修复决策。
+- business-base/.flowmind/generation-target.json：2.1 前端专用契约、允许输出范围、受保护文件 SHA-256、金标参考文件、只读业务参考数据 API。
+
+代表性提交：
+- ad33fb5：初步实现 Agent Web M0-M2。
+- f745a6d：完成至流程定义激活。
+- 2ea3f82 / ee69a44 / 540f684 / d813164：静态校验、质量面板、验证流水线与 Worker 的迭代。
+- 7c998cf：修复 Agent Web 三轮 repair，补充诊断与全量验证。
+- f2d4e8f：加强生成契约。
+- 573aae2：安全写入后自动登记并启用业务入口。
+- ef3f0d0：参考数据表/只读 API/同步脚本，以及 Agent 动态数据源契约升级。
+- 12d7ae2：Agent Web 前端代码生成改造，GenerationTargetContract 2.1 / FRONTEND_ONLY。
+- 0650293 / ff2d7e3：发布激活失败、门禁二失败时回退需求预览。
+- Platform：5787785、6302bb7、459b096、8964c51、c471a1b、76d4872、9c256cc、5b53c75、a05d69a 等，覆盖运行时持久化/幂等、推进框架、事务与 outbox、实例管理、附件、增强任务动作、会签。
+- Business Base：02fe89f、b7fb91b、9415704、ef3f0d0、364667a、e7b1e9a 等，覆盖基础底座、管理端、业务大厅入口、通用发起/附件/幂等、参考数据、知会与示例流程。
+
+视觉来源：用户指定 guizang-ppt-skill；采用 Style B 瑞士国际主义 + IKB 克莱因蓝预设。严格遵循：无衬线、单一高亮色、直角、无渐变/阴影、12/16列网格、极致字号对比、低密度高价值内容。
+
+外部来源：无。PPT 中不使用外部图片或外部事实。
