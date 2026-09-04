@@ -58,6 +58,15 @@ describe("deterministic IR generation strategy", () => {
     expect(row.pi_session_id).toBeNull();
     const summary = generation.get("session-deterministic", started.generationId, user);
     expect(summary.generationStrategy).toBe("DETERMINISTIC_IR_V1");
+    expect(summary.retrievalRelease).toMatchObject({
+      policyVersion: "RAG_RELEASE_V1",
+      releaseMode: "SHADOW",
+      selectedMode: "BM25",
+      shadowMode: "HYBRID",
+      forcedFallback: false,
+    });
+    expect(summary.retrievalRelease?.bucket).toBeGreaterThanOrEqual(0);
+    expect(summary.retrievalRelease?.bucket).toBeLessThan(100);
     expect(summary.manifest?.files).toHaveLength(5);
     const requiredKeys = summary.context?.routing?.items.filter(({ required }) => required).map(({ key }) => key) || [];
     expect(summary.context?.reads?.map(({ key }) => key)).toEqual(expect.arrayContaining(requiredKeys));

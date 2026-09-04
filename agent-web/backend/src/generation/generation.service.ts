@@ -39,6 +39,7 @@ import { loadConfig } from "../config.js";
 import { createDeterministicGenerationFiles } from "./deterministic-generation-files.js";
 import { detectCapabilities } from "./generation-context-router.js";
 import { RagRetrieverService } from "../retrieval/rag-retriever.service.js";
+import { selectRetrievalRelease } from "../retrieval/retrieval-release-policy.js";
 
 @Injectable()
 export class GenerationService {
@@ -132,6 +133,7 @@ export class GenerationService {
     const generationId = `acg_tester_${randomUUID()}`;
     const stagingDir = join(this.database.dataDir, "staging", sessionId, generationId);
     const now = new Date().toISOString();
+    const retrievalRelease = selectRetrievalRelease(generationId, this.config);
     const snapshot = fixture.processSnapshot;
     snapshot.id = `definition_tester_${generationId}`;
     this.staging.prepare(stagingDir);
@@ -165,6 +167,15 @@ export class GenerationService {
       `).run(generationId, sessionId, processId, 1, requirementJson, JSON.stringify(snapshot),
         fixture.requirement.businessCode, fixture.requirement.businessName, target.targetRoot, target.contract.contractVersion,
         JSON.stringify(target.contract), JSON.stringify(context), stagingDir, user.userId, now, now);
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET generation_strategy = ?, retrieval_policy_version = ?,
+          retrieval_release_mode = ?, retrieval_selected_mode = ?, retrieval_shadow_mode = ?,
+          retrieval_bucket = ?, retrieval_forced_fallback = ? WHERE id = ?
+      `).run(
+        this.config.generationStrategy, retrievalRelease.policyVersion, retrievalRelease.releaseMode,
+        retrievalRelease.selectedMode, retrievalRelease.shadowMode || null, retrievalRelease.bucket,
+        retrievalRelease.forcedFallback ? 1 : 0, generationId,
+      );
     });
     for (const { relativePath, content } of fixtureFiles) {
       this.staging.writeDuringGeneration(this.requiredGenerating(generationId), relativePath, content);
@@ -426,7 +437,11 @@ export class GenerationService {
       SELECT id AS generationId, session_id AS sessionId, business_code AS businessCode,
         business_name AS businessName, status, generation_revision AS generationRevision,
         hard_gate_passed AS hardGatePassed, override_required AS overrideRequired,
-        can_write AS canWrite, written_at AS writtenAt, created_at AS createdAt
+        can_write AS canWrite, written_at AS writtenAt, created_at AS createdAt,
+        generation_strategy AS generationStrategy, retrieval_policy_version AS retrievalPolicyVersion,
+        retrieval_release_mode AS retrievalReleaseMode, retrieval_selected_mode AS retrievalSelectedMode,
+        retrieval_shadow_mode AS retrievalShadowMode, retrieval_bucket AS retrievalBucket,
+        retrieval_forced_fallback AS retrievalForcedFallback
       FROM agent_code_generation WHERE created_by = ? ORDER BY created_at DESC
     `).all(user.userId);
   }
@@ -514,6 +529,7 @@ export class GenerationService {
     const stagingDir = join(this.database.dataDir, "staging", session.id, generationId);
     this.staging.prepare(stagingDir);
     const now = new Date().toISOString();
+    const retrievalRelease = selectRetrievalRelease(generationId, this.config);
     const context = inheritedContext || this.requireContexts(session.id).capture(target, session.id, deriveRequirementIr(requirement));
     const result = { accepted: true as const, generationId, state: "CODE_GENERATING" as const };
     this.database.transaction(() => {
@@ -530,8 +546,15 @@ export class GenerationService {
         requirement.businessCode, requirement.businessName, target.targetRoot, target.contract.contractVersion,
         JSON.stringify(target.contract), JSON.stringify(context), stagingDir, idempotencyKey, requestHash, JSON.stringify(result), user.userId, now, now,
       );
-      this.database.db.prepare("UPDATE agent_code_generation SET generation_strategy = ? WHERE id = ?")
-        .run(this.config.generationStrategy, generationId);
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET generation_strategy = ?, retrieval_policy_version = ?,
+          retrieval_release_mode = ?, retrieval_selected_mode = ?, retrieval_shadow_mode = ?,
+          retrieval_bucket = ?, retrieval_forced_fallback = ? WHERE id = ?
+      `).run(
+        this.config.generationStrategy, retrievalRelease.policyVersion, retrievalRelease.releaseMode,
+        retrievalRelease.selectedMode, retrievalRelease.shadowMode || null, retrievalRelease.bucket,
+        retrievalRelease.forcedFallback ? 1 : 0, generationId,
+      );
       const updated = this.database.db.prepare(`UPDATE agent_session SET target_root = ?, state = 'CODE_GENERATING', row_version = row_version + 1,
         last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ? AND row_version = ?`)
         .run(target.targetRoot, now, session.id, rowVersion);
@@ -593,6 +616,8 @@ export class GenerationService {
           capabilities: detectCapabilities(requirementIr),
           limit,
           generationId,
+          mode: generation!.retrieval_selected_mode,
+          shadowMode: generation!.retrieval_shadow_mode || undefined,
         }),
         readGenerationKnowledge: (retrievalId: string, key: string) => this.rag!.read(retrievalId, key),
       } : {}),
@@ -734,6 +759,14 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
   return {
     generationId: generation.id,
     generationStrategy: generation.generation_strategy,
+    retrievalRelease: {
+      policyVersion: generation.retrieval_policy_version,
+      releaseMode: generation.retrieval_release_mode,
+      selectedMode: generation.retrieval_selected_mode,
+      shadowMode: generation.retrieval_shadow_mode || undefined,
+      bucket: generation.retrieval_bucket,
+      forcedFallback: Boolean(generation.retrieval_forced_fallback),
+    },
     status: generation.status as CodeGenerationSummary["status"],
     generationRevision: generation.generation_revision,
     targetRoot: generation.target_root,

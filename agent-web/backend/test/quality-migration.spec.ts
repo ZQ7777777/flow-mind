@@ -39,6 +39,12 @@ describe("M4-M5 quality storage", () => {
         "write_journal_json",
         "generation_strategy",
         "context_read_evidence_json",
+        "retrieval_policy_version",
+        "retrieval_release_mode",
+        "retrieval_selected_mode",
+        "retrieval_shadow_mode",
+        "retrieval_bucket",
+        "retrieval_forced_fallback",
       ]),
     );
 
@@ -55,6 +61,7 @@ describe("M4-M5 quality storage", () => {
         "agent_rag_document",
         "agent_rag_retrieval",
         "agent_rag_read",
+        "agent_rag_shadow_observation",
       ]),
     );
     const repairColumns = database!.db

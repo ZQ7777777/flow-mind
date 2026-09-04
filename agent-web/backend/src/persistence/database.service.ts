@@ -88,6 +88,12 @@ export interface GenerationRow {
   pi_session_file: string | null;
   generation_revision: number;
   generation_strategy: "DETERMINISTIC_IR_V1" | "PI_LEGACY";
+  retrieval_policy_version: string;
+  retrieval_release_mode: "SHADOW" | "CANARY" | "HYBRID_DEFAULT" | "BM25_ONLY";
+  retrieval_selected_mode: "BM25" | "HYBRID";
+  retrieval_shadow_mode: "BM25" | "HYBRID" | null;
+  retrieval_bucket: number;
+  retrieval_forced_fallback: number;
   quality_revision: number | null;
   repair_round: number;
   max_repair_rounds: number;
@@ -651,6 +657,30 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(15);
       });
     }
+    if (!applied.has(16)) {
+      this.transaction(() => {
+        this.ensureAgentCodeGenerationColumns();
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_rag_shadow_observation (
+            id TEXT PRIMARY KEY,
+            retrieval_id TEXT NOT NULL UNIQUE REFERENCES agent_rag_retrieval(id),
+            selected_mode TEXT NOT NULL,
+            shadow_mode TEXT NOT NULL,
+            selected_keys_json TEXT NOT NULL,
+            shadow_keys_json TEXT NOT NULL,
+            overlap_count INTEGER NOT NULL,
+            selected_zero_result INTEGER NOT NULL,
+            shadow_zero_result INTEGER NOT NULL,
+            selected_duration_ms REAL NOT NULL,
+            shadow_duration_ms REAL NOT NULL,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_shadow_created
+            ON agent_rag_shadow_observation(created_at);
+        `);
+        this.recordMigration(16);
+      });
+    }
     this.ensureAgentCodeGenerationColumns();
   }
 
@@ -665,6 +695,17 @@ export class DatabaseService implements OnModuleDestroy {
     }
     if (!names.has("context_read_evidence_json")) {
       this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN context_read_evidence_json TEXT NOT NULL DEFAULT '[]'");
+    }
+    const releaseColumns: Array<[string, string]> = [
+      ["retrieval_policy_version", "TEXT NOT NULL DEFAULT 'LEGACY_UNVERSIONED'"],
+      ["retrieval_release_mode", "TEXT NOT NULL DEFAULT 'BM25_ONLY'"],
+      ["retrieval_selected_mode", "TEXT NOT NULL DEFAULT 'BM25'"],
+      ["retrieval_shadow_mode", "TEXT"],
+      ["retrieval_bucket", "INTEGER NOT NULL DEFAULT 0"],
+      ["retrieval_forced_fallback", "INTEGER NOT NULL DEFAULT 1"],
+    ];
+    for (const [name, definition] of releaseColumns) {
+      if (!names.has(name)) this.db.exec(`ALTER TABLE agent_code_generation ADD COLUMN ${name} ${definition}`);
     }
   }
 

@@ -36,4 +36,17 @@ describe("agent config", () => {
 
     expect(loadConfig().businessFrontendBaseUrl).toBe("http://127.0.0.1:6200");
   });
+
+  it("defaults RAG release to safe shadow mode and validates canary percentage", () => {
+    vi.stubEnv("AGENT_RAG_RELEASE_MODE", "");
+    vi.stubEnv("AGENT_RAG_CANARY_PERCENT", "");
+    expect(loadConfig()).toMatchObject({
+      ragReleaseMode: "SHADOW",
+      ragCanaryPercent: 10,
+      ragPolicyVersion: "RAG_RELEASE_V1",
+      ragForceBm25: false,
+    });
+    vi.stubEnv("AGENT_RAG_CANARY_PERCENT", "101");
+    expect(() => loadConfig()).toThrow(/integer from 0 to 100/);
+  });
 });

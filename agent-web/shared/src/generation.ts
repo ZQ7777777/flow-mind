@@ -96,6 +96,8 @@ export interface RagSearchRequest {
   limit?: number;
   generationId?: string;
   mode?: "BM25" | "HYBRID";
+  /** Computed and audited, but never returned to the generation model. */
+  shadowMode?: "BM25" | "HYBRID";
 }
 
 /** Search intentionally returns no source text; callers must explicitly read an audited key. */
@@ -352,6 +354,14 @@ export type CodeGenerationStatus =
 export interface CodeGenerationSummary {
   generationId: string;
   generationStrategy?: "DETERMINISTIC_IR_V1" | "PI_LEGACY";
+  retrievalRelease?: {
+    policyVersion: string;
+    releaseMode: "SHADOW" | "CANARY" | "HYBRID_DEFAULT" | "BM25_ONLY";
+    selectedMode: "BM25" | "HYBRID";
+    shadowMode?: "BM25" | "HYBRID";
+    bucket: number;
+    forcedFallback: boolean;
+  };
   status: CodeGenerationStatus;
   generationRevision: number;
   targetRoot: string;

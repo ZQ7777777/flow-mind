@@ -2,6 +2,7 @@ import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import type {
   BusinessRequirement,
   GenerationContextCapability,
@@ -124,11 +125,17 @@ export class RagRetrieverService {
     });
     const limit = Math.min(Math.max(Math.trunc(request.limit || 5), 1), 10);
     const mode = request.mode || "HYBRID";
-    if (mode === "HYBRID") this.ensureLocalIndex(candidates);
+    const shadowMode = request.shadowMode && request.shadowMode !== mode ? request.shadowMode : undefined;
+    if (mode === "HYBRID" || shadowMode === "HYBRID") this.ensureLocalIndex(candidates);
     const snapshot = mode === "BM25" ? bm25Snapshot() : hybridSnapshot();
-    const hits = (mode === "BM25"
-      ? rankBm25(query, candidates)
-      : rankHybrid(query, requestedCapabilities, candidates)).slice(0, limit);
+    const selectedStartedAt = performance.now();
+    const hits = rankByMode(mode, query, requestedCapabilities, candidates).slice(0, limit);
+    const selectedDurationMs = Number((performance.now() - selectedStartedAt).toFixed(3));
+    const shadowStartedAt = performance.now();
+    const shadowHits = shadowMode
+      ? rankByMode(shadowMode, query, requestedCapabilities, candidates).slice(0, limit)
+      : [];
+    const shadowDurationMs = shadowMode ? Number((performance.now() - shadowStartedAt).toFixed(3)) : 0;
     const retrievalId = `retr_${randomUUID()}`;
     this.database.db.prepare(`
       INSERT INTO agent_rag_retrieval (
@@ -141,9 +148,33 @@ export class RagRetrieverService {
       JSON.stringify(candidates.map(({ document_key }) => document_key)),
       JSON.stringify(hits.map(({ key }) => key)), new Date().toISOString(), JSON.stringify({
         ...snapshot,
+        durationMs: selectedDurationMs,
         scores: hits.map(({ key, score, lexicalScore, vectorScore }) => ({ key, score, lexicalScore, vectorScore })),
+        shadow: shadowMode ? {
+          mode: shadowMode,
+          snapshot: shadowMode === "BM25" ? bm25Snapshot() : hybridSnapshot(),
+          resultKeys: shadowHits.map(({ key }) => key),
+          durationMs: shadowDurationMs,
+          scores: shadowHits.map(({ key, score, lexicalScore, vectorScore }) => ({ key, score, lexicalScore, vectorScore })),
+        } : undefined,
       }),
     );
+    if (shadowMode) {
+      const selectedKeys = hits.map(({ key }) => key);
+      const shadowKeys = shadowHits.map(({ key }) => key);
+      const overlap = selectedKeys.filter((key) => shadowKeys.includes(key)).length;
+      this.database.db.prepare(`
+        INSERT INTO agent_rag_shadow_observation (
+          id, retrieval_id, selected_mode, shadow_mode, selected_keys_json, shadow_keys_json,
+          overlap_count, selected_zero_result, shadow_zero_result, selected_duration_ms,
+          shadow_duration_ms, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `shadow_${randomUUID()}`, retrievalId, mode, shadowMode, JSON.stringify(selectedKeys),
+        JSON.stringify(shadowKeys), overlap, selectedKeys.length ? 0 : 1, shadowKeys.length ? 0 : 1,
+        selectedDurationMs, shadowDurationMs, new Date().toISOString(),
+      );
+    }
     return { retrievalId, hits, snapshot };
   }
 
@@ -166,6 +197,45 @@ export class RagRetrieverService {
       VALUES (?, ?, ?, ?, ?)
     `).run(`read_${randomUUID()}`, retrievalId, key, row.sha256, new Date().toISOString());
     return { retrievalId, key, version: row.contract_version, sha256: row.sha256, content: row.content };
+  }
+
+  shadowMetrics() {
+    const rows = this.database.db.prepare(`
+      SELECT COALESCE(g.retrieval_policy_version, 'UNSCOPED') AS policyVersion,
+        COALESCE(g.retrieval_release_mode, 'MANUAL') AS releaseMode,
+        o.selected_mode AS selectedMode, o.shadow_mode AS shadowMode, COUNT(*) AS observations,
+        SUM(CASE WHEN selected_zero_result = 1 AND shadow_zero_result = 0 THEN 1 ELSE 0 END) AS shadowImprovements,
+        SUM(CASE WHEN selected_zero_result = 0 AND shadow_zero_result = 1 THEN 1 ELSE 0 END) AS shadowRegressions,
+        AVG(overlap_count) AS averageTopKOverlap,
+        AVG(selected_duration_ms) AS averageSelectedDurationMs,
+        AVG(shadow_duration_ms) AS averageShadowDurationMs
+      FROM agent_rag_shadow_observation o
+      JOIN agent_rag_retrieval r ON r.id = o.retrieval_id
+      LEFT JOIN agent_code_generation g ON g.id = r.generation_id
+      GROUP BY COALESCE(g.retrieval_policy_version, 'UNSCOPED'),
+        COALESCE(g.retrieval_release_mode, 'MANUAL'), o.selected_mode, o.shadow_mode
+      ORDER BY policyVersion, releaseMode, selectedMode, shadowMode
+    `).all() as Array<{
+      policyVersion: string;
+      releaseMode: string;
+      selectedMode: string;
+      shadowMode: string;
+      observations: number;
+      shadowImprovements: number;
+      shadowRegressions: number;
+      averageTopKOverlap: number;
+      averageSelectedDurationMs: number;
+      averageShadowDurationMs: number;
+    }>;
+    return {
+      generatedAt: new Date().toISOString(),
+      groups: rows.map((row) => ({
+        ...row,
+        averageTopKOverlap: Number((row.averageTopKOverlap || 0).toFixed(3)),
+        averageSelectedDurationMs: Number((row.averageSelectedDurationMs || 0).toFixed(3)),
+        averageShadowDurationMs: Number((row.averageShadowDurationMs || 0).toFixed(3)),
+      })),
+    };
   }
 
   private ownedGeneration(sessionId: string, generationId: string, user: MockUser): GenerationRow {
@@ -217,6 +287,15 @@ export class RagRetrieverService {
       update.run(LOCAL_EMBEDDING_MODEL, LOCAL_CHUNKER_VERSION, LOCAL_INDEX_VERSION, row.sha256, row.embedding_json, row.document_key);
     }
   }
+}
+
+function rankByMode(
+  mode: "BM25" | "HYBRID",
+  query: string,
+  capabilities: GenerationContextCapability[],
+  rows: RagDocumentRow[],
+): RagSearchHit[] {
+  return mode === "BM25" ? rankBm25(query, rows) : rankHybrid(query, capabilities, rows);
 }
 
 function rankHybrid(

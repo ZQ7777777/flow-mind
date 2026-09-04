@@ -12,6 +12,10 @@ export interface AgentConfig {
   thinkingLevel: string;
   fakePi: boolean;
   generationStrategy: "DETERMINISTIC_IR_V1" | "PI_LEGACY";
+  ragReleaseMode: "SHADOW" | "CANARY" | "HYBRID_DEFAULT" | "BM25_ONLY";
+  ragCanaryPercent: number;
+  ragPolicyVersion: string;
+  ragForceBm25: boolean;
   platformTimeoutMs: number;
   allowedTargetRoots: string[];
   compactionModel: string;
@@ -33,6 +37,10 @@ export function loadConfig(): AgentConfig {
     thinkingLevel: process.env.PI_THINKING_LEVEL || "medium",
     fakePi,
     generationStrategy: resolveGenerationStrategy(fakePi),
+    ragReleaseMode: resolveRagReleaseMode(),
+    ragCanaryPercent: resolvePercentage("AGENT_RAG_CANARY_PERCENT", 10),
+    ragPolicyVersion: process.env.AGENT_RAG_POLICY_VERSION?.trim() || "RAG_RELEASE_V1",
+    ragForceBm25: process.env.AGENT_RAG_FORCE_BM25 === "true",
     platformTimeoutMs: Number(process.env.FLOW_PLATFORM_TIMEOUT_MS || 15000),
     allowedTargetRoots: (process.env.AGENT_ALLOWED_TARGET_ROOTS || "")
       .split(process.platform === "win32" ? ";" : ":")
@@ -67,6 +75,21 @@ export function loadConfig(): AgentConfig {
       },
     ],
   };
+}
+
+function resolveRagReleaseMode(): AgentConfig["ragReleaseMode"] {
+  const configured = process.env.AGENT_RAG_RELEASE_MODE?.trim() || "SHADOW";
+  if (["SHADOW", "CANARY", "HYBRID_DEFAULT", "BM25_ONLY"].includes(configured)) {
+    return configured as AgentConfig["ragReleaseMode"];
+  }
+  throw new Error("AGENT_RAG_RELEASE_MODE must be SHADOW, CANARY, HYBRID_DEFAULT or BM25_ONLY");
+}
+
+function resolvePercentage(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  const value = raw ? Number(raw) : fallback;
+  if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error(`${name} must be an integer from 0 to 100`);
+  return value;
 }
 
 function resolveGenerationStrategy(fakePi: boolean): "DETERMINISTIC_IR_V1" | "PI_LEGACY" {

@@ -19,6 +19,12 @@ The frozen M0 evaluation suite and upgrade plan are documented in [`evals/README
 不调用生成模型。`PI_LEGACY` 只用于明确授权后的兼容性回退；开发和评测继续使用 Fake Pi 与离线门禁，
 不会读取项目中的真实模型凭据或产生模型费用。
 
+RAG 默认以 `SHADOW` 模式发布：实际结果继续使用 BM25，同时离线计算并审计 Hybrid 候选结果。验证后可将
+`AGENT_RAG_RELEASE_MODE` 设为 `CANARY`，并以 `AGENT_RAG_CANARY_PERCENT` 控制稳定分桶比例；确认后再切换
+为 `HYBRID_DEFAULT`。紧急回退设置 `AGENT_RAG_FORCE_BM25=true`，新 generation 会立即固化为 BM25 且停止
+影子向量计算。每个 generation 都记录策略版本、发布模式、0–99 分桶和回退状态；聚合差异可从
+`GET /api/agent/management/rag-shadow-metrics` 查看。
+
 生成上下文会按 IR 的多选、动态数据、级联、查询、计算和核查能力生成必读清单，并冻结共享组件 props、
 workflow 类型和只读 API 的 TypeScript 签名。质量报告中的 `BLOCKING` Reviewer finding 会阻止写入；
 人工放行必须绑定当前 revision 并留下操作者和原因。

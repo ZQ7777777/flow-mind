@@ -479,6 +479,11 @@ export class AppController {
   ) {
     return this.generation.listGenerations(this.identity.resolve(userId, userName));
   }
+
+  @Get("/api/agent/management/rag-shadow-metrics")
+  getRagShadowMetrics() {
+    return this.rag.shadowMetrics();
+  }
 }
 
 function parseVersion(value?: string): number {

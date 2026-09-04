@@ -138,6 +138,90 @@ describe("M4-M5 governed local RAG", () => {
     expect(JSON.parse(audit.ranking_snapshot_json).embedding.model).toBe("LOCAL_SEMANTIC_HASH_V1");
   });
 
+  it("audits a better shadow result without exposing it to the selected path", () => {
+    seedCompletedGeneration("shadow-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
+    rag.promote("session-shadow-pattern", "generation-shadow-pattern", user, {
+      generationRevision: 1,
+      businessAssertions: [{ assertionId: "shadow-pattern-reviewed", status: "PASSED" }],
+    });
+    const missed = evaluationCatalogV1.tasks
+      .filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY")
+      .find((task) => rag.search({
+        query: task.input.userRequest,
+        projectId: "flowmind-business-base",
+        contractVersion: "2.1",
+        capabilities: detectCapabilities(task.requirementIr),
+        mode: "BM25",
+      }).hits.length === 0)!;
+    const result = rag.search({
+      query: missed.input.userRequest,
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: detectCapabilities(missed.requirementIr),
+      mode: "BM25",
+      shadowMode: "HYBRID",
+      limit: 1,
+    });
+    expect(result.hits).toEqual([]);
+    expect(result).not.toHaveProperty("shadow");
+    const observation = database.db.prepare("SELECT * FROM agent_rag_shadow_observation WHERE retrieval_id = ?")
+      .get(result.retrievalId) as any;
+    expect(observation).toMatchObject({
+      selected_mode: "BM25",
+      shadow_mode: "HYBRID",
+      selected_zero_result: 1,
+      shadow_zero_result: 0,
+    });
+    expect(JSON.parse(observation.selected_keys_json)).toEqual([]);
+    expect(JSON.parse(observation.shadow_keys_json)).toHaveLength(1);
+    expect(rag.shadowMetrics().groups).toEqual([expect.objectContaining({
+      selectedMode: "BM25",
+      shadowMode: "HYBRID",
+      observations: 1,
+      shadowImprovements: 1,
+      shadowRegressions: 0,
+    })]);
+  });
+
+  it("runs the frozen catalog as an offline shadow release with no control regressions", () => {
+    seedCompletedGeneration("release-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
+    database.db.prepare(`
+      UPDATE agent_code_generation SET retrieval_policy_version = 'RAG_RELEASE_TEST_V1',
+        retrieval_release_mode = 'SHADOW', retrieval_selected_mode = 'BM25',
+        retrieval_shadow_mode = 'HYBRID', retrieval_bucket = 42, retrieval_forced_fallback = 0
+      WHERE id = 'generation-release-pattern'
+    `).run();
+    rag.promote("session-release-pattern", "generation-release-pattern", user, {
+      generationRevision: 1,
+      businessAssertions: [{ assertionId: "release-pattern-reviewed", status: "PASSED" }],
+    });
+    const ready = evaluationCatalogV1.tasks.filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY");
+    for (const task of ready) {
+      rag.search({
+        query: task.input.userRequest,
+        projectId: "flowmind-business-base",
+        contractVersion: "2.1",
+        capabilities: detectCapabilities(task.requirementIr),
+        mode: "BM25",
+        shadowMode: "HYBRID",
+        limit: 1,
+        generationId: "generation-release-pattern",
+      });
+    }
+    const metrics = rag.shadowMetrics().groups[0];
+    expect(metrics).toMatchObject({
+      selectedMode: "BM25",
+      shadowMode: "HYBRID",
+      policyVersion: "RAG_RELEASE_TEST_V1",
+      releaseMode: "SHADOW",
+      observations: 25,
+      shadowImprovements: 7,
+      shadowRegressions: 0,
+    });
+    expect(metrics.averageSelectedDurationMs).toBeLessThan(50);
+    expect(metrics.averageShadowDurationMs).toBeLessThan(50);
+  });
+
   function seedCompletedGeneration(suffix: string, requirement: BusinessRequirement): string {
     const target = createGenerationTarget(root, `target-${suffix}`);
     const contract = JSON.parse(readFileSync(join(target, ".flowmind", "generation-target.json"), "utf8")) as GenerationTargetContract;
