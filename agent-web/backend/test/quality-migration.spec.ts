@@ -61,5 +61,11 @@ describe("M4-M5 quality storage", () => {
       .prepare("PRAGMA table_info(agent_repair_attempt)")
       .all() as Array<{ name: string }>;
     expect(repairColumns.map(({ name }) => name)).toContain("failure_code");
+    const ragColumns = database!.db.prepare("PRAGMA table_info(agent_rag_document)").all() as Array<{ name: string }>;
+    expect(ragColumns.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "embedding_model", "chunker_version", "index_version", "indexed_sha256", "embedding_json",
+    ]));
+    const retrievalColumns = database!.db.prepare("PRAGMA table_info(agent_rag_retrieval)").all() as Array<{ name: string }>;
+    expect(retrievalColumns.map(({ name }) => name)).toContain("ranking_snapshot_json");
   });
 });

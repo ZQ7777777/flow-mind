@@ -10,7 +10,7 @@ import { RagRetrieverService } from "../src/retrieval/rag-retriever.service.js";
 import { detectCapabilities } from "../src/generation/generation-context-router.js";
 import { createGenerationTarget, seedActiveWorkflow, write } from "./generation-fixture.js";
 
-describe("M4 governed local RAG", () => {
+describe("M4-M5 governed local RAG", () => {
   let root: string;
   let database: DatabaseService;
   let rag: RagRetrieverService;
@@ -60,6 +60,7 @@ describe("M4 governed local RAG", () => {
       capabilities: ["BASE_FORM", "CALCULATION"],
       limit: 3,
       generationId: "generation-approved",
+      mode: "BM25",
     });
     expect(result.hits).toHaveLength(1);
     expect(result.hits[0]).toMatchObject({ key: promotion.documentKeys[0], version: "2.1" });
@@ -90,10 +91,51 @@ describe("M4 governed local RAG", () => {
       contractVersion: "2.1",
       capabilities: detectCapabilities(task.requirementIr),
       limit: 1,
+      mode: "BM25",
     }).hits.length > 0).length;
 
     expect(ready).toHaveLength(25);
     expect({ withoutRag: 0, withRag: retrievalHits }).toEqual({ withoutRag: 0, withRag: 18 });
+  });
+
+  it("adds repeatable local-vector recall over the M4 BM25 baseline", () => {
+    seedCompletedGeneration("hybrid-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
+    rag.promote("session-hybrid-pattern", "generation-hybrid-pattern", user, {
+      generationRevision: 1,
+      businessAssertions: [{ assertionId: "hybrid-pattern-reviewed", status: "PASSED" }],
+    });
+    const ready = evaluationCatalogV1.tasks.filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY");
+    const evaluate = (mode: "BM25" | "HYBRID") => ready.filter((task) => rag.search({
+      query: task.input.userRequest,
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: detectCapabilities(task.requirementIr),
+      limit: 1,
+      mode,
+    }).hits.length > 0).length;
+
+    expect({ bm25: evaluate("BM25"), hybrid: evaluate("HYBRID") }).toEqual({ bm25: 18, hybrid: 25 });
+    const snapshotResult = rag.search({
+      query: "录入差旅费用并限制正数",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM"],
+      mode: "HYBRID",
+    });
+    expect(snapshotResult.snapshot).toEqual({
+      retrieverVersion: "HYBRID_RRF_V1",
+      tokenizerVersion: "CJK_BIGRAM_ASCII_V1",
+      embedding: {
+        model: "LOCAL_SEMANTIC_HASH_V1",
+        dimensions: 256,
+        chunkerVersion: "CODEPOINT_800_OVERLAP_100_V1",
+        indexVersion: "LOCAL_RAG_INDEX_V1",
+      },
+    });
+    expect(snapshotResult.hits[0].vectorScore).toBeGreaterThan(0);
+    const audit = database.db.prepare("SELECT ranking_snapshot_json FROM agent_rag_retrieval WHERE id = ?")
+      .get(snapshotResult.retrievalId) as { ranking_snapshot_json: string };
+    expect(JSON.parse(audit.ranking_snapshot_json).embedding.model).toBe("LOCAL_SEMANTIC_HASH_V1");
   });
 
   function seedCompletedGeneration(suffix: string, requirement: BusinessRequirement): string {

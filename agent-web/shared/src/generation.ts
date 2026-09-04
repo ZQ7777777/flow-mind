@@ -95,6 +95,7 @@ export interface RagSearchRequest {
   capabilities: GenerationContextCapability[];
   limit?: number;
   generationId?: string;
+  mode?: "BM25" | "HYBRID";
 }
 
 /** Search intentionally returns no source text; callers must explicitly read an audited key. */
@@ -104,12 +105,24 @@ export interface RagSearchHit {
   version: string;
   sha256: string;
   score: number;
+  lexicalScore?: number;
+  vectorScore?: number;
   capabilities: GenerationContextCapability[];
 }
 
 export interface RagSearchResponse {
   retrievalId: string;
   hits: RagSearchHit[];
+  snapshot: {
+    retrieverVersion: "BM25_V1" | "HYBRID_RRF_V1";
+    tokenizerVersion: "CJK_BIGRAM_ASCII_V1";
+    embedding?: {
+      model: "LOCAL_SEMANTIC_HASH_V1";
+      dimensions: 256;
+      chunkerVersion: "CODEPOINT_800_OVERLAP_100_V1";
+      indexVersion: "LOCAL_RAG_INDEX_V1";
+    };
+  };
 }
 
 export interface RagDocumentContent {

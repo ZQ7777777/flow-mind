@@ -631,6 +631,26 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(14);
       });
     }
+    if (!applied.has(15)) {
+      this.transaction(() => {
+        const documentColumns = new Set((this.db.prepare("PRAGMA table_info(agent_rag_document)").all() as Array<{ name: string }>).map(({ name }) => name));
+        const documentAdditions: Array<[string, string]> = [
+          ["embedding_model", "TEXT NOT NULL DEFAULT ''"],
+          ["chunker_version", "TEXT NOT NULL DEFAULT ''"],
+          ["index_version", "TEXT NOT NULL DEFAULT ''"],
+          ["indexed_sha256", "TEXT NOT NULL DEFAULT ''"],
+          ["embedding_json", "TEXT NOT NULL DEFAULT '[]'"],
+        ];
+        for (const [name, definition] of documentAdditions) {
+          if (!documentColumns.has(name)) this.db.exec(`ALTER TABLE agent_rag_document ADD COLUMN ${name} ${definition}`);
+        }
+        const retrievalColumns = new Set((this.db.prepare("PRAGMA table_info(agent_rag_retrieval)").all() as Array<{ name: string }>).map(({ name }) => name));
+        if (!retrievalColumns.has("ranking_snapshot_json")) {
+          this.db.exec("ALTER TABLE agent_rag_retrieval ADD COLUMN ranking_snapshot_json TEXT NOT NULL DEFAULT '{}'");
+        }
+        this.recordMigration(15);
+      });
+    }
     this.ensureAgentCodeGenerationColumns();
   }
 
