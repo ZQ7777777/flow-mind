@@ -15,9 +15,13 @@
     "dev": "npm run dev -w @flowmind/agent-backend",
     "dev:backend": "npm run dev -w @flowmind/agent-backend",
     "dev:frontend": "npm run dev -w @flowmind/agent-frontend",
-    "test": "npm run build -w @flowmind/agent-contracts && npm run test -w @flowmind/agent-backend && npm run test -w @flowmind/agent-frontend",
+    "test": "npm run build -w @flowmind/agent-contracts && npm run eval:validate && npm run eval:test && npm run test -w @flowmind/agent-backend && npm run test -w @flowmind/agent-frontend",
     "test:e2e": "playwright test",
-    "typecheck": "npm run build -w @flowmind/agent-contracts && npm run typecheck -w @flowmind/agent-backend && npm run typecheck -w @flowmind/agent-frontend"
+    "typecheck": "npm run build -w @flowmind/agent-contracts && npm run eval:typecheck && npm run typecheck -w @flowmind/agent-backend && npm run typecheck -w @flowmind/agent-frontend",
+    "eval:typecheck": "tsc -p evals/tsconfig.json --noEmit",
+    "eval:validate": "tsx evals/v1/validate.ts",
+    "eval:test": "vitest run evals/v1/runner.spec.ts",
+    "eval:score": "tsx evals/v1/score.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.55.0"

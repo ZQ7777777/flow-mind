@@ -330,6 +330,7 @@ export interface WorkflowSnapshot {
 }
 
 export * from "./generation.js";
+export * from "./evaluation.js";
 import type { CodeGenerationSummary } from "./generation.js";
 
 export interface AgentErrorBody {

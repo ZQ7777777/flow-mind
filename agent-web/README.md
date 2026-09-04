@@ -1,5 +1,9 @@
 # Flow Mind Agent Web
 
+## Code-generation evaluation
+
+The frozen M0 evaluation suite and upgrade plan are documented in [`evals/README.md`](evals/README.md) and [`docs/code-generation-upgrade-m0-m6.md`](docs/code-generation-upgrade-m0-m6.md). The evaluation commands validate and score offline artifacts; they do not call a real model.
+
 本工程实现从自然语言需求采集、流程定义发布激活，到受限暂存区中的用户自定义流程前端代码、测试生成和人工代码预览。代码生成采用 `GenerationTargetContract 2.1` 的 `FRONTEND_ONLY` 模式，不再生成 Java 或业务专用提交接口。
 
 ## 环境
