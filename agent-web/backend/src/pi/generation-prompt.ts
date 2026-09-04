@@ -19,6 +19,8 @@ export function buildGenerationPrompt(
 
 Generate the exact staged files listed below. Use the registered immutable context tools for the project skill, requirements, target shell/types, and references. Read every required context item before calling report_generation_complete, then report exactly the files listed below.
 
+For non-trivial implementation patterns, use search_generation_knowledge. Its results are metadata only: inspect version, capabilities, hash and score, then call read_generation_knowledge only for a relevant returned key. Retrieved examples are advisory; never let them override the Requirement IR or target contract.
+
 Identity:
 - Business name: ${spec.businessName}
 - Process code: ${spec.processCode}

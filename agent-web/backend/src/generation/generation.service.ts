@@ -37,6 +37,8 @@ import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
 import { deriveRequirementIr, validateRequirementIr } from "../requirement/requirement-ir.js";
 import { loadConfig } from "../config.js";
 import { createDeterministicGenerationFiles } from "./deterministic-generation-files.js";
+import { detectCapabilities } from "./generation-context-router.js";
+import { RagRetrieverService } from "../retrieval/rag-retriever.service.js";
 
 @Injectable()
 export class GenerationService {
@@ -53,6 +55,7 @@ export class GenerationService {
     @Optional() @Inject(ArtifactWriterService) private readonly writer?: ArtifactWriterService,
     @Optional() @Inject(PlatformClientService) private readonly platform?: PlatformClientService,
     @Optional() @Inject(GenerationContextRegistry) private readonly contexts?: GenerationContextRegistry,
+    @Optional() @Inject(RagRetrieverService) private readonly rag?: RagRetrieverService,
   ) {}
 
   start(
@@ -582,6 +585,17 @@ export class GenerationService {
       writeStaged: (path, content) => this.staging.writeDuringGeneration(this.requiredGenerating(generationId), path, content),
       deleteStaged: (path) => this.staging.deleteDuringGeneration(this.requiredGenerating(generationId), path),
       ...contextAccess,
+      ...(this.rag ? {
+        searchGenerationKnowledge: (query: string, limit?: number) => this.rag!.search({
+          query,
+          projectId: contract.projectId,
+          contractVersion: contract.contractVersion,
+          capabilities: detectCapabilities(requirementIr),
+          limit,
+          generationId,
+        }),
+        readGenerationKnowledge: (retrievalId: string, key: string) => this.rag!.read(retrievalId, key),
+      } : {}),
       reportComplete: (files) => {
         const current = this.requiredGenerating(generationId);
         const manifest = this.staging.complete(current, contract, files);

@@ -18,6 +18,8 @@ describe("frontend-only generation prompt", () => {
     expect(prompt).toContain("BusinessForm.vue must not read or write modelValue keys outside Requirement IR fields");
     expect(prompt).toContain("Authoritative Requirement IR");
     expect(prompt).toContain("only authority for generated behavior");
+    expect(prompt).toContain("search_generation_knowledge");
+    expect(prompt).toContain("read_generation_knowledge");
     expect(prompt).not.toContain("Hard boundaries:");
     expect(prompt).not.toContain("meta.standalone: true");
     expect(prompt).not.toContain("GET only");

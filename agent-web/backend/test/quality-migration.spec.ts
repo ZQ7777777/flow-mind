@@ -52,6 +52,9 @@ describe("M4-M5 quality storage", () => {
         "agent_code_review",
         "agent_quality_override",
         "agent_generation_action",
+        "agent_rag_document",
+        "agent_rag_retrieval",
+        "agent_rag_read",
       ]),
     );
     const repairColumns = database!.db

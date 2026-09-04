@@ -13,6 +13,8 @@ import {
   type GenerationTargetContract,
   type QualityDiagnostic,
   type RepairResolution,
+  type RagDocumentContent,
+  type RagSearchResponse,
 } from "@flowmind/agent-contracts";
 import type { GenerationSpec } from "../generation/generation-spec.js";
 import { loadConfig } from "../config.js";
@@ -119,6 +121,8 @@ export interface GenerationPiCallbacks {
   listGenerationContext(): Array<{ key: string; sha256: string; required: boolean }>;
   readGenerationContext(key: string): string;
   requiredGenerationContextKeys: string[];
+  searchGenerationKnowledge?(query: string, limit?: number): RagSearchResponse;
+  readGenerationKnowledge?(retrievalId: string, key: string): RagDocumentContent;
   readVerificationDiagnostic?(diagnosticId: string): {
     diagnostic: QualityDiagnostic;
     stdoutExcerpt?: string;
@@ -539,6 +543,24 @@ export class PiAdapterService implements OnModuleDestroy {
       pi.defineTool({ name: "list_staged_files", label: "List staged files", description: "List files staged by this generation.", parameters: Type.Object({}), execute: async () => textResult(JSON.stringify(callbacks.listStaged())) }),
       pi.defineTool({ name: "write_staged_file", label: "Write staged file", description: "Write UTF-8 content to an allowed staged path.", parameters: Type.Object({ path: Type.String(), content: Type.String() }), execute: async (_id: string, params: any) => { callbacks.writeStaged(params.path, params.content); return textResult("staged"); } }),
     ];
+    if (!repairOnly && callbacks.searchGenerationKnowledge && callbacks.readGenerationKnowledge) {
+      baseTools.push(
+        pi.defineTool({
+          name: "search_generation_knowledge",
+          label: "Search approved generation knowledge",
+          description: "Search only approved, version-compatible examples. Returns metadata and keys, never source text.",
+          parameters: Type.Object({ query: Type.String({ minLength: 1 }), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })) }),
+          execute: async (_id: string, params: any) => textResult(JSON.stringify(callbacks.searchGenerationKnowledge!(params.query, params.limit))),
+        }),
+        pi.defineTool({
+          name: "read_generation_knowledge",
+          label: "Read approved generation knowledge",
+          description: "Read a frozen source document by a key returned from a specific audited retrieval.",
+          parameters: Type.Object({ retrievalId: Type.String({ minLength: 1 }), key: Type.String({ minLength: 1 }) }),
+          execute: async (_id: string, params: any) => textResult(JSON.stringify(callbacks.readGenerationKnowledge!(params.retrievalId, params.key))),
+        }),
+      );
+    }
     if (repairOnly && callbacks.readVerificationDiagnostic) {
       baseTools.push(pi.defineTool({
         name: "read_verification_diagnostic",

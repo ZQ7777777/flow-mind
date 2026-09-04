@@ -23,6 +23,7 @@ import { PlatformSessionRegistry } from "./auth/platform-session-registry.servic
 import { AgentAdminGuard } from "./auth/agent-admin.guard.js";
 import { AgentAuthController } from "./auth/agent-auth.controller.js";
 import { GenerationSkillRegistry } from "./generation/generation-skill-registry.service.js";
+import { RagRetrieverService } from "./retrieval/rag-retriever.service.js";
 
 @Module({
   controllers: [AppController, HealthController, AgentAuthController],
@@ -37,6 +38,7 @@ import { GenerationSkillRegistry } from "./generation/generation-skill-registry.
     StagingService,
     TargetContractService,
     GenerationSkillRegistry,
+    RagRetrieverService,
     GenerationContextRegistry,
     StaticValidatorService,
     VerificationWorkerService,

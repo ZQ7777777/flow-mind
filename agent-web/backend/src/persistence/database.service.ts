@@ -586,6 +586,51 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(13);
       });
     }
+    if (!applied.has(14)) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_rag_document (
+            document_key TEXT PRIMARY KEY,
+            source_generation_id TEXT NOT NULL REFERENCES agent_code_generation(id),
+            source_revision INTEGER NOT NULL,
+            project_id TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            business_code TEXT NOT NULL,
+            capabilities_json TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            content TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            assertion_evidence_json TEXT NOT NULL,
+            promoted_by TEXT NOT NULL,
+            promoted_at TEXT NOT NULL,
+            UNIQUE(source_generation_id, source_revision, relative_path)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_document_filter
+            ON agent_rag_document(project_id, contract_version, promoted_at);
+
+          CREATE TABLE IF NOT EXISTS agent_rag_retrieval (
+            id TEXT PRIMARY KEY,
+            generation_id TEXT REFERENCES agent_code_generation(id),
+            query_text TEXT NOT NULL,
+            filters_json TEXT NOT NULL,
+            candidate_keys_json TEXT NOT NULL,
+            result_keys_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS agent_rag_read (
+            id TEXT PRIMARY KEY,
+            retrieval_id TEXT NOT NULL REFERENCES agent_rag_retrieval(id),
+            document_key TEXT NOT NULL REFERENCES agent_rag_document(document_key),
+            document_sha256 TEXT NOT NULL,
+            read_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_read_retrieval
+            ON agent_rag_read(retrieval_id, read_at);
+        `);
+        this.recordMigration(14);
+      });
+    }
     this.ensureAgentCodeGenerationColumns();
   }
 

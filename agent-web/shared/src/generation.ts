@@ -78,6 +78,48 @@ export type GenerationContextCapability =
   | "CALCULATION"
   | "BUSINESS_CHECK";
 
+export interface RagBusinessAssertionEvidence {
+  assertionId: string;
+  status: "PASSED";
+}
+
+export interface RagPromotionRequest {
+  generationRevision: number;
+  businessAssertions: RagBusinessAssertionEvidence[];
+}
+
+export interface RagSearchRequest {
+  query: string;
+  projectId: string;
+  contractVersion: string;
+  capabilities: GenerationContextCapability[];
+  limit?: number;
+  generationId?: string;
+}
+
+/** Search intentionally returns no source text; callers must explicitly read an audited key. */
+export interface RagSearchHit {
+  key: string;
+  summary: string;
+  version: string;
+  sha256: string;
+  score: number;
+  capabilities: GenerationContextCapability[];
+}
+
+export interface RagSearchResponse {
+  retrievalId: string;
+  hits: RagSearchHit[];
+}
+
+export interface RagDocumentContent {
+  retrievalId: string;
+  key: string;
+  version: string;
+  sha256: string;
+  content: string;
+}
+
 export interface GenerationContextRouteItem {
   key: string;
   required: boolean;

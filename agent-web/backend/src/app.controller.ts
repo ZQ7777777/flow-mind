@@ -16,6 +16,8 @@ import { IdentityService } from "./identity/identity.service.js";
 import { WorkflowService } from "./workflow/workflow.service.js";
 import { EventBusService } from "./workflow/event-bus.service.js";
 import { GenerationService } from "./generation/generation.service.js";
+import { RagRetrieverService } from "./retrieval/rag-retriever.service.js";
+import type { RagPromotionRequest } from "@flowmind/agent-contracts";
 import { loadConfig } from "./config.js";
 
 @Controller()
@@ -25,6 +27,7 @@ export class AppController {
     @Inject(WorkflowService) private readonly workflow: WorkflowService,
     @Inject(EventBusService) private readonly events: EventBusService,
     @Inject(GenerationService) private readonly generation: GenerationService,
+    @Inject(RagRetrieverService) private readonly rag: RagRetrieverService,
   ) {}
 
   @Get("/api/agent/mock-users")
@@ -437,6 +440,19 @@ export class AppController {
     return this.generation.confirmWrite(
       sessionId, generationId, this.identity.resolve(userId, userName),
       parseVersion(ifMatch), body, idempotencyKey,
+    );
+  }
+
+  @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/rag-promotion")
+  promoteGenerationToRag(
+    @Param("sessionId") sessionId: string,
+    @Param("generationId") generationId: string,
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Body() body: RagPromotionRequest,
+  ) {
+    return this.rag.promote(
+      sessionId, generationId, this.identity.resolve(userId, userName), body,
     );
   }
 
