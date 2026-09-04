@@ -34,6 +34,7 @@ import { GenerationSkillRegistry } from "./generation-skill-registry.service.js"
 import { PlatformClientService } from "../platform/platform-client.service.js";
 import { loadFrozenTesterFixture } from "./frozen-tester-fixture.js";
 import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
+import { deriveRequirementIr, validateRequirementIr } from "../requirement/requirement-ir.js";
 
 @Injectable()
 export class GenerationService {
@@ -77,6 +78,15 @@ export class GenerationService {
     }
     const requirement = JSON.parse(process.requirement_snapshot_json) as BusinessRequirement;
     const issues = validateGenerationRequirement(requirement);
+    const requirementIr = deriveRequirementIr(requirement);
+    const irValidation = validateRequirementIr(requirementIr);
+    if (!irValidation.structurallyValid) {
+      issues.push(...irValidation.schemaErrors.map(({ instancePath, message }) => `Requirement IR ${instancePath || "/"} ${message || "is invalid"}`));
+    }
+    issues.push(...irValidation.semanticErrors);
+    issues.push(...requirementIr.ambiguities
+      .filter(({ impact, status }) => impact === "BLOCKING" && status === "OPEN")
+      .map(({ question }) => question));
     if (process.process_code !== requirement.businessCode) {
       issues.push(`激活流程编码 ${process.process_code} 与确认需求编码 ${requirement.businessCode} 不一致`);
     }
@@ -530,6 +540,15 @@ export class GenerationService {
     if (!generation || generation.status !== "GENERATING") return;
     const contract = generationContract(generation);
     const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
+    const requirementIr = deriveRequirementIr(requirement);
+    const irValidation = validateRequirementIr(requirementIr);
+    if (!irValidation.generationReady) {
+      this.fail(generationId, "AGENT_REQUIREMENT_IR_NOT_READY", [
+        ...irValidation.semanticErrors,
+        ...requirementIr.ambiguities.filter(({ impact, status }) => impact === "BLOCKING" && status === "OPEN").map(({ question }) => question),
+      ].join("; ") || "Requirement IR is not generation-ready.");
+      return;
+    }
     const spec = deriveGenerationSpec(requirement, contract);
     const target: ValidatedGenerationTarget = { targetRoot: generation.target_root, contract };
     const context = parseGenerationContext(generation.generation_context_snapshot_json, generation.session_id);
@@ -563,7 +582,7 @@ export class GenerationService {
       const piSession = await this.pi.runGeneration(
         generationId,
         generation.staging_dir,
-        buildGenerationPrompt(requirement, JSON.parse(generation.process_snapshot_json), contract, spec, apiReferences),
+        buildGenerationPrompt(requirement, requirementIr, JSON.parse(generation.process_snapshot_json), contract, spec, apiReferences),
         callbacks,
       );
       this.database.db.prepare("UPDATE agent_code_generation SET pi_session_id = ?, pi_session_file = ?, updated_at = ? WHERE id = ?")

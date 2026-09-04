@@ -36,6 +36,14 @@ export interface RequirementIrDraft {
     goal: string;
   };
   fields: RequirementIrField[];
+  attachments: Array<{
+    attachmentCode: string;
+    attachmentName: string;
+    required: boolean;
+    allowedExtensions: string[];
+    minCount: number;
+    maxCount: number;
+  }>;
   sections: Array<{
     sectionCode: string;
     title: string;
@@ -129,7 +137,7 @@ export const requirementIrDraftSchema = {
   type: "object",
   additionalProperties: false,
   required: [
-    "irVersion", "generationMode", "identity", "fields", "sections", "dataQueries",
+    "irVersion", "generationMode", "identity", "fields", "attachments", "sections", "dataQueries",
     "calculations", "checks", "submission", "ambiguities", "sourceRefs",
   ],
   properties: {
@@ -139,7 +147,7 @@ export const requirementIrDraftSchema = {
       type: "object", additionalProperties: false,
       required: ["businessCode", "businessName", "pageTitle", "goal"],
       properties: {
-        businessCode: { type: "string", pattern: "^[a-z][a-z0-9_]*$" },
+        businessCode: { type: "string", pattern: "^[a-z][a-z0-9_-]*$" },
         businessName: { type: "string", minLength: 1 },
         pageTitle: { type: "string", minLength: 1 },
         goal: { type: "string", minLength: 1 },
@@ -172,6 +180,19 @@ export const requirementIrDraftSchema = {
               parameterBindings: stringMapSchema, autofillBindings: stringMapSchema,
             },
           },
+        },
+      },
+    },
+    attachments: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["attachmentCode", "attachmentName", "required", "allowedExtensions", "minCount", "maxCount"],
+        properties: {
+          attachmentCode: { type: "string", pattern: "^[a-z][A-Za-z0-9]*$" },
+          attachmentName: { type: "string", minLength: 1 }, required: { type: "boolean" },
+          allowedExtensions: stringArraySchema,
+          minCount: { type: "integer", minimum: 0 }, maxCount: { type: "integer", minimum: 1 },
         },
       },
     },
