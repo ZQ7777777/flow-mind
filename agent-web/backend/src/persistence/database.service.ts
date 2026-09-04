@@ -86,6 +86,7 @@ export interface GenerationRow {
   pi_session_id: string | null;
   pi_session_file: string | null;
   generation_revision: number;
+  generation_strategy: "DETERMINISTIC_IR_V1" | "PI_LEGACY";
   quality_revision: number | null;
   repair_round: number;
   max_repair_rounds: number;
@@ -572,6 +573,12 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(11);
       });
     }
+    if (!applied.has(12)) {
+      this.transaction(() => {
+        this.ensureAgentCodeGenerationColumns();
+        this.recordMigration(12);
+      });
+    }
     this.ensureAgentCodeGenerationColumns();
   }
 
@@ -580,6 +587,9 @@ export class DatabaseService implements OnModuleDestroy {
     const names = new Set(columns.map(({ name }) => name));
     if (!names.has("generation_context_snapshot_json")) {
       this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN generation_context_snapshot_json TEXT NOT NULL DEFAULT '{}'");
+    }
+    if (!names.has("generation_strategy")) {
+      this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN generation_strategy TEXT NOT NULL DEFAULT 'PI_LEGACY'");
     }
   }
 

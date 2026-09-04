@@ -35,10 +35,13 @@ import { PlatformClientService } from "../platform/platform-client.service.js";
 import { loadFrozenTesterFixture } from "./frozen-tester-fixture.js";
 import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
 import { deriveRequirementIr, validateRequirementIr } from "../requirement/requirement-ir.js";
+import { loadConfig } from "../config.js";
+import { createDeterministicGenerationFiles } from "./deterministic-generation-files.js";
 
 @Injectable()
 export class GenerationService {
   private fallbackContexts?: GenerationContextRegistry;
+  private readonly config = loadConfig();
 
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
@@ -524,6 +527,8 @@ export class GenerationService {
         requirement.businessCode, requirement.businessName, target.targetRoot, target.contract.contractVersion,
         JSON.stringify(target.contract), JSON.stringify(context), stagingDir, idempotencyKey, requestHash, JSON.stringify(result), user.userId, now, now,
       );
+      this.database.db.prepare("UPDATE agent_code_generation SET generation_strategy = ? WHERE id = ?")
+        .run(this.config.generationStrategy, generationId);
       const updated = this.database.db.prepare(`UPDATE agent_session SET target_root = ?, state = 'CODE_GENERATING', row_version = row_version + 1,
         last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ? AND row_version = ?`)
         .run(target.targetRoot, now, session.id, rowVersion);
@@ -578,6 +583,23 @@ export class GenerationService {
         this.events.publish(current.session_id, { type: "workflow.state_changed", data: { state: "CODE_REVIEW" } });
       },
     };
+    if (this.config.generationStrategy === "DETERMINISTIC_IR_V1") {
+      try {
+        callbacks.onEvent("agent.started", { purpose: "DETERMINISTIC_GENERATOR", strategy: this.config.generationStrategy });
+        const existingRoutes = callbacks.readReference(spec.paths.routeRegistry);
+        const files = createDeterministicGenerationFiles(requirementIr, spec, contract, existingRoutes);
+        for (const [path, content] of Object.entries(files)) {
+          callbacks.writeStaged(path, content);
+          callbacks.onEvent("generation.file_changed", { generationId, relativePath: path });
+        }
+        callbacks.reportComplete(Object.keys(files));
+        callbacks.onEvent("agent.completed", { purpose: "DETERMINISTIC_GENERATOR", strategy: this.config.generationStrategy });
+      } catch (error) {
+        const current = this.database.getGeneration(generationId);
+        if (current?.status === "GENERATING") this.fail(generationId, "AGENT_DETERMINISTIC_GENERATION_FAILED", error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
     try {
       const piSession = await this.pi.runGeneration(
         generationId,
@@ -680,6 +702,7 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
     : undefined;
   return {
     generationId: generation.id,
+    generationStrategy: generation.generation_strategy,
     status: generation.status as CodeGenerationSummary["status"],
     generationRevision: generation.generation_revision,
     targetRoot: generation.target_root,

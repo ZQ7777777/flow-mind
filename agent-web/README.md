@@ -15,6 +15,10 @@ The frozen M0 evaluation suite and upgrade plan are documented in [`evals/README
 复制 `.env.example` 中的配置到进程环境。`targetRoot` 在 M0-M2 可以留空，M3 启动生成时可补填，
 但必须位于 `AGENT_ALLOWED_TARGET_ROOTS` 下并通过 `.flowmind/generation-target.json` 预检。
 
+代码生成默认使用 `DETERMINISTIC_IR_V1`，从已校验的 Requirement IR 直接产出标准模块，不创建 Pi Session、
+不调用生成模型。`PI_LEGACY` 只用于明确授权后的兼容性回退；开发和评测继续使用 Fake Pi 与离线门禁，
+不会读取项目中的真实模型凭据或产生模型费用。
+
 ## M3 目标工程前置条件
 
 目标③工程必须提供 2.1 契约声明的前端构建脚本、`WorkflowStartShell`、共享 workflow 类型、路由注册文件和金标参考文件。缺少任一前置件时会拒绝生成；1.x 与 2.0 契约会返回明确升级错误。

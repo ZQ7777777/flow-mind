@@ -42,8 +42,8 @@ export function deriveRequirementIr(
     fields,
     attachments: requirement.attachments
       .filter(({ applicableNodeCodes }) => applicableNodeCodes.includes("apply"))
-      .map(({ attachmentCode, attachmentName, required, allowedExtensions, minCount, maxCount }) => ({
-        attachmentCode, attachmentName, required, allowedExtensions, minCount, maxCount,
+      .map(({ attachmentCode, attachmentName, required, allowedExtensions, maxSizeBytes, minCount, maxCount }) => ({
+        attachmentCode, attachmentName, required, allowedExtensions, maxSizeBytes, minCount, maxCount,
       })),
     sections: frontend?.sections.map(({ sectionCode, title, fieldCodes }) => ({ sectionCode, title, fieldCodes }))
       ?? [{ sectionCode: "business-info", title: "业务信息", fieldCodes: fields.map(({ fieldCode }) => fieldCode) }],
@@ -53,8 +53,8 @@ export function deriveRequirementIr(
     calculations: frontend?.calculations.map(({ calculationCode, targetFieldCode, expression, dependencyFieldCodes, decimalPlaces }) => ({
       calculationCode, targetFieldCode, expression, dependencyFieldCodes, ...(decimalPlaces === undefined ? {} : { decimalPlaces }),
     })) ?? [],
-    checks: frontend?.checks.map(({ checkCode, description, appliesWhen, passWhen, dependencyFieldCodes, dataQueryCodes }) => ({
-      checkCode, description, ...(appliesWhen ? { appliesWhen } : {}), passWhen, dependencyFieldCodes, dataQueryCodes,
+    checks: frontend?.checks.map(({ checkCode, checkName, description, appliesWhen, passWhen, dependencyFieldCodes, dataQueryCodes }) => ({
+      checkCode, name: checkName, description, ...(appliesWhen ? { appliesWhen } : {}), passWhen, dependencyFieldCodes, dataQueryCodes,
     })) ?? [],
     submission: {
       processCode: requirement.businessCode,

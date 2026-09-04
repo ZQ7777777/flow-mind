@@ -41,6 +41,7 @@ export interface RequirementIrDraft {
     attachmentName: string;
     required: boolean;
     allowedExtensions: string[];
+    maxSizeBytes: number;
     minCount: number;
     maxCount: number;
   }>;
@@ -65,6 +66,7 @@ export interface RequirementIrDraft {
   }>;
   checks: Array<{
     checkCode: string;
+    name?: string;
     description: string;
     appliesWhen?: string;
     passWhen: string;
@@ -187,11 +189,12 @@ export const requirementIrDraftSchema = {
       type: "array",
       items: {
         type: "object", additionalProperties: false,
-        required: ["attachmentCode", "attachmentName", "required", "allowedExtensions", "minCount", "maxCount"],
+        required: ["attachmentCode", "attachmentName", "required", "allowedExtensions", "maxSizeBytes", "minCount", "maxCount"],
         properties: {
           attachmentCode: { type: "string", pattern: "^[a-z][A-Za-z0-9]*$" },
           attachmentName: { type: "string", minLength: 1 }, required: { type: "boolean" },
           allowedExtensions: stringArraySchema,
+          maxSizeBytes: { type: "integer", minimum: 1 },
           minCount: { type: "integer", minimum: 0 }, maxCount: { type: "integer", minimum: 1 },
         },
       },
@@ -232,7 +235,7 @@ export const requirementIrDraftSchema = {
         type: "object", additionalProperties: false,
         required: ["checkCode", "description", "passWhen", "dependencyFieldCodes", "dataQueryCodes"],
         properties: {
-          checkCode: { type: "string", minLength: 1 }, description: { type: "string", minLength: 1 },
+          checkCode: { type: "string", minLength: 1 }, name: { type: "string", minLength: 1 }, description: { type: "string", minLength: 1 },
           appliesWhen: { type: "string", minLength: 1 }, passWhen: { type: "string", minLength: 1 },
           dependencyFieldCodes: stringArraySchema, dataQueryCodes: stringArraySchema,
         },

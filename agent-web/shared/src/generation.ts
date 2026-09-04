@@ -260,6 +260,7 @@ export type CodeGenerationStatus =
 
 export interface CodeGenerationSummary {
   generationId: string;
+  generationStrategy?: "DETERMINISTIC_IR_V1" | "PI_LEGACY";
   status: CodeGenerationStatus;
   generationRevision: number;
   targetRoot: string;

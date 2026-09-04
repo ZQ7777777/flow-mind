@@ -1,12 +1,28 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 describe("agent config", () => {
   const originalBusinessUrl = process.env.BUSINESS_BASE_FRONTEND_URL;
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     if (originalBusinessUrl === undefined) delete process.env.BUSINESS_BASE_FRONTEND_URL;
     else process.env.BUSINESS_BASE_FRONTEND_URL = originalBusinessUrl;
+  });
+
+  it("defaults production code generation to the deterministic IR strategy", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("AGENT_FAKE_PI", "false");
+    vi.stubEnv("AGENT_GENERATION_STRATEGY", "");
+
+    expect(loadConfig().generationStrategy).toBe("DETERMINISTIC_IR_V1");
+  });
+
+  it("keeps Fake Pi tests on the legacy session protocol unless explicitly overridden", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("AGENT_GENERATION_STRATEGY", "");
+
+    expect(loadConfig().generationStrategy).toBe("PI_LEGACY");
   });
 
   it("defaults the business frontend preview base URL", () => {

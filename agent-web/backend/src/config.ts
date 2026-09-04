@@ -11,6 +11,7 @@ export interface AgentConfig {
   piModel: string;
   thinkingLevel: string;
   fakePi: boolean;
+  generationStrategy: "DETERMINISTIC_IR_V1" | "PI_LEGACY";
   platformTimeoutMs: number;
   allowedTargetRoots: string[];
   compactionModel: string;
@@ -20,6 +21,7 @@ export interface AgentConfig {
 export function loadConfig(): AgentConfig {
   const dataDir = resolve(process.cwd(), process.env.AGENT_DATA_DIR || "../data/agent-web");
   const platformAuthMode = resolvePlatformAuthMode();
+  const fakePi = process.env.NODE_ENV === "test" || process.env.AGENT_FAKE_PI === "true";
   return {
     bindHost: process.env.AGENT_BIND_HOST || "127.0.0.1",
     port: Number(process.env.AGENT_PORT || 3100),
@@ -29,7 +31,8 @@ export function loadConfig(): AgentConfig {
     platformAuthMode,
     piModel: process.env.PI_MODEL || "",
     thinkingLevel: process.env.PI_THINKING_LEVEL || "medium",
-    fakePi: process.env.NODE_ENV === "test" || process.env.AGENT_FAKE_PI === "true",
+    fakePi,
+    generationStrategy: resolveGenerationStrategy(fakePi),
     platformTimeoutMs: Number(process.env.FLOW_PLATFORM_TIMEOUT_MS || 15000),
     allowedTargetRoots: (process.env.AGENT_ALLOWED_TARGET_ROOTS || "")
       .split(process.platform === "win32" ? ";" : ":")
@@ -64,6 +67,15 @@ export function loadConfig(): AgentConfig {
       },
     ],
   };
+}
+
+function resolveGenerationStrategy(fakePi: boolean): "DETERMINISTIC_IR_V1" | "PI_LEGACY" {
+  const configured = process.env.AGENT_GENERATION_STRATEGY?.trim();
+  // Existing Fake Pi integration tests continue to exercise the full session
+  // protocol unless they explicitly select the deterministic strategy.
+  if (!configured) return fakePi ? "PI_LEGACY" : "DETERMINISTIC_IR_V1";
+  if (configured === "DETERMINISTIC_IR_V1" || configured === "PI_LEGACY") return configured;
+  throw new Error("AGENT_GENERATION_STRATEGY must be DETERMINISTIC_IR_V1 or PI_LEGACY");
 }
 
 function resolvePlatformAuthMode(): "session" | "trusted-header" {
