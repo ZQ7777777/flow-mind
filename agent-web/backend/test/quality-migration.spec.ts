@@ -38,6 +38,7 @@ describe("M4-M5 quality storage", () => {
         "write_status",
         "write_journal_json",
         "generation_strategy",
+        "context_read_evidence_json",
       ]),
     );
 

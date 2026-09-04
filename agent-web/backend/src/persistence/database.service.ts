@@ -80,6 +80,7 @@ export interface GenerationRow {
   target_contract_version: string;
   target_contract_json: string;
   generation_context_snapshot_json: string;
+  context_read_evidence_json: string;
   staging_dir: string;
   backup_dir: string | null;
   artifact_manifest_json: string;
@@ -579,6 +580,12 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(12);
       });
     }
+    if (!applied.has(13)) {
+      this.transaction(() => {
+        this.ensureAgentCodeGenerationColumns();
+        this.recordMigration(13);
+      });
+    }
     this.ensureAgentCodeGenerationColumns();
   }
 
@@ -590,6 +597,9 @@ export class DatabaseService implements OnModuleDestroy {
     }
     if (!names.has("generation_strategy")) {
       this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN generation_strategy TEXT NOT NULL DEFAULT 'PI_LEGACY'");
+    }
+    if (!names.has("context_read_evidence_json")) {
+      this.db.exec("ALTER TABLE agent_code_generation ADD COLUMN context_read_evidence_json TEXT NOT NULL DEFAULT '[]'");
     }
   }
 

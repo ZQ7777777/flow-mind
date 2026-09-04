@@ -105,11 +105,12 @@ M0 中 IR 仅用于评测，不替换现有 `BusinessRequirement`。M1 需明确
 
 ### M3：上下文路由与 Reviewer 门禁
 
-- 按动态数据、多选、级联、计算、核查等 IR 特征建立必读上下文清单。
-- 使用 TypeScript Compiler API 提取组件 props、共享类型和 API 签名。
-- `BLOCKING` Reviewer finding 进入写入门禁，允许带原因的人工 override。
+- 按动态数据、多选、级联、计算、核查等 IR 特征建立必读上下文清单。（已完成）
+- 上下文快照记录能力标签、必读原因和不可变 hash；每次必读读取均持久化时间戳证据。（已完成）
+- 使用 TypeScript Compiler API 提取组件 props、共享类型和只读 API 签名，快照不包含函数实现体。（已完成）
+- `BLOCKING` Reviewer finding 进入写入门禁，只有当前 revision、带充分原因的人工 override 才能放行。（已完成）
 
-验收：必读上下文有读取证据；接口签名不依赖语义猜测；Reviewer 阻断可审计。
+验收结果：IR 能力路由、接口抽取、必读证据、旧快照兼容和 Reviewer override 审计均有离线测试覆盖。M3 验证只使用 Fake Pi，不调用真实 Reviewer 模型，模型调用数和费用均为 0。
 
 ### M4：RAG MVP
 

@@ -69,17 +69,53 @@ export interface GenerationReferenceSnapshot {
   content: string;
 }
 
+export type GenerationContextCapability =
+  | "BASE_FORM"
+  | "MULTI_SELECT"
+  | "DYNAMIC_REFERENCE"
+  | "CASCADE"
+  | "DATA_QUERY"
+  | "CALCULATION"
+  | "BUSINESS_CHECK";
+
+export interface GenerationContextRouteItem {
+  key: string;
+  required: boolean;
+  reasons: GenerationContextCapability[];
+}
+
+export interface TypeScriptContractDeclaration {
+  kind: "FUNCTION" | "INTERFACE" | "TYPE" | "PROPS";
+  name: string;
+  signature: string;
+}
+
+export interface TypeScriptContractSnapshot {
+  relativePath: string;
+  sha256: string;
+  declarations: TypeScriptContractDeclaration[];
+}
+
 export interface GenerationContextSnapshot {
   version: "1.0";
   sha256: string;
   skills: GenerationSkillSnapshot[];
   references: GenerationReferenceSnapshot[];
+  routing?: {
+    version: "1.0";
+    capabilities: GenerationContextCapability[];
+    items: GenerationContextRouteItem[];
+  };
+  interfaces?: TypeScriptContractSnapshot[];
 }
 
 export interface GenerationContextSummary {
   sha256: string;
   skills: Array<{ name: string; sha256: string }>;
   references: Array<{ source: "REPOSITORY" | "TARGET"; relativePath: string; sha256: string }>;
+  routing?: GenerationContextSnapshot["routing"];
+  interfaces?: TypeScriptContractSnapshot[];
+  reads?: Array<{ key: string; readAt: string }>;
 }
 
 export type ArtifactChangeType = "ADD" | "MODIFY";

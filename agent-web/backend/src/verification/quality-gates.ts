@@ -15,7 +15,7 @@ export interface QualityGateDecision {
 
 export function evaluateQualityGates(
   stages: QualityStageResult[],
-  _review: CodeReviewReport | undefined,
+  review: CodeReviewReport | undefined,
   overriddenScopes: SoftGateScope[] | QualityOverrideSummary["scopes"],
   _aiReviewSkipped = false,
 ): QualityGateDecision {
@@ -30,6 +30,9 @@ export function evaluateQualityGates(
   if (stages.some(({ stage, status, blockedBy }) => stage === "FRONTEND_TESTS"
     && status !== "PASSED" && !(status === "SKIPPED" && !blockedBy?.length))) {
     softFailures.push("FRONTEND_TESTS");
+  }
+  if (review?.issues.some(({ severity }) => severity === "BLOCKING")) {
+    softFailures.push("REVIEWER");
   }
   const overridden = new Set(overriddenScopes);
   const allSoftFailuresOverridden = softFailures.every((scope) => overridden.has(scope));

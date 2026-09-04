@@ -59,6 +59,8 @@ describe("deterministic IR generation strategy", () => {
     const summary = generation.get("session-deterministic", started.generationId, user);
     expect(summary.generationStrategy).toBe("DETERMINISTIC_IR_V1");
     expect(summary.manifest?.files).toHaveLength(5);
+    const requiredKeys = summary.context?.routing?.items.filter(({ required }) => required).map(({ key }) => key) || [];
+    expect(summary.context?.reads?.map(({ key }) => key)).toEqual(expect.arrayContaining(requiredKeys));
   });
 
   it("renders dynamic data, calculations and checks from the IR", async () => {

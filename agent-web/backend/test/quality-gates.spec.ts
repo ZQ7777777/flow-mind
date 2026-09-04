@@ -12,7 +12,7 @@ describe("quality gates and repair budget", () => {
     });
   });
 
-  it("requires current-revision overrides for JUnit or Vitest failures while reviewer findings stay report-only", () => {
+  it("requires current-revision overrides for JUnit or Vitest failures", () => {
     const failed = stages().map((stage) => stage.stage === "BACKEND_TESTS"
       ? { ...stage, status: "FAILED" as const }
       : stage);
@@ -26,13 +26,30 @@ describe("quality gates and repair budget", () => {
       .toBe(true);
   });
 
-  it("does not block writing for reviewer-only findings when automatic gates pass", () => {
+  it("does not block writing for non-blocking reviewer findings when automatic gates pass", () => {
     expect(evaluateQualityGates(stages(), review("CHANGES_REQUESTED"), [])).toEqual({
       hardGatePassed: true,
       softFailures: [],
       overrideRequired: false,
       canWrite: true,
     });
+  });
+
+  it("blocks writing for BLOCKING reviewer findings until an audited override", () => {
+    const blocked = review("CHANGES_REQUESTED");
+    blocked.issues.push({
+      code: "REVIEW_BOUNDARY",
+      title: "越界行为",
+      message: "生成代码包含未声明的变更操作。",
+      severity: "BLOCKING",
+    });
+    expect(evaluateQualityGates(stages(), blocked, [])).toEqual({
+      hardGatePassed: true,
+      softFailures: ["REVIEWER"],
+      overrideRequired: true,
+      canWrite: false,
+    });
+    expect(evaluateQualityGates(stages(), blocked, ["REVIEWER"]).canWrite).toBe(true);
   });
 
   it("never permits an override for a hard failure", () => {

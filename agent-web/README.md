@@ -19,6 +19,10 @@ The frozen M0 evaluation suite and upgrade plan are documented in [`evals/README
 不调用生成模型。`PI_LEGACY` 只用于明确授权后的兼容性回退；开发和评测继续使用 Fake Pi 与离线门禁，
 不会读取项目中的真实模型凭据或产生模型费用。
 
+生成上下文会按 IR 的多选、动态数据、级联、查询、计算和核查能力生成必读清单，并冻结共享组件 props、
+workflow 类型和只读 API 的 TypeScript 签名。质量报告中的 `BLOCKING` Reviewer finding 会阻止写入；
+人工放行必须绑定当前 revision 并留下操作者和原因。
+
 ## M3 目标工程前置条件
 
 目标③工程必须提供 2.1 契约声明的前端构建脚本、`WorkflowStartShell`、共享 workflow 类型、路由注册文件和金标参考文件。缺少任一前置件时会拒绝生成；1.x 与 2.0 契约会返回明确升级错误。

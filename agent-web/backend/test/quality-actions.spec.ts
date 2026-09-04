@@ -130,6 +130,32 @@ describe("M5 quality action idempotency", () => {
       .toEqual({ count: 1 });
   });
 
+  it("persists who overrode a BLOCKING reviewer finding and why", () => {
+    const report = JSON.parse(database.getGeneration(generationId)!.quality_report_json!) as GenerationQualityReport;
+    report.stages = report.stages.map((stage) => stage.stage === "BACKEND_TESTS" ? { ...stage, status: "PASSED" } : stage);
+    report.review = {
+      reviewId: "review-blocking",
+      status: "FAILED",
+      verdict: "CHANGES_REQUESTED",
+      summary: "存在生成边界问题",
+      issues: [{ code: "REVIEW_BOUNDARY", title: "越界行为", message: "包含未声明操作", severity: "BLOCKING" }],
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+    database.db.prepare("UPDATE agent_code_generation SET quality_report_json = ? WHERE id = ?")
+      .run(JSON.stringify(report), generationId);
+    const rowVersion = database.getSession("session-actions")!.row_version;
+
+    const result = generation.overrideQuality(
+      "session-actions", generationId, user, rowVersion, 1,
+      ["REVIEWER"], "业务负责人已复核该阻断项并承担发布责任。", "reviewer-override-key",
+    );
+
+    expect(result.canWrite).toBe(true);
+    expect(database.db.prepare("SELECT revision, scopes_json, reason, created_by FROM agent_quality_override WHERE generation_id = ? ORDER BY created_at DESC LIMIT 1").get(generationId))
+      .toEqual({ revision: 1, scopes_json: '["REVIEWER"]', reason: "业务负责人已复核该阻断项并承担发布责任。", created_by: user.userId });
+  });
+
   it("stops a running quality gate, resets repair rounds, and allows restart", () => {
     const rowVersion = database.getSession("session-actions")!.row_version;
     const runningReport = JSON.parse(database.getGeneration(generationId)!.quality_report_json!) as GenerationQualityReport;

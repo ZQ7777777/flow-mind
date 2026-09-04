@@ -53,6 +53,9 @@ describe("M3 user-defined business generation", () => {
     expect(first.generationRevision).toBe(1);
     expect(first.backendRestartRequired).toBe(false);
     expect(first.context?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(first.context?.routing?.capabilities).toContain("BASE_FORM");
+    const requiredContextKeys = first.context?.routing?.items.filter(({ required }) => required).map(({ key }) => key) || [];
+    expect(first.context?.reads?.map(({ key }) => key)).toEqual(expect.arrayContaining(requiredContextKeys));
     expect(spec.paths.businessForm).toContain("travel-expense-2026/BusinessForm.vue");
     expect(spec.paths.applyView).toContain("travel-expense-2026/Apply.vue");
 
