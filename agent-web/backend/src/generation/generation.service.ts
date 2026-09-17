@@ -631,6 +631,23 @@ export class GenerationService {
     if (this.config.generationStrategy === "DETERMINISTIC_IR_V1") {
       try {
         callbacks.onEvent("agent.started", { purpose: "DETERMINISTIC_GENERATOR", strategy: this.config.generationStrategy });
+        const observedRecipe = this.config.ragV2Mode === "OFF" ? undefined : this.rag?.selectRecipe({
+          generationId,
+          ownerUserId: generation.created_by,
+          projectId: contract.projectId,
+          contractVersion: contract.contractVersion,
+          capabilities: detectCapabilities(requirementIr),
+        });
+        const recipe = this.config.ragV2Mode === "DEFAULT" ? observedRecipe : undefined;
+        if (recipe && recipe.recipeKey !== "DETERMINISTIC_IR_V1") {
+          throw new Error(`Unsupported deterministic recipe: ${recipe.recipeKey}@${recipe.recipeVersion}`);
+        }
+        callbacks.onEvent("generation.recipe_selected", {
+          generationId,
+          recipe: recipe || { recipeKey: "DETERMINISTIC_IR_V1", recipeVersion: "BUILTIN" },
+          v2Mode: this.config.ragV2Mode,
+          shadowRecipe: this.config.ragV2Mode === "SHADOW" ? observedRecipe : undefined,
+        });
         for (const key of callbacks.requiredGenerationContextKeys) callbacks.readGenerationContext(key);
         const existingRoutes = callbacks.readReference(spec.paths.routeRegistry);
         const files = createDeterministicGenerationFiles(requirementIr, spec, contract, existingRoutes);

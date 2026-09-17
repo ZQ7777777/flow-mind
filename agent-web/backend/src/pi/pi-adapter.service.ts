@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, OnModuleDestroy, Optional } from "@nestjs/common";
 import { mkdirSync, appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -22,6 +22,8 @@ import { DatabaseService } from "../persistence/database.service.js";
 import { REQUIREMENT_SYSTEM_PROMPT } from "./requirement-prompt.js";
 import { createFakeGenerationFiles } from "./fake-generation-files.js";
 import { calculateCompactionSettings, createFlowMindCompactionExtension } from "./flowmind-compaction.js";
+import { ModelBudgetService } from "../budget/model-budget.service.js";
+import type { ModelBudgetPurpose } from "@flowmind/agent-contracts";
 
 interface SessionHandle {
   sessionId: string;
@@ -174,7 +176,10 @@ export class PiAdapterService implements OnModuleDestroy {
   private readonly generationHandles = new Map<string, SessionHandle>();
   private modelRuntime: any;
 
-  constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
+  constructor(
+    @Inject(DatabaseService) private readonly database: DatabaseService,
+    @Optional() @Inject(ModelBudgetService) private readonly modelBudget?: ModelBudgetService,
+  ) {}
 
   async ready(): Promise<{ ready: boolean; message?: string }> {
     if (this.config.fakePi) return { ready: true };
@@ -209,7 +214,12 @@ export class PiAdapterService implements OnModuleDestroy {
     const handle = await this.ensureSession(agentSessionId, callbacks);
     const active = this.handles.get(agentSessionId);
     if (!active || active.sessionId !== handle.piSessionId) throw new Error("Pi session was not initialized");
-    await active.prompt(text);
+    const reservation = this.reserveModelCall("REQUIREMENT", agentSessionId, text);
+    try {
+      await active.prompt(text);
+    } finally {
+      if (reservation) this.modelBudget?.markBillingOutcomeUnknown(reservation);
+    }
   }
 
   async getMessages(agentSessionId: string, callbacks: PiCallbacks): Promise<ConversationMessage[]> {
@@ -245,7 +255,12 @@ export class PiAdapterService implements OnModuleDestroy {
     this.database.db.prepare("UPDATE agent_code_generation SET pi_session_id = ?, pi_session_file = ?, updated_at = ? WHERE id = ?")
       .run(handle.sessionId, handle.sessionFile || null, new Date().toISOString(), generationId);
     try {
-      await handle.prompt(prompt);
+      const reservation = this.reserveModelCall("GENERATOR", generationId, prompt);
+      try {
+        await handle.prompt(prompt);
+      } finally {
+        if (reservation) this.modelBudget?.markBillingOutcomeUnknown(reservation);
+      }
       return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
     } finally {
       handle.dispose();
@@ -279,7 +294,12 @@ export class PiAdapterService implements OnModuleDestroy {
       : await this.createRealGenerationHandle(generationId, stagingDir, callbacks, sessionFile, true);
     this.generationHandles.set(key, handle);
     try {
-      await handle.prompt(prompt);
+      const reservation = this.reserveModelCall("REPAIR", generationId, prompt);
+      try {
+        await handle.prompt(prompt);
+      } finally {
+        if (reservation) this.modelBudget?.markBillingOutcomeUnknown(reservation);
+      }
       return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
     } finally {
       handle.dispose();
@@ -299,7 +319,12 @@ export class PiAdapterService implements OnModuleDestroy {
       : await this.createRealReviewHandle(reviewId, callbacks);
     this.generationHandles.set(key, handle);
     try {
-      await handle.prompt(prompt);
+      const reservation = this.reserveModelCall("REVIEWER", reviewId, prompt);
+      try {
+        await handle.prompt(prompt);
+      } finally {
+        if (reservation) this.modelBudget?.markBillingOutcomeUnknown(reservation);
+      }
       return { piSessionId: handle.sessionId, sessionFile: handle.sessionFile };
     } finally {
       handle.dispose();
@@ -324,7 +349,7 @@ export class PiAdapterService implements OnModuleDestroy {
       ? pi.SessionManager.open(sessionFile, sessionDir)
       : pi.SessionManager.create(cwd, sessionDir);
     const compaction = calculateCompactionSettings(Number(model.contextWindow || 128000));
-    const settingsManager = pi.SettingsManager.inMemory({ compaction: { enabled: true, ...compaction } });
+    const settingsManager = pi.SettingsManager.inMemory({ compaction: { enabled: false, ...compaction } });
     let activePiSessionId = agentSessionId;
     const loader = new pi.DefaultResourceLoader({
       cwd,
@@ -514,7 +539,7 @@ export class PiAdapterService implements OnModuleDestroy {
     mkdirSync(cwd, { recursive: true });
     mkdirSync(stagingDir, { recursive: true });
     const compaction = calculateCompactionSettings(Number(model.contextWindow || 128000));
-    const settingsManager = pi.SettingsManager.inMemory({ compaction: { enabled: true, ...compaction } });
+    const settingsManager = pi.SettingsManager.inMemory({ compaction: { enabled: false, ...compaction } });
     let activePiSessionId = generationId;
     const generation = this.database.getGeneration(generationId);
     const loader = new pi.DefaultResourceLoader({
@@ -786,6 +811,31 @@ export class PiAdapterService implements OnModuleDestroy {
       qualityState: "M4_NOT_STARTED",
       nextStep: generation?.status === "REVIEW" ? "human code review" : "continue the current workflow stage",
     });
+  }
+
+  private reserveModelCall(
+    purpose: ModelBudgetPurpose,
+    scopeId: string,
+    prompt: string,
+  ): string | undefined {
+    if (this.config.fakePi) return undefined;
+    if (!this.modelBudget) throw new Error("model budget guard is unavailable");
+    let ownerUserId: string | undefined;
+    let budgetScopeId = scopeId;
+    if (purpose === "REQUIREMENT") {
+      ownerUserId = this.database.getSession(scopeId)?.owner_user_id;
+    } else if (purpose === "REVIEWER") {
+      const reviewScope = this.database.db.prepare(`
+        SELECT g.created_by AS ownerUserId, g.id AS generationId FROM agent_code_review r
+        JOIN agent_code_generation g ON g.id = r.generation_id WHERE r.id = ?
+      `).get(scopeId) as { ownerUserId?: string; generationId?: string } | undefined;
+      ownerUserId = reviewScope?.ownerUserId;
+      budgetScopeId = reviewScope?.generationId || scopeId;
+    } else {
+      ownerUserId = this.database.getGeneration(scopeId)?.created_by;
+    }
+    if (!ownerUserId) throw new Error(`model budget owner was not found for ${purpose}:${scopeId}`);
+    return this.modelBudget.reserve(ownerUserId, purpose, budgetScopeId, prompt).reservationId;
   }
 
   private async getModelRuntime(): Promise<any> {

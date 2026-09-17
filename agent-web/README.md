@@ -25,6 +25,19 @@ RAG 默认以 `SHADOW` 模式发布：实际结果继续使用 BM25，同时离�
 影子向量计算。每个 generation 都记录策略版本、发布模式、0–99 分桶和回退状态；聚合差异可从
 `GET /api/agent/management/rag-shadow-metrics` 查看。
 
+RAG v2 另外把审核通过的一次生成晋级为不可变案例包，保存 `BusinessRequirement`、Requirement IR、
+验收条件、能力标签、Recipe、代码/测试符号级 chunk，以及需求到产物和测试的验证关系。默认
+`AGENT_RAG_V2_MODE=SHADOW` 只记录默认确定性生成可能选择的 Recipe；验证后设为 `DEFAULT` 才使用该选择，
+且不会向确定性生成器注入自由代码。结构化证据查询使用 owner/project/contract/capability 硬过滤、
+有界本地 chunk 扫描、FTS/BM25 与本地向量 RRF、关系扩展，接口为
+`POST /api/agent/management/rag-v2/search` 与 `POST /api/agent/management/rag-v2/read`。
+
+模型费用使用一次性人民币硬预算。真实调用默认锁定，必须先通过
+`POST /api/agent/model-budget/authorizations` 对具体 purpose 与 session/generation 显式授权；缺少可信 usage、
+版本化人民币单价或可用余额时调用会 fail-closed。模型自动上下文压缩默认关闭，AI Reviewer 在未授权时
+由确定性质量门禁替代。`POST /api/agent/sessions/import-requirement` 可从完整 `BusinessRequirement` JSON
+直接创建审核会话，整条导入和确定性生成路径不调用模型。
+
 生成上下文会按 IR 的多选、动态数据、级联、查询、计算和核查能力生成必读清单，并冻结共享组件 props、
 workflow 类型和只读 API 的 TypeScript 签名。质量报告中的 `BLOCKING` Reviewer finding 会阻止写入；
 人工放行必须绑定当前 revision 并留下操作者和原因。

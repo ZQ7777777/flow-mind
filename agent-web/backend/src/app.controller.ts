@@ -18,7 +18,10 @@ import { EventBusService } from "./workflow/event-bus.service.js";
 import { GenerationService } from "./generation/generation.service.js";
 import { RagRetrieverService } from "./retrieval/rag-retriever.service.js";
 import type { RagPromotionRequest } from "@flowmind/agent-contracts";
+import type { ModelBudgetAuthorizationRequest } from "@flowmind/agent-contracts";
+import type { RagEvidenceSearchRequest } from "@flowmind/agent-contracts";
 import { loadConfig } from "./config.js";
+import { ModelBudgetService } from "./budget/model-budget.service.js";
 
 @Controller()
 export class AppController {
@@ -28,6 +31,7 @@ export class AppController {
     @Inject(EventBusService) private readonly events: EventBusService,
     @Inject(GenerationService) private readonly generation: GenerationService,
     @Inject(RagRetrieverService) private readonly rag: RagRetrieverService,
+    @Inject(ModelBudgetService) private readonly modelBudget: ModelBudgetService,
   ) {}
 
   @Get("/api/agent/mock-users")
@@ -443,6 +447,35 @@ export class AppController {
     );
   }
 
+  @Post("/api/agent/sessions/import-requirement")
+  importRequirement(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Body() body: { targetRoot?: string; requirement: unknown },
+  ) {
+    return this.workflow.createImportedSession(
+      this.identity.resolve(userId, userName), body?.requirement, body?.targetRoot,
+    );
+  }
+
+  @Get("/api/agent/model-budget")
+  getModelBudget(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+  ) {
+    return this.modelBudget.status(this.identity.resolve(userId, userName));
+  }
+
+  @Post("/api/agent/model-budget/authorizations")
+  authorizeModelBudget(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Headers("idempotency-key") idempotencyKey: string,
+    @Body() body: ModelBudgetAuthorizationRequest,
+  ) {
+    return this.modelBudget.authorize(this.identity.resolve(userId, userName), body, idempotencyKey);
+  }
+
   @Post("/api/agent/sessions/:sessionId/code-generations/:generationId/rag-promotion")
   promoteGenerationToRag(
     @Param("sessionId") sessionId: string,
@@ -483,6 +516,24 @@ export class AppController {
   @Get("/api/agent/management/rag-shadow-metrics")
   getRagShadowMetrics() {
     return this.rag.shadowMetrics();
+  }
+
+  @Post("/api/agent/management/rag-v2/search")
+  searchRagV2(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Body() body: RagEvidenceSearchRequest,
+  ) {
+    return this.rag.searchEvidence(body, this.identity.resolve(userId, userName));
+  }
+
+  @Post("/api/agent/management/rag-v2/read")
+  readRagV2(
+    @Headers("x-agent-user-id") userId: string,
+    @Headers("x-agent-user-name") userName: string,
+    @Body() body: { retrievalId: string; key: string },
+  ) {
+    return this.rag.readEvidence(body?.retrievalId, body?.key, this.identity.resolve(userId, userName));
   }
 }
 

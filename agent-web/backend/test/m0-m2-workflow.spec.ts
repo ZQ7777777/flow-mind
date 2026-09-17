@@ -255,6 +255,20 @@ describe("M0-M2 workflow", () => {
     expect(calls.every((call) => call.headers.get("X-Flow-User-Id") === "user_sales")).toBe(true);
   });
 
+  it("imports a complete requirement into review without creating a Pi session", async () => {
+    const snapshot = await workflow.createImportedSession(user, ENTRY_APPLICATION_REQUIREMENT);
+    const row = database.getSession(snapshot.sessionId)!;
+
+    expect(snapshot).toMatchObject({
+      state: "REQUIREMENT_REVIEW",
+      messages: [],
+      requirement: { revision: 1, source: "USER_IMPORT", readyForReview: true },
+    });
+    expect(row.pi_session_id).toBeNull();
+    expect(row.pi_session_file).toBeNull();
+    expect(row.requirement_source).toBe("USER_IMPORT");
+  });
+
   it("returns a draft publish failure to requirement review and reuses its platform definition", async () => {
     let snapshot = await workflow.createSession(user);
     await (workflow as any).saveAgentRequirement(snapshot.sessionId, ENTRY_APPLICATION_REQUIREMENT, [], []);

@@ -16,6 +16,13 @@ export interface AgentConfig {
   ragCanaryPercent: number;
   ragPolicyVersion: string;
   ragForceBm25: boolean;
+  ragV2Mode: "OFF" | "SHADOW" | "DEFAULT";
+  modelBudgetTotalCny: number;
+  modelBudgetLocked: boolean;
+  modelPriceInputCnyPerMillion: number;
+  modelPriceOutputCnyPerMillion: number;
+  modelPriceVersion: string;
+  modelMaxOutputTokens: number;
   platformTimeoutMs: number;
   allowedTargetRoots: string[];
   compactionModel: string;
@@ -41,6 +48,13 @@ export function loadConfig(): AgentConfig {
     ragCanaryPercent: resolvePercentage("AGENT_RAG_CANARY_PERCENT", 10),
     ragPolicyVersion: process.env.AGENT_RAG_POLICY_VERSION?.trim() || "RAG_RELEASE_V1",
     ragForceBm25: process.env.AGENT_RAG_FORCE_BM25 === "true",
+    ragV2Mode: resolveRagV2Mode(),
+    modelBudgetTotalCny: resolveNonNegativeNumber("AGENT_MODEL_BUDGET_CNY", 10),
+    modelBudgetLocked: process.env.AGENT_MODEL_BUDGET_LOCKED !== "false",
+    modelPriceInputCnyPerMillion: resolveNonNegativeNumber("AGENT_MODEL_INPUT_CNY_PER_MILLION", 0),
+    modelPriceOutputCnyPerMillion: resolveNonNegativeNumber("AGENT_MODEL_OUTPUT_CNY_PER_MILLION", 0),
+    modelPriceVersion: process.env.AGENT_MODEL_PRICE_VERSION?.trim() || "UNCONFIGURED",
+    modelMaxOutputTokens: resolvePositiveInteger("AGENT_MODEL_MAX_OUTPUT_TOKENS", 1024),
     platformTimeoutMs: Number(process.env.FLOW_PLATFORM_TIMEOUT_MS || 15000),
     allowedTargetRoots: (process.env.AGENT_ALLOWED_TARGET_ROOTS || "")
       .split(process.platform === "win32" ? ";" : ":")
@@ -75,6 +89,26 @@ export function loadConfig(): AgentConfig {
       },
     ],
   };
+}
+
+function resolveRagV2Mode(): AgentConfig["ragV2Mode"] {
+  const configured = process.env.AGENT_RAG_V2_MODE?.trim() || "SHADOW";
+  if (["OFF", "SHADOW", "DEFAULT"].includes(configured)) return configured as AgentConfig["ragV2Mode"];
+  throw new Error("AGENT_RAG_V2_MODE must be OFF, SHADOW or DEFAULT");
+}
+
+function resolveNonNegativeNumber(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  const value = raw ? Number(raw) : fallback;
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be a non-negative number`);
+  return value;
+}
+
+function resolvePositiveInteger(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  const value = raw ? Number(raw) : fallback;
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+  return value;
 }
 
 function resolveRagReleaseMode(): AgentConfig["ragReleaseMode"] {

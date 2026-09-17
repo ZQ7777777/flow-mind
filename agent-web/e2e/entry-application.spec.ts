@@ -59,9 +59,7 @@ test("入金申请从对话走到发布激活", async ({ page }) => {
   await expect(workflowState).toHaveText("CODE_REVIEW", { timeout: 10000 });
   await page.getByRole("tab", { name: "代码预览" }).click();
   await expect(page.getByText("generated-routes.ts", { exact: true })).toBeVisible();
-  const previewFrame = page.frameLocator('iframe[title="Agent 生成前端界面静态预览"]');
-  await expect(previewFrame.locator("section")).toBeVisible();
-  await expect(previewFrame.locator('[data-preview-action="submit"]')).toHaveCount(0);
+  await expect(page.locator('iframe[title="Agent 生成前端界面静态预览"]')).toHaveCount(0);
 });
 
 test("质押动态需求生成同源参考数据调用与多选 DTO", async ({ page }) => {

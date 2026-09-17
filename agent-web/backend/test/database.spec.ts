@@ -28,7 +28,7 @@ describe("agent database", () => {
     const versions = database!.db
       .prepare("SELECT version FROM agent_schema_migration ORDER BY version")
       .all() as Array<{ version: number }>;
-    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
     expect((database!.db.prepare("PRAGMA table_info(agent_code_generation)").all() as Array<{ name: string }>).map(({ name }) => name))
       .toContain("generation_context_snapshot_json");
     expect(database!.db.pragma("journal_mode", { simple: true })).toBe("wal");
@@ -110,7 +110,7 @@ describe("agent database", () => {
       pi_session_file: "legacy.jsonl",
     });
     const versions = database.db.prepare("SELECT version FROM agent_schema_migration ORDER BY version").all() as Array<{ version: number }>;
-    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    expect(versions.map(({ version }) => version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
     expect(database.db.prepare("SELECT tokens_before, summary_tokens FROM agent_compaction_stat WHERE id = 'acs_legacy'").get())
       .toEqual({ tokens_before: 12345, summary_tokens: 800 });
   });

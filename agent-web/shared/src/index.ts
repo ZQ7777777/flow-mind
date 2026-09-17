@@ -275,7 +275,7 @@ export interface RequirementRevision {
   missingItems: string[];
   ambiguities: string[];
   readyForReview: boolean;
-  source: "AGENT" | "USER_EDIT";
+  source: "AGENT" | "USER_EDIT" | "USER_IMPORT";
   confirmedBy?: string;
   confirmedAt?: string;
   createdAt: string;
@@ -339,6 +339,33 @@ export interface AgentErrorBody {
   sessionId?: string;
   requestId: string;
   details: Record<string, unknown>;
+}
+
+export type ModelBudgetPurpose = "REQUIREMENT" | "GENERATOR" | "REVIEWER" | "REPAIR" | "COMPACTION";
+
+export interface ModelBudgetAuthorizationRequest {
+  purpose: ModelBudgetPurpose;
+  scopeId: string;
+  maxCny: number;
+  expiresInMinutes?: number;
+}
+
+export interface ModelBudgetStatus {
+  totalLimitCny: number;
+  reservedCny: number;
+  spentCny: number;
+  remainingCny: number;
+  locked: boolean;
+  authorizations: Array<{
+    id: string;
+    purpose: ModelBudgetPurpose;
+    scopeId: string;
+    maxCny: number;
+    reservedCny: number;
+    spentCny: number;
+    status: "ACTIVE" | "EXHAUSTED" | "REVOKED";
+    expiresAt: string;
+  }>;
 }
 
 export const businessRequirementSchema = {

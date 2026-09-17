@@ -681,6 +681,204 @@ export class DatabaseService implements OnModuleDestroy {
         this.recordMigration(16);
       });
     }
+    if (!applied.has(17)) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_rag_case (
+            id TEXT PRIMARY KEY,
+            source_generation_id TEXT NOT NULL REFERENCES agent_code_generation(id),
+            source_revision INTEGER NOT NULL,
+            owner_user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            business_code TEXT NOT NULL,
+            visibility TEXT NOT NULL CHECK(visibility IN ('PRIVATE', 'SHARED')),
+            status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE', 'SUPERSEDED', 'TOMBSTONED')),
+            requirement_json TEXT NOT NULL,
+            requirement_ir_json TEXT NOT NULL,
+            capabilities_json TEXT NOT NULL,
+            validation_evidence_json TEXT NOT NULL,
+            supersedes_case_id TEXT REFERENCES agent_rag_case(id),
+            promoted_by TEXT NOT NULL,
+            promoted_at TEXT NOT NULL,
+            activated_at TEXT,
+            UNIQUE(source_generation_id, source_revision)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_case_scope
+            ON agent_rag_case(owner_user_id, project_id, contract_version, status, promoted_at);
+
+          CREATE TABLE IF NOT EXISTS agent_rag_node (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES agent_rag_case(id) ON DELETE CASCADE,
+            node_type TEXT NOT NULL,
+            stable_key TEXT NOT NULL,
+            label TEXT NOT NULL,
+            content_json TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            origin TEXT NOT NULL CHECK(origin IN ('EXPLICIT', 'DERIVED', 'INFERRED')),
+            validation_status TEXT NOT NULL CHECK(validation_status IN ('CANDIDATE', 'VERIFIED', 'REJECTED')),
+            UNIQUE(case_id, node_type, stable_key)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_node_case_type
+            ON agent_rag_node(case_id, node_type, stable_key);
+
+          CREATE TABLE IF NOT EXISTS agent_rag_edge (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES agent_rag_case(id) ON DELETE CASCADE,
+            from_node_id TEXT NOT NULL REFERENCES agent_rag_node(id) ON DELETE CASCADE,
+            to_node_id TEXT NOT NULL REFERENCES agent_rag_node(id) ON DELETE CASCADE,
+            edge_type TEXT NOT NULL,
+            source_kind TEXT NOT NULL CHECK(source_kind IN ('EXPLICIT', 'DERIVED', 'INFERRED')),
+            confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+            validation_status TEXT NOT NULL CHECK(validation_status IN ('CANDIDATE', 'VERIFIED', 'REJECTED')),
+            evidence_json TEXT NOT NULL,
+            UNIQUE(case_id, from_node_id, to_node_id, edge_type)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_edge_from
+            ON agent_rag_edge(case_id, from_node_id, edge_type, validation_status);
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_edge_to
+            ON agent_rag_edge(case_id, to_node_id, edge_type, validation_status);
+
+          CREATE TABLE IF NOT EXISTS agent_rag_chunk (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES agent_rag_case(id) ON DELETE CASCADE,
+            node_id TEXT REFERENCES agent_rag_node(id) ON DELETE SET NULL,
+            chunk_type TEXT NOT NULL,
+            artifact_path TEXT,
+            symbol_name TEXT,
+            start_line INTEGER,
+            end_line INTEGER,
+            summary TEXT NOT NULL,
+            content TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            embedding_json TEXT NOT NULL DEFAULT '[]',
+            index_version TEXT NOT NULL,
+            index_status TEXT NOT NULL CHECK(index_status IN ('PENDING', 'ACTIVE', 'FAILED')),
+            UNIQUE(case_id, chunk_type, sha256, artifact_path, symbol_name)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_chunk_case_status
+            ON agent_rag_chunk(case_id, index_status, chunk_type);
+          CREATE VIRTUAL TABLE IF NOT EXISTS agent_rag_chunk_fts USING fts5(
+            chunk_id UNINDEXED,
+            search_text,
+            tokenize = 'unicode61'
+          );
+
+          CREATE TABLE IF NOT EXISTS agent_rag_recipe (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES agent_rag_case(id) ON DELETE CASCADE,
+            recipe_key TEXT NOT NULL,
+            recipe_version TEXT NOT NULL,
+            capabilities_json TEXT NOT NULL,
+            selector_json TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('CANDIDATE', 'ACTIVE', 'RETIRED')),
+            created_at TEXT NOT NULL,
+            UNIQUE(recipe_key, recipe_version, case_id)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_recipe_status
+            ON agent_rag_recipe(status, recipe_key, recipe_version);
+
+          CREATE TABLE IF NOT EXISTS agent_rag_index_version (
+            id TEXT PRIMARY KEY,
+            owner_user_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            version TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE', 'FAILED', 'RETIRED')),
+            case_ids_json TEXT NOT NULL,
+            content_sha256 TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            activated_at TEXT,
+            UNIQUE(owner_user_id, project_id, contract_version, version)
+          );
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_rag_index_active
+            ON agent_rag_index_version(owner_user_id, project_id, contract_version)
+            WHERE status = 'ACTIVE';
+
+          CREATE TABLE IF NOT EXISTS agent_generation_knowledge_use (
+            id TEXT PRIMARY KEY,
+            generation_id TEXT NOT NULL REFERENCES agent_code_generation(id) ON DELETE CASCADE,
+            case_id TEXT REFERENCES agent_rag_case(id),
+            recipe_id TEXT REFERENCES agent_rag_recipe(id),
+            intent TEXT NOT NULL,
+            query_json TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            selected_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_generation_knowledge_use
+            ON agent_generation_knowledge_use(generation_id, selected_at);
+
+          CREATE TABLE IF NOT EXISTS agent_rag_v2_retrieval (
+            id TEXT PRIMARY KEY,
+            owner_user_id TEXT NOT NULL,
+            query_text TEXT NOT NULL,
+            intent TEXT NOT NULL,
+            filters_json TEXT NOT NULL,
+            candidate_chunk_ids_json TEXT NOT NULL,
+            result_chunk_ids_json TEXT NOT NULL,
+            ranking_snapshot_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS agent_rag_v2_read (
+            id TEXT PRIMARY KEY,
+            retrieval_id TEXT NOT NULL REFERENCES agent_rag_v2_retrieval(id),
+            chunk_id TEXT NOT NULL REFERENCES agent_rag_chunk(id),
+            chunk_sha256 TEXT NOT NULL,
+            read_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_rag_v2_read_retrieval
+            ON agent_rag_v2_read(retrieval_id, read_at);
+        `);
+        this.recordMigration(17);
+      });
+    }
+    if (!applied.has(18)) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_model_budget_authorization (
+            id TEXT PRIMARY KEY,
+            owner_user_id TEXT NOT NULL,
+            purpose TEXT NOT NULL,
+            scope_id TEXT NOT NULL,
+            max_micros_cny INTEGER NOT NULL CHECK(max_micros_cny > 0),
+            reserved_micros_cny INTEGER NOT NULL DEFAULT 0,
+            spent_micros_cny INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL CHECK(status IN ('ACTIVE', 'EXHAUSTED', 'REVOKED')),
+            idempotency_key TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            UNIQUE(owner_user_id, idempotency_key)
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_model_budget_scope
+            ON agent_model_budget_authorization(owner_user_id, purpose, scope_id, status, expires_at);
+
+          CREATE TABLE IF NOT EXISTS agent_model_budget_reservation (
+            id TEXT PRIMARY KEY,
+            authorization_id TEXT NOT NULL REFERENCES agent_model_budget_authorization(id),
+            owner_user_id TEXT NOT NULL,
+            purpose TEXT NOT NULL,
+            scope_id TEXT NOT NULL,
+            provider_model TEXT NOT NULL,
+            price_version TEXT NOT NULL,
+            prompt_sha256 TEXT NOT NULL,
+            estimated_input_tokens INTEGER NOT NULL,
+            max_output_tokens INTEGER NOT NULL,
+            reserved_micros_cny INTEGER NOT NULL,
+            actual_input_tokens INTEGER,
+            actual_output_tokens INTEGER,
+            actual_micros_cny INTEGER,
+            status TEXT NOT NULL CHECK(status IN ('RESERVED', 'SETTLED', 'UNKNOWN', 'RELEASED')),
+            created_at TEXT NOT NULL,
+            settled_at TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_model_budget_reservation_scope
+            ON agent_model_budget_reservation(owner_user_id, purpose, scope_id, created_at);
+        `);
+        this.recordMigration(18);
+      });
+    }
     this.ensureAgentCodeGenerationColumns();
   }
 

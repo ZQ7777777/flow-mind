@@ -88,6 +88,69 @@ export interface RagPromotionRequest {
   businessAssertions: RagBusinessAssertionEvidence[];
 }
 
+export type RagNodeType =
+  | "REQUIREMENT_ELEMENT"
+  | "ACCEPTANCE_CRITERION"
+  | "CAPABILITY"
+  | "RECIPE"
+  | "ARTIFACT"
+  | "SYMBOL"
+  | "TEST_CASE"
+  | "DECISION"
+  | "EVIDENCE_CHUNK";
+
+export type RagEdgeType =
+  | "decomposes_to"
+  | "requires"
+  | "implemented_by"
+  | "generated_from"
+  | "verified_by"
+  | "supported_by"
+  | "depends_on"
+  | "supersedes"
+  | "conflicts_with";
+
+export interface RagRecipeSelection {
+  caseId: string;
+  recipeId: string;
+  recipeKey: string;
+  recipeVersion: string;
+  capabilities: GenerationContextCapability[];
+  evidenceNodeIds: string[];
+}
+
+export type RagQueryIntent = "SIMILAR_CASE" | "IDENTIFIER" | "TRACEABILITY" | "IMPACT";
+
+export interface RagEvidenceSearchRequest {
+  query: string;
+  projectId: string;
+  contractVersion: string;
+  capabilities: GenerationContextCapability[];
+  intent?: RagQueryIntent;
+  limit?: number;
+}
+
+export interface RagEvidenceHit {
+  key: string;
+  caseId: string;
+  nodeId?: string;
+  chunkType: string;
+  summary: string;
+  sha256: string;
+  score: number;
+  artifactPath?: string;
+  symbolName?: string;
+  startLine?: number;
+  endLine?: number;
+}
+
+export interface RagEvidenceSearchResponse {
+  retrievalId: string;
+  intent: RagQueryIntent;
+  hits: RagEvidenceHit[];
+  retrieverVersion: "TYPED_GRAPH_HYBRID_V2";
+}
+
 export interface RagSearchRequest {
   query: string;
   projectId: string;

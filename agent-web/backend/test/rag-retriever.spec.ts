@@ -9,6 +9,7 @@ import { DatabaseService } from "../src/persistence/database.service.js";
 import { RagRetrieverService } from "../src/retrieval/rag-retriever.service.js";
 import { detectCapabilities } from "../src/generation/generation-context-router.js";
 import { createGenerationTarget, seedActiveWorkflow, write } from "./generation-fixture.js";
+import { deriveAcceptanceAssertions, deriveRequirementIr } from "../src/requirement/requirement-ir.js";
 
 describe("M4-M5 governed local RAG", () => {
   let root: string;
@@ -49,8 +50,58 @@ describe("M4-M5 governed local RAG", () => {
     const content = seedCompletedGeneration("approved", calculationRequirement());
     const promotion = rag.promote("session-approved", "generation-approved", user, {
       generationRevision: 1,
-      businessAssertions: [{ assertionId: "signed-amount", status: "PASSED" }],
+      businessAssertions: evidenceFor(calculationRequirement()),
     });
+    expect(promotion.caseId).toMatch(/^case_/);
+    expect(promotion.recipeId).toMatch(/^recipe_/);
+    expect(database.db.prepare("SELECT status FROM agent_rag_case WHERE id = ?").get(promotion.caseId))
+      .toEqual({ status: "ACTIVE" });
+    expect((database.db.prepare("SELECT COUNT(*) AS count FROM agent_rag_node WHERE case_id = ?")
+      .get(promotion.caseId) as { count: number }).count).toBeGreaterThan(5);
+    expect((database.db.prepare("SELECT COUNT(*) AS count FROM agent_rag_edge WHERE case_id = ?")
+      .get(promotion.caseId) as { count: number }).count).toBeGreaterThan(5);
+    expect((database.db.prepare("SELECT COUNT(*) AS count FROM agent_rag_chunk WHERE case_id = ? AND index_status = 'ACTIVE'")
+      .get(promotion.caseId) as { count: number }).count).toBeGreaterThan(5);
+    expect(rag.selectRecipe({
+      generationId: "generation-approved",
+      ownerUserId: user.userId,
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+    })).toMatchObject({ caseId: promotion.caseId, recipeKey: "DETERMINISTIC_IR_V1", recipeVersion: "1.0" });
+    expect(rag.selectRecipe({
+      generationId: "generation-approved",
+      ownerUserId: "different-owner",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+    })).toBeUndefined();
+    const evidence = rag.searchEvidence({
+      query: "calculation signedAmount 对应实现与测试",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+      intent: "TRACEABILITY",
+    }, user);
+    expect(evidence).toMatchObject({ intent: "TRACEABILITY", retrieverVersion: "TYPED_GRAPH_HYBRID_V2" });
+    expect(evidence.hits.length).toBeGreaterThan(0);
+    expect(evidence.hits.some(({ chunkType }) => chunkType === "STRUCTURED_REQUIREMENT")).toBe(true);
+    expect(rag.readEvidence(evidence.retrievalId, evidence.hits[0].key, user)).toMatchObject({
+      retrievalId: evidence.retrievalId,
+      key: evidence.hits[0].key,
+    });
+    expect(() => rag.readEvidence(evidence.retrievalId, evidence.hits[0].key, { userId: "other", userName: "Other" }))
+      .toThrow(/owned retrieval/);
+    const semanticOnly = rag.searchEvidence({
+      query: "公式",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+    }, user);
+    expect(semanticOnly.hits.length).toBeGreaterThan(0);
+    const semanticAudit = database.db.prepare("SELECT ranking_snapshot_json FROM agent_rag_v2_retrieval WHERE id = ?")
+      .get(semanticOnly.retrievalId) as { ranking_snapshot_json: string };
+    expect(JSON.parse(semanticAudit.ranking_snapshot_json).ftsCandidateCount).toBe(0);
     insertIncompatibleDocument();
 
     const result = rag.search({
@@ -82,7 +133,7 @@ describe("M4-M5 governed local RAG", () => {
     seedCompletedGeneration("broad-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
     rag.promote("session-broad-pattern", "generation-broad-pattern", user, {
       generationRevision: 1,
-      businessAssertions: [{ assertionId: "generic-pattern-reviewed", status: "PASSED" }],
+      businessAssertions: evidenceFor(WAREHOUSE_PLEDGE_REQUIREMENT),
     });
     const ready = evaluationCatalogV1.tasks.filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY");
     const retrievalHits = ready.filter((task) => rag.search({
@@ -102,7 +153,7 @@ describe("M4-M5 governed local RAG", () => {
     seedCompletedGeneration("hybrid-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
     rag.promote("session-hybrid-pattern", "generation-hybrid-pattern", user, {
       generationRevision: 1,
-      businessAssertions: [{ assertionId: "hybrid-pattern-reviewed", status: "PASSED" }],
+      businessAssertions: evidenceFor(WAREHOUSE_PLEDGE_REQUIREMENT),
     });
     const ready = evaluationCatalogV1.tasks.filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY");
     const evaluate = (mode: "BM25" | "HYBRID") => ready.filter((task) => rag.search({
@@ -142,7 +193,7 @@ describe("M4-M5 governed local RAG", () => {
     seedCompletedGeneration("shadow-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
     rag.promote("session-shadow-pattern", "generation-shadow-pattern", user, {
       generationRevision: 1,
-      businessAssertions: [{ assertionId: "shadow-pattern-reviewed", status: "PASSED" }],
+      businessAssertions: evidenceFor(WAREHOUSE_PLEDGE_REQUIREMENT),
     });
     const missed = evaluationCatalogV1.tasks
       .filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY")
@@ -193,7 +244,7 @@ describe("M4-M5 governed local RAG", () => {
     `).run();
     rag.promote("session-release-pattern", "generation-release-pattern", user, {
       generationRevision: 1,
-      businessAssertions: [{ assertionId: "release-pattern-reviewed", status: "PASSED" }],
+      businessAssertions: evidenceFor(WAREHOUSE_PLEDGE_REQUIREMENT),
     });
     const ready = evaluationCatalogV1.tasks.filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY");
     for (const task of ready) {
@@ -273,4 +324,9 @@ function calculationRequirement(): BusinessRequirement {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function evidenceFor(requirement: BusinessRequirement) {
+  return deriveAcceptanceAssertions(deriveRequirementIr(requirement))
+    .map(({ assertionId }) => ({ assertionId, status: "PASSED" as const }));
 }

@@ -65,6 +65,36 @@ export class WorkflowService {
     return this.getSnapshot(id, user);
   }
 
+  async createImportedSession(
+    user: MockUser,
+    requirement: unknown,
+    targetRoot?: string,
+  ): Promise<WorkflowSnapshot> {
+    const normalizedRequirement = applyRequirementDefaults(requirement);
+    const validation = validateRequirement(normalizedRequirement);
+    if (!validation.structurallyValid) {
+      throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_REQUIREMENT_SCHEMA_INVALID", "requirement schema is invalid", undefined, {
+        errors: validation.schemaErrors,
+      });
+    }
+    const id = `ags_${randomUUID()}`;
+    const now = new Date().toISOString();
+    this.database.db.prepare(`
+      INSERT INTO agent_session (
+        id, owner_user_id, owner_user_name, owner_dept_id, owner_dept_name, target_root,
+        state, row_version, requirement_revision, requirement_json,
+        requirement_missing_items_json, requirement_ambiguities_json,
+        requirement_ready_for_review, requirement_source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'REQUIREMENT_REVIEW', 0, 1, ?, ?, ?, ?, 'USER_IMPORT', ?, ?)
+    `).run(
+      id, user.userId, user.userName, user.departmentId || null, user.departmentName || null,
+      normalizeOptionalTarget(targetRoot) || null, JSON.stringify(normalizedRequirement),
+      JSON.stringify(validation.missingItems), JSON.stringify(validation.ambiguities),
+      validation.readyForReview ? 1 : 0, now, now,
+    );
+    return this.getSnapshot(id, user);
+  }
+
   async getSnapshot(sessionId: string, user: MockUser): Promise<WorkflowSnapshot> {
     const session = this.ownedSession(sessionId, user);
     const requirement = toRequirementRevision(session);
@@ -73,7 +103,11 @@ export class WorkflowService {
     const generation = hasGenerationPreview(session.state)
       ? this.database.getLatestGenerationBySession(sessionId)
       : undefined;
-    const messages = await this.pi.getMessages(sessionId, this.callbacks(sessionId));
+    // Imported requirements deliberately have no Pi session: opening the review
+    // screen must remain a zero-cost, zero-authentication path.
+    const messages = session.pi_session_id
+      ? await this.pi.getMessages(sessionId, this.callbacks(sessionId))
+      : [];
     return {
       sessionId,
       ownerUserId: session.owner_user_id,
@@ -790,7 +824,7 @@ function toRequirementRevision(session: SessionRow): RequirementRevision | undef
     missingItems: parseJson(session.requirement_missing_items_json, []),
     ambiguities: parseJson(session.requirement_ambiguities_json, []),
     readyForReview: Boolean(session.requirement_ready_for_review),
-    source: session.requirement_source as "AGENT" | "USER_EDIT",
+    source: session.requirement_source as RequirementRevision["source"],
     confirmedBy: session.requirement_confirmed_at ? session.owner_user_id : undefined,
     confirmedAt: session.requirement_confirmed_at || undefined,
     createdAt: session.updated_at,

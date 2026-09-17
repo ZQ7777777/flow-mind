@@ -24,6 +24,7 @@ import { AgentAdminGuard } from "./auth/agent-admin.guard.js";
 import { AgentAuthController } from "./auth/agent-auth.controller.js";
 import { GenerationSkillRegistry } from "./generation/generation-skill-registry.service.js";
 import { RagRetrieverService } from "./retrieval/rag-retriever.service.js";
+import { ModelBudgetService } from "./budget/model-budget.service.js";
 
 @Module({
   controllers: [AppController, HealthController, AgentAuthController],
@@ -39,6 +40,7 @@ import { RagRetrieverService } from "./retrieval/rag-retriever.service.js";
     TargetContractService,
     GenerationSkillRegistry,
     RagRetrieverService,
+    ModelBudgetService,
     GenerationContextRegistry,
     StaticValidatorService,
     VerificationWorkerService,

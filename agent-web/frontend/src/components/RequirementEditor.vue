@@ -291,7 +291,7 @@ function uniqueValues(values: string[]): string[] {
     </section>
 
     <el-dialog v-model="documentVisible" title="需求文档" width="min(860px, 92vw)">
-      <pre class="requirement-document-text">{{ requirementDocument }}</pre>
+      <pre v-if="documentVisible" class="requirement-document-text">{{ requirementDocument }}</pre>
     </el-dialog>
   </div>
 </template>
