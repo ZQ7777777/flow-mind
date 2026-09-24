@@ -70,6 +70,7 @@ function ir(options: IrOptions): RequirementIrDraft {
       goal: options.goal,
     },
     fields: options.fields,
+    attachments: [],
     sections: options.sections ?? [{ sectionCode: "basic", title: "基本信息", fieldCodes: options.fields.map(({ fieldCode }) => fieldCode) }],
     dataQueries: options.dataQueries ?? [],
     calculations: options.calculations ?? [],

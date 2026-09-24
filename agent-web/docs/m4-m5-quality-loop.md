@@ -42,7 +42,7 @@ Migration 6 增加 `agent_generation_action`，用于 reverify 和 quality overr
 | `FRONTEND_TYPECHECK` | `npm run typecheck` | 硬 |
 | `FRONTEND_TESTS` | `npm run test -- --run` | 软 |
 | `FRONTEND_BUILD` | `npm run build` | 硬 |
-| Reviewer | 独立只读 Pi Session | 软 |
+| Reviewer | 独立只读 Pi Session；`BLOCKING` finding 必须修复或人工 override | 软阻断 |
 
 静态检查覆盖精确文件集合、唯一 `startAndSubmit()`、平台动作边界、平台 HTTP、持久化/SQL、
 Java 9+/Jakarta、字段和附件映射、路由注册及测试削弱。命令输出会归一化为带文件、行列和错误码
@@ -57,7 +57,8 @@ Verification Worker 创建不包含符号链接的一次性目标副本，再 ov
 ## Reviewer 与 Repair
 
 Reviewer 使用 `SessionManager.create()` 创建独立 Session，只注册 staged file、diff、quality
-读取工具和 `submit_code_review`，没有写工具。
+读取工具和 `submit_code_review`，没有写工具。WARNING/INFO 仅报告；`BLOCKING` finding 会令
+`canWrite=false`，仅允许当前 generation revision 上记录操作者、原因和 scope 的人工 override。
 
 Repair 使用 Generator 的 `pi_session_file` 调用 `SessionManager.open()`。每轮只能修改当前
 Manifest 已管理的文件，不能新增或删除文件；完成后 revision 增加一并重新执行全部质量阶段。

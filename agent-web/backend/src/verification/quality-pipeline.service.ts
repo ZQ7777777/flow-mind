@@ -25,6 +25,8 @@ import {
   type VerificationCommandStage,
 } from "./verification-worker.service.js";
 import { qualityDiagnostic } from "./quality-diagnostic.js";
+import { loadConfig } from "../config.js";
+import { ModelBudgetService } from "../budget/model-budget.service.js";
 
 interface QualityActionRequest {
   idempotencyKey: string;
@@ -88,6 +90,7 @@ function isEnvironmentPath(path: string): boolean {
 @Injectable()
 export class QualityPipelineService {
   private readonly activeRuns = new Map<string, AbortController>();
+  private readonly config = loadConfig();
 
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
@@ -98,6 +101,7 @@ export class QualityPipelineService {
     @Inject(ReviewerService) private readonly reviewer: ReviewerService,
     @Inject(EventBusService) private readonly events: EventBusService,
     @Optional() @Inject(RepairCoordinatorService) private readonly repair?: RepairCoordinatorService,
+    @Optional() @Inject(ModelBudgetService) private readonly modelBudget?: ModelBudgetService,
   ) {}
 
   start(generationId: string, trigger: QualityTrigger = "GENERATION"): void {
@@ -435,13 +439,16 @@ export class QualityPipelineService {
       const hasIntegrationImpact = stages.some(({ diagnostics }) =>
         diagnostics.some(({ scope }) => scope === "INTEGRATION_IMPACT"));
       let review: CodeReviewReport | undefined;
-      if (trigger !== "REPAIR_LIGHT" && !hardFailure && !infrastructureFailure && (!generation.skip_ai_review || hasIntegrationImpact)) {
+      const reviewerAuthorized = this.config.fakePi || !this.config.modelBudgetLocked
+        || Boolean(this.modelBudget?.hasActiveAuthorization(generation.created_by, "REVIEWER", generation.id));
+      if (reviewerAuthorized && trigger !== "REPAIR_LIGHT" && !hardFailure && !infrastructureFailure
+        && (!generation.skip_ai_review || hasIntegrationImpact)) {
         this.transition(generation.id, generation.session_id, "REVIEWING", "CODE_REVIEWING", runId);
         generation = this.database.getGeneration(generationId)!;
         review = await this.reviewer.review(generation, runId, stages, signal);
         if (signal.aborted) return;
       }
-      const aiReviewSkipped = Boolean(generation.skip_ai_review && !review);
+      const aiReviewSkipped = Boolean((!reviewerAuthorized || generation.skip_ai_review) && !review);
       const decision = evaluateQualityGates(stages, review, [], aiReviewSkipped);
       const reviewerInfrastructureFailure = review?.status === "INFRASTRUCTURE_FAILED";
       infrastructureFailure = infrastructureFailure || reviewerInfrastructureFailure;

@@ -37,6 +37,14 @@ describe("M4-M5 quality storage", () => {
         "can_write",
         "write_status",
         "write_journal_json",
+        "generation_strategy",
+        "context_read_evidence_json",
+        "retrieval_policy_version",
+        "retrieval_release_mode",
+        "retrieval_selected_mode",
+        "retrieval_shadow_mode",
+        "retrieval_bucket",
+        "retrieval_forced_fallback",
       ]),
     );
 
@@ -50,11 +58,21 @@ describe("M4-M5 quality storage", () => {
         "agent_code_review",
         "agent_quality_override",
         "agent_generation_action",
+        "agent_rag_document",
+        "agent_rag_retrieval",
+        "agent_rag_read",
+        "agent_rag_shadow_observation",
       ]),
     );
     const repairColumns = database!.db
       .prepare("PRAGMA table_info(agent_repair_attempt)")
       .all() as Array<{ name: string }>;
     expect(repairColumns.map(({ name }) => name)).toContain("failure_code");
+    const ragColumns = database!.db.prepare("PRAGMA table_info(agent_rag_document)").all() as Array<{ name: string }>;
+    expect(ragColumns.map(({ name }) => name)).toEqual(expect.arrayContaining([
+      "embedding_model", "chunker_version", "index_version", "indexed_sha256", "embedding_json",
+    ]));
+    const retrievalColumns = database!.db.prepare("PRAGMA table_info(agent_rag_retrieval)").all() as Array<{ name: string }>;
+    expect(retrievalColumns.map(({ name }) => name)).toContain("ranking_snapshot_json");
   });
 });

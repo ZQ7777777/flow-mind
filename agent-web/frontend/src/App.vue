@@ -12,6 +12,21 @@ import { AUTHENTICATION_REQUIRED_EVENT } from "./api";
 import { useAuthStore } from "./stores/auth";
 import { useWorkflowStore } from "./stores/workflow";
 import { isResetSessionDisabled, nextStepMessage } from "./workflow-presentation";
+import type { BusinessRequirement } from "@flowmind/agent-contracts";
+
+const EMPTY_REQUIREMENT_JSON = JSON.stringify({
+  schemaVersion: "1.2",
+  businessCode: "new_business",
+  businessName: "新业务",
+  systemCode: "FINANCE_SYS_001",
+  goal: "请补充业务目标",
+  participants: [],
+  formFields: [],
+  attachments: [],
+  nodes: [],
+  edges: [],
+  businessRules: [],
+}, null, 2);
 
 const store = useWorkflowStore();
 const auth = useAuthStore();
@@ -21,6 +36,8 @@ const activeTab = ref("requirement");
 const generationTargetRoot = ref("");
 const compactionSummaryVisible = ref(false);
 const sessionHistoryVisible = ref(false);
+const requirementImportVisible = ref(false);
+const requirementImportJson = ref(EMPTY_REQUIREMENT_JSON);
 const {
   workspaceGrid,
   resizingPanels,
@@ -101,8 +118,45 @@ async function createSession(): Promise<void> {
   try { await store.createSession(targetRoot.value); } catch { /* store exposes error */ }
 }
 
+async function importRequirement(): Promise<void> {
+  try {
+    const requirement = JSON.parse(requirementImportJson.value) as BusinessRequirement;
+    await store.importRequirement(requirement, targetRoot.value);
+    requirementImportVisible.value = false;
+    ElMessage.success("结构化需求已导入；未调用模型");
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : "需求 JSON 无效");
+  }
+}
+
+async function loadRequirementFile(file: File): Promise<void> {
+  requirementImportJson.value = await file.text();
+}
+
+function onRequirementFile(event: Event): void {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (file) void loadRequirementFile(file);
+}
+
 async function createQualityGateFixture(): Promise<void> {
   try { await store.createQualityGateFixture(targetRoot.value || store.defaultTargetRoot); } catch { /* store exposes error */ }
+}
+
+async function authorizeRequirementModel(): Promise<void> {
+  if (!store.snapshot) return;
+  await action(
+    () => store.authorizeModelCall("REQUIREMENT", store.snapshot!.sessionId, 6),
+    "已授权本会话最多 6 元的需求对话，30 分钟后失效",
+  );
+}
+
+async function authorizeReviewerModel(): Promise<void> {
+  const generationId = store.snapshot?.activeGeneration?.generationId;
+  if (!generationId) return;
+  await action(
+    () => store.authorizeModelCall("REVIEWER", generationId, 1),
+    "已授权本次生成最多 1 元的 AI Reviewer，30 分钟后失效",
+  );
 }
 
 async function send(): Promise<void> {
@@ -187,6 +241,9 @@ function formatTokens(value: number | undefined): string {
         <el-button type="primary" size="large" :loading="store.busy" @click="createSession">
           开始采集需求
         </el-button>
+        <el-button size="large" :disabled="store.busy" @click="requirementImportVisible = true">
+          零费用导入结构化需求
+        </el-button>
         <el-button aria-label="查看历史会话" size="large" :disabled="store.busy" @click="sessionHistoryVisible = true">
           查看历史会话
         </el-button>
@@ -215,6 +272,23 @@ function formatTokens(value: number | undefined): string {
         <el-tag :type="store.state === 'PROCESS_ACTIVE' ? 'success' : processing ? 'warning' : 'info'" effect="dark">
           {{ store.state }}
         </el-tag>
+        <div v-if="store.modelBudget" class="budget-control">
+          <span>模型余额 ¥{{ store.modelBudget.remainingCny.toFixed(4) }}</span>
+          <el-button
+            v-if="store.state === 'COLLECTING'"
+            size="small"
+            type="warning"
+            plain
+            @click="authorizeRequirementModel"
+          >授权需求模型（上限 ¥6）</el-button>
+          <el-button
+            v-if="store.snapshot.activeGeneration && ['CODE_REVIEW','CODE_PIPELINE_FAILED'].includes(store.state || '')"
+            size="small"
+            type="warning"
+            plain
+            @click="authorizeReviewerModel"
+          >授权 Reviewer（上限 ¥1）</el-button>
+        </div>
         <el-popconfirm
           title="将清空当前需求与对话，并开始新的 Pi 会话；已创建的平台流程不会被删除。"
           confirm-button-text="确认重置"
@@ -397,6 +471,20 @@ function formatTokens(value: number | undefined): string {
     <el-dialog v-model="sessionHistoryVisible" title="历史会话" width="min(1080px, 92vw)">
       <ManagementLists @opened="handleSessionOpened" />
     </el-dialog>
+    <el-dialog v-model="requirementImportVisible" title="零费用创建或导入结构化需求" width="min(900px, 92vw)">
+      <p>粘贴完整 BusinessRequirement JSON，或从本地选择 JSON 文件。后端会校验后直接进入需求审核，不调用模型。</p>
+      <input
+        type="file"
+        accept="application/json,.json"
+        aria-label="选择需求 JSON 文件"
+        @change="onRequirementFile"
+      />
+      <el-input v-model="requirementImportJson" type="textarea" :rows="20" resize="vertical" />
+      <template #footer>
+        <el-button @click="requirementImportVisible = false">取消</el-button>
+        <el-button type="primary" :loading="store.busy" @click="importRequirement">校验并进入审核</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -407,6 +495,7 @@ function formatTokens(value: number | undefined): string {
 .authenticated-user span { color: #aeb7ca; font-size: 11px; }
 .logout-button { color: #dce3f2; }
 .target-root-input { width: min(460px, 42vw); }
+.budget-control { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .compaction-summary-card {
   display: flex;
   align-items: center;

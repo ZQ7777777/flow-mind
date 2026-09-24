@@ -10,6 +10,8 @@ import type {
   GeneratedFileDiff,
   ArtifactManifest,
   GenerationQualityReport,
+  ModelBudgetPurpose,
+  ModelBudgetStatus,
 } from "@flowmind/agent-contracts";
 import { ApiError, apiRequest, streamEvents, type SseMessage } from "../api";
 
@@ -111,6 +113,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
   const qualityLog = ref<GenerationLogEntry[]>([]);
   const qualityStream = ref("");
   const reasoningText = ref("");
+  const modelBudget = ref<ModelBudgetStatus>();
   let streamAbort: AbortController | undefined;
   let reconnectTimer: number | undefined;
 
@@ -122,6 +125,7 @@ export const useWorkflowStore = defineStore("workflow", () => {
     const publicConfig = await apiRequest<AgentPublicConfig>("/api/agent/config");
     defaultTargetRoot.value = publicConfig.defaultTargetRoot;
     businessFrontendBaseUrl.value = publicConfig.businessFrontendBaseUrl;
+    modelBudget.value = await apiRequest<ModelBudgetStatus>("/api/agent/model-budget");
     const sessionId = localStorage.getItem(sessionStorageKey());
     if (sessionId) {
       try {
@@ -144,6 +148,34 @@ export const useWorkflowStore = defineStore("workflow", () => {
       localStorage.setItem(sessionStorageKey(), createdSnapshot.sessionId);
       connect();
     });
+  }
+
+  async function importRequirement(requirement: BusinessRequirement, targetRoot?: string): Promise<void> {
+    if (!currentUser.value) return;
+    await run(async () => {
+      const createdSnapshot = await apiRequest<WorkflowSnapshot>("/api/agent/sessions/import-requirement", {
+        method: "POST",
+        body: JSON.stringify({ requirement, targetRoot: targetRoot?.trim() || undefined }),
+      });
+      applySnapshot(createdSnapshot);
+      localStorage.setItem(sessionStorageKey(), createdSnapshot.sessionId);
+      connect();
+    });
+  }
+
+  async function authorizeModelCall(purpose: ModelBudgetPurpose, scopeId: string, maxCny: number): Promise<void> {
+    if (!currentUser.value) return;
+    await run(async () => {
+      const result = await apiRequest<ModelBudgetStatus & { authorizationId: string }>(
+        "/api/agent/model-budget/authorizations",
+        {
+          method: "POST",
+          idempotencyKey: crypto.randomUUID(),
+          body: JSON.stringify({ purpose, scopeId, maxCny, expiresInMinutes: 30 }),
+        },
+      );
+      modelBudget.value = result;
+    }, false);
   }
 
   async function createQualityGateFixture(targetRoot?: string): Promise<void> {
@@ -639,8 +671,11 @@ export const useWorkflowStore = defineStore("workflow", () => {
     qualityLog,
     qualityStream,
     reasoningText,
+    modelBudget,
     initialize,
     createSession,
+    importRequirement,
+    authorizeModelCall,
     createQualityGateFixture,
     refresh,
     openSession,

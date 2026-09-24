@@ -127,6 +127,15 @@ export class TargetContractService {
     }
 
     const routePath = `${contract.frontend.rootDir}/${contract.frontend.routeRegistry}`;
+    const interfacePaths = [
+      `${contract.frontend.rootDir}/${contract.frontend.sharedStartShell}`,
+      `${contract.frontend.rootDir}/${contract.frontend.sharedWorkflowTypes}`,
+    ];
+    for (const path of interfacePaths) {
+      if (!contract.readableReferenceFiles.includes(path)) {
+        throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_TARGET_CONTRACT_INVALID", `shared TypeScript contract must be readable: ${path}`, sessionId);
+      }
+    }
     this.requireFile(targetRoot, normalizeRelativePath(routePath, sessionId), sessionId, "generated route registry");
     this.requireFile(targetRoot, `${contract.frontend.rootDir}/${contract.frontend.sharedStartShell}`, sessionId, "shared workflow start shell");
     this.requireFile(targetRoot, `${contract.frontend.rootDir}/${contract.frontend.sharedWorkflowTypes}`, sessionId, "shared workflow types");

@@ -6,6 +6,8 @@ import {
 } from "@flowmind/agent-contracts";
 import { deriveGenerationSpec } from "../src/generation/generation-spec.js";
 import { createFakeGenerationFiles } from "../src/pi/fake-generation-files.js";
+import { createDeterministicGenerationFiles } from "../src/generation/deterministic-generation-files.js";
+import { deriveRequirementIr } from "../src/requirement/requirement-ir.js";
 import { StaticValidatorService } from "../src/validation/static-validator.service.js";
 
 const contract = {
@@ -29,6 +31,17 @@ describe("frontend-only static generated-code validation", () => {
   it("passes the exact seven-file dynamic frontend artifact set", () => {
     const input = validInput();
     expect(input.spec.files).toHaveLength(7);
+    expect(validator.validate(input)).toEqual(expect.objectContaining({ status: "PASSED", diagnostics: [] }));
+  });
+
+  it("passes deterministic Requirement IR artifacts", () => {
+    const input = validInput();
+    input.files = new Map(Object.entries(createDeterministicGenerationFiles(
+      deriveRequirementIr(input.requirement),
+      input.spec,
+      input.contract,
+      'import type { RouteRecordRaw } from "vue-router";\nexport const generatedRoutes: RouteRecordRaw[] = [];\n',
+    )));
     expect(validator.validate(input)).toEqual(expect.objectContaining({ status: "PASSED", diagnostics: [] }));
   });
 

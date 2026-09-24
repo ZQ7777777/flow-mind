@@ -46,6 +46,16 @@ describe("GenerationTargetContract 2.1 preflight", () => {
     expect(() => new TargetContractService().validate(unreadable)).toThrow(/example reference must be readable/);
   });
 
+  it("requires shared TypeScript contracts to be readable for signature extraction", () => {
+    const target = createGenerationTarget(parent, "unreadable-shared-contract");
+    const path = join(target, ".flowmind", "generation-target.json");
+    const contract = JSON.parse(readFileSync(path, "utf8"));
+    contract.readableReferenceFiles = contract.readableReferenceFiles.filter((item: string) => !item.endsWith("types/workflow.ts"));
+    writeFileSync(path, JSON.stringify(contract), "utf8");
+
+    expect(() => new TargetContractService().validate(target)).toThrow(/shared TypeScript contract must be readable/);
+  });
+
   it("validates an optional protected read-only business API reference", () => {
     const target = createGenerationTarget(parent, "frontend-api-reference");
     const relativePath = ".flowmind/references/business-reference-data-v1.md";

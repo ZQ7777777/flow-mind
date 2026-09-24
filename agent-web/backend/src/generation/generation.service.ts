@@ -34,10 +34,17 @@ import { GenerationSkillRegistry } from "./generation-skill-registry.service.js"
 import { PlatformClientService } from "../platform/platform-client.service.js";
 import { loadFrozenTesterFixture } from "./frozen-tester-fixture.js";
 import { createFakeGenerationFiles } from "../pi/fake-generation-files.js";
+import { deriveRequirementIr, validateRequirementIr } from "../requirement/requirement-ir.js";
+import { loadConfig } from "../config.js";
+import { createDeterministicGenerationFiles } from "./deterministic-generation-files.js";
+import { detectCapabilities } from "./generation-context-router.js";
+import { RagRetrieverService } from "../retrieval/rag-retriever.service.js";
+import { selectRetrievalRelease } from "../retrieval/retrieval-release-policy.js";
 
 @Injectable()
 export class GenerationService {
   private fallbackContexts?: GenerationContextRegistry;
+  private readonly config = loadConfig();
 
   constructor(
     @Inject(DatabaseService) private readonly database: DatabaseService,
@@ -49,6 +56,7 @@ export class GenerationService {
     @Optional() @Inject(ArtifactWriterService) private readonly writer?: ArtifactWriterService,
     @Optional() @Inject(PlatformClientService) private readonly platform?: PlatformClientService,
     @Optional() @Inject(GenerationContextRegistry) private readonly contexts?: GenerationContextRegistry,
+    @Optional() @Inject(RagRetrieverService) private readonly rag?: RagRetrieverService,
   ) {}
 
   start(
@@ -77,6 +85,15 @@ export class GenerationService {
     }
     const requirement = JSON.parse(process.requirement_snapshot_json) as BusinessRequirement;
     const issues = validateGenerationRequirement(requirement);
+    const requirementIr = deriveRequirementIr(requirement);
+    const irValidation = validateRequirementIr(requirementIr);
+    if (!irValidation.structurallyValid) {
+      issues.push(...irValidation.schemaErrors.map(({ instancePath, message }) => `Requirement IR ${instancePath || "/"} ${message || "is invalid"}`));
+    }
+    issues.push(...irValidation.semanticErrors);
+    issues.push(...requirementIr.ambiguities
+      .filter(({ impact, status }) => impact === "BLOCKING" && status === "OPEN")
+      .map(({ question }) => question));
     if (process.process_code !== requirement.businessCode) {
       issues.push(`激活流程编码 ${process.process_code} 与确认需求编码 ${requirement.businessCode} 不一致`);
     }
@@ -99,8 +116,8 @@ export class GenerationService {
       throw new AgentError(HttpStatus.FORBIDDEN, "AGENT_TEST_FIXTURE_FORBIDDEN", "Only the tester mock user can create a quality-gate fixture.");
     }
     const target = this.targets.validate(targetRootInput || "", "tester-fixture");
-    const context = this.requireContexts("tester-fixture").capture(target, "tester-fixture");
     const fixture = loadFrozenTesterFixture();
+    const context = this.requireContexts("tester-fixture").capture(target, "tester-fixture", deriveRequirementIr(fixture.requirement));
     const spec = deriveGenerationSpec(fixture.requirement, target.contract);
     // The requirement/process snapshot is frozen, but artifact templates must
     // track the platform-starter API exposed by the selected target.
@@ -116,6 +133,7 @@ export class GenerationService {
     const generationId = `acg_tester_${randomUUID()}`;
     const stagingDir = join(this.database.dataDir, "staging", sessionId, generationId);
     const now = new Date().toISOString();
+    const retrievalRelease = selectRetrievalRelease(generationId, this.config);
     const snapshot = fixture.processSnapshot;
     snapshot.id = `definition_tester_${generationId}`;
     this.staging.prepare(stagingDir);
@@ -149,6 +167,15 @@ export class GenerationService {
       `).run(generationId, sessionId, processId, 1, requirementJson, JSON.stringify(snapshot),
         fixture.requirement.businessCode, fixture.requirement.businessName, target.targetRoot, target.contract.contractVersion,
         JSON.stringify(target.contract), JSON.stringify(context), stagingDir, user.userId, now, now);
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET generation_strategy = ?, retrieval_policy_version = ?,
+          retrieval_release_mode = ?, retrieval_selected_mode = ?, retrieval_shadow_mode = ?,
+          retrieval_bucket = ?, retrieval_forced_fallback = ? WHERE id = ?
+      `).run(
+        this.config.generationStrategy, retrievalRelease.policyVersion, retrievalRelease.releaseMode,
+        retrievalRelease.selectedMode, retrievalRelease.shadowMode || null, retrievalRelease.bucket,
+        retrievalRelease.forcedFallback ? 1 : 0, generationId,
+      );
     });
     for (const { relativePath, content } of fixtureFiles) {
       this.staging.writeDuringGeneration(this.requiredGenerating(generationId), relativePath, content);
@@ -410,7 +437,11 @@ export class GenerationService {
       SELECT id AS generationId, session_id AS sessionId, business_code AS businessCode,
         business_name AS businessName, status, generation_revision AS generationRevision,
         hard_gate_passed AS hardGatePassed, override_required AS overrideRequired,
-        can_write AS canWrite, written_at AS writtenAt, created_at AS createdAt
+        can_write AS canWrite, written_at AS writtenAt, created_at AS createdAt,
+        generation_strategy AS generationStrategy, retrieval_policy_version AS retrievalPolicyVersion,
+        retrieval_release_mode AS retrievalReleaseMode, retrieval_selected_mode AS retrievalSelectedMode,
+        retrieval_shadow_mode AS retrievalShadowMode, retrieval_bucket AS retrievalBucket,
+        retrieval_forced_fallback AS retrievalForcedFallback
       FROM agent_code_generation WHERE created_by = ? ORDER BY created_at DESC
     `).all(user.userId);
   }
@@ -498,7 +529,8 @@ export class GenerationService {
     const stagingDir = join(this.database.dataDir, "staging", session.id, generationId);
     this.staging.prepare(stagingDir);
     const now = new Date().toISOString();
-    const context = inheritedContext || this.requireContexts(session.id).capture(target, session.id);
+    const retrievalRelease = selectRetrievalRelease(generationId, this.config);
+    const context = inheritedContext || this.requireContexts(session.id).capture(target, session.id, deriveRequirementIr(requirement));
     const result = { accepted: true as const, generationId, state: "CODE_GENERATING" as const };
     this.database.transaction(() => {
       if (supersedes) this.database.db.prepare("UPDATE agent_code_generation SET status = 'SUPERSEDED', superseded_by = ?, updated_at = ? WHERE id = ?").run(generationId, now, supersedes);
@@ -513,6 +545,15 @@ export class GenerationService {
         generationId, session.id, processId, requirementRevision, JSON.stringify(requirement), JSON.stringify(processSnapshot),
         requirement.businessCode, requirement.businessName, target.targetRoot, target.contract.contractVersion,
         JSON.stringify(target.contract), JSON.stringify(context), stagingDir, idempotencyKey, requestHash, JSON.stringify(result), user.userId, now, now,
+      );
+      this.database.db.prepare(`
+        UPDATE agent_code_generation SET generation_strategy = ?, retrieval_policy_version = ?,
+          retrieval_release_mode = ?, retrieval_selected_mode = ?, retrieval_shadow_mode = ?,
+          retrieval_bucket = ?, retrieval_forced_fallback = ? WHERE id = ?
+      `).run(
+        this.config.generationStrategy, retrievalRelease.policyVersion, retrievalRelease.releaseMode,
+        retrievalRelease.selectedMode, retrievalRelease.shadowMode || null, retrievalRelease.bucket,
+        retrievalRelease.forcedFallback ? 1 : 0, generationId,
       );
       const updated = this.database.db.prepare(`UPDATE agent_session SET target_root = ?, state = 'CODE_GENERATING', row_version = row_version + 1,
         last_error_code = NULL, last_error_message = NULL, updated_at = ? WHERE id = ? AND row_version = ?`)
@@ -530,10 +571,25 @@ export class GenerationService {
     if (!generation || generation.status !== "GENERATING") return;
     const contract = generationContract(generation);
     const requirement = JSON.parse(generation.requirement_snapshot_json) as BusinessRequirement;
+    const requirementIr = deriveRequirementIr(requirement);
+    const irValidation = validateRequirementIr(requirementIr);
+    if (!irValidation.generationReady) {
+      this.fail(generationId, "AGENT_REQUIREMENT_IR_NOT_READY", [
+        ...irValidation.semanticErrors,
+        ...requirementIr.ambiguities.filter(({ impact, status }) => impact === "BLOCKING" && status === "OPEN").map(({ question }) => question),
+      ].join("; ") || "Requirement IR is not generation-ready.");
+      return;
+    }
     const spec = deriveGenerationSpec(requirement, contract);
     const target: ValidatedGenerationTarget = { targetRoot: generation.target_root, contract };
     const context = parseGenerationContext(generation.generation_context_snapshot_json, generation.session_id);
-    const contextAccess = buildContextAccess(this.requireContexts(generation.session_id), context, spec.hasBusinessApi, generation.session_id);
+    const contextAccess = buildContextAccess(
+      this.requireContexts(generation.session_id),
+      context,
+      spec.hasBusinessApi,
+      generation.session_id,
+      (key) => this.recordContextRead(generationId, key),
+    );
     const apiReferences = {
       businessReferenceData: contract.frontend.apiReferences?.businessReferenceData
         ? this.targets.readReference(target, contract.frontend.apiReferences.businessReferenceData, generation.session_id)
@@ -552,6 +608,19 @@ export class GenerationService {
       writeStaged: (path, content) => this.staging.writeDuringGeneration(this.requiredGenerating(generationId), path, content),
       deleteStaged: (path) => this.staging.deleteDuringGeneration(this.requiredGenerating(generationId), path),
       ...contextAccess,
+      ...(this.rag ? {
+        searchGenerationKnowledge: (query: string, limit?: number) => this.rag!.search({
+          query,
+          projectId: contract.projectId,
+          contractVersion: contract.contractVersion,
+          capabilities: detectCapabilities(requirementIr),
+          limit,
+          generationId,
+          mode: generation!.retrieval_selected_mode,
+          shadowMode: generation!.retrieval_shadow_mode || undefined,
+        }),
+        readGenerationKnowledge: (retrievalId: string, key: string) => this.rag!.read(retrievalId, key),
+      } : {}),
       reportComplete: (files) => {
         const current = this.requiredGenerating(generationId);
         const manifest = this.staging.complete(current, contract, files);
@@ -559,11 +628,46 @@ export class GenerationService {
         this.events.publish(current.session_id, { type: "workflow.state_changed", data: { state: "CODE_REVIEW" } });
       },
     };
+    if (this.config.generationStrategy === "DETERMINISTIC_IR_V1") {
+      try {
+        callbacks.onEvent("agent.started", { purpose: "DETERMINISTIC_GENERATOR", strategy: this.config.generationStrategy });
+        const observedRecipe = this.config.ragV2Mode === "OFF" ? undefined : this.rag?.selectRecipe({
+          generationId,
+          ownerUserId: generation.created_by,
+          projectId: contract.projectId,
+          contractVersion: contract.contractVersion,
+          capabilities: detectCapabilities(requirementIr),
+        });
+        const recipe = this.config.ragV2Mode === "DEFAULT" ? observedRecipe : undefined;
+        if (recipe && recipe.recipeKey !== "DETERMINISTIC_IR_V1") {
+          throw new Error(`Unsupported deterministic recipe: ${recipe.recipeKey}@${recipe.recipeVersion}`);
+        }
+        callbacks.onEvent("generation.recipe_selected", {
+          generationId,
+          recipe: recipe || { recipeKey: "DETERMINISTIC_IR_V1", recipeVersion: "BUILTIN" },
+          v2Mode: this.config.ragV2Mode,
+          shadowRecipe: this.config.ragV2Mode === "SHADOW" ? observedRecipe : undefined,
+        });
+        for (const key of callbacks.requiredGenerationContextKeys) callbacks.readGenerationContext(key);
+        const existingRoutes = callbacks.readReference(spec.paths.routeRegistry);
+        const files = createDeterministicGenerationFiles(requirementIr, spec, contract, existingRoutes);
+        for (const [path, content] of Object.entries(files)) {
+          callbacks.writeStaged(path, content);
+          callbacks.onEvent("generation.file_changed", { generationId, relativePath: path });
+        }
+        callbacks.reportComplete(Object.keys(files));
+        callbacks.onEvent("agent.completed", { purpose: "DETERMINISTIC_GENERATOR", strategy: this.config.generationStrategy });
+      } catch (error) {
+        const current = this.database.getGeneration(generationId);
+        if (current?.status === "GENERATING") this.fail(generationId, "AGENT_DETERMINISTIC_GENERATION_FAILED", error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
     try {
       const piSession = await this.pi.runGeneration(
         generationId,
         generation.staging_dir,
-        buildGenerationPrompt(requirement, JSON.parse(generation.process_snapshot_json), contract, spec, apiReferences),
+        buildGenerationPrompt(requirement, requirementIr, JSON.parse(generation.process_snapshot_json), contract, spec, apiReferences),
         callbacks,
       );
       this.database.db.prepare("UPDATE agent_code_generation SET pi_session_id = ?, pi_session_file = ?, updated_at = ? WHERE id = ?")
@@ -587,6 +691,16 @@ export class GenerationService {
     });
     this.events.publish(generation.session_id, { type: "error", data: { code, message, generationId } });
     this.events.publish(generation.session_id, { type: "workflow.state_changed", data: { state: "CODE_PIPELINE_FAILED" } });
+  }
+
+  private recordContextRead(generationId: string, key: string): void {
+    const generation = this.database.getGeneration(generationId);
+    if (!generation) return;
+    const reads = parseContextReads(generation.context_read_evidence_json);
+    if (reads.some((item) => item.key === key)) return;
+    reads.push({ key, readAt: new Date().toISOString() });
+    this.database.db.prepare("UPDATE agent_code_generation SET context_read_evidence_json = ? WHERE id = ?")
+      .run(JSON.stringify(reads), generationId);
   }
 
   private requireContexts(sessionId?: string): GenerationContextRegistry {
@@ -661,6 +775,15 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
     : undefined;
   return {
     generationId: generation.id,
+    generationStrategy: generation.generation_strategy,
+    retrievalRelease: {
+      policyVersion: generation.retrieval_policy_version,
+      releaseMode: generation.retrieval_release_mode,
+      selectedMode: generation.retrieval_selected_mode,
+      shadowMode: generation.retrieval_shadow_mode || undefined,
+      bucket: generation.retrieval_bucket,
+      forcedFallback: Boolean(generation.retrieval_forced_fallback),
+    },
     status: generation.status as CodeGenerationSummary["status"],
     generationRevision: generation.generation_revision,
     targetRoot: generation.target_root,
@@ -670,7 +793,7 @@ export function toSummary(generation: GenerationRow): CodeGenerationSummary {
     quality,
     backendRestartRequired: false,
     context: generation.generation_context_snapshot_json && generation.generation_context_snapshot_json !== "{}"
-      ? summarizeContext(parseGenerationContext(generation.generation_context_snapshot_json, generation.session_id))
+      ? { ...summarizeContext(parseGenerationContext(generation.generation_context_snapshot_json, generation.session_id)), reads: parseContextReads(generation.context_read_evidence_json) }
       : undefined,
     createdAt: generation.created_at,
     updatedAt: generation.updated_at,
@@ -692,6 +815,8 @@ function summarizeContext(snapshot: GenerationContextSnapshot) {
     sha256: snapshot.sha256,
     skills: snapshot.skills.map(({ name, sha256 }) => ({ name, sha256 })),
     references: snapshot.references.map(({ source, relativePath, sha256 }) => ({ source, relativePath, sha256 })),
+    routing: snapshot.routing,
+    interfaces: snapshot.interfaces,
   };
 }
 
@@ -700,6 +825,7 @@ function buildContextAccess(
   snapshot: GenerationContextSnapshot,
   includeApiExamples: boolean,
   sessionId?: string,
+  onRead?: (key: string) => void,
 ): Pick<GenerationPiCallbacks, "listGenerationContext" | "readGenerationContext" | "requiredGenerationContextKeys"> {
   const items = [
     ...snapshot.skills.flatMap((skill) => skill.files.map((file) => ({
@@ -715,15 +841,28 @@ function buildContextAccess(
       read: () => registry.readReference(snapshot, reference.source, reference.relativePath, sessionId),
     })),
   ];
+  const requiredKeys = snapshot.routing?.items.filter(({ required }) => required).map(({ key }) => key)
+    ?? items.filter(({ required }) => required).map(({ key }) => key);
   return {
-    listGenerationContext: () => items.map(({ key, sha256, required }) => ({ key, sha256, required })),
+    listGenerationContext: () => items.map(({ key, sha256 }) => ({ key, sha256, required: requiredKeys.includes(key) })),
     readGenerationContext: (key) => {
       const item = items.find((candidate) => candidate.key === key);
       if (!item) throw new AgentError(HttpStatus.NOT_FOUND, "AGENT_GENERATION_CONTEXT_FILE_NOT_FOUND", "generation context file was not found", sessionId);
-      return item.read();
+      const content = item.read();
+      onRead?.(key);
+      return content;
     },
-    requiredGenerationContextKeys: items.filter(({ required }) => required).map(({ key }) => key),
+    requiredGenerationContextKeys: requiredKeys,
   };
+}
+
+function parseContextReads(value: string | undefined): Array<{ key: string; readAt: string }> {
+  try {
+    const parsed = JSON.parse(value || "[]") as Array<{ key: string; readAt: string }>;
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item?.key === "string" && typeof item?.readAt === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function samePath(left: string, right: string): boolean {

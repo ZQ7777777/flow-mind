@@ -38,6 +38,7 @@ describe("workflow SSE lifecycle", () => {
     mocks.streamEvents.mockReset();
     mocks.apiRequest.mockImplementation(async (path: string) => {
       if (path === "/api/agent/config") return { defaultTargetRoot: "E:\\workspace\\business-base", businessFrontendBaseUrl: "http://127.0.0.1:5174" };
+      if (path === "/api/agent/model-budget") return { totalCny: 10, reservedCny: 0, remainingCny: 10, locked: true, priceVersion: "UNCONFIGURED" };
       if (path === "/api/agent/sessions") return snapshot;
       return snapshot;
     });
@@ -222,7 +223,7 @@ describe("workflow SSE lifecycle", () => {
       tokensReducedEstimate: 40800,
     });
     expect(store.streamingText).toBe("");
-    expect(mocks.apiRequest).toHaveBeenCalledTimes(2);
+    expect(mocks.apiRequest).toHaveBeenCalledTimes(3);
   });
 
   it("starts M3 with a late-bound target and loads generated content plus diff", async () => {

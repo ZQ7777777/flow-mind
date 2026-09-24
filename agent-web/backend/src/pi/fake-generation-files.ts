@@ -5,7 +5,7 @@ import type {
 } from "@flowmind/agent-contracts";
 import type { GenerationSpec } from "../generation/generation-spec.js";
 
-/** Deterministic test/demo substitute. Production generation remains LLM-driven. */
+/** Low-level deterministic template renderer shared by Fake Pi and the IR strategy. */
 export function createFakeGenerationFiles(
   requirement: BusinessRequirement,
   spec: GenerationSpec,

@@ -47,7 +47,32 @@ describe("Pi adapter repair sessions", () => {
 
     const database = new DatabaseService();
     try {
-      const adapter = new PiAdapterService(database);
+      const now = new Date().toISOString();
+      database.db.prepare(`
+        INSERT INTO agent_session (id, owner_user_id, owner_user_name, state, row_version, created_at, updated_at)
+        VALUES ('session-1', 'user-sales', 'Sales User', 'CODE_REPAIRING', 0, ?, ?)
+      `).run(now, now);
+      database.db.prepare(`
+        INSERT INTO agent_process_definition (
+          id, session_id, requirement_revision, process_code, process_name, status, saga_step,
+          requirement_snapshot_json, create_operation_id, save_operation_id, publish_operation_id,
+          activate_operation_id, created_by, created_at, updated_at
+        ) VALUES ('process-1', 'session-1', 1, 'sample', 'Sample', 'ACTIVE', 'ACTIVE', '{}',
+          'create-1', 'save-1', 'publish-1', 'activate-1', 'user-sales', ?, ?)
+      `).run(now, now);
+      database.db.prepare(`
+        INSERT INTO agent_code_generation (
+          id, session_id, process_definition_record_id, requirement_revision, requirement_snapshot_json,
+          business_code, business_name, status, artifact_manifest_json, generation_revision,
+          created_by, created_at, updated_at
+        ) VALUES ('generation-1', 'session-1', 'process-1', 1, '{}', 'sample', 'Sample',
+          'REPAIRING', '{}', 1, 'user-sales', ?, ?)
+      `).run(now, now);
+      const modelBudget = {
+        reserve: vi.fn(() => ({ reservationId: "reservation-1", reservedCny: 0.01 })),
+        markBillingOutcomeUnknown: vi.fn(),
+      };
+      const adapter = new PiAdapterService(database, modelBudget as any);
       await adapter.runRepair(
         "generation-1",
         join(root, "staging"),
@@ -60,6 +85,8 @@ describe("Pi adapter repair sessions", () => {
       expect(inMemory).toHaveBeenCalledOnce();
       expect(prompt).toHaveBeenCalledWith("repair prompt");
       expect(dispose).toHaveBeenCalledOnce();
+      expect(modelBudget.reserve).toHaveBeenCalledWith("user-sales", "REPAIR", "generation-1", "repair prompt");
+      expect(modelBudget.markBillingOutcomeUnknown).toHaveBeenCalledWith("reservation-1");
     } finally {
       database.onModuleDestroy();
       vi.doUnmock("@earendil-works/pi-coding-agent");

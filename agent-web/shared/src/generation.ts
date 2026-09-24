@@ -69,17 +69,173 @@ export interface GenerationReferenceSnapshot {
   content: string;
 }
 
+export type GenerationContextCapability =
+  | "BASE_FORM"
+  | "MULTI_SELECT"
+  | "DYNAMIC_REFERENCE"
+  | "CASCADE"
+  | "DATA_QUERY"
+  | "CALCULATION"
+  | "BUSINESS_CHECK";
+
+export interface RagBusinessAssertionEvidence {
+  assertionId: string;
+  status: "PASSED";
+}
+
+export interface RagPromotionRequest {
+  generationRevision: number;
+  businessAssertions: RagBusinessAssertionEvidence[];
+}
+
+export type RagNodeType =
+  | "REQUIREMENT_ELEMENT"
+  | "ACCEPTANCE_CRITERION"
+  | "CAPABILITY"
+  | "RECIPE"
+  | "ARTIFACT"
+  | "SYMBOL"
+  | "TEST_CASE"
+  | "DECISION"
+  | "EVIDENCE_CHUNK";
+
+export type RagEdgeType =
+  | "decomposes_to"
+  | "requires"
+  | "implemented_by"
+  | "generated_from"
+  | "verified_by"
+  | "supported_by"
+  | "depends_on"
+  | "supersedes"
+  | "conflicts_with";
+
+export interface RagRecipeSelection {
+  caseId: string;
+  recipeId: string;
+  recipeKey: string;
+  recipeVersion: string;
+  capabilities: GenerationContextCapability[];
+  evidenceNodeIds: string[];
+}
+
+export type RagQueryIntent = "SIMILAR_CASE" | "IDENTIFIER" | "TRACEABILITY" | "IMPACT";
+
+export interface RagEvidenceSearchRequest {
+  query: string;
+  projectId: string;
+  contractVersion: string;
+  capabilities: GenerationContextCapability[];
+  intent?: RagQueryIntent;
+  limit?: number;
+}
+
+export interface RagEvidenceHit {
+  key: string;
+  caseId: string;
+  nodeId?: string;
+  chunkType: string;
+  summary: string;
+  sha256: string;
+  score: number;
+  artifactPath?: string;
+  symbolName?: string;
+  startLine?: number;
+  endLine?: number;
+}
+
+export interface RagEvidenceSearchResponse {
+  retrievalId: string;
+  intent: RagQueryIntent;
+  hits: RagEvidenceHit[];
+  retrieverVersion: "TYPED_GRAPH_HYBRID_V2";
+}
+
+export interface RagSearchRequest {
+  query: string;
+  projectId: string;
+  contractVersion: string;
+  capabilities: GenerationContextCapability[];
+  limit?: number;
+  generationId?: string;
+  mode?: "BM25" | "HYBRID";
+  /** Computed and audited, but never returned to the generation model. */
+  shadowMode?: "BM25" | "HYBRID";
+}
+
+/** Search intentionally returns no source text; callers must explicitly read an audited key. */
+export interface RagSearchHit {
+  key: string;
+  summary: string;
+  version: string;
+  sha256: string;
+  score: number;
+  lexicalScore?: number;
+  vectorScore?: number;
+  capabilities: GenerationContextCapability[];
+}
+
+export interface RagSearchResponse {
+  retrievalId: string;
+  hits: RagSearchHit[];
+  snapshot: {
+    retrieverVersion: "BM25_V1" | "HYBRID_RRF_V1";
+    tokenizerVersion: "CJK_BIGRAM_ASCII_V1";
+    embedding?: {
+      model: "LOCAL_SEMANTIC_HASH_V1";
+      dimensions: 256;
+      chunkerVersion: "CODEPOINT_800_OVERLAP_100_V1";
+      indexVersion: "LOCAL_RAG_INDEX_V1";
+    };
+  };
+}
+
+export interface RagDocumentContent {
+  retrievalId: string;
+  key: string;
+  version: string;
+  sha256: string;
+  content: string;
+}
+
+export interface GenerationContextRouteItem {
+  key: string;
+  required: boolean;
+  reasons: GenerationContextCapability[];
+}
+
+export interface TypeScriptContractDeclaration {
+  kind: "FUNCTION" | "INTERFACE" | "TYPE" | "PROPS";
+  name: string;
+  signature: string;
+}
+
+export interface TypeScriptContractSnapshot {
+  relativePath: string;
+  sha256: string;
+  declarations: TypeScriptContractDeclaration[];
+}
+
 export interface GenerationContextSnapshot {
   version: "1.0";
   sha256: string;
   skills: GenerationSkillSnapshot[];
   references: GenerationReferenceSnapshot[];
+  routing?: {
+    version: "1.0";
+    capabilities: GenerationContextCapability[];
+    items: GenerationContextRouteItem[];
+  };
+  interfaces?: TypeScriptContractSnapshot[];
 }
 
 export interface GenerationContextSummary {
   sha256: string;
   skills: Array<{ name: string; sha256: string }>;
   references: Array<{ source: "REPOSITORY" | "TARGET"; relativePath: string; sha256: string }>;
+  routing?: GenerationContextSnapshot["routing"];
+  interfaces?: TypeScriptContractSnapshot[];
+  reads?: Array<{ key: string; readAt: string }>;
 }
 
 export type ArtifactChangeType = "ADD" | "MODIFY";
@@ -260,6 +416,15 @@ export type CodeGenerationStatus =
 
 export interface CodeGenerationSummary {
   generationId: string;
+  generationStrategy?: "DETERMINISTIC_IR_V1" | "PI_LEGACY";
+  retrievalRelease?: {
+    policyVersion: string;
+    releaseMode: "SHADOW" | "CANARY" | "HYBRID_DEFAULT" | "BM25_ONLY";
+    selectedMode: "BM25" | "HYBRID";
+    shadowMode?: "BM25" | "HYBRID";
+    bucket: number;
+    forcedFallback: boolean;
+  };
   status: CodeGenerationStatus;
   generationRevision: number;
   targetRoot: string;

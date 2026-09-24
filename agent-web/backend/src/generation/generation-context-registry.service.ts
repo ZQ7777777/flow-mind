@@ -7,10 +7,13 @@ import type {
   GenerationContextSnapshot,
   GenerationContextSummary,
   GenerationReferenceSnapshot,
+  RequirementIrDraft,
 } from "@flowmind/agent-contracts";
 import { AgentError } from "../common/agent-error.js";
 import { GenerationSkillRegistry } from "./generation-skill-registry.service.js";
 import { TargetContractService, type ValidatedGenerationTarget } from "./target-contract.service.js";
+import { extractTypeScriptContract } from "./typescript-contract-extractor.js";
+import { routeGenerationContext } from "./generation-context-router.js";
 
 const MAX_REFERENCE_BYTES = 1024 * 1024;
 const GOLDEN_REQUIREMENT_PATH = "doc/example_process/仓单、国债（解）质押申请.md";
@@ -22,11 +25,18 @@ export class GenerationContextRegistry {
     @Inject(TargetContractService) private readonly targets: TargetContractService,
   ) {}
 
-  capture(target: ValidatedGenerationTarget, sessionId?: string): GenerationContextSnapshot {
+  capture(target: ValidatedGenerationTarget, sessionId?: string, ir?: RequirementIrDraft): GenerationContextSnapshot {
     const skills = this.skills.loadRequired(sessionId);
-    const references: GenerationReferenceSnapshot[] = [
+    const frontendRoot = target.contract.frontend.rootDir;
+    const targetPaths = [
+      target.contract.frontend.sharedStartShell ? `${frontendRoot}/${target.contract.frontend.sharedStartShell}` : undefined,
+      target.contract.frontend.sharedWorkflowTypes ? `${frontendRoot}/${target.contract.frontend.sharedWorkflowTypes}` : undefined,
+      target.contract.frontend.apiReferences?.businessReferenceData,
+      ...(target.contract.frontend.exampleReferenceFiles || []),
+    ].filter((path): path is string => Boolean(path));
+    const references: GenerationReferenceSnapshot[] = deduplicateReferences([
       this.readRepositoryReference(GOLDEN_REQUIREMENT_PATH, sessionId),
-      ...(target.contract.frontend.exampleReferenceFiles || []).map((relativePath) => {
+      ...targetPaths.map((relativePath) => {
         const content = this.targets.readReference(target, relativePath, sessionId);
         return {
           source: "TARGET" as const,
@@ -36,12 +46,19 @@ export class GenerationContextRegistry {
           content,
         };
       }),
-    ];
+    ]);
+    const interfaces = references
+      .filter(({ source, relativePath }) => source === "TARGET" && /\.(?:ts|vue)$/.test(relativePath))
+      .map(({ relativePath, content }) => extractTypeScriptContract(relativePath, content))
+      .filter(({ declarations }) => declarations.length > 0);
+    const routing = ir ? routeGenerationContext(ir, skills, references) : undefined;
     const sha256 = hash([
       ...skills.map((skill) => `skill\0${skill.name}\0${skill.sha256}`),
       ...references.map((item) => `reference\0${item.source}\0${item.relativePath}\0${item.sha256}`),
+      ...interfaces.map((item) => `interface\0${item.relativePath}\0${item.sha256}\0${JSON.stringify(item.declarations)}`),
+      routing ? `routing\0${JSON.stringify(routing)}` : "",
     ].join("\n"));
-    return { version: "1.0", sha256, skills, references };
+    return { version: "1.0", sha256, skills, references, ...(routing ? { routing } : {}), interfaces };
   }
 
   readSkill(snapshot: GenerationContextSnapshot, skillName: string, path: string, sessionId?: string): string {
@@ -59,6 +76,8 @@ export class GenerationContextRegistry {
       sha256: snapshot.sha256,
       skills: snapshot.skills.map(({ name, sha256 }) => ({ name, sha256 })),
       references: snapshot.references.map(({ source, relativePath, sha256 }) => ({ source, relativePath, sha256 })),
+      routing: snapshot.routing,
+      interfaces: snapshot.interfaces,
     };
   }
 
@@ -78,6 +97,16 @@ export class GenerationContextRegistry {
     if (Buffer.from(content, "utf8").compare(bytes) !== 0) throw new AgentError(HttpStatus.BAD_REQUEST, "AGENT_GENERATION_REFERENCE_ENCODING_INVALID", `generation reference must be UTF-8: ${normalized}`, sessionId);
     return { source: "REPOSITORY", relativePath: normalized, required: true, sha256: hash(bytes), content };
   }
+}
+
+function deduplicateReferences(items: GenerationReferenceSnapshot[]): GenerationReferenceSnapshot[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.source}:${item.relativePath}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalize(value: string): string {

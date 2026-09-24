@@ -349,6 +349,7 @@ export function buildRepairPrompt(
   repairContext?: RepairGenerationContext,
 ): string {
   const failedStages = stages.filter(({ status }) => status !== "PASSED");
+  const frontendOnly = failedStages.length > 0 && failedStages.every(({ stage }) => stage.startsWith("FRONTEND_"));
   const diagnostics = boundRepairDiagnostics(failedStages.flatMap(({ diagnostics }) => diagnostics));
   const actionableDiagnostics = diagnostics.filter(({ repairability, derivedFrom, classification }) =>
     !derivedFrom?.length && classification !== "BLOCKED"
@@ -408,7 +409,8 @@ export function buildRepairPrompt(
 
     "Modify only existing Manifest-managed staged files.",
     "Do not add or delete files.",
-    "Fix all actionable diagnostics and reviewer issues while preserving the confirmed requirement, then call report_repair_complete.",
+    "Fix all actionable diagnostics and reviewer issues from all failed hard and soft quality stages while preserving the confirmed requirement, then call report_repair_complete.",
+    "BACKEND_TESTS and FRONTEND_TESTS are soft quality stages, but their actionable diagnostics still require repair.",
 
     "Use the diagnostic fields already provided in the Repair Brief first.",
     "Do not read additional context by default.",
@@ -427,9 +429,18 @@ export function buildRepairPrompt(
     "Do not weaken tests, validation, business logic, exception handling, commands, or quality gates.",
     "Do not guess API signatures.",
 
-    "If the same diagnostic persists from the previous repair, do not repeat the same edit pattern; inspect only the authoritative definition needed to re-check the root cause.",
+    ...(frontendOnly ? ["No generated business API is required for this frontend-only repair."] : []),
 
-    "Report one RESOLVED resolution for every actionable diagnostic you addressed.",
+    ...(repairContext ? [
+      "Use read_generation_contract_file only when the compact source of truth does not contain the required contract detail.",
+    ] : []),
+
+    "If the same diagnostic persists from the previous repair, do not repeat the same edit pattern; inspect only the authoritative definition needed to re-check the root cause.",
+    ...(ineffectiveRepairSignals?.requiresRootCauseRecheck ? [
+      "For a persisting diagnostic, re-check the actual API, DTO, imports, dependencies, and language constraints before editing.",
+    ] : []),
+
+    "Report one RESOLVED resolution for every actionable diagnostic you addressed, plus any explicitly remaining subchecks.",
     "Verification determines whether it is actually resolved.",
 
     `Current Repair Brief:\n${JSON.stringify(brief)}`,

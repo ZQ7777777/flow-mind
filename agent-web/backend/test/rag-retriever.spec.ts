@@ -1,0 +1,332 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { ENTRY_APPLICATION_REQUIREMENT, WAREHOUSE_PLEDGE_REQUIREMENT, type BusinessRequirement, type GenerationTargetContract } from "@flowmind/agent-contracts";
+import { evaluationCatalogV1 } from "../../evals/v1/catalog.js";
+import { DatabaseService } from "../src/persistence/database.service.js";
+import { RagRetrieverService } from "../src/retrieval/rag-retriever.service.js";
+import { detectCapabilities } from "../src/generation/generation-context-router.js";
+import { createGenerationTarget, seedActiveWorkflow, write } from "./generation-fixture.js";
+import { deriveAcceptanceAssertions, deriveRequirementIr } from "../src/requirement/requirement-ir.js";
+
+describe("M4-M5 governed local RAG", () => {
+  let root: string;
+  let database: DatabaseService;
+  let rag: RagRetrieverService;
+  const user = { userId: "user_sales", userName: "Sales User" };
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "flowmind-rag-"));
+    process.env.AGENT_DATA_DIR = join(root, "data");
+    process.env.AGENT_DB_PATH = join(root, "agent.db");
+    database = new DatabaseService();
+    rag = new RagRetrieverService(database);
+  });
+
+  afterEach(() => {
+    database.onModuleDestroy();
+    rmSync(root, { recursive: true, force: true });
+    delete process.env.AGENT_DATA_DIR;
+    delete process.env.AGENT_DB_PATH;
+  });
+
+  it("fails promotion closed unless technical, business and human evidence all pass", () => {
+    seedCompletedGeneration("eligible", ENTRY_APPLICATION_REQUIREMENT);
+    expect(() => rag.promote("session-eligible", "generation-eligible", user, {
+      generationRevision: 1,
+      businessAssertions: [],
+    })).toThrow(/technical gates, explicit passed business assertions, and confirmed human approval/);
+
+    database.db.prepare("UPDATE agent_code_generation SET confirmed_by = NULL WHERE id = ?").run("generation-eligible");
+    expect(() => rag.promote("session-eligible", "generation-eligible", user, {
+      generationRevision: 1,
+      businessAssertions: [{ assertionId: "business-code", status: "PASSED" }],
+    })).toThrow(/technical gates, explicit passed business assertions, and confirmed human approval/);
+  });
+
+  it("filters metadata before BM25 and audits search plus key-scoped reads", () => {
+    const content = seedCompletedGeneration("approved", calculationRequirement());
+    const promotion = rag.promote("session-approved", "generation-approved", user, {
+      generationRevision: 1,
+      businessAssertions: evidenceFor(calculationRequirement()),
+    });
+    expect(promotion.caseId).toMatch(/^case_/);
+    expect(promotion.recipeId).toMatch(/^recipe_/);
+    expect(database.db.prepare("SELECT status FROM agent_rag_case WHERE id = ?").get(promotion.caseId))
+      .toEqual({ status: "ACTIVE" });
+    expect((database.db.prepare("SELECT COUNT(*) AS count FROM agent_rag_node WHERE case_id = ?")
+      .get(promotion.caseId) as { count: number }).count).toBeGreaterThan(5);
+    expect((database.db.prepare("SELECT COUNT(*) AS count FROM agent_rag_edge WHERE case_id = ?")
+      .get(promotion.caseId) as { count: number }).count).toBeGreaterThan(5);
+    expect((database.db.prepare("SELECT COUNT(*) AS count FROM agent_rag_chunk WHERE case_id = ? AND index_status = 'ACTIVE'")
+      .get(promotion.caseId) as { count: number }).count).toBeGreaterThan(5);
+    expect(rag.selectRecipe({
+      generationId: "generation-approved",
+      ownerUserId: user.userId,
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+    })).toMatchObject({ caseId: promotion.caseId, recipeKey: "DETERMINISTIC_IR_V1", recipeVersion: "1.0" });
+    expect(rag.selectRecipe({
+      generationId: "generation-approved",
+      ownerUserId: "different-owner",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+    })).toBeUndefined();
+    const evidence = rag.searchEvidence({
+      query: "calculation signedAmount 对应实现与测试",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+      intent: "TRACEABILITY",
+    }, user);
+    expect(evidence).toMatchObject({ intent: "TRACEABILITY", retrieverVersion: "TYPED_GRAPH_HYBRID_V2" });
+    expect(evidence.hits.length).toBeGreaterThan(0);
+    expect(evidence.hits.some(({ chunkType }) => chunkType === "STRUCTURED_REQUIREMENT")).toBe(true);
+    expect(rag.readEvidence(evidence.retrievalId, evidence.hits[0].key, user)).toMatchObject({
+      retrievalId: evidence.retrievalId,
+      key: evidence.hits[0].key,
+    });
+    expect(() => rag.readEvidence(evidence.retrievalId, evidence.hits[0].key, { userId: "other", userName: "Other" }))
+      .toThrow(/owned retrieval/);
+    const semanticOnly = rag.searchEvidence({
+      query: "公式",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+    }, user);
+    expect(semanticOnly.hits.length).toBeGreaterThan(0);
+    const semanticAudit = database.db.prepare("SELECT ranking_snapshot_json FROM agent_rag_v2_retrieval WHERE id = ?")
+      .get(semanticOnly.retrievalId) as { ranking_snapshot_json: string };
+    expect(JSON.parse(semanticAudit.ranking_snapshot_json).ftsCandidateCount).toBe(0);
+    insertIncompatibleDocument();
+
+    const result = rag.search({
+      query: "signed amount decimal calculation 金额计算",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM", "CALCULATION"],
+      limit: 3,
+      generationId: "generation-approved",
+      mode: "BM25",
+    });
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0]).toMatchObject({ key: promotion.documentKeys[0], version: "2.1" });
+    expect(result.hits[0]).not.toHaveProperty("content");
+    expect(result.hits[0].score).toBeGreaterThan(0);
+
+    expect(() => rag.read(result.retrievalId, "rag-incompatible")).toThrow(/not returned/);
+    const read = rag.read(result.retrievalId, result.hits[0].key);
+    expect(read.content).toBe(content);
+    expect(read.sha256).toBe(result.hits[0].sha256);
+
+    const audit = database.db.prepare("SELECT * FROM agent_rag_retrieval WHERE id = ?").get(result.retrievalId) as any;
+    expect(JSON.parse(audit.candidate_keys_json)).toEqual([promotion.documentKeys[0]]);
+    expect(JSON.parse(audit.filters_json).capabilities).toEqual(["BASE_FORM", "CALCULATION"]);
+    expect(database.db.prepare("SELECT COUNT(*) AS count FROM agent_rag_read WHERE retrieval_id = ?").get(result.retrievalId)).toEqual({ count: 1 });
+  });
+
+  it("improves the declared approved-context-availability proxy on the frozen task set", () => {
+    seedCompletedGeneration("broad-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
+    rag.promote("session-broad-pattern", "generation-broad-pattern", user, {
+      generationRevision: 1,
+      businessAssertions: evidenceFor(WAREHOUSE_PLEDGE_REQUIREMENT),
+    });
+    const ready = evaluationCatalogV1.tasks.filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY");
+    const retrievalHits = ready.filter((task) => rag.search({
+      query: task.input.userRequest,
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: detectCapabilities(task.requirementIr),
+      limit: 1,
+      mode: "BM25",
+    }).hits.length > 0).length;
+
+    expect(ready).toHaveLength(25);
+    expect({ withoutRag: 0, withRag: retrievalHits }).toEqual({ withoutRag: 0, withRag: 18 });
+  });
+
+  it("adds repeatable local-vector recall over the M4 BM25 baseline", () => {
+    seedCompletedGeneration("hybrid-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
+    rag.promote("session-hybrid-pattern", "generation-hybrid-pattern", user, {
+      generationRevision: 1,
+      businessAssertions: evidenceFor(WAREHOUSE_PLEDGE_REQUIREMENT),
+    });
+    const ready = evaluationCatalogV1.tasks.filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY");
+    const evaluate = (mode: "BM25" | "HYBRID") => ready.filter((task) => rag.search({
+      query: task.input.userRequest,
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: detectCapabilities(task.requirementIr),
+      limit: 1,
+      mode,
+    }).hits.length > 0).length;
+
+    expect({ bm25: evaluate("BM25"), hybrid: evaluate("HYBRID") }).toEqual({ bm25: 18, hybrid: 25 });
+    const snapshotResult = rag.search({
+      query: "录入差旅费用并限制正数",
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: ["BASE_FORM"],
+      mode: "HYBRID",
+    });
+    expect(snapshotResult.snapshot).toEqual({
+      retrieverVersion: "HYBRID_RRF_V1",
+      tokenizerVersion: "CJK_BIGRAM_ASCII_V1",
+      embedding: {
+        model: "LOCAL_SEMANTIC_HASH_V1",
+        dimensions: 256,
+        chunkerVersion: "CODEPOINT_800_OVERLAP_100_V1",
+        indexVersion: "LOCAL_RAG_INDEX_V1",
+      },
+    });
+    expect(snapshotResult.hits[0].vectorScore).toBeGreaterThan(0);
+    const audit = database.db.prepare("SELECT ranking_snapshot_json FROM agent_rag_retrieval WHERE id = ?")
+      .get(snapshotResult.retrievalId) as { ranking_snapshot_json: string };
+    expect(JSON.parse(audit.ranking_snapshot_json).embedding.model).toBe("LOCAL_SEMANTIC_HASH_V1");
+  });
+
+  it("audits a better shadow result without exposing it to the selected path", () => {
+    seedCompletedGeneration("shadow-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
+    rag.promote("session-shadow-pattern", "generation-shadow-pattern", user, {
+      generationRevision: 1,
+      businessAssertions: evidenceFor(WAREHOUSE_PLEDGE_REQUIREMENT),
+    });
+    const missed = evaluationCatalogV1.tasks
+      .filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY")
+      .find((task) => rag.search({
+        query: task.input.userRequest,
+        projectId: "flowmind-business-base",
+        contractVersion: "2.1",
+        capabilities: detectCapabilities(task.requirementIr),
+        mode: "BM25",
+      }).hits.length === 0)!;
+    const result = rag.search({
+      query: missed.input.userRequest,
+      projectId: "flowmind-business-base",
+      contractVersion: "2.1",
+      capabilities: detectCapabilities(missed.requirementIr),
+      mode: "BM25",
+      shadowMode: "HYBRID",
+      limit: 1,
+    });
+    expect(result.hits).toEqual([]);
+    expect(result).not.toHaveProperty("shadow");
+    const observation = database.db.prepare("SELECT * FROM agent_rag_shadow_observation WHERE retrieval_id = ?")
+      .get(result.retrievalId) as any;
+    expect(observation).toMatchObject({
+      selected_mode: "BM25",
+      shadow_mode: "HYBRID",
+      selected_zero_result: 1,
+      shadow_zero_result: 0,
+    });
+    expect(JSON.parse(observation.selected_keys_json)).toEqual([]);
+    expect(JSON.parse(observation.shadow_keys_json)).toHaveLength(1);
+    expect(rag.shadowMetrics().groups).toEqual([expect.objectContaining({
+      selectedMode: "BM25",
+      shadowMode: "HYBRID",
+      observations: 1,
+      shadowImprovements: 1,
+      shadowRegressions: 0,
+    })]);
+  });
+
+  it("runs the frozen catalog as an offline shadow release with no control regressions", () => {
+    seedCompletedGeneration("release-pattern", WAREHOUSE_PLEDGE_REQUIREMENT);
+    database.db.prepare(`
+      UPDATE agent_code_generation SET retrieval_policy_version = 'RAG_RELEASE_TEST_V1',
+        retrieval_release_mode = 'SHADOW', retrieval_selected_mode = 'BM25',
+        retrieval_shadow_mode = 'HYBRID', retrieval_bucket = 42, retrieval_forced_fallback = 0
+      WHERE id = 'generation-release-pattern'
+    `).run();
+    rag.promote("session-release-pattern", "generation-release-pattern", user, {
+      generationRevision: 1,
+      businessAssertions: evidenceFor(WAREHOUSE_PLEDGE_REQUIREMENT),
+    });
+    const ready = evaluationCatalogV1.tasks.filter(({ expectedOutcome }) => expectedOutcome === "GENERATION_READY");
+    for (const task of ready) {
+      rag.search({
+        query: task.input.userRequest,
+        projectId: "flowmind-business-base",
+        contractVersion: "2.1",
+        capabilities: detectCapabilities(task.requirementIr),
+        mode: "BM25",
+        shadowMode: "HYBRID",
+        limit: 1,
+        generationId: "generation-release-pattern",
+      });
+    }
+    const metrics = rag.shadowMetrics().groups[0];
+    expect(metrics).toMatchObject({
+      selectedMode: "BM25",
+      shadowMode: "HYBRID",
+      policyVersion: "RAG_RELEASE_TEST_V1",
+      releaseMode: "SHADOW",
+      observations: 25,
+      shadowImprovements: 7,
+      shadowRegressions: 0,
+    });
+    expect(metrics.averageSelectedDurationMs).toBeLessThan(50);
+    expect(metrics.averageShadowDurationMs).toBeLessThan(50);
+  });
+
+  function seedCompletedGeneration(suffix: string, requirement: BusinessRequirement): string {
+    const target = createGenerationTarget(root, `target-${suffix}`);
+    const contract = JSON.parse(readFileSync(join(target, ".flowmind", "generation-target.json"), "utf8")) as GenerationTargetContract;
+    const relativePath = `frontend/src/modules/generated/${suffix}/BusinessForm.vue`;
+    const content = `<script setup lang="ts">const approvedPattern = "生成申请表单 多选 动态参考数据 级联 查询 计算 核查 signed amount decimal calculation 金额计算";</script>\n<template><div>${requirement.businessName}</div></template>\n`;
+    write(target, relativePath, content);
+    seedActiveWorkflow(database, `session-${suffix}`, target, user.userId, requirement);
+    const now = new Date().toISOString();
+    const digest = sha256(content);
+    const manifest = { generationId: `generation-${suffix}`, targetRoot: target, contractVersion: "2.1", revision: 1, files: [{ relativePath, changeType: "ADD", stagedSha256: digest, sizeBytes: Buffer.byteLength(content), validationStatus: "VALID", editedByUser: false }] };
+    const quality = { generationId: `generation-${suffix}`, revision: 1, pipelineState: "PASSED", repairRound: 0, maxRepairRounds: 3, stages: [{ stage: "FRONTEND_BUILD", status: "PASSED", hardGate: true, summary: "passed", diagnostics: [] }], hardGatePassed: true, overrideRequired: false, canWrite: true, updatedAt: now };
+    database.db.prepare(`INSERT INTO agent_code_generation (
+      id, session_id, process_definition_record_id, requirement_revision, requirement_snapshot_json,
+      process_snapshot_json, business_code, business_name, status, target_root, target_contract_version,
+      target_contract_json, staging_dir, artifact_manifest_json, generation_revision, quality_revision,
+      quality_report_json, hard_gate_passed, can_write, write_status, created_by, confirmed_by,
+      confirmed_at, written_at, created_at, updated_at
+    ) VALUES (?, ?, ?, 1, ?, '{}', ?, ?, 'COMPLETED', ?, '2.1', ?, ?, ?, 1, 1, ?, 1, 1,
+      'COMPLETED', ?, ?, ?, ?, ?, ?)`)
+      .run(`generation-${suffix}`, `session-${suffix}`, `process_session-${suffix}`, JSON.stringify(requirement), requirement.businessCode,
+        requirement.businessName, target, JSON.stringify(contract), join(root, "staging", suffix), JSON.stringify(manifest), JSON.stringify(quality),
+        user.userId, user.userId, now, now, now, now);
+    return content;
+  }
+
+  function insertIncompatibleDocument(): void {
+    const now = new Date().toISOString();
+    const content = "signed amount decimal calculation 金额计算";
+    database.db.prepare(`INSERT INTO agent_rag_document (
+      document_key, source_generation_id, source_revision, project_id, contract_version,
+      business_code, capabilities_json, relative_path, summary, content, sha256,
+      assertion_evidence_json, promoted_by, promoted_at
+    ) VALUES ('rag-incompatible', 'generation-approved', 2, 'flowmind-business-base', '1.0',
+      'wrong-version', '["BASE_FORM","CALCULATION"]', 'wrong.ts', 'wrong version', ?, ?, '[]', ?, ?)`)
+      .run(content, sha256(content), user.userId, now);
+  }
+});
+
+function calculationRequirement(): BusinessRequirement {
+  const requirement = structuredClone(ENTRY_APPLICATION_REQUIREMENT);
+  requirement.businessCode = "calculation_sample";
+  requirement.businessName = "金额计算样例";
+  requirement.frontendBehavior = {
+    sections: [], dataQueries: [], checks: [],
+    calculations: [{ calculationCode: "signedAmount", targetFieldCode: "amount", expression: "quantity * price", dependencyFieldCodes: ["quantity", "price"], decimalPlaces: 2, sortOrder: 1 }],
+  };
+  return requirement;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function evidenceFor(requirement: BusinessRequirement) {
+  return deriveAcceptanceAssertions(deriveRequirementIr(requirement))
+    .map(({ assertionId }) => ({ assertionId, status: "PASSED" as const }));
+}
